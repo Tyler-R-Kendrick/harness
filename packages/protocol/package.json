@@ -1,0 +1,14 @@
+{
+  "name": "@harness/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ACP framing, JSON-RPC envelopes and the _harness profile. Pure: no host I/O.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0"
+  }
+}

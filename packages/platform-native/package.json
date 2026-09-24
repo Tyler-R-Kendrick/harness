@@ -1,0 +1,19 @@
+{
+  "name": "@harness/platform-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Native background-service platform layer: stdio/socket ACP bindings and Node host ports.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/core": "0.0.0",
+    "@harness/protocol": "0.0.0"
+  },
+  "devDependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "@harness/testkit": "0.0.0"
+  }
+}

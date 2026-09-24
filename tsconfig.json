@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/protocol" },
+    { "path": "packages/core" },
+    { "path": "packages/cognitive" },
+    { "path": "packages/testkit" },
+    { "path": "packages/platform-native" },
+    { "path": "packages/evals" }
+  ]
+}
