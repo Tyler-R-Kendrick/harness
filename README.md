@@ -63,8 +63,10 @@ AI_GATEWAY_API_KEY=... npm run eval -- --out eval-results/results.json
 
 There are two suites:
 - `calibration`: checks the judge on known good and bad examples.
-- `harness`: end-to-end turns through the daemon core and model worker, using the free
-  `inclusionai/ling-3.0-flash-fin` model by default.
+- `harness`: end-to-end turns through the daemon core with the deterministic echo
+  worker; Jev judges the prompt round-trip, turn order and permission routing.
+
+Jev is the only model the evals call.
 
 Every result is `passed`, `failed`, `inconclusive` or `blocked`. A missing credential
 is reported as `blocked`, never as a pass.

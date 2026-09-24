@@ -7,20 +7,19 @@ import { JevJudge } from "./judge.ts";
 import { resolveGatewayCredential, runEvals } from "./runner.ts";
 import type { EvalCase } from "./runner.ts";
 import { calibrationSuite } from "./suites/calibration.ts";
-import { DEFAULT_SUBJECT_MODEL, harnessSuite } from "./suites/harness.ts";
+import { harnessSuite } from "./suites/harness.ts";
 
 const { values } = parseArgs({
   options: {
     out: { type: "string", default: "eval-results/results.json" },
     suite: { type: "string", default: "all" },
-    "subject-model": { type: "string", default: DEFAULT_SUBJECT_MODEL },
     "require-live": { type: "boolean", default: false },
   },
 });
 
 const suites: Record<string, () => readonly EvalCase[]> = {
   calibration: () => calibrationSuite,
-  harness: () => harnessSuite(values["subject-model"]),
+  harness: () => harnessSuite,
 };
 const selected = values.suite === "all" ? Object.keys(suites) : values.suite.split(",");
 const unknown = selected.filter((s) => !(s in suites));

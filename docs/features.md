@@ -162,8 +162,8 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Evals with Jev as judge (typesafe-ai/jev via Vercel AI Gateway) | built | EV1–EV7; live runs need `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` and are otherwise `blocked` |
-| Judge calibration suite | built (not yet run live) | `calibration` suite |
-| End-to-end harness suite (daemon + model worker) | built (not yet run live) | `harness` suite, free subject model `inclusionai/ling-3.0-flash-fin` |
+| Judge calibration suite | built | `calibration` suite; live run 2026-09-24: 5/5, including both known-bad cases |
+| End-to-end harness suite (daemon, judged by Jev) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. Jev is the only model the evals call |
 | OTel/ATIF export; outcome contracts; protected acceptance suites | not started | |
 
 ## P. Reliability, provenance and lifecycle

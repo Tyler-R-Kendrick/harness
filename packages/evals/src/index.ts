@@ -7,5 +7,4 @@ export type { Credential, EvalCase, EvalReport, EvalResult } from "./runner.ts";
 export { runSession } from "./session.ts";
 export type { TurnResult } from "./session.ts";
 export { calibrationSuite } from "./suites/calibration.ts";
-export { DEFAULT_SUBJECT_MODEL, harnessSuite } from "./suites/harness.ts";
-export type { ModelFactory } from "./suites/harness.ts";
+export { harnessSuite } from "./suites/harness.ts";

@@ -1,64 +1,76 @@
-import { gateway } from "@ai-sdk/gateway";
-import type { LanguageModel } from "ai";
-import { ModelWorker } from "@harness/workers";
-import { BlockedError } from "../runner.ts";
+import { EchoWorker } from "@harness/workers";
 import type { EvalCase } from "../runner.ts";
 import { runSession } from "../session.ts";
-import type { TurnResult } from "../session.ts";
-
-/** Free model on the Vercel AI Gateway used as the default subject under test. */
-export const DEFAULT_SUBJECT_MODEL = "inclusionai/ling-3.0-flash-fin";
-
-export type ModelFactory = (modelId: string) => LanguageModel;
-
-async function converse(model: LanguageModel, prompts: readonly string[]): Promise<TurnResult[]> {
-  const turns = await runSession(new ModelWorker({ model, system: "You are a concise assistant." }), prompts);
-  const failure = turns.flatMap((t) => t.notices).find((n) => n.severity === "error");
-  if (failure) {
-    const detail = `${failure.title}: ${failure.description ?? ""}`;
-    if (/\b(401|403)\b|unauthori[sz]ed|forbidden|authentication|api key|credential/i.test(detail)) throw new BlockedError(detail);
-    throw new Error(detail);
-  }
-  return turns;
-}
 
 /**
- * End-to-end harness behavior: prompts go through the real daemon core and the
- * in-process model worker, and Jev judges the outcome.
+ * End-to-end harness behavior. Prompts go through the real daemon core with the
+ * deterministic echo worker, so the only model in the pipeline is the Jev judge,
+ * which checks what the multiplexer did: replies, turn order and permission routing.
  */
-export function harnessSuite(modelId = DEFAULT_SUBJECT_MODEL, makeModel: ModelFactory = (id) => gateway(id)): readonly EvalCase[] {
-  const converseWith = (prompts: readonly string[]) => converse(makeModel(modelId), prompts);
-  return [
-    {
-      id: "harness.answers-question",
-      description: "A prompt through the daemon gets a correct answer",
-      subject: async () => {
-        const [turn] = await converseWith(["What is the capital of France? Answer in one word."]);
-        return { prompt: turn!.prompt, reply: turn!.reply };
-      },
-      questions: { paris: { type: "boolean", instructions: "Does `reply` state that the capital of France is Paris?" } },
-      expect: { paris: { type: "boolean", expect: true } },
+export const harnessSuite: readonly EvalCase[] = [
+  {
+    id: "harness.prompt-roundtrip",
+    description: "A prompt reaches the worker and its reply comes back on the same turn",
+    subject: async () => {
+      const [turn] = await runSession(new EchoWorker(), ["Summarize the release notes"]);
+      return { prompt: turn!.prompt, reply: turn!.reply, stopReason: turn!.stopReason ?? "none" };
     },
-    {
-      id: "harness.multi-turn-context",
-      description: "The session keeps context across turns",
-      subject: async () => {
-        const turns = await converseWith(["My name is Ada. Reply with just OK.", "What is my name?"]);
-        return { turns: turns.map((t) => ({ user: t.prompt, assistant: t.reply })) };
+    questions: {
+      roundtrip: {
+        type: "boolean",
+        instructions: "Does `reply` contain the full text of `prompt`, and is `stopReason` equal to end_turn?",
       },
-      questions: { remembers: { type: "boolean", instructions: "In the last entry of `turns`, does the assistant correctly say the user's name is Ada?" } },
-      expect: { remembers: { type: "boolean", expect: true } },
     },
-    {
-      id: "harness.turn-completes",
-      description: "Turns end normally rather than being cut off",
-      subject: async () => {
-        const [turn] = await converseWith(["Name three primary colors, comma-separated."]);
-        return { reply: turn!.reply, stopReason: turn!.stopReason ?? "none" };
+    expect: { roundtrip: { type: "boolean", expect: true } },
+  },
+  {
+    id: "harness.multi-turn-order",
+    description: "Turns in one session stay separate and in order",
+    subject: async () => {
+      const turns = await runSession(new EchoWorker(), ["first: open the file", "second: edit line 3", "third: save"]);
+      return { turns: turns.map((t) => ({ user: t.prompt, assistant: t.reply, stopReason: t.stopReason ?? "none" })) };
+    },
+    questions: {
+      ordered: {
+        type: "boolean",
+        instructions:
+          "Does `turns` have exactly one entry per user prompt, in the order first, second, third, where each assistant reply repeats only its own user prompt (no text from another turn) and every stopReason is end_turn?",
       },
-      questions: { complete: { type: "boolean", instructions: "Is `reply` a complete answer naming three colors, and is `stopReason` equal to end_turn?" } },
-      expect: { complete: { type: "boolean", expect: true } },
     },
-  ];
-}
-
+    expect: { ordered: { type: "boolean", expect: true } },
+  },
+  {
+    id: "harness.permission-denied",
+    description: "A denied permission request stops the tool from running",
+    subject: async () => {
+      const prompt = "!permission delete the build folder";
+      const [turn] = await runSession(new EchoWorker(), [prompt], { permission: "deny" });
+      return { policy: "deny", prompt, reply: turn!.reply, stopReason: turn!.stopReason ?? "none" };
+    },
+    questions: {
+      refused: {
+        type: "boolean",
+        instructions:
+          "The approver answered the tool's permission request according to `policy`. Does `reply` report that permission was denied, without repeating the text of `prompt`?",
+      },
+    },
+    expect: { refused: { type: "boolean", expect: true } },
+  },
+  {
+    id: "harness.permission-allowed",
+    description: "An allowed permission request lets the tool run",
+    subject: async () => {
+      const prompt = "!permission list the build folder";
+      const [turn] = await runSession(new EchoWorker(), [prompt], { permission: "allow" });
+      return { policy: "allow", prompt, reply: turn!.reply, stopReason: turn!.stopReason ?? "none" };
+    },
+    questions: {
+      ran: {
+        type: "boolean",
+        instructions:
+          "The approver answered the tool's permission request according to `policy`. Does `reply` contain the full text of `prompt`, showing the tool ran, and is `stopReason` equal to end_turn?",
+      },
+    },
+    expect: { ran: { type: "boolean", expect: true } },
+  },
+];

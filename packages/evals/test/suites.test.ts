@@ -1,23 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulateReadableStream } from "ai";
-import { MockLanguageModelV4 } from "ai/test";
-import { BlockedError, calibrationSuite, harnessSuite } from "@harness/evals";
-
-const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
-const replying = (text: string) =>
-  new MockLanguageModelV4({
-    doStream: async () => ({
-      stream: simulateReadableStream({
-        chunks: [
-          { type: "text-start" as const, id: "1" },
-          { type: "text-delta" as const, id: "1", delta: text },
-          { type: "text-end" as const, id: "1" },
-          { type: "finish" as const, finishReason: { unified: "stop" as const, raw: "stop" }, usage },
-        ],
-      }),
-    }),
-  });
-const failing = (message: string) => new MockLanguageModelV4({ doStream: async () => { throw new Error(message); } });
+import { calibrationSuite, harnessSuite } from "@harness/evals";
 
 /** Every `name` a question refers to in backticks must exist in the judged state. */
 function referencedKeys(instructions: unknown): string[] {
@@ -41,21 +23,27 @@ describe("eval suites", () => {
     expect(expectations.some((e) => e.type === "boolean" && !e.expect)).toBe(true);
   });
 
-  it("EV7.3 harness cases run prompts through the daemon and model worker and expose referenced fields", async () => {
-    const suite = harnessSuite("mock", () => replying("Paris"));
-    for (const c of suite) {
+  it("EV7.3 harness cases run prompts through the daemon and expose every referenced field", async () => {
+    const ids = harnessSuite.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const c of harnessSuite) {
       const state = (await c.subject()) as Record<string, unknown>;
       for (const q of Object.values(c.questions)) for (const key of referencedKeys(q.instructions)) expect(state, `${c.id} -> ${key}`).toHaveProperty(key);
+      expect(Object.keys(c.expect).sort()).toEqual(Object.keys(c.questions).sort());
     }
-    const [first] = suite;
-    expect(await first!.subject()).toEqual({ prompt: "What is the capital of France? Answer in one word.", reply: "Paris" });
   });
 
-  it("EV7.4 a model access failure blocks the case; any other model failure fails it", async () => {
-    const [blocked] = harnessSuite("mock", () => failing("Gateway 401: unauthorized"));
-    await expect(blocked!.subject()).rejects.toBeInstanceOf(BlockedError);
-    const [broken] = harnessSuite("mock", () => failing("model exploded"));
-    await expect(broken!.subject()).rejects.toThrow(/model exploded/);
-    await expect(broken!.subject()).rejects.not.toBeInstanceOf(BlockedError);
+  it("EV7.4 the harness suite needs no model besides the Jev judge: subjects are deterministic daemon runs", async () => {
+    for (const c of harnessSuite) expect(await c.subject(), c.id).toEqual(await c.subject());
+    const roundtrip = harnessSuite.find((c) => c.id === "harness.prompt-roundtrip")!;
+    expect(await roundtrip.subject()).toMatchObject({ reply: expect.stringContaining("Summarize the release notes"), stopReason: "end_turn" });
+  });
+
+  it("EV7.5 permission cases route the worker's request and apply the stated policy", async () => {
+    const denied = (await harnessSuite.find((c) => c.id === "harness.permission-denied")!.subject()) as Record<string, unknown>;
+    expect(denied).toMatchObject({ policy: "deny", reply: "permission denied", stopReason: "end_turn" });
+    const allowed = (await harnessSuite.find((c) => c.id === "harness.permission-allowed")!.subject()) as Record<string, unknown>;
+    expect(allowed).toMatchObject({ policy: "allow", stopReason: "end_turn" });
+    expect(allowed["reply"]).toContain(allowed["prompt"]);
   });
 });
