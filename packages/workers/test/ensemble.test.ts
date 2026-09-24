@@ -112,4 +112,32 @@ describe("EnsembleWorker", () => {
     expect(second.events[0]).toMatchObject({ update: { title: "Behavior: calm", description: "calm", _meta: { harness: { behavior: { state: "calm" } } } } });
     expect(second.events[1]).toMatchObject({ update: { description: "calm → alert" } });
   });
+
+  it("EW1.7 with memory, a turn is given related memories from other sessions and is remembered afterwards", async () => {
+    const ensemble = new FakeEnsemble(() => [{ type: "text", text: "It is in the vault." }, { type: "finish", reason: "stop" }]);
+    const asked: unknown[] = [];
+    const kept: unknown[] = [];
+    const memory = {
+      recall: async (query: string, options: unknown) => (asked.push({ query, options }), [{ id: "m1", text: "the deploy key lives in the vault", score: 0.8, sessionId: "old" }]),
+      remember: async (items: unknown) => (kept.push(items), ["m2", "m3"]),
+    };
+    const { done } = run(new EnsembleWorker({ ensemble, memory }), [{ type: "text", text: "where is the deploy key?" }], "s9");
+    await done;
+    expect(asked).toEqual([{ query: "where is the deploy key?", options: { excludeSession: "s9", limit: 3 } }]);
+    expect(ensemble.calls[0]!.request.messages[0]).toEqual({ role: "system", content: "Relevant memories from earlier sessions:\n- the deploy key lives in the vault" });
+    expect(kept).toEqual([
+      [
+        { text: "where is the deploy key?", sessionId: "s9", kind: "user" },
+        { text: "It is in the vault.", sessionId: "s9", kind: "assistant" },
+      ],
+    ]);
+    // nothing related: no memory message; a memory that fails does not fail the turn
+    const quiet = new FakeEnsemble(() => [{ type: "text", text: "ok" }, { type: "finish", reason: "stop" }]);
+    const broken = { recall: async () => [], remember: async () => Promise.reject(new Error("disk full")) };
+    const second = run(new EnsembleWorker({ ensemble: quiet, memory: broken }), [{ type: "text", text: "hi" }]);
+    await second.done;
+    expect(quiet.calls[0]!.request.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(second.events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
+  });
 });
+

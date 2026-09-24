@@ -20,6 +20,7 @@
     "@harness/platform-native": "0.0.0"
   },
   "devDependencies": {
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "@harness/memory": "0.0.0"
   }
 }

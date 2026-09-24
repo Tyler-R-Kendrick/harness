@@ -1,0 +1,19 @@
+{
+  "name": "@harness/memory",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Memory for the cognitive core, as an extension: its embedding model, vector recall and session memory. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "@orama/orama": "3.1.18",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0"
+  }
+}

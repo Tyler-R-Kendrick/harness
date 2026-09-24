@@ -14,6 +14,9 @@
       "path": "packages/behavior"
     },
     {
+      "path": "packages/memory"
+    },
+    {
       "path": "packages/models"
     },
     {

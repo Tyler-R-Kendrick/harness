@@ -84,7 +84,9 @@ export const COGNITIVE_OPS = {
   compress: "prompt-compression",
   parse: "document-parsing",
 } as const;
-export type CognitiveOp = keyof typeof COGNITIVE_OPS | "status";
+/** An installed cognitive extension's operation, e.g. `memory.recall`; the extension's id is its capability. */
+const EXTENSION_OP = /^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$/;
+export type CognitiveOp = keyof typeof COGNITIVE_OPS | "status" | `${string}.${string}`;
 
 /** Model work the daemon hands to the host, which runs its ensemble and reports back. */
 export interface CognitiveWork {
@@ -475,11 +477,15 @@ export class Daemon {
 
   #cognitiveInvoke(conn: Connection, id: JsonRpcId, params: Record<string, unknown>): typeof DEFER {
     const op = params["op"];
-    if (typeof op !== "string" || !Object.hasOwn(COGNITIVE_OPS, op)) throw invalidParams(`op must be one of ${Object.keys(COGNITIVE_OPS).join(", ")}`);
+    const core = typeof op === "string" && Object.hasOwn(COGNITIVE_OPS, op);
+    if (typeof op !== "string" || !(core || EXTENSION_OP.test(op))) {
+      throw invalidParams(`op must be one of ${Object.keys(COGNITIVE_OPS).join(", ")}, or <extension>.<operation>`);
+    }
     if (!("input" in params)) throw invalidParams("input is required");
-    const task = COGNITIVE_OPS[op as keyof typeof COGNITIVE_OPS];
-    if (!this.#capabilities.inventory().some((c) => c.name === `cognitive.${task}`)) {
-      throw new RpcError(ERROR_CODES.notFound, `no model serves ${task} on this platform`);
+    const task = core ? COGNITIVE_OPS[op as keyof typeof COGNITIVE_OPS] : undefined;
+    const capability = task ? `cognitive.${task}` : op.split(".")[0]!;
+    if (!this.#capabilities.inventory().some((c) => c.name === capability)) {
+      throw new RpcError(ERROR_CODES.notFound, task ? `no model serves ${task} on this platform` : `no extension ${capability} is installed on this host`);
     }
     return this.#cognitiveWork(conn, id, op as CognitiveOp, task, params["input"]);
   }

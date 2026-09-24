@@ -8,6 +8,7 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { EchoWorker, EnsembleWorker, ModelWorker } from "@harness/workers";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
+import { FileStorage } from "./file-storage.ts";
 import { NodeHost } from "./node-host.ts";
 
 const { values } = parseArgs({
@@ -24,6 +25,7 @@ const { values } = parseArgs({
     "no-hosted": { type: "boolean", default: false },
     behavior: { type: "string" },
     "sae-rows": { type: "string" },
+    memory: { type: "string" },
   },
 });
 
@@ -31,7 +33,7 @@ if (!values.stdio && values.socket === undefined) {
   process.stderr.write(
     "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble] [--model <gateway id>]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
-      "                            [--behavior <graph.json> --sae-rows <rows.json>]]\n",
+      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file>]]\n",
   );
   process.exit(2);
 }
@@ -46,6 +48,10 @@ const behavior =
     ? undefined
     : compilePack(parseGraph(JSON.parse(readFileSync(values.behavior, "utf8"))), parseSaeRows(readFileSync(values["sae-rows"]!, "utf8")));
 
+// Memory is an extension of the cognitive core, persisted to its own file.
+const memoryFile = values.memory === undefined ? undefined : new FileStorage(values.memory);
+const saved = await memoryFile?.load();
+
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
@@ -53,6 +59,7 @@ const cognitive =
         allowHosted: !values["no-hosted"],
         ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
         ...(behavior ? { behavior } : {}),
+        ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
       })
     : undefined;
 const system = values.system === undefined ? {} : { system: values.system };
@@ -60,7 +67,12 @@ const worker: Worker =
   values.worker === "model"
     ? new ModelWorker({ model: gateway(values.model), ...system })
     : values.worker === "ensemble"
-      ? new EnsembleWorker({ ensemble: cognitive!.ensemble, ...system, ...(behavior ? { task: "steered-chat" as const } : {}) })
+      ? new EnsembleWorker({
+          ensemble: cognitive!.ensemble,
+          ...system,
+          ...(behavior ? { task: "steered-chat" as const } : {}),
+          ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
+        })
       : new EchoWorker();
 
 const host = await NodeHost.start({

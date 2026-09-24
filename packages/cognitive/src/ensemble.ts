@@ -21,8 +21,21 @@ export type MemberState = "offline" | "loading" | "ready" | "failed" | "revoked"
 
 export interface MemberEvent {
   readonly id: string;
-  readonly state: MemberState;
+  /** "removed" when an extension that brought the member is uninstalled. */
+  readonly state: MemberState | "removed";
   readonly reason?: string;
+}
+
+/**
+ * A bundle the cognitive core can take on at runtime, such as memory with its
+ * embedding model. Installing registers its models; uninstalling takes them away.
+ */
+export interface CognitiveExtension {
+  /** Also the capability the daemon offers while the extension can serve. */
+  readonly id: string;
+  readonly models: readonly { readonly descriptor: ModelDescriptor; readonly load: () => Promise<Ports> }[];
+  /** Operations served as `<id>.<name>` through `_harness/cognitive/invoke`. */
+  readonly operations?: Readonly<Record<string, (input: unknown) => Promise<unknown>>>;
 }
 
 export class CognitiveError extends Error {
@@ -64,6 +77,7 @@ export class Ensemble {
   readonly #options: EnsembleOptions;
   readonly #members = new Map<string, Member>();
   readonly #listeners = new Set<(event: MemberEvent) => void>();
+  readonly #extensions = new Map<string, CognitiveExtension>();
 
   constructor(options: EnsembleOptions) {
     this.#options = options;
@@ -79,6 +93,42 @@ export class Ensemble {
       throw new Error(`model ${descriptor.id} does not run on ${this.#options.platform}`);
     }
     this.#members.set(descriptor.id, { descriptor, load, state: "offline", generation: 0 });
+  }
+
+  /** Take on an extension's models, all or none; returns a function that removes them again. */
+  install(extension: CognitiveExtension): () => void {
+    const added: string[] = [];
+    try {
+      for (const m of extension.models) added.push((this.register(m.descriptor, m.load), m.descriptor.id));
+    } catch (e) {
+      for (const id of added) this.#members.delete(id);
+      throw e;
+    }
+    this.#extensions.set(extension.id, extension);
+    for (const m of extension.models) this.#emit({ id: m.descriptor.id, state: "offline" });
+    return () => {
+      this.#extensions.delete(extension.id);
+      for (const { descriptor } of extension.models) {
+        const m = this.#members.get(descriptor.id);
+        if (!m) continue;
+        m.generation++;
+        this.#members.delete(descriptor.id);
+        this.#emit({ id: descriptor.id, state: "removed" });
+      }
+    };
+  }
+
+  /** Installed extensions that have a model in service. */
+  extensions(): string[] {
+    const serving = (id: string) => ["offline", "loading", "ready"].includes(this.#members.get(id)?.state ?? "");
+    return [...this.#extensions.values()].filter((x) => x.models.some((m) => serving(m.descriptor.id))).map((x) => x.id);
+  }
+
+  /** An installed extension's operation, by its `<extension>.<name>` name. */
+  operation(name: string): ((input: unknown) => Promise<unknown>) | undefined {
+    const [extension = "", op = ""] = name.split(".");
+    const operations = this.#extensions.get(extension)?.operations;
+    return operations && Object.hasOwn(operations, op) ? operations[op] : undefined;
   }
 
   state(id: string): MemberState | undefined {
@@ -200,7 +250,10 @@ export class Ensemble {
     m.state = state;
     if (reason === undefined) delete m.reason;
     else m.reason = reason;
-    const event: MemberEvent = { id: m.descriptor.id, state, ...(reason === undefined ? {} : { reason }) };
+    this.#emit({ id: m.descriptor.id, state, ...(reason === undefined ? {} : { reason }) });
+  }
+
+  #emit(event: MemberEvent): void {
     for (const listener of this.#listeners) listener(event);
   }
 

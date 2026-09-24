@@ -5,6 +5,12 @@ import { textChunk } from "./worker.ts";
 import type { Emit, PromptCommand, Worker } from "./worker.ts";
 
 /** The part of the cognitive ensemble this worker needs. */
+/** Session memory (see @harness/memory): related items are recalled into a turn, and the turn is remembered. */
+export interface SessionMemory {
+  recall(query: string, options: { readonly excludeSession?: string; readonly limit?: number }): Promise<readonly { readonly text: string }[]>;
+  remember(items: readonly { readonly text: string; readonly sessionId?: string; readonly kind?: string }[]): Promise<unknown>;
+}
+
 export interface GeneratingEnsemble {
   generate(request: GenerateRequest, task?: TaskCategory): AsyncIterable<GenerationEvent>;
 }
@@ -34,14 +40,16 @@ export class EnsembleWorker implements Worker {
   readonly #ensemble: GeneratingEnsemble;
   readonly #system: string | undefined;
   readonly #task: TaskCategory;
+  readonly #memory: SessionMemory | undefined;
   #history = new Map<string, ChatMessage[]>();
   #cancelled = new Set<string>();
 
   /** `task` is what text turns ask the ensemble for: "chat" by default, "steered-chat" for the local kernel. */
-  constructor(options: { ensemble: GeneratingEnsemble; system?: string; task?: TaskCategory }) {
+  constructor(options: { ensemble: GeneratingEnsemble; system?: string; task?: TaskCategory; memory?: SessionMemory }) {
     this.#ensemble = options.ensemble;
     this.#system = options.system;
     this.#task = options.task ?? "chat";
+    this.#memory = options.memory;
   }
 
   async run(command: PromptCommand, emit: Emit): Promise<void> {
@@ -51,10 +59,13 @@ export class EnsembleWorker implements Worker {
     const user: ChatMessage = { role: "user", content: hasImage ? parts : parts.map((p) => (p.type === "text" ? p.text : "")).join("") };
     const history = this.#history.get(command.sessionId) ?? [];
     const messages: ChatMessage[] = [...(history.length === 0 && this.#system ? [{ role: "system" as const, content: this.#system }] : []), ...history, user];
+    const said = parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+    const memories = this.#memory && said ? await this.#memory.recall(said, { excludeSession: command.sessionId, limit: 3 }).catch(() => []) : [];
+    const recalled: ChatMessage[] = memories.length ? [{ role: "system", content: `Relevant memories from earlier sessions:\n${memories.map((m) => `- ${m.text}`).join("\n")}` }] : [];
     let stopReason: StopReason = "end_turn";
     let reply = "";
     try {
-      for await (const event of this.#ensemble.generate({ messages }, hasImage ? "vision-qa" : this.#task)) {
+      for await (const event of this.#ensemble.generate({ messages: [...messages.slice(0, -1), ...recalled, user] }, hasImage ? "vision-qa" : this.#task)) {
         if (this.#cancelled.has(key)) {
           stopReason = "cancelled";
           break;
@@ -70,7 +81,18 @@ export class EnsembleWorker implements Worker {
           emit({ type: "update", ...base, update: { sessionUpdate: "notice", severity: "info", title: `Behavior: ${event.state}`, description, _meta: { harness: { behavior } } } });
         } else if (event.type === "finish") stopReason = STOP_REASONS[event.reason] ?? "end_turn";
       }
-      if (stopReason !== "cancelled") this.#history.set(command.sessionId, [...messages, { role: "assistant", content: reply }]);
+      if (stopReason !== "cancelled") {
+        this.#history.set(command.sessionId, [...messages, { role: "assistant", content: reply }]);
+        // Memory is best effort: a turn never fails because it could not be remembered.
+        await this.#memory
+          ?.remember(
+            [
+              { text: said, sessionId: command.sessionId, kind: "user" },
+              { text: reply, sessionId: command.sessionId, kind: "assistant" },
+            ].filter((item) => item.text !== ""),
+          )
+          .catch(() => undefined);
+      }
     } catch (e) {
       emit({ type: "update", ...base, update: { sessionUpdate: "notice", severity: "error", title: "Model call failed", description: e instanceof Error ? e.message : String(e) } });
     } finally {

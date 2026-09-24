@@ -144,6 +144,16 @@ describe("cognitive service input handling", () => {
   });
 });
 
+describe("extension operations", () => {
+  it("CS3.1 a namespaced operation runs on the installed extension; one no extension serves is refused", async () => {
+    const e = ensemble();
+    await expect(invokeCognitive(e, "memory.recall", { query: "x" })).rejects.toThrow("no installed extension serves memory.recall");
+    e.install({ id: "memory", models: [{ descriptor: d("memory-embedder", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: new HashEmbedder(8) }) }], operations: { recall: async (input) => ({ got: input }) } });
+    expect(await invokeCognitive(e, "memory.recall", { query: "x" })).toEqual({ got: { query: "x" } });
+    expect(((await invokeCognitive(e, "status", {})) as { extensions: string[] }).extensions).toEqual(["memory"]);
+  });
+});
+
 describe("capability mirror", () => {
   it("CM1.1 offers a capability per task some member can serve, and follows revocations and failures", async () => {
     const e = new Ensemble({ platform: "native" });

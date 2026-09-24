@@ -8,7 +8,7 @@ export type { Artifact, ArtifactFile, BenchmarkResult, Locality, ModelDescriptor
 export { eligible, rankForTask } from "./selection.ts";
 export type { Evidence, Ranked, SelectionOptions } from "./selection.ts";
 export { CognitiveError, Ensemble } from "./ensemble.ts";
-export type { EnsembleOptions, MemberEvent, MemberState } from "./ensemble.ts";
+export type { CognitiveExtension, EnsembleOptions, MemberEvent, MemberState } from "./ensemble.ts";
 export type {
   ChatMessage,
   Compression,
@@ -43,4 +43,4 @@ export { decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
 export { MODEL_CATALOG, TASK_PREFERENCES } from "./catalog.ts";
 export { invokeCognitive, mirrorCapabilities } from "./service.ts";
-export type { CognitiveOperation } from "./service.ts";
+export type { CognitiveOperation, ExtensionOperation } from "./service.ts";

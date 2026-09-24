@@ -1,21 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { invokeCognitive } from "@harness/cognitive";
 import { buildNativeEnsemble } from "@harness/platform-native";
 
 describe("native cognitive host", () => {
-  it("CH1.1 registers every catalog model that runs natively, without loading any", async () => {
+  it("CH1.1 registers every catalog model that runs natively, without loading any; embedders come only with memory", async () => {
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: "/nonexistent/cache", llamaServer: "/usr/local/bin/llama-server" });
     expect(ensemble.members().map((m) => m.id).sort()).toEqual([
       "ATH-MaaS/OvisOCR2",
       "Cactus-Compute/needle3",
       "Qwen/Qwen3-1.7B",
       "Qwen/Qwen3.5-0.8B",
-      "google/embeddinggemma-300m",
       "lightonai/LightOnOCR-2-1B",
       "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
       "ornith-ai/Ornith-1.5-9B",
       "typesafe-ai/jev",
     ]);
     expect(ensemble.members().every((m) => m.state === "offline")).toBe(true);
+    expect(ensemble.candidates("text-embedding")).toEqual([]);
     await close();
   });
 
@@ -85,7 +86,7 @@ function fakeHub(files: Record<string, Uint8Array>) {
 describe("native cognitive host loaders", () => {
   it("CH2.1 the transformers.js models load through their backends and serve their tasks", async () => {
     const { module } = fakeTransformers({ generated: ["Paris"] });
-    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, transformers: module });
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, transformers: module, memory: {} });
     expect((await ensemble.embed([{ kind: "query", text: "x" }]))[0]).toBeInstanceOf(Float32Array);
     expect((await ensemble.compress({ text: "one two three four", rate: 1 })).text).toBe("one two three four");
     let reply = "";
@@ -243,4 +244,16 @@ require("node:http").createServer((req, res) => {
     expect(ort.steers[0]).toEqual([3, 0]);
     await close();
   });
+
+  it("CH3.1 memory installs EmbeddingGemma through the transformers.js backend, persists every change and restores from it", async () => {
+    const saves: unknown[] = [];
+    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128, persist: (s) => saves.push(s) } });
+    expect(first.ensemble.extensions()).toEqual(["memory"]);
+    await invokeCognitive(first.ensemble, "memory.remember", { items: [{ text: "kept" }] });
+    expect(saves).toHaveLength(1);
+    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128, saved: saves[0] } });
+    expect(second.memory!.size).toBe(1);
+    await Promise.all([first.close(), second.close()]);
+  });
 });
+

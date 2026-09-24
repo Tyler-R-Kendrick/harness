@@ -14,7 +14,8 @@ Feature scope and status: `docs/features.md`. Update it in the same change as th
 | `packages/protocol` | ACP framing, JSON-RPC envelopes, `_harness` profile | pure |
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
 | `packages/cognitive` | cognitive core: model ports, task taxonomy, catalog + benchmarks, selection, ensemble, cascade | pure |
-| `packages/behavior` | behavior state graphs over SAE features: validation, packs, the engine | pure |
+| `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
+| `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
 | `packages/models` | model adapters: Jev, Needle 3 (WASM), transformers.js models, llama-server models | portable |

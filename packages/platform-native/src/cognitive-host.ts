@@ -24,6 +24,7 @@ import {
   VisionChatGenerator,
 } from "@harness/models";
 import type { OrtLike } from "@harness/models";
+import { Memory, memoryExtension } from "@harness/memory";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadNeedleModule } from "./model-cache.ts";
 import { ModelFiles } from "./model-files.ts";
@@ -47,6 +48,14 @@ export interface NativeEnsembleOptions {
   readonly onnxruntime?: unknown;
   /** Behavior pack the steerable kernel runs; without one it generates unsteered. */
   readonly behavior?: BehaviorPack;
+  /** Install memory: its embedding model, vector recall and session memory. */
+  readonly memory?: {
+    /** A previous Memory.save(), to continue from. */
+    readonly saved?: unknown;
+    /** Called with Memory.save() after every change. */
+    readonly persist?: (saved: unknown) => void;
+    readonly dimensions?: number;
+  };
 }
 
 /** Qwen3-1.7B's decoder shape and the layer its public SAEs read (resid_post 14). */
@@ -58,7 +67,7 @@ const QWEN_DTYPE = { embed_tokens: "q4", vision_encoder: "q4", decoder_model_mer
  * The native host's cognitive core: every catalog model that can run here, registered
  * with a loader that fetches and verifies its pinned weights on first use.
  */
-export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; close(): Promise<void> } {
+export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; close(): Promise<void> } {
   const allowHosted = options.allowHosted !== false;
   const ensemble = new Ensemble({ platform: "native", preferences: TASK_PREFERENCES, selection: { allowHosted } });
   const fetchFn = options.fetch ?? fetch;
@@ -86,7 +95,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       process.env["DO_NOT_TRACK"] ??= "1";
       const [js, wasm, weights] = await Promise.all(["wasm/needle.js", "wasm/needle.wasm", "needle3.cact"].map((p) => artifacts.file(m.artifact!, p)));
       const engine = await NeedleEngine.create(await loadNeedleModule(js!, wasm!), weights!);
-      return { router: engine, embedder: engine };
+      return { router: engine };
     },
     "google/embeddinggemma-300m": async (m) => ({ embedder: new EmbeddingGemmaEmbedder(await loadEmbeddingGemmaBackend({ ...pinned(m), dtype: "q4" })) }),
     "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank": async (m) => ({ compressor: new LinguaCompressor(await loadLinguaBackend({ ...pinned(m), dtype: "uint8" })) }),
@@ -114,10 +123,23 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
     if (options.only && !options.only.includes(m.id)) continue;
     ensemble.register(m, () => load(m));
   }
+  const memory = options.memory && installMemory(ensemble, options.memory, (m) => loaders[m.id]!(m));
   return {
     ensemble,
+    ...(memory ? { memory } : {}),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
     },
   };
+}
+
+function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOptions["memory"]>, load: (m: ModelDescriptor) => Promise<Ports>): Memory {
+  const { persist } = options;
+  const memory = new Memory(ensemble, {
+    ...(options.dimensions === undefined ? {} : { dimensions: options.dimensions }),
+    ...(options.saved === undefined ? {} : { saved: options.saved }),
+    ...(persist ? { onChange: (m: Memory) => persist(m.save()) } : {}),
+  });
+  ensemble.install(memoryExtension({ memory, load }));
+  return memory;
 }

@@ -29,7 +29,6 @@ The daemon hosts an ensemble of models and routes each task to the best one it c
 |---|---|---|
 | Jev (TypeSafe) | judgments with calibrated probabilities | hosted, AI Gateway |
 | Needle 3 (Cactus) | tool calling, extraction, embeddings | local WASM |
-| EmbeddingGemma 300M | text embeddings | local, transformers.js |
 | LLMLingua-2 | prompt compression | local, transformers.js |
 | Qwen3.5 0.8B | chat and vision; the browser LLM | local, transformers.js |
 | LightOnOCR-2 1B | documents, OCR, tables | local, transformers.js |
@@ -45,6 +44,19 @@ commit and verified by sha256 before use.
 ```sh
 ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 node packages/platform-native/src/main.ts --stdio --cognitive [--llama-server /path/to/llama-server] [--no-hosted]
+```
+
+### Memory (an extension)
+
+The core carries no embedding model. Memory brings one (EmbeddingGemma 300M) when it is
+installed, and the daemon then offers `memory` and `cognitive.text-embedding` in its
+capability registry. Clients call `memory.remember` and `memory.recall` through
+`_harness/cognitive/invoke`; the ensemble worker recalls related memories from other
+sessions into each turn and remembers the turn afterwards. The index is Orama (pure JS),
+saved to a file:
+
+```sh
+node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json
 ```
 
 ### Behavior graphs (the local kernel)

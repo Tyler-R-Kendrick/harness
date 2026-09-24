@@ -136,4 +136,14 @@ describe("Daemon: cognitive core over ACP", () => {
     expect(d.request("c1", invoke, { op: "judge", input: {} }).error).toMatchObject({ code: -32005, message: "no model serves judgment on this platform" });
     expect(d.request("c1", invoke, { op: "toString", input: {} }).error).toMatchObject({ code: -32602, message: expect.stringContaining("judge, route, decide-tools, embed, compress, parse") });
   });
+
+  it("DM9.12 an extension's operation is admitted while the host offers the extension's capability", () => {
+    const { d, daemon } = setup();
+    expect(d.request("c1", invoke, { op: "memory.recall", input: {} }).error).toMatchObject({ code: -32005, message: "no extension memory is installed on this host" });
+    daemon.offerPlatformCapability({ name: "memory", version: 1, trust: "trusted" });
+    d.send("c1", { jsonrpc: "2.0", id: 9, method: invoke, params: { op: "memory.recall", input: { query: "x" } } });
+    expect(d.cognitive()).toEqual([{ requestId: expect.any(String), op: "memory.recall", task: undefined, input: { query: "x" } }]);
+    for (const op of ["memory", "memory.", ".recall", "memory.recall.now", "Memory.Recall"]) expect(d.request("c1", invoke, { op, input: {} }).error, op).toMatchObject({ code: -32602 });
+  });
 });
+

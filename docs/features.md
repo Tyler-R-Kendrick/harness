@@ -106,7 +106,8 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | LLMLingua-2 word scoring, rate threshold, windowing (pure) | built | LL1.1–LL2.1 |
 | EmbeddingGemma prompts and Matryoshka truncation | built | EG1.1–EG2.4 |
 | ChatML / qwen3_xml streaming parser (Qwen3.5, Ornith) | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
-| Capabilities mirrored from the ensemble (`cognitive.<task>`) | built | CM1.1, NH2.1, DM9.7 |
+| Capabilities mirrored from the ensemble (`cognitive.<task>`, plus each installed extension's id) | built | CM1.1, EN2.4, NH2.1, DM9.7 |
+| Extensions: models and `<extension>.<op>` operations installed and removed at runtime; the daemon admits an extension's operations only while its capability is offered | built | EN2.1–EN2.4, CS3.1, DM9.12 |
 | ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.11, CS1.1–CS1.6, CS2.1–CS2.5, NH2.1–NH2.2 |
 | Ensemble worker (sessions on the best generator; images → vision) | built | EW1.1–EW1.5; CLI `--worker ensemble` |
 | Candidate-strategy math (coverage, attempts, voting, precision, mixtures, Wilson) | built | AM1–AM5 |
@@ -128,7 +129,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 |---|---|---|---|
 | Jev 1.13 (TypeSafe AI) | judgment, classification | hosted (AI Gateway) | evals (live run: calibration 5/5) |
 | Needle 3 (Cactus Compute) | tool calling, extraction, classification, embeddings | WASM, native + browser | NM1.1–NM1.3 + router/embedder contracts |
-| EmbeddingGemma 300M | text embeddings | transformers.js, native + browser | EM1.1 + embedder contract (768/512/256/128) |
+| EmbeddingGemma 300M (brought by memory, not in the core catalog) | text embeddings | transformers.js, native + browser | EM1.1 + embedder contract (768/512/256/128), MM1.1 |
 | LLMLingua-2 (mBERT) | prompt compression | transformers.js, native + browser | LM1.1 + compressor contract |
 | Qwen3.5 0.8B | chat, reasoning, tools, extraction, vision QA, OCR, documents, charts | transformers.js, native + browser (the browser LLM) | QM1.1–QM1.3 + generator contract |
 | LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | DM1.1 + document-parser contract |
@@ -140,7 +141,11 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Record kinds, orthogonal fields, facets, lineage, snapshots, retrieval, compaction, code intelligence, standards | not started | |
+| Memory as a cognitive-core extension (`@harness/memory`): brings the embedding model; the core has none of its own | built | MX1.1, CH1.1, CH3.1 |
+| Vector memory: remember text (as documents), recall by meaning (as queries), per-session filters, JSON save/restore; Orama index, pure JS on every platform | built | ME1.1–ME1.4; real weights MM1.1 |
+| ACP `memory.remember` / `memory.recall` through `_harness/cognitive/invoke` | built | MX1.2–MX1.3, DM9.12 |
+| Session memory: each turn gets related memories from other sessions and is remembered afterwards | built | EW1.7; CLI `--worker ensemble --memory <file>` |
+| Record kinds, orthogonal fields, facets, lineage, snapshots, compaction, code intelligence, standards | not started | |
 
 ## I. Tools, environments and action
 

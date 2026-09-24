@@ -1,7 +1,8 @@
 import type { BenchmarkResult, ModelDescriptor, TaskCategory } from "./models.ts";
 
 /**
- * The cognitive core's model ensemble. Every local model is pinned to a commit with
+ * The cognitive core's model ensemble. Embedding models are not here: memory brings
+ * its own as an extension (@harness/memory). Every local model is pinned to a commit with
  * hashed weight files (downloadBytes counts weights; small config and tokenizer files
  * are fetched at the same revision). Benchmark numbers are copied from the cited
  * source, which also states conditions; they describe the published checkpoint, not
@@ -17,7 +18,6 @@ const NEEDLE_CHART = "https://huggingface.co/Cactus-Compute/needle3/resolve/main
 const CHART = "Needle 3 card chart";
 const QWEN_CARD = "https://huggingface.co/Qwen/Qwen3.5-0.8B";
 const ORNITH_CARD = "https://huggingface.co/ornith-ai/Ornith-1.5-9B";
-const GEMMA_CARD = "https://huggingface.co/google/embeddinggemma-300m";
 const LINGUA_PAPER = "https://arxiv.org/html/2403.12968v2";
 
 export const MODEL_CATALOG: readonly ModelDescriptor[] = [
@@ -46,14 +46,14 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
     id: "Cactus-Compute/needle3",
     name: "Needle 3 (20 layers)",
     publisher: "Cactus Compute",
-    tasks: ["tool-calling", "structured-extraction", "classification", "text-embedding"],
-    ports: ["router", "embedder"],
+    tasks: ["tool-calling", "structured-extraction", "classification"],
+    ports: ["router"],
     locality: "local",
     runtime: "needle-wasm",
     platforms: ["native", "browser"],
     license: "Apache-2.0",
     downloadBytes: 35335380 + 688521 + 62502,
-    notes: "121M-parameter tool caller with a calibrated confidence head; 3072-d embeddings. One global instance per WASM module.",
+    notes: "121M-parameter tool caller with a calibrated confidence head. One global instance per WASM module.",
     artifact: {
       repo: "Cactus-Compute/needle3",
       revision: "b274efcb211a9eef48c9a88da4b43bd569696a39",
@@ -70,32 +70,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       { benchmark: "DSTC8 (1,813 turns)", task: "structured-extraction", metric: "field micro-F1", score: 40.7, setting: CHART, source: NEEDLE_CHART },
       { benchmark: "SNIPS gold (700)", task: "structured-extraction", metric: "field micro-F1", score: 30.2, setting: CHART, source: NEEDLE_CHART },
       { benchmark: "SNIPS 7-way (700)", task: "structured-extraction", metric: "field micro-F1", score: 24.7, setting: CHART, source: NEEDLE_CHART },
-    ]),
-  },
-  {
-    id: "google/embeddinggemma-300m",
-    name: "EmbeddingGemma 300M",
-    publisher: "Google DeepMind",
-    tasks: ["text-embedding"],
-    ports: ["embedder"],
-    locality: "local",
-    runtime: "transformers.js",
-    platforms: ["native", "browser"],
-    license: "Gemma Terms of Use",
-    downloadBytes: 519322 + 196725760,
-    notes: "768-d, Matryoshka to 512/256/128. Needs task prefixes. Do not run fp16 activations.",
-    artifact: {
-      repo: "onnx-community/embeddinggemma-300m-ONNX",
-      revision: "5090578d9565bb06545b4552f76e6bc2c93e4a66",
-      files: [
-        { path: "onnx/model_q4.onnx", bytes: 519322, sha256: "ad1dfee81a70f7944b9b9d1cc6e48075b832881cf33fab2f2b248be78f3f0043" },
-        { path: "onnx/model_q4.onnx_data", bytes: 196725760, sha256: "599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02" },
-      ],
-    },
-    benchmarks: results([
-      { benchmark: "MTEB (Multilingual, v2)", task: "text-embedding", metric: "mean (task)", score: 61.15, setting: "768d", source: GEMMA_CARD },
-      { benchmark: "MTEB (English, v2)", task: "text-embedding", metric: "mean (task)", score: 69.67, setting: "768d", source: GEMMA_CARD },
-      { benchmark: "MTEB (Code, v1)", task: "text-embedding", metric: "mean (task)", score: 68.76, setting: "768d", source: GEMMA_CARD },
     ]),
   },
   {
@@ -281,7 +255,6 @@ export const TASK_PREFERENCES: Partial<Record<TaskCategory, readonly string[]>> 
   classification: ["typesafe-ai/jev", "Cactus-Compute/needle3"],
   "tool-calling": ["Cactus-Compute/needle3", "ornith-ai/Ornith-1.5-9B", "Qwen/Qwen3.5-0.8B"],
   "structured-extraction": ["Cactus-Compute/needle3", "Qwen/Qwen3.5-0.8B"],
-  "text-embedding": ["google/embeddinggemma-300m", "Cactus-Compute/needle3"],
   "prompt-compression": ["microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"],
   chat: ["ornith-ai/Ornith-1.5-9B", "Qwen/Qwen3.5-0.8B"],
   reasoning: ["ornith-ai/Ornith-1.5-9B", "Qwen/Qwen3.5-0.8B"],

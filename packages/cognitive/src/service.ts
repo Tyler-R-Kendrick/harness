@@ -10,7 +10,9 @@ import { CompressRequestSchema, JudgeQuestionSchema, ParseRequestSchema, ToolSpe
  * `_harness/cognitive/*` methods run on the host's ensemble. Every input is parsed
  * before anything runs, and every result names the model that produced it.
  */
-export type CognitiveOperation = "judge" | "route" | "decide-tools" | "embed" | "compress" | "parse" | "status";
+export type CognitiveOperation = "judge" | "route" | "decide-tools" | "embed" | "compress" | "parse" | "status" | ExtensionOperation;
+/** An installed extension's operation, e.g. `memory.recall`. */
+export type ExtensionOperation = `${string}.${string}`;
 
 const ToolRequest = z.object({ input: z.string(), tools: z.array(ToolSpecSchema) });
 
@@ -22,9 +24,9 @@ const INPUTS = {
   compress: CompressRequestSchema,
   parse: ParseRequestSchema,
   status: z.object({}),
-} satisfies Record<CognitiveOperation, z.ZodType>;
+} satisfies Record<Exclude<CognitiveOperation, ExtensionOperation>, z.ZodType>;
 
-function parse<Op extends CognitiveOperation>(op: Op, input: unknown): z.output<(typeof INPUTS)[Op]> {
+function parse<Op extends keyof typeof INPUTS>(op: Op, input: unknown): z.output<(typeof INPUTS)[Op]> {
   const result = INPUTS[op].safeParse(input ?? {});
   if (!result.success) throw new Error(`invalid ${op} input\n${z.prettifyError(result.error)}`);
   return result.data as z.output<(typeof INPUTS)[Op]>;
@@ -76,7 +78,13 @@ export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation
           runtime: m.descriptor.runtime,
         })),
         tasks: Object.fromEntries(TASK_CATEGORIES.map((t) => [t, ensemble.candidates(t).map((r) => ({ id: r.id, wins: r.wins, losses: r.losses }))])),
+        extensions: ensemble.extensions(),
       };
+    default: {
+      const operation = ensemble.operation(op);
+      if (!operation) throw new Error(`no installed extension serves ${op}`);
+      return operation(input);
+    }
   }
 }
 
@@ -88,7 +96,7 @@ export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation
 export function mirrorCapabilities(ensemble: Ensemble, sink: { offer(name: string): void; withdraw(name: string): void }): () => void {
   let offered = new Set<string>();
   const sync = () => {
-    const now = new Set(TASK_CATEGORIES.filter((t) => ensemble.candidates(t).length > 0).map((t) => `cognitive.${t}`));
+    const now = new Set([...TASK_CATEGORIES.filter((t) => ensemble.candidates(t).length > 0).map((t) => `cognitive.${t}`), ...ensemble.extensions()]);
     for (const name of offered) if (!now.has(name)) sink.withdraw(name);
     for (const name of now) if (!offered.has(name)) sink.offer(name);
     offered = now;

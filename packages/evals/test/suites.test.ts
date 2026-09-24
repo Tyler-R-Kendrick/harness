@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Memory, memoryExtension } from "@harness/memory";
 import { calibrationSuite, cognitiveSuite, harnessSuite } from "@harness/evals";
 import { Ensemble } from "@harness/cognitive";
 import type { GenerationEvent, ModelDescriptor, TaskCategory } from "@harness/cognitive";
@@ -54,7 +55,7 @@ describe("eval suites", () => {
     const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
     const ensemble = new Ensemble({ platform: "native" });
     ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-    ensemble.register(d("emb", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(32) }));
+    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: 32 }), load: async () => ({ embedder: new HashEmbedder(64) }) }));
     ensemble.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
     ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
     ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({
@@ -67,7 +68,7 @@ describe("eval suites", () => {
     }));
     const suite = cognitiveSuite(async () => ensemble);
     expect(new Set(suite.map((c) => c.id)).size).toBe(suite.length);
-    expect(suite.map((c) => c.id)).toEqual(["cognitive.tool-decision", "cognitive.compression-keeps-facts", "cognitive.document-ocr", "cognitive.vision-answer", "cognitive.retrieval"]);
+    expect(suite.map((c) => c.id)).toEqual(["cognitive.tool-decision", "cognitive.compression-keeps-facts", "cognitive.document-ocr", "cognitive.vision-answer", "cognitive.memory-recall"]);
     for (const c of suite) {
       const state = (await c.subject()) as Record<string, unknown>;
       for (const q of Object.values(c.questions)) for (const key of referencedKeys(q.instructions)) expect(state, `${c.id} -> ${key}`).toHaveProperty(key);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CognitiveError, Ensemble } from "@harness/cognitive";
+import { CognitiveError, Ensemble, mirrorCapabilities } from "@harness/cognitive";
 import type { BenchmarkResult, Embedder, GenerationEvent, Generator, Judge, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
 
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
@@ -146,3 +146,66 @@ describe("Ensemble", () => {
     expect(e.candidates("text-embedding").map((c) => c.id)).toEqual(["b", "a"]);
   });
 });
+
+describe("extensions", () => {
+  const memory = { id: "memory", models: [{ descriptor: descriptor("gemma", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: embedder(7) }) }] };
+
+  it("EN2.1 an extension brings its models at runtime, and takes them away again; capabilities follow", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const offered = new Set<string>();
+    mirrorCapabilities(e, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
+    const events: string[] = [];
+    e.onChange((ev) => events.push(`${ev.id}:${ev.state}`));
+    expect(offered.has("cognitive.text-embedding")).toBe(false);
+    const uninstall = e.install(memory);
+    expect(offered.has("cognitive.text-embedding")).toBe(true);
+    expect(Array.from((await e.embed([{ kind: "query", text: "x" }]))[0]!)).toEqual([7]);
+    uninstall();
+    expect(offered.has("cognitive.text-embedding")).toBe(false);
+    expect(e.members()).toEqual([]);
+    expect(events).toContain("gemma:removed");
+    await expect(e.embed([{ kind: "query", text: "x" }])).rejects.toMatchObject({ code: "no_member" });
+    uninstall();
+    expect(e.install(memory)).toBeTypeOf("function");
+  });
+
+  it("EN2.2 an extension whose model is already there is refused whole", () => {
+    const e = new Ensemble({ platform: "native" });
+    e.register(descriptor("other", ["judgment"], ["judge"]), async () => ({}));
+    const clash = { id: "clash", models: [{ descriptor: descriptor("fresh", ["chat"], ["generator"]), load: async () => ({}) }, { descriptor: descriptor("other", ["judgment"], ["judge"]), load: async () => ({}) }] };
+    expect(() => e.install(clash)).toThrow(/other is already registered/);
+    expect(e.members().map((m) => m.id)).toEqual(["other"]);
+    const browserOnly = { id: "web", models: [{ descriptor: descriptor("fresh", ["chat"], ["generator"]), load: async () => ({}) }, { descriptor: descriptor("webgpu", ["chat"], ["generator"], { platforms: ["browser"] }), load: async () => ({}) }] };
+    expect(() => e.install(browserOnly)).toThrow(/does not run on native/);
+    expect(e.members().map((m) => m.id)).toEqual(["other"]);
+  });
+
+  it("EN2.3 an extension's operations are served under its name while it is installed", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const ext = { ...memory, operations: { recall: async (input: unknown) => ({ echoed: input }) } };
+    expect(e.operation("memory.recall")).toBeUndefined();
+    const uninstall = e.install(ext);
+    expect(await e.operation("memory.recall")!({ q: 1 })).toEqual({ echoed: { q: 1 } });
+    expect(e.operation("memory.forget")).toBeUndefined();
+    expect(e.operation("other.recall")).toBeUndefined();
+    expect(e.extensions()).toEqual(["memory"]);
+    uninstall();
+    expect(e.operation("memory.recall")).toBeUndefined();
+    expect(e.extensions()).toEqual([]);
+  });
+
+  it("EN2.4 the extension's capability is offered while one of its models is in service", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const offered = new Set<string>();
+    mirrorCapabilities(e, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
+    const uninstall = e.install(memory);
+    expect(offered.has("memory")).toBe(true);
+    e.revoke("gemma", "no memory to spare");
+    expect(offered.has("memory")).toBe(false);
+    e.restore("gemma");
+    expect(offered.has("memory")).toBe(true);
+    uninstall();
+    expect(offered.has("memory")).toBe(false);
+  });
+});
+

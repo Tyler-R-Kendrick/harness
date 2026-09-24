@@ -1,5 +1,5 @@
 import sharp from "sharp";
-import { cosine, decideToolCalls } from "@harness/cognitive";
+import { decideToolCalls, invokeCognitive } from "@harness/cognitive";
 import type { Ensemble, ImageInput } from "@harness/cognitive";
 import type { EvalCase } from "../runner.ts";
 
@@ -105,8 +105,8 @@ export function cognitiveSuite(ensemble: () => Promise<Ensemble>): readonly Eval
       expect: { accurate: { type: "boolean", expect: true } },
     },
     {
-      id: "cognitive.retrieval",
-      description: "Embeddings put the document that answers the query first",
+      id: "cognitive.memory-recall",
+      description: "Memory recalls the remembered note that answers the query first",
       subject: async () => {
         const e = await ensemble();
         const query = "How do I reset my password?";
@@ -115,10 +115,9 @@ export function cognitiveSuite(ensemble: () => Promise<Ensemble>): readonly Eval
           "Our office is closed on public holidays.",
           "Invoices are emailed on the first business day of each month.",
         ];
-        const { id, port } = await e.resolve("text-embedding", "embedder");
-        const [q, ...vs] = await port.embed([{ kind: "query", text: query }, ...docs.map((text) => ({ kind: "document" as const, text }))]);
-        const ranked = docs.map((doc, i) => ({ doc, score: cosine(q!, vs[i]!) })).sort((a, b) => b.score - a.score);
-        return { query, top: ranked[0]!.doc, ranking: ranked.map((r) => r.doc), model: id };
+        await invokeCognitive(e, "memory.remember", { items: docs.map((text) => ({ text, sessionId: "eval" })) });
+        const { memories } = (await invokeCognitive(e, "memory.recall", { query, minScore: 0 })) as { memories: { text: string }[] };
+        return { query, top: memories[0]?.text ?? "", ranking: memories.map((m) => m.text), model: e.candidates("text-embedding")[0]?.id };
       },
       questions: { relevant: { type: "boolean", instructions: "Does `top` answer `query`?" } },
       expect: { relevant: { type: "boolean", expect: true } },

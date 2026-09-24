@@ -40,10 +40,10 @@ describe("model catalog", () => {
       }
   });
 
-  it("CT1.4 natively every task has a model; in the browser every task but coding and steered chat does", () => {
+  it("CT1.4 natively every task but text embedding has a model (memory brings that); the browser also lacks coding and steered chat", () => {
     const uncovered = (platform: Platform) => TASK_CATEGORIES.filter((t) => rankForTask(t, MODEL_CATALOG, { platform }).length === 0);
-    expect(uncovered("native")).toEqual([]);
-    expect(uncovered("browser")).toEqual(["coding", "steered-chat"]);
+    expect(uncovered("native")).toEqual(["text-embedding"]);
+    expect(uncovered("browser")).toEqual(["text-embedding", "coding", "steered-chat"]);
   });
 
   it("CT1.5 Jev, through the AI Gateway, is the only judge and the only hosted model", () => {
@@ -63,7 +63,6 @@ describe("model catalog", () => {
     expect(top("tool-calling", "browser")).toBe("Cactus-Compute/needle3");
     // ...and loses structured extraction 0 of 3.
     expect(top("structured-extraction", "browser")).toBe("Qwen/Qwen3.5-0.8B");
-    expect(top("text-embedding", "browser")).toBe("google/embeddinggemma-300m");
     expect(top("prompt-compression", "browser")).toBe("microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank");
     expect(top("document-parsing", "browser")).toBe("lightonai/LightOnOCR-2-1B");
     expect(top("document-parsing", "native")).toBe("ATH-MaaS/OvisOCR2");

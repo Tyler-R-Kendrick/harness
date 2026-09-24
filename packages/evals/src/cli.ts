@@ -31,6 +31,7 @@ const suites: Record<string, () => readonly EvalCase[]> = {
     native ??= buildNativeEnsemble({
       cacheDir: process.env["HARNESS_MODEL_CACHE"] ?? join(homedir(), ".cache", "harness", "models"),
       ...(process.env["LLAMA_SERVER"] ? { llamaServer: process.env["LLAMA_SERVER"] } : {}),
+      memory: {},
     });
     const ensemble = native.ensemble;
     return cognitiveSuite(async () => ensemble);

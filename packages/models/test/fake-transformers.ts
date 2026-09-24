@@ -5,7 +5,7 @@ interface FakeTensor {
   dims: number[];
 }
 
-export function fakeTransformers(opts: { generated?: string[]; promptLength?: number } = {}) {
+export function fakeTransformers(opts: { generated?: string[]; promptLength?: number; embeddingWidth?: number } = {}) {
   const log: { name: string; args: unknown[] }[] = [];
   // transformers.js tokenizers are synchronous callables.
   const tokenizer = Object.assign(
@@ -57,7 +57,7 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
     AutoModel: {
       from_pretrained: async (repo: string, o: unknown) => (
         log.push({ name: "model.load", args: [repo, o] }),
-        async (inputs: { ids: number }) => ({ sentence_embedding: { tolist: () => Array.from({ length: inputs.ids }, (_, i) => [i, 1]) } })
+        async (inputs: { ids: number }) => ({ sentence_embedding: { tolist: () => Array.from({ length: inputs.ids }, (_, i) => [i, 1, ...new Array<number>(Math.max(0, (opts.embeddingWidth ?? 2) - 2)).fill(0)]) } })
       ),
     },
     AutoModelForTokenClassification: {
