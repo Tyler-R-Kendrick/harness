@@ -27,9 +27,11 @@ import {
 } from "@harness/models";
 import type { CactusModule, OrtLike } from "@harness/models";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
+import { Learning, learningExtension, Plugins } from "@harness/learning";
+import type { Settings } from "@harness/learning";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
-import { loadCatalog } from "./catalog-files.ts";
+import { loadCatalog, loadLearningSettings } from "./catalog-files.ts";
 import { ModelFiles } from "./model-files.ts";
 import { steerableModel } from "./steerable-model.ts";
 
@@ -65,6 +67,17 @@ export interface NativeEnsembleOptions {
     /** Memory's models; defaults to memory's data files. */
     readonly catalog?: Catalog;
   };
+  /** Install learning, on memory (which it requires): lessons from sessions, the capability ladder, plugins. */
+  readonly learning?: {
+    /** A previous Learning.save(), to continue from. */
+    readonly saved?: unknown;
+    /** Called with Learning.save() after every change. */
+    readonly persist?: (saved: unknown) => void;
+    /** Thresholds and prompts; defaults to learning's data file. */
+    readonly settings?: Settings;
+    /** Plugins the client brings (skills, workflows, tool building, teaching). */
+    readonly plugins?: Plugins;
+  };
 }
 
 type Of<R extends Runtime> = Extract<ModelDescriptor, { runtime: R }>;
@@ -76,7 +89,8 @@ type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
  * use. Nothing here knows a model: the catalog entry says which runtime runs it, how
  * (its `run` settings) and which ports it serves.
  */
-export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; close(): Promise<void> } {
+export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; close(): Promise<void> } {
+  if (options.learning && !options.memory) throw new Error("learning requires memory: install memory too");
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
   const env = options.env ?? process.env;
@@ -175,9 +189,11 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       if (!load) throw new Error(`no ${m.runtime} runtime on this host`);
       return load(m);
     });
+  const learning = memory && options.learning && installLearning(ensemble, memory, options.learning);
   return {
     ensemble,
     ...(memory ? { memory } : {}),
+    ...(learning ? { learning } : {}),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
     },
@@ -194,4 +210,17 @@ function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOp
   });
   ensemble.install(memoryExtension({ memory, models, load }));
   return memory;
+}
+
+function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullable<NativeEnsembleOptions["learning"]>): Learning {
+  const { persist } = options;
+  const learning = new Learning({
+    reasoner: ensemble,
+    memory,
+    settings: options.settings ?? loadLearningSettings(),
+    ...(options.saved === undefined ? {} : { saved: options.saved }),
+    ...(persist ? { onChange: (l: Learning) => persist(l.save()) } : {}),
+  });
+  ensemble.install(learningExtension({ learning, reasoner: ensemble, plugins: options.plugins ?? new Plugins() }));
+  return learning;
 }

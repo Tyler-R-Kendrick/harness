@@ -37,6 +37,7 @@ export type {
   ToolRouter,
   ToolSpec,
 } from "./ports.ts";
+export { ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./compression.ts";
 export { decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";

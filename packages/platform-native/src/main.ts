@@ -26,6 +26,7 @@ const { values } = parseArgs({
     behavior: { type: "string" },
     "sae-rows": { type: "string" },
     memory: { type: "string" },
+    learning: { type: "string" },
   },
 });
 
@@ -33,7 +34,7 @@ if (!values.stdio && values.socket === undefined) {
   process.stderr.write(
     "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble] [--model <gateway id>]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
-      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file>]]\n",
+      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]]]\n",
   );
   process.exit(2);
 }
@@ -48,9 +49,15 @@ const behavior =
     ? undefined
     : compilePack(parseGraph(JSON.parse(readFileSync(values.behavior, "utf8"))), parseSaeRows(readFileSync(values["sae-rows"]!, "utf8")));
 
-// Memory is an extension of the cognitive core, persisted to its own file.
+if (values.learning !== undefined && values.memory === undefined) {
+  process.stderr.write("--learning needs --memory: lessons are found by meaning in memory\n");
+  process.exit(2);
+}
+// Memory and learning are extensions of the cognitive core, each persisted to its own file.
 const memoryFile = values.memory === undefined ? undefined : new FileStorage(values.memory);
 const saved = await memoryFile?.load();
+const learningFile = values.learning === undefined ? undefined : new FileStorage(values.learning);
+const learned = await learningFile?.load();
 
 const cognitive =
   values.cognitive || values.worker === "ensemble"
@@ -60,6 +67,7 @@ const cognitive =
         ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
+        ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
 const system = values.system === undefined ? {} : { system: values.system };
@@ -72,6 +80,7 @@ const worker: Worker =
           ...system,
           ...(behavior ? { task: "steered-chat" as const } : {}),
           ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
+          ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
         })
       : new EchoWorker();
 

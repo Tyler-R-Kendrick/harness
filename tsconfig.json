@@ -17,6 +17,9 @@
       "path": "packages/memory"
     },
     {
+      "path": "packages/learning"
+    },
+    {
       "path": "packages/models"
     },
     {

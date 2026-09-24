@@ -123,7 +123,7 @@ describe("EnsembleWorker", () => {
     };
     const { done } = run(new EnsembleWorker({ ensemble, memory }), [{ type: "text", text: "where is the deploy key?" }], "s9");
     await done;
-    expect(asked).toEqual([{ query: "where is the deploy key?", options: { excludeSession: "s9", limit: 3 } }]);
+    expect(asked).toEqual([{ query: "where is the deploy key?", options: { excludeSession: "s9", limit: 3, kinds: ["user", "assistant"] } }]);
     expect(ensemble.calls[0]!.request.messages[0]).toEqual({ role: "system", content: "Relevant memories from earlier sessions:\n- the deploy key lives in the vault" });
     expect(kept).toEqual([
       [
@@ -139,5 +139,22 @@ describe("EnsembleWorker", () => {
     expect(quiet.calls[0]!.request.messages).toEqual([{ role: "user", content: "hi" }]);
     expect(second.events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });
+  it("EW1.8 with learning, a turn is given the playbook of lessons for what was asked; a failing or empty playbook adds nothing", async () => {
+    const ensemble = new FakeEnsemble(() => [{ type: "text", text: "ok" }, { type: "finish", reason: "stop" }]);
+    const asked: string[] = [];
+    const learning = { recall: async (task: string) => (asked.push(task), { playbook: "Lessons from earlier sessions:\n- [procedure] deploys: migrate first" }) };
+    await run(new EnsembleWorker({ ensemble, learning, system: "be brief" }), [{ type: "text", text: "deploy to staging" }]).done;
+    expect(asked).toEqual(["deploy to staging"]);
+    expect(ensemble.calls[0]!.request.messages).toEqual([
+      { role: "system", content: "be brief" },
+      { role: "system", content: "Lessons from earlier sessions:\n- [procedure] deploys: migrate first" },
+      { role: "user", content: "deploy to staging" },
+    ]);
+    const quiet = new FakeEnsemble(() => [{ type: "text", text: "ok" }, { type: "finish", reason: "stop" }]);
+    await run(new EnsembleWorker({ ensemble: quiet, learning: { recall: async () => Promise.reject(new Error("no embedder")) } }), [{ type: "text", text: "hi" }]).done;
+    await run(new EnsembleWorker({ ensemble: quiet, learning: { recall: async () => ({ playbook: "" }) } }), [{ type: "text", text: "hi" }]).done;
+    expect(quiet.calls.map((c) => c.request.messages)).toEqual([[{ role: "user", content: "hi" }], [{ role: "user", content: "hi" }]]);
+  });
+
 });
 

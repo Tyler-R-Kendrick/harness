@@ -68,6 +68,23 @@ saved to a file:
 node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json
 ```
 
+### Learning (an extension on memory)
+
+Learning distils lessons from sessions (insights, strategies, procedures, pitfalls) with a
+reflection model, edits them incrementally, merges duplicates and retires lessons that
+mislead, then puts the related ones before the model on later turns. For a new task it
+climbs a ladder: do it natively if the model knows how; else use a tool it has (offered,
+discovered, or built earlier); else build one if it knows how and a tool-building plugin
+is installed; else ask to be taught. Plugins that clients bring turn lessons into agent
+skills, workflows or tools, and teachers turn a recording of a person doing the task
+into a demonstration. Operations are `learning.*` through `_harness/cognitive/invoke`;
+thresholds and prompts are in `packages/learning/data/settings.json`.
+
+```sh
+node packages/platform-native/src/main.ts --stdio --worker ensemble \
+  --memory ~/.harness/memory.json --learning ~/.harness/learning.json
+```
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
@@ -159,3 +176,5 @@ reported as `blocked`, never as a pass.
 | `packages/workers` | Echo worker and model worker (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
+| `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
+| `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |

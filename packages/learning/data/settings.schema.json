@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "reflection": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "related": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "system",
+        "maxTokens",
+        "related"
+      ],
+      "additionalProperties": false
+    },
+    "curation": {
+      "type": "object",
+      "properties": {
+        "duplicate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "retireMargin": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "duplicate",
+        "retireMargin"
+      ],
+      "additionalProperties": false
+    },
+    "recall": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "minScore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "limit",
+        "minScore"
+      ],
+      "additionalProperties": false
+    },
+    "ladder": {
+      "type": "object",
+      "properties": {
+        "native": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "question",
+            "threshold"
+          ],
+          "additionalProperties": false
+        },
+        "tool": {
+          "type": "object",
+          "properties": {
+            "confidence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "confidence"
+          ],
+          "additionalProperties": false
+        },
+        "build": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "minLength": 1
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "question",
+            "threshold"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "native",
+        "tool",
+        "build"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "reflection",
+    "curation",
+    "recall",
+    "ladder"
+  ],
+  "additionalProperties": false
+}

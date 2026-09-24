@@ -70,5 +70,24 @@ describe("memory", () => {
     await memory.recall("one");
     expect(saves).toEqual([1, 3]);
   });
-});
 
+  it("ME1.5 forgotten items are gone, their ids are never reused, and forgetting is announced", async () => {
+    const saves: number[] = [];
+    const memory = new Memory(embedder(), { dimensions: 32, onChange: (m) => saves.push(m.size) });
+    await memory.remember([{ text: "the vault key rotates monthly" }, { text: "bananas are yellow" }]);
+    await memory.forget(["m1", "m9"]);
+    expect(memory.size).toBe(1);
+    expect(await memory.recall("vault key", { minScore: 0.3 })).toEqual([]);
+    expect(await memory.remember([{ text: "next" }])).toEqual(["m3"]);
+    expect(saves).toEqual([2, 1, 2]);
+    const restored = new Memory(embedder(), { dimensions: 32, saved: JSON.parse(JSON.stringify(memory.save())) });
+    expect(await restored.remember([{ text: "after restore" }])).toEqual(["m4"]);
+  });
+
+  it("ME1.6 recall can keep to some kinds of item", async () => {
+    const memory = new Memory(embedder(), { dimensions: 32 });
+    await memory.remember([{ text: "alpha lesson", kind: "lesson" }, { text: "alpha note", kind: "note" }, { text: "alpha plain" }]);
+    expect((await memory.recall("alpha", { minScore: 0, kinds: ["lesson"] })).map((h) => h.id)).toEqual(["m1"]);
+    expect((await memory.recall("alpha", { minScore: 0, kinds: ["lesson", "note"], sessionId: "none" }))).toEqual([]);
+  });
+});

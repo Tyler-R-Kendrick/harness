@@ -56,6 +56,7 @@ import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
 import { compilePack, defineGraph } from "@harness/behavior";
+import { ScriptedGenerator } from "@harness/testkit";
 
 const tmp: string[] = [];
 afterEach(async () => {
@@ -279,5 +280,24 @@ require("node:http").createServer((req, res) => {
     const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: embedder!.embedding!.dimensions[0]! }).module, memory: {} });
     expect(host.memory!.save()).toMatchObject({ dimensions: embedder!.embedding!.dimensions[0] });
     await host.close();
+  });
+
+  it("CH3.3 learning installs on memory, persists every change, restores, and thinks with the ensemble; without memory it is refused", async () => {
+    const saves: unknown[] = [];
+    const transformers = fakeTransformers({ embeddingWidth: 768 }).module;
+    const reflection = JSON.stringify({ operations: [{ op: "add", kind: "strategy", title: "deploys", text: "migrate first" }] });
+    const judge = { models: [], preferences: {} };
+    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: 128 }, learning: { persist: (s) => saves.push(s) } });
+    expect(first.ensemble.extensions()).toEqual(["memory", "learning"]);
+    first.ensemble.register(
+      { ...byRuntime("transformers.js"), id: "local/reasoner", tasks: ["reasoning"], ports: ["generator"] } as never,
+      async () => ({ generator: new ScriptedGenerator(() => reflection) }),
+    );
+    expect(await invokeCognitive(first.ensemble, "learning.observe", { id: "t1", task: "deploy", steps: [], outcome: { status: "success" } })).toMatchObject({ changes: [{ op: "added", id: "l1" }] });
+    expect(saves).toHaveLength(1);
+    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: 128 }, learning: { saved: saves[0] } });
+    expect(second.learning!.lessons().map((l) => l.id)).toEqual(["l1"]);
+    expect(() => buildNativeEnsemble({ cacheDir: "/nonexistent", learning: {} })).toThrow("learning requires memory");
+    await Promise.all([first.close(), second.close()]);
   });
 });

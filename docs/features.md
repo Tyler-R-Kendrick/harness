@@ -147,9 +147,18 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Memory as a cognitive-core extension (`@harness/memory`): brings the embedding model; the core has none of its own; the index size is the largest size its embedding models share | built | MX1.1, MX2.1–MX2.2, CH1.1, CH3.1–CH3.2 |
-| Vector memory: remember text (as documents), recall by meaning (as queries), per-session filters, JSON save/restore; Orama index, pure JS on every platform | built | ME1.1–ME1.4; real weights MM1.1 |
+| Vector memory: remember text (as documents), recall by meaning (as queries), per-session and per-kind filters, forgetting (ids never reused), JSON save/restore; Orama index, pure JS on every platform | built | ME1.1–ME1.6; real weights MM1.1 |
 | ACP `memory.remember` / `memory.recall` through `_harness/cognitive/invoke` | built | MX1.2–MX1.3, DM9.12 |
 | Session memory: each turn gets related memories from other sessions and is remembered afterwards | built | EW1.7; CLI `--worker ensemble --memory <file>` |
+| Extension dependencies: an extension installs only after the ones it requires, serves only while they serve, and cannot be uninstalled before its dependents | built | EN2.5–EN2.6, LX1.1 |
+| Learning as an extension on memory (`@harness/learning`): no models of its own; thinks with the ensemble's generator, judge and router | built | LX1.1–LX1.2, CH3.3; CLI `--memory <file> --learning <file>` (NS1.4) |
+| Lessons from sessions: a reflection distils insights, strategies, procedures and pitfalls from successes and failures (ExpeL, ReasoningBank) and edits the lesson set incrementally, add/refine/helpful/harmful (ACE deltas); edits to lessons it was not shown and malformed output are rejected with reasons | built | LN1.1–LN1.5 |
+| Curation: a new lesson that says what an old one says merges into it; lessons that mislead more than they help are retired; consolidation merges near-duplicates learned apart; feedback from outside a reflection | built | LN1.3–LN1.4, LN1.6, LN1.8 |
+| Lessons inform later sessions: recalled by meaning (through memory) as a playbook, put before the model on each ensemble-worker turn | built | LN1.1, EW1.8 |
+| Capability ladder: native (judge: can it do this without tools?) → a tool it has (offered, found by client discovery, or built and learned earlier; router with confidence) → build one (judge: does it know how? and a tool-building plugin) → ask to be taught (listing what teachers can observe); every rung's decision kept as evidence, and a missing judge or router is "unknown", not a guess | built | LD1.1–LD1.6 |
+| Learning plugins: materializers turn lessons into agent skills, workflows, tools (code mode) or any client-defined target, and lessons remember what was made; teachers translate a recording (screen, audio, events, transcript, whatever the client can observe) into a demonstration that is learned from | built (contract) | PL1.1–PL1.3, LD1.6; no plugin implementations ship yet: clients bring them |
+| Learning settings (thresholds, prompts) as data with a generated JSON Schema | built | LS1.1–LS1.2; `packages/learning/data/settings.json` |
+| Plugins offered by ACP clients (bridged over the capability registry), automatic reflection when a session ends, lesson evals on real models | not started | Plugins are in-process today; sessions are observed through `learning.observe` |
 | Record kinds, orthogonal fields, facets, lineage, snapshots, compaction, code intelligence, standards | not started | |
 
 ## I. Tools, environments and action

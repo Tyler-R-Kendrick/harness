@@ -34,7 +34,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/{core,protocol,cognitive,testkit,behavior,memory}/src/**/*.ts"],
+    files: ["packages/{core,protocol,cognitive,testkit,behavior,memory,learning}/src/**/*.ts"],
     languageOptions: { globals: {} },
     rules: pureRestrictions,
   },

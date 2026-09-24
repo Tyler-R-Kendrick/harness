@@ -17,6 +17,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/cognitive` | cognitive core: model ports, task taxonomy, catalog + benchmarks, selection, ensemble, cascade | pure |
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
+| `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |

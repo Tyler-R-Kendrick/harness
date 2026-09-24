@@ -83,4 +83,12 @@ describe("native daemon over stdio with the official ACP SDK client", () => {
     expect(kinds[0]).toBe("user_message_chunk");
     expect(agentText(second.updates)).toBe("echo: remember me");
   });
+
+  it("NS1.4 learning without memory is a usage error: lessons are found by meaning in memory", async () => {
+    const child = spawn(process.execPath, [MAIN, "--stdio", "--learning", "/tmp/never-written.json"], { env: { ...process.env, NODE_OPTIONS: "" } });
+    let stderr = "";
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    expect(await new Promise<number | null>((resolve) => child.on("exit", resolve))).toBe(2);
+    expect(stderr).toContain("--learning needs --memory");
+  });
 });

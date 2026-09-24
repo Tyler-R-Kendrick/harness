@@ -4,13 +4,18 @@ import type { StopReason } from "@harness/core";
 import { textChunk } from "./worker.ts";
 import type { Emit, PromptCommand, Worker } from "./worker.ts";
 
-/** The part of the cognitive ensemble this worker needs. */
 /** Session memory (see @harness/memory): related items are recalled into a turn, and the turn is remembered. */
 export interface SessionMemory {
-  recall(query: string, options: { readonly excludeSession?: string; readonly limit?: number }): Promise<readonly { readonly text: string }[]>;
+  recall(query: string, options: { readonly excludeSession?: string; readonly limit?: number; readonly kinds?: readonly string[] }): Promise<readonly { readonly text: string }[]>;
   remember(items: readonly { readonly text: string; readonly sessionId?: string; readonly kind?: string }[]): Promise<unknown>;
 }
 
+/** Learning (see @harness/learning): the lessons for what was asked, as a playbook put before the model. */
+export interface TurnLearning {
+  recall(task: string): Promise<{ readonly playbook: string }>;
+}
+
+/** The part of the cognitive ensemble this worker needs. */
 export interface GeneratingEnsemble {
   generate(request: GenerateRequest, task?: TaskCategory): AsyncIterable<GenerationEvent>;
 }
@@ -41,15 +46,17 @@ export class EnsembleWorker implements Worker {
   readonly #system: string | undefined;
   readonly #task: TaskCategory;
   readonly #memory: SessionMemory | undefined;
+  readonly #learning: TurnLearning | undefined;
   #history = new Map<string, ChatMessage[]>();
   #cancelled = new Set<string>();
 
   /** `task` is what text turns ask the ensemble for: "chat" by default, "steered-chat" for the local kernel. */
-  constructor(options: { ensemble: GeneratingEnsemble; system?: string; task?: TaskCategory; memory?: SessionMemory }) {
+  constructor(options: { ensemble: GeneratingEnsemble; system?: string; task?: TaskCategory; memory?: SessionMemory; learning?: TurnLearning }) {
     this.#ensemble = options.ensemble;
     this.#system = options.system;
     this.#task = options.task ?? "chat";
     this.#memory = options.memory;
+    this.#learning = options.learning;
   }
 
   async run(command: PromptCommand, emit: Emit): Promise<void> {
@@ -60,8 +67,13 @@ export class EnsembleWorker implements Worker {
     const history = this.#history.get(command.sessionId) ?? [];
     const messages: ChatMessage[] = [...(history.length === 0 && this.#system ? [{ role: "system" as const, content: this.#system }] : []), ...history, user];
     const said = parts.map((p) => (p.type === "text" ? p.text : "")).join("");
-    const memories = this.#memory && said ? await this.#memory.recall(said, { excludeSession: command.sessionId, limit: 3 }).catch(() => []) : [];
-    const recalled: ChatMessage[] = memories.length ? [{ role: "system", content: `Relevant memories from earlier sessions:\n${memories.map((m) => `- ${m.text}`).join("\n")}` }] : [];
+    // Memory and learning are best effort: a turn never fails because they could not answer.
+    const memories = this.#memory && said ? await this.#memory.recall(said, { excludeSession: command.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];
+    const playbook = this.#learning && said ? await this.#learning.recall(said).then((r) => r.playbook, () => "") : "";
+    const recalled: ChatMessage[] = [
+      ...(playbook ? [{ role: "system" as const, content: playbook }] : []),
+      ...(memories.length ? [{ role: "system" as const, content: `Relevant memories from earlier sessions:\n${memories.map((m) => `- ${m.text}`).join("\n")}` }] : []),
+    ];
     let stopReason: StopReason = "end_turn";
     let reply = "";
     try {

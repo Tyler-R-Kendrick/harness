@@ -20,9 +20,10 @@ import type { Ranked, SelectionOptions } from "./selection.ts";
 export type MemberState = "offline" | "loading" | "ready" | "failed" | "revoked";
 
 export interface MemberEvent {
+  /** A member's id; for "installed" and "uninstalled", an extension's. */
   readonly id: string;
   /** "removed" when an extension that brought the member is uninstalled. */
-  readonly state: MemberState | "removed";
+  readonly state: MemberState | "removed" | "installed" | "uninstalled";
   readonly reason?: string;
 }
 
@@ -34,6 +35,8 @@ export interface CognitiveExtension {
   /** Also the capability the daemon offers while the extension can serve. */
   readonly id: string;
   readonly models: readonly { readonly descriptor: ModelDescriptor; readonly load: () => Promise<Ports> }[];
+  /** Extensions it builds on: it installs only after them, and serves only while they serve. */
+  readonly requires?: readonly string[];
   /** Operations served as `<id>.<name>` through `_harness/cognitive/invoke`. */
   readonly operations?: Readonly<Record<string, (input: unknown) => Promise<unknown>>>;
 }
@@ -103,6 +106,8 @@ export class Ensemble {
 
   /** Take on an extension's models, all or none; returns a function that removes them again. */
   install(extension: CognitiveExtension): () => void {
+    if (this.#extensions.has(extension.id)) throw new Error(`extension ${extension.id} is already installed`);
+    for (const r of extension.requires ?? []) if (!this.#extensions.has(r)) throw new Error(`extension ${extension.id} requires ${r}, which is not installed`);
     const added: string[] = [];
     try {
       for (const m of extension.models) added.push((this.register(m.descriptor, m.load), m.descriptor.id));
@@ -112,22 +117,27 @@ export class Ensemble {
     }
     this.#extensions.set(extension.id, extension);
     for (const m of extension.models) this.#emit({ id: m.descriptor.id, state: "offline" });
+    this.#emit({ id: extension.id, state: "installed" });
     return () => {
+      if (this.#extensions.get(extension.id) !== extension) return;
+      const dependent = [...this.#extensions.values()].find((x) => x.requires?.includes(extension.id));
+      if (dependent) throw new Error(`extension ${extension.id} is required by ${dependent.id}; uninstall it first`);
       this.#extensions.delete(extension.id);
       for (const { descriptor } of extension.models) {
-        const m = this.#members.get(descriptor.id);
-        if (!m) continue;
-        m.generation++;
+        this.#members.get(descriptor.id)!.generation++;
         this.#members.delete(descriptor.id);
         this.#emit({ id: descriptor.id, state: "removed" });
       }
+      this.#emit({ id: extension.id, state: "uninstalled" });
     };
   }
 
-  /** Installed extensions that have a model in service. */
+  /** Installed extensions that can serve: one of their models is in service (if they bring any), and so is every extension they require. */
   extensions(): string[] {
-    const serving = (id: string) => ["offline", "loading", "ready"].includes(this.#members.get(id)?.state ?? "");
-    return [...this.#extensions.values()].filter((x) => x.models.some((m) => serving(m.descriptor.id))).map((x) => x.id);
+    const inService = (id: string) => ["offline", "loading", "ready"].includes(this.#members.get(id)?.state ?? "");
+    const serves = (x: CognitiveExtension): boolean =>
+      (x.models.length === 0 || x.models.some((m) => inService(m.descriptor.id))) && (x.requires ?? []).every((r) => serves(this.#extensions.get(r)!));
+    return [...this.#extensions.values()].filter(serves).map((x) => x.id);
   }
 
   /** An installed extension's operation, by its `<extension>.<name>` name. */

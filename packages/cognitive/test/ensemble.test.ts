@@ -163,9 +163,10 @@ describe("extensions", () => {
     uninstall();
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     expect(e.members()).toEqual([]);
-    expect(events).toContain("embedder-a:removed");
+    expect(events).toEqual(["embedder-a:offline", "memory:installed", "embedder-a:loading", "embedder-a:ready", "embedder-a:removed", "memory:uninstalled"]);
     await expect(e.embed([{ kind: "query", text: "x" }])).rejects.toMatchObject({ code: "no_member" });
     uninstall();
+    expect(events).toHaveLength(6);
     expect(e.install(memory)).toBeTypeOf("function");
   });
 
@@ -206,6 +207,33 @@ describe("extensions", () => {
     expect(offered.has("memory")).toBe(true);
     uninstall();
     expect(offered.has("memory")).toBe(false);
+  });
+
+  it("EN2.5 an extension that requires another installs only after it, and serves while it serves", () => {
+    const e = new Ensemble({ platform: "native" });
+    const offered = new Set<string>();
+    mirrorCapabilities(e, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
+    const learning = { id: "learning", requires: ["memory"], models: [] };
+    expect(() => e.install(learning)).toThrow("extension learning requires memory, which is not installed");
+    e.install(memory);
+    e.install(learning);
+    expect([...offered].sort()).toEqual(["cognitive.text-embedding", "learning", "memory"]);
+    e.revoke("embedder-a", "no memory to spare");
+    expect(offered.has("learning")).toBe(false);
+    e.restore("embedder-a");
+    expect(e.extensions()).toEqual(["memory", "learning"]);
+  });
+
+  it("EN2.6 an extension others require cannot be uninstalled before them; a second install of one id is refused", () => {
+    const e = new Ensemble({ platform: "native" });
+    const uninstallMemory = e.install(memory);
+    const uninstallLearning = e.install({ id: "learning", requires: ["memory"], models: [] });
+    expect(() => uninstallMemory()).toThrow("extension memory is required by learning; uninstall it first");
+    expect(e.extensions()).toEqual(["memory", "learning"]);
+    expect(() => e.install({ id: "learning", models: [] })).toThrow("extension learning is already installed");
+    uninstallLearning();
+    uninstallMemory();
+    expect(e.extensions()).toEqual([]);
   });
 });
 

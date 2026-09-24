@@ -1,4 +1,4 @@
-import { count, create, insertMultiple, load, save, search } from "@orama/orama";
+import { count, create, insertMultiple, load, removeMultiple, save, search } from "@orama/orama";
 import type { RawData } from "@orama/orama";
 import { z } from "zod";
 import type { Embedder } from "@harness/cognitive";
@@ -25,6 +25,8 @@ export interface RecallOptions {
   readonly sessionId?: string;
   /** ...or everything but this session's. */
   readonly excludeSession?: string;
+  /** Recall only items of these kinds. */
+  readonly kinds?: readonly string[];
 }
 
 export interface Recollection {
@@ -36,7 +38,7 @@ export interface Recollection {
 }
 
 const FORMAT = "harness.memory/v1";
-const Saved = z.object({ format: z.literal(FORMAT), dimensions: z.int().positive(), index: z.custom<RawData>((v) => typeof v === "object" && v !== null) });
+const Saved = z.object({ format: z.literal(FORMAT), dimensions: z.int().positive(), next: z.int().positive(), index: z.custom<RawData>((v) => typeof v === "object" && v !== null) });
 
 const index = (dimensions: number) =>
   create({ schema: { text: "string", sessionId: "enum", kind: "enum", embedding: `vector[${dimensions}]` as "vector[1]" } as const });
@@ -46,6 +48,8 @@ export class Memory {
   readonly #dimensions: number;
   readonly #index: ReturnType<typeof index>;
   readonly #onChange: ((memory: Memory) => void) | undefined;
+  /** The next id's number: ids are never reused, even after forgetting. */
+  #next = 1;
 
   constructor(embedder: Pick<Embedder, "embed">, options: MemoryOptions) {
     this.#embedder = embedder;
@@ -57,6 +61,7 @@ export class Memory {
       if (!result.success) throw new Error(`invalid saved memory\n${z.prettifyError(result.error)}`);
       if (result.data.dimensions !== this.#dimensions) throw new Error(`saved memory has ${result.data.dimensions} dimensions, this memory ${this.#dimensions}`);
       load(this.#index, result.data.index);
+      this.#next = result.data.next;
     }
   }
 
@@ -69,28 +74,35 @@ export class Memory {
       items.map((item) => ({ kind: "document", text: item.text })),
       { dimensions: this.#dimensions },
     );
-    const first = this.size + 1;
-    const docs = items.map((item, i) => ({ ...item, id: `m${first + i}`, embedding: Array.from(vectors[i]!) }));
+    const docs = items.map((item, i) => ({ ...item, id: `m${this.#next + i}`, embedding: Array.from(vectors[i]!) }));
+    this.#next += items.length;
     const ids = await insertMultiple(this.#index, docs);
     this.#onChange?.(this);
     return ids;
   }
 
+  /** Remove items by id; ids that are not there are ignored. */
+  async forget(ids: readonly string[]): Promise<void> {
+    await removeMultiple(this.#index, [...ids]);
+    this.#onChange?.(this);
+  }
+
   async recall(query: string, options: RecallOptions = {}): Promise<Recollection[]> {
     const [vector] = await this.#embedder.embed([{ kind: "query", text: query }], { dimensions: this.#dimensions });
-    const where = options.sessionId !== undefined ? { sessionId: { eq: options.sessionId } } : options.excludeSession !== undefined ? { sessionId: { nin: [options.excludeSession] } } : undefined;
+    const session = options.sessionId !== undefined ? { sessionId: { eq: options.sessionId } } : options.excludeSession !== undefined ? { sessionId: { nin: [options.excludeSession] } } : {};
+    const where = { ...session, ...(options.kinds ? { kind: { in: [...options.kinds] } } : {}) };
     const found = await search(this.#index, {
       mode: "vector",
       vector: { value: Array.from(vector!), property: "embedding" },
       similarity: options.minScore ?? 0.4,
       limit: options.limit ?? 5,
       includeVectors: false,
-      ...(where ? { where } : {}),
+      ...(Object.keys(where).length > 0 ? { where } : {}),
     });
     return found.hits.map(({ id, score, document: d }) => ({ id, text: d.text, score, ...(d.sessionId ? { sessionId: String(d.sessionId) } : {}), ...(d.kind ? { kind: String(d.kind) } : {}) }));
   }
 
   save(): unknown {
-    return { format: FORMAT, dimensions: this.#dimensions, index: save(this.#index) };
+    return { format: FORMAT, dimensions: this.#dimensions, next: this.#next, index: save(this.#index) };
   }
 }
