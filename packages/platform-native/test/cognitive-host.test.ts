@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invokeCognitive, rankForTask, TASK_CATEGORIES } from "@harness/cognitive";
+import { dimensions, invokeCognitive, rankForTask, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 
@@ -266,11 +266,11 @@ require("node:http").createServer((req, res) => {
 
   it("CH3.1 memory installs its embedding model through the transformers.js backend, persists every change and restores from it", async () => {
     const saves: unknown[] = [];
-    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128, persist: (s) => saves.push(s) } });
+    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128), persist: (s) => saves.push(s) } });
     expect(first.ensemble.extensions()).toEqual(["memory"]);
     await invokeCognitive(first.ensemble, "memory.remember", { items: [{ text: "kept" }] });
     expect(saves).toHaveLength(1);
-    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128, saved: saves[0] } });
+    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, only: [], transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128), saved: saves[0] } });
     expect(second.memory!.size).toBe(1);
     await Promise.all([first.close(), second.close()]);
   });
@@ -287,7 +287,7 @@ require("node:http").createServer((req, res) => {
     const transformers = fakeTransformers({ embeddingWidth: 768 }).module;
     const reflection = JSON.stringify({ operations: [{ op: "add", kind: "strategy", title: "deploys", text: "migrate first" }] });
     const judge = { models: [], preferences: {} };
-    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: 128 }, learning: { persist: (s) => saves.push(s) } });
+    const first = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: dimensions(128) }, learning: { persist: (s) => saves.push(s) } });
     expect(first.ensemble.extensions()).toEqual(["memory", "learning"]);
     first.ensemble.register(
       { ...byRuntime("transformers.js"), id: "local/reasoner", tasks: ["reasoning"], ports: ["generator"] } as never,
@@ -295,7 +295,7 @@ require("node:http").createServer((req, res) => {
     );
     expect(await invokeCognitive(first.ensemble, "learning.observe", { id: "t1", task: "deploy", steps: [], outcome: { status: "success" } })).toMatchObject({ changes: [{ op: "added", id: "l1" }] });
     expect(saves).toHaveLength(1);
-    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: 128 }, learning: { saved: saves[0] } });
+    const second = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: judge, transformers, memory: { dimensions: dimensions(128) }, learning: { saved: saves[0] } });
     expect(second.learning!.lessons().map((l) => l.id)).toEqual(["l1"]);
     expect(() => buildNativeEnsemble({ cacheDir: "/nonexistent", learning: {} })).toThrow("learning requires memory");
     await Promise.all([first.close(), second.close()]);
@@ -304,7 +304,7 @@ require("node:http").createServer((req, res) => {
   it("CH3.4 with workflows, learning gets the shipped plugins: a learned procedure becomes a workflow that runs durably from the library", async () => {
     const dir = await tempDir("workflows-");
     const reflection = JSON.stringify({ operations: [{ op: "add", kind: "procedure", title: "greet", text: "greet the user", steps: ["say hello"] }] });
-    const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128 }, learning: {}, workflows: { dir } });
+    const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128) }, learning: {}, workflows: { dir } });
     host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/thinker", tasks: ["reasoning", "chat"], ports: ["generator"] } as never, async () => ({ generator: new ScriptedGenerator((r) => (String(r.messages[0]!.content).startsWith("You distil") ? reflection : "Hello!")) }));
     expect(host.ensemble.extensions()).toEqual(["memory", "workflows", "learning"]);
     expect(((await invokeCognitive(host.ensemble, "learning.status", {})) as { plugins: { id: string }[] }).plugins.map((p) => p.id)).toEqual(["workflow-builder", "skill-builder", "tool-builder", "recording-teacher"]);

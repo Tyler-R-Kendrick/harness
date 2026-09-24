@@ -5,6 +5,7 @@ import type {
   CompressionConfig,
   CompressRequest,
   Compressor,
+  Dimensions,
   DocumentParser,
   Embedder,
   EmbeddingConfig,
@@ -30,7 +31,7 @@ export interface EmbeddingBackend {
  * to the sizes it was trained for, both from its catalog entry.
  */
 export class PromptedEmbedder implements Embedder {
-  readonly dimensions: number;
+  readonly dimensions: Dimensions;
   readonly #backend: EmbeddingBackend;
   readonly #config: EmbeddingConfig;
   readonly #batchSize: number;
@@ -42,7 +43,7 @@ export class PromptedEmbedder implements Embedder {
     this.#batchSize = options.batchSize ?? 16;
   }
 
-  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: number } = {}): Promise<Float32Array[]> {
+  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}): Promise<Float32Array[]> {
     const size = options.dimensions ?? this.dimensions;
     if (!this.#config.dimensions.includes(size)) throw new Error(`the model embeds in ${this.#config.dimensions.join(", ")} dimensions, not ${size}`);
     const prompts = inputs.map((input) => embeddingPrompt(this.#config, input));

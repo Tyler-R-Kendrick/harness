@@ -35,7 +35,7 @@
       "properties": {
         "duplicate": {
           "type": "number",
-          "minimum": 0,
+          "minimum": -1,
           "maximum": 1
         },
         "retireMargin": {
@@ -60,7 +60,7 @@
         },
         "minScore": {
           "type": "number",
-          "minimum": 0,
+          "minimum": -1,
           "maximum": 1
         }
       },

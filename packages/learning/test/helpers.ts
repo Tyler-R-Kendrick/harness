@@ -1,4 +1,4 @@
-import { Ensemble } from "@harness/cognitive";
+import { bytes, dimensions, Ensemble, probability } from "@harness/cognitive";
 import type { GenerateRequest, JudgeAnswer, JudgeQuestion, JudgeRequest, ModelDescriptor, Ports } from "@harness/cognitive";
 import { Memory } from "@harness/memory";
 import { parseSettings } from "@harness/learning";
@@ -11,13 +11,13 @@ export const settings: Settings = parseSettings({
   recall: { limit: 5, minScore: 0.2 },
   ladder: {
     native: { question: "Can you do this without tools?", threshold: 0.7 },
-    tool: { confidence: 0.6 },
+    tool: { confidence: probability(0.6) },
     build: { question: "Can you build a tool for this?", threshold: 0.6 },
   },
 });
 
 const descriptor = (id: string, tasks: ModelDescriptor["tasks"], ports: ModelDescriptor["ports"]): ModelDescriptor =>
-  ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] }) as ModelDescriptor;
+  ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] }) as ModelDescriptor;
 
 /**
  * An ensemble with scripted models: the generator answers reflections with `reflect`,
@@ -33,7 +33,7 @@ export function setup(options: { reflect?: (request: GenerateRequest) => string;
   if (!options.noJudge) register("judge-a", ["judgment"], ["judge"], { judge });
   if (!options.noRouter) register("router-a", ["tool-calling"], ["router"], { router });
   register("embedder-a", ["text-embedding"], ["embedder"], { embedder: new HashEmbedder(64) });
-  const memory = new Memory(ensemble, { dimensions: 64 });
+  const memory = new Memory(ensemble, { dimensions: dimensions(64) });
   return { ensemble, generator, judge, router, memory };
 }
 

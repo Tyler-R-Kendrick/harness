@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { probability } from "@harness/cognitive";
 import { describe, expect, it } from "vitest";
 import { Learning, Plugins, TARGETS } from "@harness/learning";
 import type { Lesson } from "@harness/learning";
@@ -83,7 +84,7 @@ describe("skill builder", () => {
 
   it("LP3.2 a skill's name and description keep to the agent-skills limits", async () => {
     const long: Lesson = { id: "l1", kind: "strategy", title: "A".repeat(80), text: "x ".repeat(700), helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m1" };
-    const made = await skillBuilder({ reasoner: { route: async () => ({ calls: [], confidence: 0, reasoning: "" }) }, library: new MemoryLibrary(), settings }).materialize({ purpose: "p", lessons: [long], tools: [] });
+    const made = await skillBuilder({ reasoner: { route: async () => ({ calls: [], confidence: probability(0), reasoning: "" }) }, library: new MemoryLibrary(), settings }).materialize({ purpose: "p", lessons: [long], tools: [] });
     const front = (made as { files: { content: string }[] }).files[0]!.content.split("\n");
     expect(front[1]!.length).toBeLessThanOrEqual("name: ".length + 64);
     expect(front[2]!.length).toBeLessThanOrEqual("description: ".length + 1024);
@@ -148,7 +149,7 @@ describe("names and descriptions", () => {
     expect(kebab("Deploy the Web-App!")).toBe("deploy-the-web-app");
     expect(kebab("???")).toBe("workflow");
     expect(kebab(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
-    const workflow = await compileProcedure({ reasoner: { route: async () => ({ calls: [], confidence: 1, reasoning: "" }) }, settings }, { purpose: "tidy up", lessons: [], tools: [] });
+    const workflow = await compileProcedure({ reasoner: { route: async () => ({ calls: [], confidence: probability(1), reasoning: "" }) }, settings }, { purpose: "tidy up", lessons: [], tools: [] });
     expect([workflow.name, workflow.description]).toEqual(["tidy-up", "tidy up"]);
     expect(workflow.code).toContain('Step 1 of \\"tidy up\\": tidy up');
   });
@@ -160,7 +161,7 @@ describe("generated artifacts, exactly", () => {
     { id: "l2", kind: "pitfall", title: "fridays", text: "never deploy on fridays", helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m2" },
     { id: "l3", kind: "procedure", title: "smoke", text: "smoke test the site", helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m3" },
   ];
-  const router = (confidence: number) => ({ route: async (r: { input: string }) => (r.input.includes("migrations") ? { calls: [{ name: "run_migrations", arguments: { all: true } }], confidence, reasoning: "" } : { calls: [], confidence: 0.1, reasoning: "" }) });
+  const router = (confidence: number) => ({ route: async (r: { input: string }) => (r.input.includes("migrations") ? { calls: [{ name: "run_migrations", arguments: { all: true } }], confidence: probability(confidence), reasoning: "" } : { calls: [], confidence: probability(0.1), reasoning: "" }) });
 
   it("LP2.5 the workflow code for procedures, guidance and a fitting tool", async () => {
     const workflow = await compileProcedure({ reasoner: router(0.6), settings }, { purpose: "ship  it", lessons, tools: [migrate] });

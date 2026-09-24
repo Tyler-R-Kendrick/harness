@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { Ensemble } from "@harness/cognitive";
-import type { Catalog, ModelDescriptor, Ports, Runtime } from "@harness/cognitive";
+import type { Catalog, Dimensions, ModelDescriptor, Ports, Runtime } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
@@ -67,7 +67,7 @@ export interface NativeEnsembleOptions {
     /** Called with Memory.save() after every change. */
     readonly persist?: (saved: unknown) => void;
     /** Index size; defaults to the largest size all of memory's embedding models produce. */
-    readonly dimensions?: number;
+    readonly dimensions?: Dimensions;
     /** Memory's models; defaults to memory's data files. */
     readonly catalog?: Catalog;
   };

@@ -37,12 +37,14 @@ export type {
   ToolRouter,
   ToolSpec,
 } from "./ports.ts";
-export { ToolSpecSchema } from "./ports.ts";
+export { JudgeAnswerSchema, ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./compression.ts";
-export { decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";
+export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
 export { BenchmarksFileSchema, CatalogFileSchema, catalogJsonSchemas, parseCatalog } from "./catalog.ts";
 export type { Catalog, CompressionConfig, EmbeddingConfig, ModelEntry } from "./catalog.ts";
 export { invokeCognitive, mirrorCapabilities } from "./service.ts";
 export type { CognitiveOperation, ExtensionOperation } from "./service.ts";
+export { bytes, BytesSchema, commitSha, CommitShaSchema, dimensions, DimensionsSchema, PositiveBytesSchema, probability, ProbabilitySchema, sha256, Sha256Schema, similarity, SimilaritySchema, sumBytes } from "./units.ts";
+export type { Bytes, CommitSha, Dimensions, Probability, Sha256, Similarity } from "./units.ts";

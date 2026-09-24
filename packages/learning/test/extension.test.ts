@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
+import { invokeCognitive, mirrorCapabilities, probability } from "@harness/cognitive";
 import { memoryExtension } from "@harness/memory";
 import { Learning, learningExtension, Plugins, TARGETS } from "@harness/learning";
 import { reply, settings, setup } from "./helpers.ts";
 
 function installed() {
-  const s = setup({ reflect: () => reply([{ op: "add", kind: "procedure", title: "staging deploy", text: "migrate, then deploy" }]), judge: () => ({ type: "boolean", probability: 0.95 }) });
+  const s = setup({ reflect: () => reply([{ op: "add", kind: "procedure", title: "staging deploy", text: "migrate, then deploy" }]), judge: () => ({ type: "boolean", probability: probability(0.95) }) });
   const offered = new Set<string>();
   mirrorCapabilities(s.ensemble, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
   const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });

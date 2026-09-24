@@ -3,6 +3,11 @@ import { EvaluationJudge, gatewayEvaluationModel, serviceAvailable, typesafeApiE
 import { FakeEvaluationModel } from "./fake-evaluation-model.ts";
 
 describe("evaluation judges", () => {
+  it("EV1.3 a model's answers are parsed where they enter: a probability outside [0, 1] is an error, not an answer", async () => {
+    const judge = new EvaluationJudge(new FakeEvaluationModel(() => ({ correct: { type: "boolean", probability: 1.2 } })));
+    await expect(judge.evaluate({ state: "s", questions: { correct: { type: "boolean", instructions: "?" } } })).rejects.toThrow(/probability|P\(true/);
+  });
+
   it("EV1.1 a gateway evaluation model is named by its gateway id", () => {
     expect(new EvaluationJudge(gatewayEvaluationModel("acme/judge")).identity).toEqual({ provider: "gateway", modelId: "acme/judge" });
   });

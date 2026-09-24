@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { CognitiveExtension, ModelDescriptor, Ports } from "@harness/cognitive";
+import { dimensions } from "@harness/cognitive";
+import type { CognitiveExtension, Dimensions, ModelDescriptor, Ports } from "@harness/cognitive";
 import type { Memory } from "./memory.ts";
 
 const Remember = z.object({ items: z.array(z.object({ text: z.string(), sessionId: z.string().exactOptional(), kind: z.string().exactOptional() })) });
@@ -21,11 +22,11 @@ const parse = <T>(schema: z.ZodType<T>, op: string, input: unknown): T => {
  * The largest embedding size every embedding model among `models` can produce, so the
  * memory index keeps working when one of them fails over to another.
  */
-export function sharedEmbeddingSize(models: readonly ModelDescriptor[]): number {
+export function sharedEmbeddingSize(models: readonly ModelDescriptor[]): Dimensions {
   const sizes = models.flatMap((m) => (m.embedding ? [m.embedding.dimensions] : []));
   const shared = sizes.reduce((common, s) => common.filter((d) => s.includes(d)), sizes[0] ?? []);
   if (shared.length === 0) throw new Error(sizes.length === 0 ? "memory has no embedding model" : "memory's embedding models share no embedding size");
-  return Math.max(...shared);
+  return dimensions(Math.max(...shared));
 }
 
 /**

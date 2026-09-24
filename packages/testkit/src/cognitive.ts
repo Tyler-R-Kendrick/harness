@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ChatStreamParser, compressWords } from "@harness/cognitive";
+import { ChatStreamParser, compressWords, dimensions, probability } from "@harness/cognitive";
 import type {
+  Dimensions,
   Compression,
   CompressRequest,
   Compressor,
@@ -33,11 +34,11 @@ function hash(s: string): number {
 
 /** Feature-hashing embedder: texts sharing words get similar vectors. */
 export class HashEmbedder implements Embedder {
-  readonly dimensions: number;
-  constructor(dimensions = 64) {
-    this.dimensions = dimensions;
+  readonly dimensions: Dimensions;
+  constructor(size = 64) {
+    this.dimensions = dimensions(size);
   }
-  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: number } = {}): Promise<Float32Array[]> {
+  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}): Promise<Float32Array[]> {
     const size = options.dimensions ?? this.dimensions;
     return inputs.map((input) => {
       const v = new Float32Array(size);
@@ -63,8 +64,8 @@ export class KeywordRouter implements ToolRouter {
     const said = new Set(words(request.input));
     const scored = request.tools.map((t) => ({ t, score: words(`${t.name.replace(/_/g, " ")} ${t.description}`).filter((w) => said.has(w)).length }));
     const best = scored.sort((a, b) => b.score - a.score)[0];
-    if (!best || best.score === 0) return { calls: [], confidence: 0.9, reasoning: "no tool shares a word with the request" };
-    return { calls: [{ name: best.t.name, arguments: {} }], confidence: Math.min(0.99, 0.5 + 0.2 * best.score), reasoning: `matched ${best.score} word(s)` };
+    if (!best || best.score === 0) return { calls: [], confidence: probability(0.9), reasoning: "no tool shares a word with the request" };
+    return { calls: [{ name: best.t.name, arguments: {} }], confidence: probability(Math.min(0.99, 0.5 + 0.2 * best.score)), reasoning: `matched ${best.score} word(s)` };
   }
 }
 
@@ -94,10 +95,10 @@ export class ScriptedGenerator implements Generator {
 }
 
 function defaultAnswer(q: JudgeQuestion): JudgeAnswer {
-  if (q.type === "boolean") return { type: "boolean", probability: 0.5 };
+  if (q.type === "boolean") return { type: "boolean", probability: probability(0.5) };
   if (q.type === "choice") {
     const options = Object.keys(q.criteria);
-    return { type: "choice", choice: options[0]!, probabilities: Object.fromEntries(options.map((o) => [o, 1 / options.length])) };
+    return { type: "choice", choice: options[0]!, probabilities: Object.fromEntries(options.map((o) => [o, probability(1 / options.length)])) };
   }
   return { type: "score", score: (q.criteria.length - 1) / 2 };
 }
@@ -235,7 +236,7 @@ export function embedderContract(label: string, make: () => Embedder | Promise<E
     for (const size of options.sizes ?? []) {
       it(`EC3 truncates to ${size} dimensions as unit vectors`, async () => {
         const embedder = await make();
-        const [v] = await embedder.embed([{ kind: "document", text: "hello world" }], { dimensions: size });
+        const [v] = await embedder.embed([{ kind: "document", text: "hello world" }], { dimensions: dimensions(size) });
         expect(v!.length).toBe(size);
         expect(Math.hypot(...v!)).toBeCloseTo(1, 3);
       });

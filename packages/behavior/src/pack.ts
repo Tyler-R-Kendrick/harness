@@ -73,6 +73,8 @@ export function compilePack(graph: BehaviorGraph, sae: SaeRows): BehaviorPack {
   return seal({ graph, dims: sae.dims, sense, steering });
 }
 
+// The one place a BehaviorPack is made: compilePack and parsePack both end here.
+// eslint-disable-next-line no-restricted-syntax
 const seal = (pack: Omit<BehaviorPack, typeof compiled>) => pack as BehaviorPack;
 
 const FORMAT = "harness.behavior-pack/v1";

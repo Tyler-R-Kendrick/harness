@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { bytes as size, commitSha, sha256 } from "@harness/cognitive";
 import { ArtifactIntegrityError, ArtifactStore, MemoryByteCache, sha256Hex } from "@harness/models";
 import type { Artifact } from "@harness/cognitive";
 
 const bytes = new TextEncoder().encode("weights!");
 const digest = await sha256Hex(bytes);
-const artifact: Artifact = { repo: "org/model", revision: "a".repeat(40), files: [{ path: "w.bin", bytes: bytes.length, sha256: digest }] };
+const artifact: Artifact = { repo: "org/model", revision: commitSha("a".repeat(40)), files: [{ path: "w.bin", bytes: size(bytes.length), sha256: sha256(digest) }] };
 
 function fakeFetch(body: Uint8Array | (() => Uint8Array), status = 200) {
   const urls: string[] = [];

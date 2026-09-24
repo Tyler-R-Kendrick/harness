@@ -1,3 +1,3 @@
 export { memoryExtension, sharedEmbeddingSize } from "./extension.ts";
-export { Memory } from "./memory.ts";
-export type { MemoryOptions, Recollection, RecallOptions } from "./memory.ts";
+export { Memory, MemoryIdSchema } from "./memory.ts";
+export type { MemoryId, MemoryOptions, Recollection, RecallOptions } from "./memory.ts";

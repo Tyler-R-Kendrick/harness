@@ -34,6 +34,13 @@ exports, SAE rows); nothing in `packages/` imports it.
 randomness, storage and transport arrive through ports. Do not weaken these rules to
 make something compile; add a port instead.
 
+Values with invariants are refined types, made only by parsing: `Probability`,
+`Similarity`, `Bytes`, `Dimensions`, `Sha256`, `CommitSha` (`packages/cognitive/src/units.ts`),
+branded policies and packs, and template-literal ids (`MemoryId`, `LessonId`). Construct
+them with their constructor or schema; ESLint forbids casting to them. When a new value
+has an invariant (a range, a unit, a format), give it a refined type rather than
+checking it where it is used.
+
 Node runs TypeScript directly (type stripping), so source must be erasable syntax only:
 no enums, namespaces, parameter properties or decorators. Import siblings with `.ts`.
 

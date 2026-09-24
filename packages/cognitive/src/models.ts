@@ -67,18 +67,5 @@ export interface BenchmarkResult {
   readonly setting?: string;
 }
 
-export interface ArtifactFile {
-  readonly path: string;
-  readonly bytes: number;
-  readonly sha256?: string;
-}
-
-export interface Artifact {
-  readonly repo: string;
-  /** Pinned commit, never a moving branch. */
-  readonly revision: string;
-  readonly files: readonly ArtifactFile[];
-}
-
-/** A catalog model, as parsed from the catalog data (see catalog.ts). */
-export type { ModelDescriptor } from "./catalog.ts";
+/** A catalog model, its pinned weights and their files, as parsed from the catalog data (see catalog.ts). */
+export type { Artifact, ArtifactFile, ModelDescriptor } from "./catalog.ts";

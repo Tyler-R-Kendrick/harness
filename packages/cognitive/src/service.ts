@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { decideToolCalls } from "./cascade.ts";
+import { CascadePolicySchema, decideToolCalls } from "./cascade.ts";
 import { EmbedInputSchema } from "./embedding.ts";
 import type { Ensemble } from "./ensemble.ts";
 import { TASK_CATEGORIES } from "./models.ts";
+import { DimensionsSchema } from "./units.ts";
 import { CompressRequestSchema, JudgeQuestionSchema, ParseRequestSchema, ToolSpecSchema } from "./ports.ts";
 
 /**
@@ -19,8 +20,8 @@ const ToolRequest = z.object({ input: z.string(), tools: z.array(ToolSpecSchema)
 const INPUTS = {
   judge: z.object({ state: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())]).default(""), questions: z.record(z.string(), JudgeQuestionSchema) }),
   route: ToolRequest,
-  "decide-tools": ToolRequest.extend({ policy: z.object({ act: z.number(), verify: z.number(), accept: z.number() }).optional() }),
-  embed: z.object({ inputs: z.array(EmbedInputSchema), dimensions: z.int().positive().optional() }),
+  "decide-tools": ToolRequest.extend({ policy: CascadePolicySchema.optional() }),
+  embed: z.object({ inputs: z.array(EmbedInputSchema), dimensions: DimensionsSchema.optional() }),
   compress: CompressRequestSchema,
   parse: ParseRequestSchema,
   status: z.object({}),

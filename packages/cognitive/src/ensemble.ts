@@ -16,6 +16,7 @@ import type {
 } from "./ports.ts";
 import { rankForTask } from "./selection.ts";
 import type { Ranked, SelectionOptions } from "./selection.ts";
+import type { Dimensions } from "./units.ts";
 
 export type MemberState = "offline" | "loading" | "ready" | "failed" | "revoked";
 
@@ -205,7 +206,7 @@ export class Ensemble {
     return this.#call("tool-calling", "router", (port) => port.route(request));
   }
 
-  async embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: number }): Promise<Float32Array[]> {
+  async embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: Dimensions }): Promise<Float32Array[]> {
     return this.#call("text-embedding", "embedder", (port) => port.embed(inputs, options));
   }
 

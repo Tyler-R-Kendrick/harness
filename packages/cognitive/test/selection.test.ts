@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rankForTask } from "@harness/cognitive";
+import { bytes, rankForTask } from "@harness/cognitive";
 import type { BenchmarkResult, ModelDescriptor } from "@harness/cognitive";
 
 const bench = (benchmark: string, score: number, extra: Partial<BenchmarkResult> = {}): BenchmarkResult => ({
@@ -23,7 +23,7 @@ function model(id: string, benchmarks: readonly BenchmarkResult[], extra: Partia
     run: { dtype: "q4" },
     platforms: ["native", "browser"],
     license: "Apache-2.0",
-    downloadBytes: 1000,
+    downloadBytes: bytes(1000),
     benchmarks,
     ...extra,
   } as ModelDescriptor;
@@ -37,8 +37,8 @@ describe("benchmark-driven model selection", () => {
       model("ok", []),
       model("wrong-task", [], { tasks: ["coding"] }),
       model("native-only", [], { platforms: ["native"] }),
-      model("hosted", [], { locality: "hosted", downloadBytes: 0 }),
-      model("too-big", [], { downloadBytes: 10_000 }),
+      model("hosted", [], { locality: "hosted", downloadBytes: bytes(0) }),
+      model("too-big", [], { downloadBytes: bytes(10_000) }),
     ];
     expect(ids(rankForTask("chat", models, { platform: "browser", maxDownloadBytes: 5000, allowHosted: false }))).toEqual(["ok"]);
     expect(ids(rankForTask("chat", models, { platform: "browser", maxDownloadBytes: 5000 }))).toEqual(["ok", "hosted"]);
@@ -71,11 +71,11 @@ describe("benchmark-driven model selection", () => {
   });
 
   it("SE1.5 without head-to-head evidence, the preference order wins, then more task evidence, then the smaller download", () => {
-    const rich = model("rich", [bench("P", 1), bench("Q", 1)], { downloadBytes: 900 });
-    const poor = model("poor", [bench("R", 1)], { downloadBytes: 100 });
+    const rich = model("rich", [bench("P", 1), bench("Q", 1)], { downloadBytes: bytes(900) });
+    const poor = model("poor", [bench("R", 1)], { downloadBytes: bytes(100) });
     expect(ids(rankForTask("chat", [poor, rich], { platform: "native" }))).toEqual(["rich", "poor"]);
-    const big = model("big", [], { downloadBytes: 900 });
-    const small = model("small", [], { downloadBytes: 100 });
+    const big = model("big", [], { downloadBytes: bytes(900) });
+    const small = model("small", [], { downloadBytes: bytes(100) });
     expect(ids(rankForTask("chat", [big, small], { platform: "native" }))).toEqual(["small", "big"]);
     expect(ids(rankForTask("chat", [small, big], { platform: "native", prefer: ["big"] }))).toEqual(["big", "small"]);
     // A curated preference outranks a longer list of unrelated benchmarks.

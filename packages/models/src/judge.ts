@@ -2,7 +2,11 @@ import { gateway } from "@ai-sdk/gateway";
 import type { Experimental_EvaluationModelV4 } from "@ai-sdk/provider";
 import { createTypeSafeAi } from "@ai-sdk/typesafe-ai";
 import { experimental_evaluate as evaluate } from "ai";
+import { z } from "zod";
+import { JudgeAnswerSchema } from "@harness/cognitive";
 import type { Judge, JudgeAnswer, JudgeRequest } from "@harness/cognitive";
+
+const Answers = z.record(z.string(), JudgeAnswerSchema);
 
 /** An evaluation model served through the Vercel AI Gateway, by its gateway id. */
 export const gatewayEvaluationModel = (model: string): Experimental_EvaluationModelV4 => gateway.evaluationModel(model);
@@ -60,6 +64,8 @@ export class EvaluationJudge implements Judge {
       questions: input.questions,
       maxRetries: 1,
     });
-    return result.answers as Record<string, JudgeAnswer>;
+    const answers = Answers.safeParse(result.answers);
+    if (!answers.success) throw new Error(`the model's judge answers are not valid\n${z.prettifyError(answers.error)}`);
+    return answers.data;
   }
 }

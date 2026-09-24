@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ensemble } from "@harness/cognitive";
+import { bytes, Ensemble, probability } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { BlockedError, chooseJudge, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
@@ -36,7 +36,7 @@ describe("runEvals", () => {
       ["bad", "failed"],
       ["unsure", "inconclusive"],
     ]);
-    expect(report.results[0]!.answers).toEqual({ correct: { type: "boolean", probability: 0.95 } });
+    expect(report.results[0]!.answers).toEqual({ correct: { type: "boolean", probability: probability(0.95) } });
     expect(report.summary).toMatchObject({ total: 3, passed: 1, failed: 1, inconclusive: 1, blocked: 0 });
   });
 
@@ -85,7 +85,7 @@ describe("runEvals", () => {
 
 describe("chooseJudge", () => {
   const judgeModel = (id: string, locality: "hosted" | "local"): ModelDescriptor =>
-    ({ id, name: id, publisher: "p", tasks: ["judgment"], ports: ["judge"], locality, platforms: ["native"], license: "x", downloadBytes: 0, runtime: "ai-gateway", run: { model: id }, benchmarks: [] }) as ModelDescriptor;
+    ({ id, name: id, publisher: "p", tasks: ["judgment"], ports: ["judge"], locality, platforms: ["native"], license: "x", downloadBytes: bytes(0), runtime: "ai-gateway", run: { model: id }, benchmarks: [] }) as ModelDescriptor;
 
   it("EV3.8 the judge is the preferred judgment model that loads; failures are reasons, and none left blocks every case", async () => {
     const ensemble = new Ensemble({ platform: "native", preferences: { judgment: ["hosted-judge", "local-judge"] } });

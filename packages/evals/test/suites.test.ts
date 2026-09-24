@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Memory, memoryExtension } from "@harness/memory";
 import { calibrationSuite, cognitiveSuite, harnessSuite } from "@harness/evals";
-import { Ensemble } from "@harness/cognitive";
+import { bytes, dimensions, Ensemble } from "@harness/cognitive";
 import type { GenerationEvent, ModelDescriptor, TaskCategory } from "@harness/cognitive";
 import { HashEmbedder, HeuristicCompressor, KeywordRouter, StubDocumentParser } from "@harness/testkit";
 
@@ -52,10 +52,10 @@ describe("eval suites", () => {
   });
 
   it("EV8.1 cognitive cases run real ensemble work and expose every field their questions reference", async () => {
-    const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
+    const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] });
     const ensemble = new Ensemble({ platform: "native" });
     ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: 32 }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: new HashEmbedder(64) }) }));
+    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: dimensions(32) }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: new HashEmbedder(64) }) }));
     ensemble.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
     ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
     ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({

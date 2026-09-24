@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ensemble, invokeCognitive } from "@harness/cognitive";
+import { bytes, Ensemble, invokeCognitive } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { askEnsemble, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
 import { MemoryStorage, ScriptedGenerator } from "@harness/testkit";
@@ -68,7 +68,7 @@ describe("workflow library and host", () => {
   it("WH1.5 as a cognitive-core extension, workflows are listed and run through the invoke operation; the ensemble answers questions", async () => {
     const ensemble = new Ensemble({ platform: "native" });
     const generator = new ScriptedGenerator(() => "Stretch.");
-    ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
+    ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
     const journals = new Map<string, MemoryStorage>();
     const extension = workflowsExtension({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), ensemble, tools: { call: async () => ({ id: 1 }) } });
     ensemble.install(extension);

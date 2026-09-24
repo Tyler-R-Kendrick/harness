@@ -8,6 +8,8 @@ import { base64 } from "@scure/base";
 import { z } from "zod";
 import type { ChatEvent, ToolCall } from "./chat-format.ts";
 import type { EmbedInput } from "./embedding.ts";
+import { ProbabilitySchema } from "./units.ts";
+import type { Dimensions, Probability } from "./units.ts";
 
 // Requests that can arrive as JSON (see service.ts) are defined as schemas; their
 // types are the schemas' outputs, so a parsed request is a port request as is.
@@ -21,10 +23,13 @@ export const JudgeQuestionSchema = z.discriminatedUnion("type", [
 ]);
 export type JudgeQuestion = z.output<typeof JudgeQuestionSchema>;
 
-export type JudgeAnswer =
-  | { readonly type: "boolean"; readonly probability: number }
-  | { readonly type: "choice"; readonly choice: string; readonly probabilities?: Readonly<Record<string, number>> }
-  | { readonly type: "score"; readonly score: number; readonly probabilities?: Readonly<Record<string, number>> };
+/** A judge's answers, parsed where they enter (an adapter's model output), so probabilities are Probabilities. */
+export const JudgeAnswerSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("boolean"), probability: ProbabilitySchema }).readonly(),
+  z.object({ type: z.literal("choice"), choice: z.string(), probabilities: z.record(z.string(), ProbabilitySchema).readonly().exactOptional() }).readonly(),
+  z.object({ type: z.literal("score"), score: z.number(), probabilities: z.record(z.string(), ProbabilitySchema).readonly().exactOptional() }).readonly(),
+]);
+export type JudgeAnswer = z.output<typeof JudgeAnswerSchema>;
 
 export type JudgeState = string | Readonly<Record<string, unknown>> | readonly unknown[];
 
@@ -54,8 +59,8 @@ export interface RouteRequest {
 
 export interface Routing {
   readonly calls: readonly ToolCall[];
-  /** Calibrated probability that `calls` is right, in [0, 1]. */
-  readonly confidence: number;
+  /** Calibrated probability that `calls` is right. */
+  readonly confidence: Probability;
   readonly reasoning: string;
 }
 
@@ -66,9 +71,9 @@ export interface ToolRouter {
 // ---- embeddings ------------------------------------------------------------------
 
 export interface Embedder {
-  readonly dimensions: number;
+  readonly dimensions: Dimensions;
   /** One unit-length vector per input. */
-  embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: number }): Promise<Float32Array[]>;
+  embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: Dimensions }): Promise<Float32Array[]>;
 }
 
 // ---- prompt compression ------------------------------------------------------------

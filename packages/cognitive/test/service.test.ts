@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
+import { bytes, dimensions, Ensemble, invokeCognitive, mirrorCapabilities, probability } from "@harness/cognitive";
 import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
 import { HashEmbedder, HeuristicCompressor, KeywordRouter, ScriptedJudge, StubDocumentParser } from "@harness/testkit";
 
 function d(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor {
-  return { id, name: `Model ${id}`, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
+  return { id, name: `Model ${id}`, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] };
 }
 
 function ensemble() {
   const e = new Ensemble({ platform: "native" });
-  e.register(d("judge-a", ["judgment"], ["judge"]), async () => ({ judge: new ScriptedJudge(() => ({ type: "boolean", probability: 0.8 })) }));
+  e.register(d("judge-a", ["judgment"], ["judge"]), async () => ({ judge: new ScriptedJudge(() => ({ type: "boolean", probability: probability(0.8) })) }));
   e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
   e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(8) }));
   e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
@@ -22,13 +22,13 @@ const tools = [{ name: "set_timer", description: "Start a timer", parameters: { 
 describe("cognitive service (ACP operations on the ensemble)", () => {
   it("CS1.1 every result names the model that served it", async () => {
     const e = ensemble();
-    expect(await invokeCognitive(e, "judge", { state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ model: "judge-a", answers: { ok: { type: "boolean", probability: 0.8 } } });
+    expect(await invokeCognitive(e, "judge", { state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ model: "judge-a", answers: { ok: { type: "boolean", probability: probability(0.8) } } });
     expect(await invokeCognitive(e, "route", { input: "start a timer", tools })).toMatchObject({ model: "router-a", calls: [{ name: "set_timer" }] });
     expect(await invokeCognitive(e, "decide-tools", { input: "start a timer", tools })).toMatchObject({ calls: [{ name: "set_timer" }], decidedBy: expect.any(String) });
   });
 
   it("CS1.2 embeddings come back as plain arrays, truncated when asked", async () => {
-    const r = (await invokeCognitive(ensemble(), "embed", { inputs: [{ kind: "query", text: "hi there" }], dimensions: 4 })) as { model: string; vectors: number[][] };
+    const r = (await invokeCognitive(ensemble(), "embed", { inputs: [{ kind: "query", text: "hi there" }], dimensions: dimensions(4) })) as { model: string; vectors: number[][] };
     expect(r.model).toBe("embedder-a");
     expect(Array.isArray(r.vectors[0])).toBe(true);
     expect(r.vectors[0]).toHaveLength(4);
@@ -66,8 +66,8 @@ describe("cognitive service input handling", () => {
   function recording() {
     const seen: Record<string, unknown[]> = { route: [], embed: [], compress: [], parse: [] };
     const e = new Ensemble({ platform: "native" });
-    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: { route: async (r) => (seen["route"]!.push(r), { calls: [], confidence: 1, reasoning: "" }) } }));
-    e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: { dimensions: 2, embed: async (i, o) => (seen["embed"]!.push([i, o]), i.map(() => Float32Array.from([1, 0]))) } }));
+    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: { route: async (r) => (seen["route"]!.push(r), { calls: [], confidence: probability(1), reasoning: "" }) } }));
+    e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: { dimensions: dimensions(2), embed: async (i, o) => (seen["embed"]!.push([i, o]), i.map(() => Float32Array.from([1, 0]))) } }));
     e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: { compress: async (r) => (seen["compress"]!.push(r), { text: r.text, originalTokens: 1, compressedTokens: 1 }) } }));
     e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": { parse: async (r) => (seen["parse"]!.push(r), { pages: [] }) } }));
     return { e, seen };
@@ -118,10 +118,10 @@ describe("cognitive service input handling", () => {
 
   it("CS2.3 optional fields reach the port only when the client sent them", async () => {
     const { e, seen } = recording();
-    await invokeCognitive(e, "embed", { inputs: [{ kind: "document", text: "a" }], dimensions: 2 });
+    await invokeCognitive(e, "embed", { inputs: [{ kind: "document", text: "a" }], dimensions: dimensions(2) });
     await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }] });
     expect(seen["embed"]).toEqual([
-      [[{ kind: "document", text: "a" }], { dimensions: 2 }],
+      [[{ kind: "document", text: "a" }], { dimensions: dimensions(2) }],
       [[{ kind: "query", text: "a" }], {}],
     ]);
     await invokeCognitive(e, "compress", { text: "a b", rate: 0.5, forceTokens: ["b"] });
@@ -138,7 +138,7 @@ describe("cognitive service input handling", () => {
   it("CS2.4 a policy is handed to the cascade; members without a reason report none", async () => {
     const e = ensemble();
     // a policy that never trusts the router alone sends it to the judge (0.8 here)
-    expect(await invokeCognitive(e, "decide-tools", { input: "start a timer", tools, policy: { act: 1, verify: 0, accept: 0.5 } })).toMatchObject({ decidedBy: "router+judge", confidence: 0.8 });
+    expect(await invokeCognitive(e, "decide-tools", { input: "start a timer", tools, policy: { act: 1, verify: 0, accept: 0.5 } })).toMatchObject({ decidedBy: "router+judge", confidence: probability(0.8) });
     const status = (await invokeCognitive(e, "status", {})) as { members: Record<string, unknown>[] };
     expect(status.members.every((m) => !("reason" in m))).toBe(true);
   });

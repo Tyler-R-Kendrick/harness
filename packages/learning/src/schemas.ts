@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ToolSpecSchema } from "@harness/cognitive";
+import { ProbabilitySchema, SimilaritySchema, ToolSpecSchema } from "@harness/cognitive";
+import { MemoryIdSchema } from "@harness/memory";
 
 /**
  * What learning reads and writes, as schemas: parsed at every boundary (operations,
@@ -7,9 +8,10 @@ import { ToolSpecSchema } from "@harness/cognitive";
  */
 
 const text = z.string().min(1);
-/** A calibrated probability or a cosine similarity floor. */
-const unit = z.number().min(0).max(1).brand<"Unit">();
-export type Unit = z.output<typeof unit>;
+
+/** Lesson ids: "l" and a number that is never reused. A memory id ("m1") is not one. */
+export const LessonIdSchema = z.templateLiteral(["l", z.int().positive()]);
+export type LessonId = z.output<typeof LessonIdSchema>;
 
 // ---- sessions ----------------------------------------------------------------------
 
@@ -57,7 +59,7 @@ const LessonContent = {
 };
 
 export const LessonSchema = z.strictObject({
-  id: text,
+  id: LessonIdSchema,
   kind: z.enum(LESSON_KINDS),
   ...LessonContent,
   /** The tool a "tool" lesson made available. */
@@ -70,7 +72,7 @@ export const LessonSchema = z.strictObject({
   /** What plugins made of it (skills, workflows, tools). */
   artifacts: z.array(z.strictObject({ target: text, name: text })).readonly(),
   /** Its entry in memory, where it is found by meaning. */
-  memoryId: text,
+  memoryId: MemoryIdSchema,
 });
 export type Lesson = z.output<typeof LessonSchema>;
 
@@ -81,9 +83,9 @@ export type Lesson = z.output<typeof LessonSchema>;
  */
 export const DeltaSchema = z.discriminatedUnion("op", [
   z.strictObject({ op: z.literal("add"), kind: z.enum(LESSON_KINDS).exclude(["tool"]), ...LessonContent }),
-  z.strictObject({ op: z.literal("refine"), id: text, ...LessonContent }),
-  z.strictObject({ op: z.literal("helpful"), id: text }),
-  z.strictObject({ op: z.literal("harmful"), id: text }),
+  z.strictObject({ op: z.literal("refine"), id: LessonIdSchema, ...LessonContent }),
+  z.strictObject({ op: z.literal("helpful"), id: LessonIdSchema }),
+  z.strictObject({ op: z.literal("harmful"), id: LessonIdSchema }),
 ]);
 export type Delta = z.output<typeof DeltaSchema>;
 export const ReflectionSchema = z.strictObject({ operations: z.array(DeltaSchema) });
@@ -111,18 +113,18 @@ export const SettingsSchema = z.strictObject({
   }),
   curation: z.strictObject({
     /** Similarity at which a new lesson is the same as an old one, and merges into it. */
-    duplicate: unit,
+    duplicate: SimilaritySchema,
     /** A lesson that misled this many more times than it helped is retired. */
     retireMargin: z.int().positive(),
   }),
-  recall: z.strictObject({ limit: z.int().positive(), minScore: unit }),
+  recall: z.strictObject({ limit: z.int().positive(), minScore: SimilaritySchema }),
   ladder: z.strictObject({
     /** Asked of the judge: can the model do the task from its own knowledge? */
-    native: z.strictObject({ question: text, threshold: unit }),
+    native: z.strictObject({ question: text, threshold: ProbabilitySchema }),
     /** The router's confidence needed to use a tool it picked. */
-    tool: z.strictObject({ confidence: unit }),
+    tool: z.strictObject({ confidence: ProbabilitySchema }),
     /** Asked of the judge: does the model know how to build a tool for the task? */
-    build: z.strictObject({ question: text, threshold: unit }),
+    build: z.strictObject({ question: text, threshold: ProbabilitySchema }),
   }),
 });
 export type Settings = z.output<typeof SettingsSchema>;

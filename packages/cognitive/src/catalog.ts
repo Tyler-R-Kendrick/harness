@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { LOCALITIES, PLATFORMS, PORT_KINDS, TASK_CATEGORIES, TASK_PORTS } from "./models.ts";
 import type { BenchmarkResult, RUNTIMES, TaskCategory } from "./models.ts";
+import { BytesSchema, CommitShaSchema, DimensionsSchema, PositiveBytesSchema, Sha256Schema } from "./units.ts";
 
 /** A catalog model with its benchmark results attached. */
 export type ModelDescriptor = ModelEntry & { readonly benchmarks: readonly BenchmarkResult[] };
@@ -17,8 +18,8 @@ const task = z.enum(TASK_CATEGORIES);
 
 const Artifact = z.strictObject({
   repo: id,
-  revision: z.string().regex(/^[0-9a-f]{40}$/, "a pinned commit, never a branch"),
-  files: z.array(z.strictObject({ path: id, bytes: z.int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).readonly(),
+  revision: CommitShaSchema,
+  files: z.array(z.strictObject({ path: id, bytes: PositiveBytesSchema, sha256: Sha256Schema })).min(1).readonly(),
 });
 
 /** Chat-template options passed through to the model's template (e.g. turning thinking off). */
@@ -63,7 +64,7 @@ const RUN = {
 } satisfies Record<(typeof RUNTIMES)[number], z.ZodType>;
 
 /** What an embedding model expects: prompt templates ({text}, and optional {task}/{title}) and the sizes it can truncate to (native first). */
-const Embedding = z.strictObject({ query: id, document: id, defaults: z.record(z.string(), z.string()).exactOptional(), dimensions: z.array(z.int().positive()).min(1).readonly() });
+const Embedding = z.strictObject({ query: id, document: id, defaults: z.record(z.string(), z.string()).exactOptional(), dimensions: z.array(DimensionsSchema).min(1).readonly() });
 /** A token-classification compressor: its window and how its tokenizer marks subwords. */
 const Compression = z.strictObject({ window: z.int().positive(), subwords: z.enum(["wordpiece", "sentencepiece"]), keepLabel: z.int().min(0) });
 
@@ -77,7 +78,7 @@ const Base = z.strictObject({
   platforms: z.array(z.enum(PLATFORMS)).min(1).readonly(),
   license: id,
   /** Weight bytes a client downloads; 0 for hosted models. */
-  downloadBytes: z.int().min(0),
+  downloadBytes: BytesSchema,
   notes: z.string().exactOptional(),
   artifact: Artifact.exactOptional(),
   embedding: Embedding.exactOptional(),
@@ -113,6 +114,8 @@ const Model = z
   });
 
 export type ModelEntry = z.output<typeof Model>;
+export type Artifact = z.output<typeof Artifact>;
+export type ArtifactFile = Artifact["files"][number];
 export type EmbeddingConfig = z.output<typeof Embedding>;
 export type CompressionConfig = z.output<typeof Compression>;
 

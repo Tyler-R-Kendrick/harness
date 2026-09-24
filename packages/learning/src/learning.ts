@@ -2,12 +2,12 @@ import { z } from "zod";
 import type { Ensemble } from "@harness/cognitive";
 import type { Memory } from "@harness/memory";
 import { LessonSchema, parse, ReflectionSchema, TrajectorySchema } from "./schemas.ts";
-import type { Delta, Lesson, LessonKind, Settings, TrajectoryInput } from "./schemas.ts";
+import type { Delta, Lesson, LessonId, LessonKind, Settings, TrajectoryInput } from "./schemas.ts";
 
 /** The models learning thinks with: a generator to reflect, a judge to assess, a router to pick tools. */
 export type Reasoner = Pick<Ensemble, "generate" | "judge" | "route">;
 
-export type Change = { readonly op: "added" | "merged" | "refined" | "helpful" | "harmful" | "retired"; readonly id: string };
+export type Change = { readonly op: "added" | "merged" | "refined" | "helpful" | "harmful" | "retired"; readonly id: LessonId };
 
 export interface LearningOptions {
   readonly reasoner: Reasoner;
@@ -115,8 +115,7 @@ export class Learning {
 
   /** Feedback from outside a reflection: the lesson helped, or misled. */
   async feedback(id: string, helpful: boolean): Promise<Change[]> {
-    this.lesson(id);
-    const changes = await this.#apply({ op: helpful ? "helpful" : "harmful", id });
+    const changes = await this.#apply({ op: helpful ? "helpful" : "harmful", id: this.lesson(id).id });
     this.#onChange?.(this);
     return changes;
   }

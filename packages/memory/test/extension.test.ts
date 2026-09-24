@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
+import { dimensions, Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import { readFileSync } from "node:fs";
 import { parseCatalog } from "@harness/cognitive";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
@@ -14,7 +14,7 @@ function setup() {
   const offered = new Set<string>();
   mirrorCapabilities(ensemble, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
   const loaded: string[] = [];
-  const memory = new Memory(ensemble, { dimensions: 32 });
+  const memory = new Memory(ensemble, { dimensions: dimensions(32) });
   const extension = memoryExtension({ memory, models, load: async (d) => (loaded.push(d.id), { embedder: new HashEmbedder(64) }) });
   return { ensemble, offered, loaded, memory, extension };
 }
@@ -51,7 +51,7 @@ describe("memory as a cognitive-core extension", () => {
 });
 
 describe("memory's embedding size", () => {
-  const embedder = (dimensions: number[]) => ({ ...models[0]!, embedding: { ...models[0]!.embedding!, dimensions } }) as ModelDescriptor;
+  const embedder = (sizes: number[]) => ({ ...models[0]!, embedding: { ...models[0]!.embedding!, dimensions: sizes.map(dimensions) } }) as ModelDescriptor;
 
   it("MX2.1 is the largest size every embedding model produces, so any of them can serve the index", () => {
     expect(sharedEmbeddingSize([embedder([768, 512, 256])])).toBe(768);

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { CognitiveError, Ensemble, mirrorCapabilities } from "@harness/cognitive";
+import { bytes, CognitiveError, dimensions, Ensemble, mirrorCapabilities, probability } from "@harness/cognitive";
 import type { BenchmarkResult, Embedder, GenerationEvent, Generator, Judge, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
 
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
-  return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native", "browser"], license: "MIT", downloadBytes: 1, benchmarks: [], ...extra } as ModelDescriptor;
+  return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native", "browser"], license: "MIT", downloadBytes: bytes(1), benchmarks: [], ...extra } as ModelDescriptor;
 }
 const win = (benchmark: string, score: number, task: TaskCategory = "text-embedding"): BenchmarkResult => ({ benchmark, task, metric: "m", score, higherIsBetter: true });
 
-const embedder = (tag: number): Embedder => ({ dimensions: 1, embed: async (inputs) => inputs.map(() => new Float32Array([tag])) });
-const judge: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: 0.9 } }) };
+const embedder = (tag: number): Embedder => ({ dimensions: dimensions(1), embed: async (inputs) => inputs.map(() => new Float32Array([tag])) });
+const judge: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: probability(0.9) } }) };
 const generator = (text: string): Generator => ({
   async *generate(): AsyncIterable<GenerationEvent> {
     yield { type: "text", text };
@@ -119,12 +119,12 @@ describe("Ensemble", () => {
     const e = new Ensemble({ platform: "native" });
     e.register(descriptor("judge-a", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge }));
     e.register(descriptor("router-a", ["tool-calling"], ["router"]), async () => ({
-      router: { route: async (r) => ({ calls: [{ name: r.tools[0]!.name, arguments: {} }], confidence: 1, reasoning: "" }) },
+      router: { route: async (r) => ({ calls: [{ name: r.tools[0]!.name, arguments: {} }], confidence: probability(1), reasoning: "" }) },
     }));
     e.register(descriptor("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
       compressor: { compress: async (r) => ({ text: r.text.slice(0, 2), originalTokens: 4, compressedTokens: 2 }) },
     }));
-    expect(await e.judge({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ ok: { type: "boolean", probability: 0.9 } });
+    expect(await e.judge({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ ok: { type: "boolean", probability: probability(0.9) } });
     expect((await e.route({ input: "go", tools: [{ name: "t", description: "", parameters: {} }] })).calls).toEqual([{ name: "t", arguments: {} }]);
     expect((await e.compress({ text: "abcd", rate: 0.5 })).text).toBe("ab");
     expect(e.candidates("judgment").map((c) => c.id)).toEqual(["judge-a"]);
@@ -239,7 +239,7 @@ describe("extensions", () => {
 
 describe("failover on calls", () => {
   const failing = (error: unknown): Judge => ({ evaluate: async () => Promise.reject(error) });
-  const answering: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: 0.9 } }) };
+  const answering: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: probability(0.9) } }) };
   const request = { state: "s", questions: { ok: { type: "boolean" as const, instructions: "?" } } };
   const setup = (first: Judge) => {
     const e = new Ensemble({ platform: "native", preferences: { judgment: ["judge-a", "judge-b"] } });
@@ -251,7 +251,7 @@ describe("failover on calls", () => {
   it("EN3.1 a member whose service is unavailable (out of budget, unauthorized, down) is taken out and the next one answers", async () => {
     for (const error of [Object.assign(new Error("Payment Required"), { statusCode: 402 }), Object.assign(new Error("fetch failed"), { isRetryable: true }), Object.assign(new Error("Bad Gateway"), { statusCode: 502 })]) {
       const e = setup(failing(error));
-      expect(await e.judge(request)).toEqual({ ok: { type: "boolean", probability: 0.9 } });
+      expect(await e.judge(request)).toEqual({ ok: { type: "boolean", probability: probability(0.9) } });
       expect(e.members().find((m) => m.id === "judge-a")).toMatchObject({ state: "failed", reason: error.message });
     }
   });

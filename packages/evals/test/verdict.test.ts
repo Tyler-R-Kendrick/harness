@@ -1,32 +1,33 @@
 import { describe, expect, it } from "vitest";
+import { probability } from "@harness/cognitive";
 import { caseVerdict, questionVerdict } from "@harness/evals";
 
 describe("questionVerdict", () => {
   it("EV2.1 expecting yes: pass at >= .8, fail at <= .5, inconclusive between", () => {
     const e = { type: "boolean" as const, expect: true };
-    expect(questionVerdict(e, { type: "boolean", probability: 0.8 })).toBe("passed");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.79 })).toBe("inconclusive");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.51 })).toBe("inconclusive");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.5 })).toBe("failed");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.8) })).toBe("passed");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.79) })).toBe("inconclusive");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.51) })).toBe("inconclusive");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.5) })).toBe("failed");
   });
 
   it("EV2.2 expecting no mirrors the thresholds", () => {
     const e = { type: "boolean" as const, expect: false };
-    expect(questionVerdict(e, { type: "boolean", probability: 0.2 })).toBe("passed");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.3 })).toBe("inconclusive");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.5 })).toBe("failed");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.2) })).toBe("passed");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.3) })).toBe("inconclusive");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.5) })).toBe("failed");
   });
 
   it("EV2.3 custom thresholds are honoured", () => {
     const e = { type: "boolean" as const, expect: true, pass: 0.95, fail: 0.7 };
-    expect(questionVerdict(e, { type: "boolean", probability: 0.9 })).toBe("inconclusive");
-    expect(questionVerdict(e, { type: "boolean", probability: 0.7 })).toBe("failed");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.9) })).toBe("inconclusive");
+    expect(questionVerdict(e, { type: "boolean", probability: probability(0.7) })).toBe("failed");
   });
 
   it("EV2.4 choice passes on the expected option with enough probability", () => {
     const e = { type: "choice" as const, expect: "billing" };
-    expect(questionVerdict(e, { type: "choice", choice: "billing", probabilities: { billing: 0.9, tech: 0.1 } })).toBe("passed");
-    expect(questionVerdict(e, { type: "choice", choice: "billing", probabilities: { billing: 0.55, tech: 0.45 } })).toBe("inconclusive");
+    expect(questionVerdict(e, { type: "choice", choice: "billing", probabilities: { billing: probability(0.9), tech: probability(0.1) } })).toBe("passed");
+    expect(questionVerdict(e, { type: "choice", choice: "billing", probabilities: { billing: probability(0.55), tech: probability(0.45) } })).toBe("inconclusive");
     expect(questionVerdict(e, { type: "choice", choice: "billing" })).toBe("passed");
     expect(questionVerdict(e, { type: "choice", choice: "tech" })).toBe("failed");
   });

@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { dimensions } from "@harness/cognitive";
 import { Memory } from "@harness/memory";
-import type { EmbedInput } from "@harness/cognitive";
+import type { Dimensions, EmbedInput } from "@harness/cognitive";
 import { HashEmbedder } from "@harness/testkit";
 
 /** Word-hash vectors: texts that share words are near each other. Records what it was asked. */
 function embedder() {
   const inner = new HashEmbedder(64);
-  const calls: { inputs: EmbedInput[]; dimensions: number | undefined }[] = [];
+  const calls: { inputs: EmbedInput[]; dimensions: Dimensions | undefined }[] = [];
   return {
     calls,
-    embed: (inputs: readonly EmbedInput[], options: { readonly dimensions?: number } = {}) => {
+    embed: (inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}) => {
       calls.push({ inputs: [...inputs], dimensions: options.dimensions });
       return inner.embed(inputs, options);
     },
@@ -19,7 +20,7 @@ function embedder() {
 describe("memory", () => {
   it("ME1.1 remembers text as documents and recalls the nearest by meaning, best first, for a query", async () => {
     const e = embedder();
-    const memory = new Memory(e, { dimensions: 32 });
+    const memory = new Memory(e, { dimensions: dimensions(32) });
     const ids = await memory.remember([{ text: "the deploy key lives in the vault" }, { text: "bananas are rich in potassium" }, { text: "rotate the vault deploy key monthly" }]);
     expect(ids).toEqual(["m1", "m2", "m3"]);
     expect(memory.size).toBe(3);
@@ -33,7 +34,7 @@ describe("memory", () => {
   });
 
   it("ME1.2 recall keeps to a session, or leaves one out, and honours the limit and the score floor", async () => {
-    const memory = new Memory(embedder(), { dimensions: 32 });
+    const memory = new Memory(embedder(), { dimensions: dimensions(32) });
     await memory.remember([
       { text: "alpha project uses postgres", sessionId: "s1", kind: "user" },
       { text: "alpha project deploys on fridays", sessionId: "s2", kind: "assistant" },
@@ -51,20 +52,20 @@ describe("memory", () => {
 
   it("ME1.3 memory saves to JSON and restores exactly; a saved memory from another setup is refused", async () => {
     const e = embedder();
-    const memory = new Memory(e, { dimensions: 32 });
+    const memory = new Memory(e, { dimensions: dimensions(32) });
     await memory.remember([{ text: "the vault key rotates monthly", sessionId: "s1" }]);
     const saved = JSON.parse(JSON.stringify(memory.save()));
-    const restored = new Memory(e, { dimensions: 32, saved });
+    const restored = new Memory(e, { dimensions: dimensions(32), saved });
     expect(restored.size).toBe(1);
     expect(await restored.recall("vault key", { minScore: 0.1 })).toEqual(await memory.recall("vault key", { minScore: 0.1 }));
     expect(await restored.remember([{ text: "next" }])).toEqual(["m2"]);
-    expect(() => new Memory(e, { dimensions: 64, saved })).toThrow(/32.*64|dimensions/);
-    expect(() => new Memory(e, { dimensions: 32, saved: { format: "other" } })).toThrow(/memory/);
+    expect(() => new Memory(e, { dimensions: dimensions(64), saved })).toThrow(/32.*64|dimensions/);
+    expect(() => new Memory(e, { dimensions: dimensions(32), saved: { format: "other" } })).toThrow(/memory/);
   });
 
   it("ME1.4 every change is announced, so the host can persist it", async () => {
     const saves: number[] = [];
-    const memory = new Memory(embedder(), { dimensions: 32, onChange: (m) => saves.push(m.size) });
+    const memory = new Memory(embedder(), { dimensions: dimensions(32), onChange: (m) => saves.push(m.size) });
     await memory.remember([{ text: "one" }]);
     await memory.remember([{ text: "two" }, { text: "three" }]);
     await memory.recall("one");
@@ -73,19 +74,19 @@ describe("memory", () => {
 
   it("ME1.5 forgotten items are gone, their ids are never reused, and forgetting is announced", async () => {
     const saves: number[] = [];
-    const memory = new Memory(embedder(), { dimensions: 32, onChange: (m) => saves.push(m.size) });
+    const memory = new Memory(embedder(), { dimensions: dimensions(32), onChange: (m) => saves.push(m.size) });
     await memory.remember([{ text: "the vault key rotates monthly" }, { text: "bananas are yellow" }]);
     await memory.forget(["m1", "m9"]);
     expect(memory.size).toBe(1);
     expect(await memory.recall("vault key", { minScore: 0.3 })).toEqual([]);
     expect(await memory.remember([{ text: "next" }])).toEqual(["m3"]);
     expect(saves).toEqual([2, 1, 2]);
-    const restored = new Memory(embedder(), { dimensions: 32, saved: JSON.parse(JSON.stringify(memory.save())) });
+    const restored = new Memory(embedder(), { dimensions: dimensions(32), saved: JSON.parse(JSON.stringify(memory.save())) });
     expect(await restored.remember([{ text: "after restore" }])).toEqual(["m4"]);
   });
 
   it("ME1.6 recall can keep to some kinds of item", async () => {
-    const memory = new Memory(embedder(), { dimensions: 32 });
+    const memory = new Memory(embedder(), { dimensions: dimensions(32) });
     await memory.remember([{ text: "alpha lesson", kind: "lesson" }, { text: "alpha note", kind: "note" }, { text: "alpha plain" }]);
     expect((await memory.recall("alpha", { minScore: 0, kinds: ["lesson"] })).map((h) => h.id)).toEqual(["m1"]);
     expect((await memory.recall("alpha", { minScore: 0, kinds: ["lesson", "note"], sessionId: "none" }))).toEqual([]);

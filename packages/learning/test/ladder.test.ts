@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { probability } from "@harness/cognitive";
 import { Learning, planTask, Plugins, TARGETS } from "@harness/learning";
 import type { Materializer, Teacher } from "@harness/learning";
 import type { JudgeQuestion, ToolSpec } from "@harness/cognitive";
@@ -7,7 +8,7 @@ import { settings, setup } from "./helpers.ts";
 const weather: ToolSpec = { name: "get_weather", description: "current weather for a city", parameters: {} };
 /** The judge's probability per ladder question (matched by the settings' wording). */
 const judging = (native: number, build: number) => (_: string, q: JudgeQuestion) =>
-  q.type === "boolean" ? { type: "boolean" as const, probability: q.instructions === settings.ladder.native.question ? native : build } : undefined;
+  q.type === "boolean" ? { type: "boolean" as const, probability: probability(q.instructions === settings.ladder.native.question ? native : build) } : undefined;
 const builder = (tool?: ToolSpec): Materializer & { inputs: unknown[] } => {
   const inputs: unknown[] = [];
   return {
@@ -115,7 +116,7 @@ describe("the capability ladder", () => {
     const s = setup({ judge: judging(0.1, 0) });
     const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
     const seen: number[] = [];
-    const reasoner = { ...s.ensemble, judge: s.ensemble.judge.bind(s.ensemble), generate: s.ensemble.generate.bind(s.ensemble), route: async (r: { tools: readonly ToolSpec[] }) => (seen.push(r.tools.length), { calls: [{ name: "get_weather", arguments: {} }], confidence: 0.59, reasoning: "" }) };
+    const reasoner = { ...s.ensemble, judge: s.ensemble.judge.bind(s.ensemble), generate: s.ensemble.generate.bind(s.ensemble), route: async (r: { tools: readonly ToolSpec[] }) => (seen.push(r.tools.length), { calls: [{ name: "get_weather", arguments: {} }], confidence: probability(0.59), reasoning: "" }) };
     const plan = await planTask({ learning, reasoner, plugins: new Plugins(), discover: async () => [weather] }, { task: "weather", tools: [weather] });
     expect(seen).toEqual([1]);
     expect(plan.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "confidence 0.59 < 0.6" });

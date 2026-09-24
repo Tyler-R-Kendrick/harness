@@ -1,4 +1,5 @@
-import type { Embedder, EmbedInput, RouteRequest, Routing, ToolRouter } from "@harness/cognitive";
+import { dimensions, ProbabilitySchema } from "@harness/cognitive";
+import type { Dimensions, Embedder, EmbedInput, RouteRequest, Routing, ToolRouter } from "@harness/cognitive";
 
 /** The parts of a Cactus Emscripten module the engine uses; the C API is reached by name through ccall. */
 export interface CactusModule {
@@ -32,14 +33,14 @@ export class CactusWasmEngine implements ToolRouter, Embedder {
   readonly #m: CactusModule;
   readonly #api: (name: string) => string;
   readonly #out: number;
-  readonly dimensions: number;
+  readonly dimensions: Dimensions;
   #tools: string | undefined;
 
   private constructor(m: CactusModule, prefix: string) {
     this.#m = m;
     this.#api = (name) => `${prefix}_${name}`;
     this.#out = m._malloc(OUT_CAPACITY);
-    this.dimensions = m.ccall(this.#api("embed"), "number", ["string", "number", "number"], ["", 0, 0]);
+    this.dimensions = dimensions(m.ccall(this.#api("embed"), "number", ["string", "number", "number"], ["", 0, 0]));
   }
 
   static async create(module: CactusModule, weights: Uint8Array, prefix: string): Promise<CactusWasmEngine> {
@@ -54,7 +55,7 @@ export class CactusWasmEngine implements ToolRouter, Embedder {
   }
 
   async route(request: RouteRequest): Promise<Routing> {
-    if (request.tools.length === 0) return { calls: [], confidence: 1, reasoning: "no tools offered" };
+    if (request.tools.length === 0) return { calls: [], confidence: ProbabilitySchema.parse(1), reasoning: "no tools offered" };
     const tools = JSON.stringify(request.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })));
     if (tools !== this.#tools) {
       const status = this.#m.ccall(this.#api("init"), "number", ["string", "string", "string"], ["", tools, ""]);
@@ -87,12 +88,12 @@ export class CactusWasmEngine implements ToolRouter, Embedder {
 function parseReply(text: string): Routing {
   const reply = JSON.parse(text) as CactusReply;
   if (reply.success !== true) throw new Error(`the model could not route: ${typeof reply.error === "string" ? reply.error : text}`);
-  const confidence = reply.confidence;
-  if (typeof confidence !== "number" || !(confidence >= 0 && confidence <= 1)) throw new Error(`the model returned an invalid confidence: ${String(confidence)}`);
+  const confidence = ProbabilitySchema.safeParse(reply.confidence);
+  if (!confidence.success) throw new Error(`the model returned an invalid confidence: ${String(reply.confidence)}`);
   const calls = Array.isArray(reply.function_calls) ? reply.function_calls : [];
   return {
     calls: calls.map((c: { name: string; arguments?: Record<string, unknown> }) => ({ name: c.name, arguments: c.arguments ?? {} })),
-    confidence,
+    confidence: confidence.data,
     reasoning: typeof reply.reasoning === "string" ? reply.reasoning : "",
   };
 }

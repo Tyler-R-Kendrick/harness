@@ -2,17 +2,31 @@ import type { ToolCall } from "./chat-format.ts";
 import { CognitiveError } from "./ensemble.ts";
 import type { Ensemble } from "./ensemble.ts";
 import type { Routing, ToolSpec } from "./ports.ts";
+import { z } from "zod";
+import { probability, ProbabilitySchema } from "./units.ts";
+import type { Probability } from "./units.ts";
 
-export interface CascadePolicy {
-  /** Router confidence at or above which its calls are taken without checking. */
-  readonly act: number;
-  /** Router confidence at or above which the judge is asked; below it, escalate. */
-  readonly verify: number;
-  /** Judge probability at or above which a verified routing is accepted. */
-  readonly accept: number;
+export const CascadePolicySchema = z
+  .object({
+    /** Router confidence at or above which its calls are taken without checking. */
+    act: ProbabilitySchema,
+    /** Router confidence at or above which the judge is asked; below it, escalate. */
+    verify: ProbabilitySchema,
+    /** Judge probability at or above which a verified routing is accepted. */
+    accept: ProbabilitySchema,
+  })
+  .refine((p) => p.verify <= p.act, "verify must not be above act")
+  .brand<"CascadePolicy">();
+/** Cascade thresholds: probabilities with verify <= act, made only by cascadePolicy(). */
+export type CascadePolicy = z.output<typeof CascadePolicySchema>;
+
+export function cascadePolicy(thresholds: { readonly act: number; readonly verify: number; readonly accept: number }): CascadePolicy {
+  const result = CascadePolicySchema.safeParse(thresholds);
+  if (!result.success) throw new RangeError(`invalid cascade thresholds ${JSON.stringify(thresholds)}\n${z.prettifyError(result.error)}`);
+  return result.data;
 }
 
-export const DEFAULT_CASCADE: CascadePolicy = { act: 0.9, verify: 0.5, accept: 0.8 };
+export const DEFAULT_CASCADE: CascadePolicy = cascadePolicy({ act: 0.9, verify: 0.5, accept: 0.8 });
 
 export interface CascadeStep {
   readonly step: "route" | "verify" | "escalate";
@@ -24,7 +38,7 @@ export interface ToolDecision {
   readonly calls: readonly ToolCall[];
   readonly decidedBy: "router" | "router+judge" | "generator";
   /** Router confidence or judge probability behind the decision; absent for the generator. */
-  readonly confidence?: number;
+  readonly confidence?: Probability;
   /** Set when the decision could not be checked because no stronger model was available. */
   readonly unverified?: true;
   readonly trace: readonly CascadeStep[];
@@ -60,10 +74,6 @@ export async function decideToolCalls(
   request: { readonly input: string; readonly tools: readonly ToolSpec[] },
   policy: CascadePolicy = DEFAULT_CASCADE,
 ): Promise<ToolDecision> {
-  const inRange = (x: number) => x >= 0 && x <= 1;
-  if (!(inRange(policy.verify) && inRange(policy.act) && inRange(policy.accept) && policy.verify <= policy.act)) {
-    throw new Error(`cascade thresholds must be probabilities with verify <= act: ${JSON.stringify(policy)}`);
-  }
   const trace: CascadeStep[] = [];
   let routing: Routing | undefined;
   let valid = false;
@@ -92,7 +102,7 @@ export async function decideToolCalls(
           },
         });
         const answer = answers["correct"];
-        const p = answer?.type === "boolean" ? answer.probability : 0;
+        const p = answer?.type === "boolean" ? answer.probability : probability(0);
         trace.push({ step: "verify", member: judge.id, outcome: `p=${p}` });
         if (p >= policy.accept) return { calls: routing.calls, decidedBy: "router+judge", confidence: p, trace };
       }

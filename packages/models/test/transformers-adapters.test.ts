@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { dimensions } from "@harness/cognitive";
 import { PromptedEmbedder, TokenClassifierCompressor, VisionChatDocumentParser, VisionChatGenerator } from "@harness/models";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "@harness/models";
 import type { CompressionConfig, EmbeddingConfig, GenerationEvent } from "@harness/cognitive";
@@ -11,7 +12,7 @@ async function collect(stream: AsyncIterable<GenerationEvent>): Promise<Generati
 }
 
 /** An embedding model's catalog settings: prompts per input kind and the sizes it truncates to. */
-const EMBEDDING: EmbeddingConfig = { query: "Q({task}) {text}", document: "D({title}) {text}", defaults: { task: "search", title: "none" }, dimensions: [96, 64, 32] };
+const EMBEDDING: EmbeddingConfig = { query: "Q({task}) {text}", document: "D({title}) {text}", defaults: { task: "search", title: "none" }, dimensions: [96, 64, 32].map(dimensions) };
 
 class RecordingEmbeddingBackend implements EmbeddingBackend {
   readonly batches: string[][] = [];
@@ -43,10 +44,10 @@ describe("prompted embedder", () => {
 
   it("EA1.2 truncates to a Matryoshka size and rejects sizes the model was not trained for", async () => {
     const e = new PromptedEmbedder(new RecordingEmbeddingBackend(), EMBEDDING);
-    const [v] = await e.embed([{ kind: "document", text: "hello" }], { dimensions: 32 });
+    const [v] = await e.embed([{ kind: "document", text: "hello" }], { dimensions: dimensions(32) });
     expect(v!.length).toBe(32);
     expect(Math.hypot(...v!)).toBeCloseTo(1, 5);
-    await expect(e.embed([{ kind: "document", text: "hello" }], { dimensions: 50 })).rejects.toThrow("the model embeds in 96, 64, 32 dimensions, not 50");
+    await expect(e.embed([{ kind: "document", text: "hello" }], { dimensions: dimensions(50) })).rejects.toThrow("the model embeds in 96, 64, 32 dimensions, not 50");
   });
 });
 

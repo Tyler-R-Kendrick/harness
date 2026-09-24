@@ -20,7 +20,7 @@ describe("learning settings (data/settings.json)", () => {
       return () => parseSettings(s);
     };
     expect(edit(["ladder", "native", "threshold"], 1.5)).toThrow(/ladder\.native\.threshold/);
-    expect(edit(["curation", "duplicate"], -0.1)).toThrow(/curation\.duplicate/);
+    expect(edit(["curation", "duplicate"], 1.5)).toThrow(/curation\.duplicate/);
     expect(edit(["reflection", "system"], "")).toThrow(/reflection\.system/);
     expect(edit(["recall", "extra"], 1)).toThrow(/extra/);
   });

@@ -1,9 +1,9 @@
 import { fc, test } from "@fast-check/vitest";
 import { describe, expect } from "vitest";
-import { rankForTask } from "@harness/cognitive";
+import { bytes, rankForTask } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 
-const descriptor = (id: string, scores: readonly (number | null)[], bytes: number): ModelDescriptor => ({
+const descriptor = (id: string, scores: readonly (number | null)[], size: number): ModelDescriptor => ({
   id,
   name: id,
   publisher: "p",
@@ -14,7 +14,7 @@ const descriptor = (id: string, scores: readonly (number | null)[], bytes: numbe
   run: { dtype: "q4" },
   platforms: ["native"],
   license: "MIT",
-  downloadBytes: bytes,
+  downloadBytes: bytes(size),
   benchmarks: scores.flatMap((s, i) =>
     s === null ? [] : [{ benchmark: `B${i}`, task: "chat" as const, metric: "acc", score: s, higherIsBetter: true }],
   ),

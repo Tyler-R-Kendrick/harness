@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { bytes, commitSha, sha256 } from "@harness/cognitive";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +9,7 @@ import { ModelFiles } from "@harness/platform-native";
 
 const body = new TextEncoder().encode("gguf-weights-".repeat(1000));
 const sha = createHash("sha256").update(body).digest("hex");
-const artifact: Artifact = { repo: "org/m-GGUF", revision: "b".repeat(40), files: [{ path: "m.gguf", bytes: body.length, sha256: sha }] };
+const artifact: Artifact = { repo: "org/m-GGUF", revision: commitSha("b".repeat(40)), files: [{ path: "m.gguf", bytes: bytes(body.length), sha256: sha256(sha) }] };
 
 function streamingFetch(bytes: Uint8Array, status = 200) {
   const urls: string[] = [];
@@ -67,7 +68,7 @@ describe("native model files (streamed to disk)", () => {
     const dir = await tempDir();
     const files = new ModelFiles({ dir, fetch: streamingFetch(body).f });
     const kept = await files.path(artifact, "m.gguf");
-    const other: Artifact = { repo: "org/other-GGUF", revision: "c".repeat(40), files: [{ path: "o.gguf", bytes: body.length, sha256: sha }] };
+    const other: Artifact = { repo: "org/other-GGUF", revision: commitSha("c".repeat(40)), files: [{ path: "o.gguf", bytes: bytes(body.length), sha256: sha256(sha) }] };
     const bad = new Uint8Array(body);
     bad[0] = 1;
     await expect(new ModelFiles({ dir, fetch: streamingFetch(bad).f }).path(other, "o.gguf")).rejects.toThrow(/sha256/);

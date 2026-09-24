@@ -1,7 +1,12 @@
 import { count, create, insertMultiple, load, removeMultiple, save, search } from "@orama/orama";
 import type { RawData } from "@orama/orama";
 import { z } from "zod";
-import type { Embedder } from "@harness/cognitive";
+import { DimensionsSchema } from "@harness/cognitive";
+import type { Dimensions, Embedder } from "@harness/cognitive";
+
+/** Memory item ids: "m" and a number that is never reused. */
+export const MemoryIdSchema = z.templateLiteral(["m", z.int().positive()]);
+export type MemoryId = z.output<typeof MemoryIdSchema>;
 
 /**
  * Memory the cognitive core can keep and search by meaning: text is embedded as a
@@ -10,7 +15,7 @@ import type { Embedder } from "@harness/cognitive";
  */
 export interface MemoryOptions {
   /** Embedding size of the index; every embedder that serves memory must produce it (see sharedEmbeddingSize). */
-  readonly dimensions: number;
+  readonly dimensions: Dimensions;
   /** A previous `save()`, to continue from. */
   readonly saved?: unknown;
   /** Called after every change, e.g. to persist `save()`. */
@@ -30,7 +35,7 @@ export interface RecallOptions {
 }
 
 export interface Recollection {
-  readonly id: string;
+  readonly id: MemoryId;
   readonly text: string;
   readonly score: number;
   readonly sessionId?: string;
@@ -38,14 +43,14 @@ export interface Recollection {
 }
 
 const FORMAT = "harness.memory/v1";
-const Saved = z.object({ format: z.literal(FORMAT), dimensions: z.int().positive(), next: z.int().positive(), index: z.custom<RawData>((v) => typeof v === "object" && v !== null) });
+const Saved = z.object({ format: z.literal(FORMAT), dimensions: DimensionsSchema, next: z.int().positive(), index: z.custom<RawData>((v) => typeof v === "object" && v !== null) });
 
 const index = (dimensions: number) =>
   create({ schema: { text: "string", sessionId: "enum", kind: "enum", embedding: `vector[${dimensions}]` as "vector[1]" } as const });
 
 export class Memory {
   readonly #embedder: Pick<Embedder, "embed">;
-  readonly #dimensions: number;
+  readonly #dimensions: Dimensions;
   readonly #index: ReturnType<typeof index>;
   readonly #onChange: ((memory: Memory) => void) | undefined;
   /** The next id's number: ids are never reused, even after forgetting. */
@@ -69,20 +74,20 @@ export class Memory {
     return count(this.#index);
   }
 
-  async remember(items: readonly { readonly text: string; readonly sessionId?: string; readonly kind?: string }[]): Promise<string[]> {
+  async remember(items: readonly { readonly text: string; readonly sessionId?: string; readonly kind?: string }[]): Promise<MemoryId[]> {
     const vectors = await this.#embedder.embed(
       items.map((item) => ({ kind: "document", text: item.text })),
       { dimensions: this.#dimensions },
     );
-    const docs = items.map((item, i) => ({ ...item, id: `m${this.#next + i}`, embedding: Array.from(vectors[i]!) }));
+    const docs = items.map((item, i) => ({ ...item, id: `m${this.#next + i}` as const, embedding: Array.from(vectors[i]!) }));
     this.#next += items.length;
-    const ids = await insertMultiple(this.#index, docs);
+    await insertMultiple(this.#index, docs);
     this.#onChange?.(this);
-    return ids;
+    return docs.map((d) => d.id);
   }
 
   /** Remove items by id; ids that are not there are ignored. */
-  async forget(ids: readonly string[]): Promise<void> {
+  async forget(ids: readonly MemoryId[]): Promise<void> {
     await removeMultiple(this.#index, [...ids]);
     this.#onChange?.(this);
   }
@@ -99,7 +104,7 @@ export class Memory {
       includeVectors: false,
       ...(Object.keys(where).length > 0 ? { where } : {}),
     });
-    return found.hits.map(({ id, score, document: d }) => ({ id, text: d.text, score, ...(d.sessionId ? { sessionId: String(d.sessionId) } : {}), ...(d.kind ? { kind: String(d.kind) } : {}) }));
+    return found.hits.map(({ id, score, document: d }) => ({ id: MemoryIdSchema.parse(id), text: d.text, score, ...(d.sessionId ? { sessionId: String(d.sessionId) } : {}), ...(d.kind ? { kind: String(d.kind) } : {}) }));
   }
 
   save(): unknown {
