@@ -37,7 +37,7 @@ describe("eval suites", () => {
     }
   });
 
-  it("EV7.4 the harness suite needs no model besides the Jev judge: subjects are deterministic daemon runs", async () => {
+  it("EV7.4 the harness suite needs no model besides the judge: subjects are deterministic daemon runs", async () => {
     for (const c of harnessSuite) expect(await c.subject(), c.id).toEqual(await c.subject());
     const roundtrip = harnessSuite.find((c) => c.id === "harness.prompt-roundtrip")!;
     expect(await roundtrip.subject()).toMatchObject({ reply: expect.stringContaining("Summarize the release notes"), stopReason: "end_turn" });
@@ -52,11 +52,11 @@ describe("eval suites", () => {
   });
 
   it("EV8.1 cognitive cases run real ensemble work and expose every field their questions reference", async () => {
-    const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
+    const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
     const ensemble = new Ensemble({ platform: "native" });
     ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
     ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: 32 }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: new HashEmbedder(64) }) }));
-    ensemble.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
+    ensemble.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
     ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
     ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({
       generator: {

@@ -7,7 +7,7 @@ export interface LlamaServerStart {
   /** Path to llama.cpp's llama-server binary. */
   readonly binary: string;
   readonly model: string;
-  /** Multimodal projector, for vision models such as OvisOCR2. */
+  /** Multimodal projector, for vision models. */
   readonly mmproj?: string;
   readonly contextSize?: number;
   readonly args?: readonly string[];

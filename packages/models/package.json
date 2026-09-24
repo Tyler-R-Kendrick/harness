@@ -2,7 +2,7 @@
   "name": "@harness/models",
   "version": "0.0.0",
   "private": true,
-  "description": "Model adapters for the cognitive core: Jev (hosted), Needle 3 (WASM), transformers.js models (EmbeddingGemma, LLMLingua-2, Qwen3.5, LightOnOCR-2) and llama.cpp-served models (Ornith, OvisOCR2).",
+  "description": "Model adapters for the cognitive core, by category and runtime: evaluation judges (AI Gateway, TypeSafe API), a Cactus WASM tool router, transformers.js embedders, compressors and vision chat models, llama.cpp-served models and a steerable ONNX kernel.",
   "license": "MIT",
   "type": "module",
   "exports": {

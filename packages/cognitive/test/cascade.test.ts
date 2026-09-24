@@ -8,18 +8,18 @@ const tools: ToolSpec[] = [
 ];
 
 function d(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], locality: ModelDescriptor["locality"] = "local"): ModelDescriptor {
-  return { id, name: id, publisher: "t", tasks, ports, locality, runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
+  return { id, name: id, publisher: "t", tasks, ports, locality, runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
 }
 
 function setup(options: { routing?: Routing; judgeP?: number; judgeAnswer?: JudgeAnswer | null; generated?: string | null; alsoGenerate?: ToolCall }) {
   const calls = { route: 0, judge: [] as JudgeRequest[], generate: 0, requests: [] as GenerateRequest[] };
   const e = new Ensemble({ platform: "native" });
   if (options.routing)
-    e.register(d("needle", ["tool-calling"], ["router"]), async () => ({
+    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({
       router: { route: async () => (calls.route++, options.routing!) },
     }));
   if (options.judgeP !== undefined || options.judgeAnswer !== undefined)
-    e.register(d("jev", ["judgment"], ["judge"], "hosted"), async () => ({
+    e.register(d("judge-a", ["judgment"], ["judge"], "hosted"), async () => ({
       judge: {
         evaluate: async (r) => {
           calls.judge.push(r);
@@ -30,7 +30,7 @@ function setup(options: { routing?: Routing; judgeP?: number; judgeAnswer?: Judg
     }));
   if (options.generated !== undefined && options.generated !== null) {
     const raw = options.generated;
-    e.register(d("ornith", ["tool-calling", "chat"], ["generator"]), async () => ({
+    e.register(d("generator-a", ["tool-calling", "chat"], ["generator"]), async () => ({
       generator: {
         async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
           calls.generate++;
@@ -122,23 +122,23 @@ describe("tool-call cascade: router, then judge, then generator", () => {
   });
 
   it("CA2.1 the trace records each step exactly: who answered, with what confidence, and why it moved on", async () => {
-    expect((await decideToolCalls(setup({ routing: weather }).e, { input: "x", tools })).trace).toEqual([{ step: "route", member: "needle", outcome: "confidence 0.97" }]);
+    expect((await decideToolCalls(setup({ routing: weather }).e, { input: "x", tools })).trace).toEqual([{ step: "route", member: "router-a", outcome: "confidence 0.97" }]);
     expect((await decideToolCalls(setup({ routing: { ...weather, confidence: 0.7 }, judgeP: 0.92 }).e, { input: "x", tools })).trace).toEqual([
-      { step: "route", member: "needle", outcome: "confidence 0.7" },
-      { step: "verify", member: "jev", outcome: "p=0.92" },
+      { step: "route", member: "router-a", outcome: "confidence 0.7" },
+      { step: "verify", member: "judge-a", outcome: "p=0.92" },
     ]);
     const unknown = await decideToolCalls(setup({ routing: { calls: [{ name: "launch_rocket", arguments: {} }], confidence: 1, reasoning: "" }, generated: "" }).e, { input: "x", tools });
-    expect(unknown.trace[0]).toEqual({ step: "route", member: "needle", outcome: "invalid: unknown tool launch_rocket" });
+    expect(unknown.trace[0]).toEqual({ step: "route", member: "router-a", outcome: "invalid: unknown tool launch_rocket" });
     const missing = await decideToolCalls(setup({ routing: { calls: [{ name: "get_weather", arguments: {} }], confidence: 1, reasoning: "" }, generated: "" }).e, { input: "x", tools });
-    expect(missing.trace[0]).toEqual({ step: "route", member: "needle", outcome: "invalid: get_weather is missing city" });
+    expect(missing.trace[0]).toEqual({ step: "route", member: "router-a", outcome: "invalid: get_weather is missing city" });
     expect((await decideToolCalls(setup({ generated: "" }).e, { input: "x", tools })).trace).toEqual([
       { step: "route", outcome: "no router available" },
-      { step: "escalate", member: "ornith", outcome: "1 call(s)" },
+      { step: "escalate", member: "generator-a", outcome: "1 call(s)" },
     ]);
     expect((await decideToolCalls(setup({ routing: { ...weather, confidence: 0.7 }, generated: "" }).e, { input: "x", tools })).trace).toEqual([
-      { step: "route", member: "needle", outcome: "confidence 0.7" },
+      { step: "route", member: "router-a", outcome: "confidence 0.7" },
       { step: "verify", outcome: "no judge available" },
-      { step: "escalate", member: "ornith", outcome: "1 call(s)" },
+      { step: "escalate", member: "generator-a", outcome: "1 call(s)" },
     ]);
   });
 
@@ -146,7 +146,7 @@ describe("tool-call cascade: router, then judge, then generator", () => {
     const { e, calls } = setup({ generated: "", alsoGenerate: { name: "launch_rocket", arguments: {} } });
     const decision = await decideToolCalls(e, { input: "5 minute timer", tools });
     expect(decision.calls).toEqual([{ name: "set_timer", arguments: { minutes: 5 } }]);
-    expect(decision.trace.at(-1)).toEqual({ step: "escalate", member: "ornith", outcome: "1 call(s), 1 invalid dropped" });
+    expect(decision.trace.at(-1)).toEqual({ step: "escalate", member: "generator-a", outcome: "1 call(s), 1 invalid dropped" });
     expect(calls.requests[0]).toEqual({
       messages: [
         { role: "system", content: "Call the tools that fulfil the user's request. Call nothing if no tool applies." },
@@ -171,7 +171,7 @@ describe("tool-call cascade: router, then judge, then generator", () => {
     for (const judgeAnswer of [{ type: "score" as const, score: 1 }, null]) {
       const decision = await decideToolCalls(setup({ routing: { ...weather, confidence: 0.7 }, judgeAnswer, generated: "" }).e, { input: "x", tools });
       expect(decision.decidedBy).toBe("generator");
-      expect(decision.trace[1]).toEqual({ step: "verify", member: "jev", outcome: "p=0" });
+      expect(decision.trace[1]).toEqual({ step: "verify", member: "judge-a", outcome: "p=0" });
     }
   });
 

@@ -19,9 +19,9 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
-| `packages/models` | model adapters: Jev, Needle 3 (WASM), transformers.js models, llama-server models | portable |
+| `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
 | `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, CLI | host |
-| `packages/evals` | eval runner; Jev (`typesafe-ai/jev` via Vercel AI Gateway) as judge | host |
+| `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable
 exports, SAE rows); nothing in `packages/` imports it.
@@ -52,8 +52,9 @@ Test kinds (filename suffix decides the kind):
   `HARNESS_MODEL_CACHE`). Run with `npm run test:models`; CI runs them in the `models` job.
   Required when you change a model adapter or the catalog. Install with
   `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` to avoid onnxruntime's CUDA download.
-- Evals (`packages/evals`): LLM-as-judge with Jev. Results are `passed`, `failed`,
-  `inconclusive` or `blocked`; a missing credential is `blocked`, never a pass.
+- Evals (`packages/evals`): LLM-as-judge with the catalog's best reachable judge. Results
+  are `passed`, `failed`, `inconclusive` or `blocked`; no reachable judge is `blocked`,
+  never a pass.
 
 Gates, all required before pushing:
 
@@ -72,6 +73,12 @@ are `packages/cognitive/data/{catalog,benchmarks}.json` (and each extension's ow
 `data/`); behavior graphs name `packages/behavior/data/graph.schema.json`. Benchmark rows
 are `[model, task, benchmark, metric, score, "higher"|"lower", setting?]` and are compared
 only when benchmark, metric and setting match.
+
+No code is model specific, tests included. Models will be swapped: code is written per
+model category (judge, router, embedder, compressor, generator, document parser) and per
+runtime. Everything particular to a model (ids, file names, prompts, dimensions, chat
+template options, tap nodes, env names) is catalog data, read from the model's entry, and
+tests pick models by runtime or port, never by id.
 
 Never lower a coverage or mutation threshold, skip a test, or add a production mock to
 get green. Kill surviving mutants with tests, or document why a mutant is equivalent.

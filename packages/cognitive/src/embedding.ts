@@ -1,27 +1,22 @@
 /**
- * Embedding helpers. EmbeddingGemma expects a task prefix on every input and
- * supports Matryoshka truncation: the leading components of a vector form a
- * smaller embedding once renormalized.
+ * Embedding helpers for any embedding model. A model's catalog entry says how it wants
+ * queries and documents written (prompt templates) and which sizes it can truncate to;
+ * truncation keeps the leading components and renormalizes (Matryoshka-style).
  */
 import { z } from "zod";
-
-export const EMBEDDING_TASKS = ["search result", "question answering", "fact checking", "classification", "clustering", "sentence similarity", "code retrieval"] as const;
-export type EmbeddingTask = (typeof EMBEDDING_TASKS)[number];
+import type { EmbeddingConfig } from "./catalog.ts";
 
 export const EmbedInputSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("query"), text: z.string(), task: z.enum(EMBEDDING_TASKS).exactOptional() }),
+  /** A search query; `task` names what the query is for, when the model's template uses it. */
+  z.object({ kind: z.literal("query"), text: z.string(), task: z.string().exactOptional() }),
   z.object({ kind: z.literal("document"), text: z.string(), title: z.string().exactOptional() }),
 ]);
 export type EmbedInput = z.output<typeof EmbedInputSchema>;
 
-/** Sizes EmbeddingGemma-300m was trained to truncate to. */
-export const EMBEDDING_GEMMA_DIMENSIONS: readonly number[] = [768, 512, 256, 128];
-
-/** The prompt EmbeddingGemma was trained on for this kind of input. */
-export function embeddingGemmaPrompt(input: EmbedInput): string {
-  return input.kind === "query"
-    ? `task: ${input.task ?? "search result"} | query: ${input.text}`
-    : `title: ${input.title ?? "none"} | text: ${input.text}`;
+/** Write an input the way the model was trained to see it: its template, with {text}, {task} and {title} filled in. */
+export function embeddingPrompt(config: Pick<EmbeddingConfig, "query" | "document" | "defaults">, input: EmbedInput): string {
+  const values: Record<string, string | undefined> = { ...config.defaults, ...input };
+  return (input.kind === "query" ? config.query : config.document).replace(/\{(\w+)\}/g, (_, key: string) => values[key] ?? "");
 }
 
 function magnitude(v: Float32Array): number {

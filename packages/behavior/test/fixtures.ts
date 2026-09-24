@@ -9,7 +9,7 @@ import type { SaeRows } from "@harness/behavior";
 export const guideSpec = {
   version: 1,
   id: "guide",
-  model: { id: "Qwen/Qwen3-1.7B", layer: 14 },
+  model: { id: "local/kernel", layer: 14 },
   initial: "calm",
   features: { threat: 0, question: 1, warmth: 2, caution: 3 },
   sensors: {

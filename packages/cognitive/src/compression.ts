@@ -1,14 +1,13 @@
 /**
- * The model-independent half of LLMLingua-2 prompt compression (Pan et al. 2024,
- * arXiv:2403.12968; reference: microsoft/LLMLingua prompt_compressor.py). A token
- * classifier scores each subword with P(keep); words take the mean of their
- * subwords; the keep rate sets a percentile threshold over word probabilities,
- * weighted by how many tokens each word spans; surviving words keep their order.
+ * The model-independent half of token-classification prompt compression. A token
+ * classifier scores each subword with P(keep); words take the mean of their subwords;
+ * the keep rate sets a percentile threshold over word probabilities, weighted by how
+ * many tokens each word spans; surviving words keep their order.
  */
 
 export interface ScoredToken {
   readonly text: string;
-  /** P(keep) from the classifier (softmax index 1). */
+  /** P(keep) from the classifier. */
   readonly keep: number;
   readonly special: boolean;
 }

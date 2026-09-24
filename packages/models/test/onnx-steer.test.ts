@@ -1,10 +1,10 @@
 import * as ort from "onnxruntime-node";
 import { describe, expect, it } from "vitest";
-import { makeSteerable, qwenTap } from "@harness/models";
+import { makeSteerable } from "@harness/models";
 import { encodeModel } from "./onnx-builder.ts";
 
 /**
- * A two-token, four-wide model with the same fused op the Qwen3 exports use:
+ * A two-token, four-wide model with the fused op onnxruntime-genai decoder exports use:
  * SkipSimplifiedLayerNormalization(x, skip, gamma) -> (normed, _, _, sum).
  */
 function tinyModel(options: { sumOutput?: boolean } = {}): Uint8Array {
@@ -75,10 +75,6 @@ describe("ONNX steering patch", () => {
     expect(() => makeSteerable(tinyModel(), { node: "/nope", steerInput: 1, residOutput: 3, layer: 0, hidden: 4 })).toThrow(/no node \/nope/);
     const once = makeSteerable(tinyModel(), { node: "/model/layers.1/input_layernorm/SkipLayerNorm", steerInput: 1, residOutput: 3, layer: 0, hidden: 4 });
     expect(() => makeSteerable(once, { node: "/model/layers.1/input_layernorm/SkipLayerNorm", steerInput: 1, residOutput: 3, layer: 0, hidden: 4 })).toThrow(/already has an input steer.0/);
-    expect(() => makeSteerable(new Uint8Array([1, 2, 3]), qwenTap(14, 2048))).toThrow();
-  });
-
-  it("OS1.5 the Qwen3 tap for layer L is layer L+1's input layernorm, steering its second input and reading its sum", () => {
-    expect(qwenTap(14, 2048)).toEqual({ node: "/model/layers.15/input_layernorm/SkipLayerNorm", steerInput: 1, residOutput: 3, layer: 14, hidden: 2048 });
+    expect(() => makeSteerable(new Uint8Array([1, 2, 3]), { node: "/model/layers.15/input_layernorm/SkipLayerNorm", steerInput: 1, residOutput: 3, layer: 14, hidden: 2048 })).toThrow();
   });
 });

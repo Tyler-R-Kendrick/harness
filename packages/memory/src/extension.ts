@@ -18,6 +18,17 @@ const parse = <T>(schema: z.ZodType<T>, op: string, input: unknown): T => {
 };
 
 /**
+ * The largest embedding size every embedding model among `models` can produce, so the
+ * memory index keeps working when one of them fails over to another.
+ */
+export function sharedEmbeddingSize(models: readonly ModelDescriptor[]): number {
+  const sizes = models.flatMap((m) => (m.embedding ? [m.embedding.dimensions] : []));
+  const shared = sizes.reduce((common, s) => common.filter((d) => s.includes(d)), sizes[0] ?? []);
+  if (shared.length === 0) throw new Error(sizes.length === 0 ? "memory has no embedding model" : "memory's embedding models share no embedding size");
+  return Math.max(...shared);
+}
+
+/**
  * Memory for the cognitive core. Installing it brings the embedding models (the core
  * has none of its own) and the `memory.remember` / `memory.recall` operations; the
  * daemon offers `memory` and `cognitive.text-embedding` while it can serve them.

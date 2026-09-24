@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import { readFileSync } from "node:fs";
 import { parseCatalog } from "@harness/cognitive";
-import { Memory, memoryExtension } from "@harness/memory";
+import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
+import type { ModelDescriptor } from "@harness/cognitive";
 import { HashEmbedder } from "@harness/testkit";
 
 const data = (file: string): unknown => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8"));
@@ -26,7 +27,7 @@ describe("memory as a cognitive-core extension", () => {
     expect([...offered].sort()).toEqual(["cognitive.text-embedding", "memory"]);
     expect(ensemble.candidates("text-embedding").map((c) => c.id)).toEqual(models.map((m) => m.id));
     await ensemble.embed([{ kind: "query", text: "x" }]);
-    expect(loaded).toEqual(["google/embeddinggemma-300m"]);
+    expect(loaded).toEqual([models[0]!.id]);
     uninstall();
     expect(offered.size).toBe(0);
   });
@@ -46,5 +47,19 @@ describe("memory as a cognitive-core extension", () => {
     await expect(invokeCognitive(ensemble, "memory.recall", { query: "x", limit: 0 })).rejects.toThrow(/at limit/);
     await expect(invokeCognitive(ensemble, "memory.recall", {})).rejects.toThrow(/at query/);
     expect(loaded).toEqual([]);
+  });
+});
+
+describe("memory's embedding size", () => {
+  const embedder = (dimensions: number[]) => ({ ...models[0]!, embedding: { ...models[0]!.embedding!, dimensions } }) as ModelDescriptor;
+
+  it("MX2.1 is the largest size every embedding model produces, so any of them can serve the index", () => {
+    expect(sharedEmbeddingSize([embedder([768, 512, 256])])).toBe(768);
+    expect(sharedEmbeddingSize([embedder([768, 512, 256]), embedder([1024, 512, 256])])).toBe(512);
+  });
+
+  it("MX2.2 without a shared size, or without an embedding model, memory cannot be sized", () => {
+    expect(() => sharedEmbeddingSize([embedder([768]), embedder([384])])).toThrow("memory's embedding models share no embedding size");
+    expect(() => sharedEmbeddingSize([])).toThrow("memory has no embedding model");
   });
 });

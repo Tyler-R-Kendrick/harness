@@ -68,8 +68,6 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
       },
     },
     AutoProcessor: { from_pretrained: async () => processor },
-    Qwen3_5ForConditionalGeneration: { from_pretrained: async (repo: string, o: unknown) => (log.push({ name: "vision.load", args: [repo, o] }), visionModel) },
-    LightOnOcrForConditionalGeneration: { from_pretrained: async () => visionModel },
     Tensor: class {
       type: string;
       data: BigInt64Array;
@@ -94,5 +92,8 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
       }
     },
   };
-  return { module, log, processor };
+  // Any image-text-to-text class name resolves, as each model's own class does in transformers.js.
+  const vision = { from_pretrained: async (repo: string, o: unknown) => (log.push({ name: "vision.load", args: [repo, o] }), visionModel) };
+  const registry = new Proxy(module, { get: (t, k, r) => (typeof k === "string" && k.endsWith("ForConditionalGeneration") ? vision : Reflect.get(t, k, r)) });
+  return { module: registry, log, processor };
 }

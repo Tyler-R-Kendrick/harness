@@ -2,7 +2,7 @@
   "name": "@harness/evals",
   "version": "0.0.0",
   "private": true,
-  "description": "Eval runner with Jev (typesafe-ai/jev via Vercel AI Gateway) as LLM-as-judge.",
+  "description": "Eval runner with LLM-as-judge: the best judgment model the host can reach, from the catalog.",
   "license": "MIT",
   "type": "module",
   "exports": {

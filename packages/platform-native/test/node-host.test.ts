@@ -61,7 +61,7 @@ describe("NodeHost", () => {
   });
 
   it("NH2.1 with an ensemble, cognitive capabilities are offered and invokes are answered by the model that served them", async () => {
-    const embedder: ModelDescriptor = { id: "gemma", name: "Gemma", publisher: "t", tasks: ["text-embedding"], ports: ["embedder"], locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
+    const embedder: ModelDescriptor = { id: "embedder-a", name: "Embedder A", publisher: "t", tasks: ["text-embedding"], ports: ["embedder"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
     const ensemble = new Ensemble({ platform: "native" });
     ensemble.register(embedder, async () => ({ embedder: new HashEmbedder(4) }));
     const host = await NodeHost.start({ worker: { run: async () => {}, cancel: () => {}, permission: () => {} }, identity: { principal: "me", kind: "human" }, cognitive: ensemble });
@@ -70,11 +70,11 @@ describe("NodeHost", () => {
     c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
     c.send({ jsonrpc: "2.0", id: 2, method: "_harness/cognitive/invoke", params: { op: "embed", input: { inputs: [{ kind: "query", text: "hello" }] } } });
     const res = (await c.waitFor((m) => m["id"] === 2)) as { result: { model: string; vectors: number[][] } };
-    expect(res.result.model).toBe("gemma");
+    expect(res.result.model).toBe("embedder-a");
     expect(res.result.vectors[0]).toHaveLength(4);
     c.send({ jsonrpc: "2.0", id: 3, method: "_harness/cognitive/invoke", params: { op: "embed", input: { inputs: "bad" } } });
     expect(await c.waitFor((m) => m["id"] === 3)).toMatchObject({ error: { code: -32603, message: expect.stringMatching(/inputs/) } });
-    ensemble.revoke("gemma", "platform withdrew it");
+    ensemble.revoke("embedder-a", "platform withdrew it");
     expect(host.daemon.capabilities().map((c) => c.name)).not.toContain("cognitive.text-embedding");
     await host.close();
   });

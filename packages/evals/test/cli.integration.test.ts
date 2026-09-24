@@ -13,12 +13,13 @@ const env = (extra: Record<string, string> = {}) => {
 };
 
 describe("eval CLI", () => {
-  it("EV6.1 without credentials every case is blocked, results are written, and the run does not claim success", async () => {
+  it("EV6.1 without a reachable judge every case is blocked, results are written, and the run does not claim success", async () => {
     const out = join(mkdtempSync(join(tmpdir(), "evals-")), "r.json");
     const { stdout } = await run(process.execPath, [CLI, "--out", out], { env: env({ GITHUB_ACTIONS: "true" }) });
     const report = JSON.parse(readFileSync(out, "utf8"));
     expect(report.schemaVersion).toBe("harness.eval/v1");
-    expect(report.judge).toEqual({ provider: "gateway", modelId: "typesafe-ai/jev" });
+    expect(report.judge).toEqual({ provider: "none", modelId: "none" });
+    expect(report.results[0].reason).toMatch(/No judge could be reached: .*AI Gateway credential/);
     expect(report.summary.passed).toBe(0);
     expect(report.summary.blocked).toBe(report.summary.total);
     expect(report.summary.total).toBeGreaterThanOrEqual(8);

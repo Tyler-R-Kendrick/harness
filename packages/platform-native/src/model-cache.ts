@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import type { ByteCache, NeedleModule } from "@harness/models";
+import type { ByteCache } from "@harness/models";
 import writeFileAtomic from "write-file-atomic";
 
 /**
@@ -37,15 +37,15 @@ export class FileByteCache implements ByteCache {
 }
 
 /**
- * Instantiate Needle's Emscripten module from its (already hash-verified) loader
- * source. The loader is CommonJS; it gets module/exports/require/__dirname, and the
- * WASM bytes are passed in so it never reads the file system for them.
+ * Instantiate an Emscripten module from its (already hash-verified) loader source. The
+ * loader is CommonJS; it gets module/exports/require/__dirname, and the WASM bytes are
+ * passed in so it never reads the file system for them.
  */
-export async function loadNeedleModule(source: Uint8Array, wasm: Uint8Array): Promise<NeedleModule> {
+export async function loadEmscriptenModule<M>(source: Uint8Array, wasm: Uint8Array, name = "loader.js"): Promise<M> {
   const module: { exports: unknown } = { exports: {} };
   const require = createRequire(import.meta.url);
-  new Function("module", "exports", "require", "__filename", "__dirname", new TextDecoder().decode(source))(module, module.exports, require, "needle.js", ".");
+  new Function("module", "exports", "require", "__filename", "__dirname", new TextDecoder().decode(source))(module, module.exports, require, name, ".");
   const factory = module.exports;
-  if (typeof factory !== "function") throw new Error("needle.js did not export a module factory");
-  return (await (factory as (arg: { wasmBinary: Uint8Array }) => Promise<NeedleModule>)({ wasmBinary: wasm })) as NeedleModule;
+  if (typeof factory !== "function") throw new Error(`${name} did not export a module factory`);
+  return (factory as (arg: { wasmBinary: Uint8Array }) => Promise<M>)({ wasmBinary: wasm });
 }

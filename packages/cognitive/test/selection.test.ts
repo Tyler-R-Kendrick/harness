@@ -20,12 +20,13 @@ function model(id: string, benchmarks: readonly BenchmarkResult[], extra: Partia
     ports: ["generator"],
     locality: "local",
     runtime: "transformers.js",
+    run: { dtype: "q4" },
     platforms: ["native", "browser"],
     license: "Apache-2.0",
     downloadBytes: 1000,
     benchmarks,
     ...extra,
-  };
+  } as ModelDescriptor;
 }
 
 const ids = (r: ReturnType<typeof rankForTask>) => r.map((x) => x.id);

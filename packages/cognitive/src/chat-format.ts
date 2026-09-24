@@ -1,7 +1,7 @@
 /**
- * Parser for ChatML-family model output (Qwen3.5, Ornith and other Qwen-derived
- * models): `<think>` reasoning, `<tool_call>` blocks in the qwen3_xml form
- * (`<function=name><parameter=k>v</parameter></function>`) or the JSON form, and
+ * Parser for ChatML-family model output: `<think>` reasoning, `<tool_call>` blocks in
+ * the XML function form (`<function=name><parameter=k>v</parameter></function>`) or the
+ * JSON form, and
  * end-of-turn markers. The streaming parser emits text as soon as it cannot be the
  * start of a tag; whole-string parsing is the same machine run once.
  */

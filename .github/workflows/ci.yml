@@ -53,8 +53,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      # Jev runs through the Vercel AI Gateway. Without a credential the runner records
-      # every case as `blocked` and emits a warning; it never reports a pass.
+      # The judge is the catalog's best reachable one (hosted ones need a gateway credential).
+      # Without one the runner records every case as `blocked` and warns; never a pass.
       - run: npm run eval -- --out eval-results/results.json
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
@@ -82,8 +82,8 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: /mnt/harness-models
-          key: models-${{ hashFiles('packages/cognitive/src/catalog.ts') }}
-      # llama-server serves the native-only GGUF models (Ornith, OvisOCR2).
+          key: models-${{ hashFiles('packages/*/data/catalog.json') }}
+      # llama-server serves the catalog's llama.cpp-server models.
       - name: Download llama.cpp
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,7 +108,7 @@ jobs:
           # Its shared libraries ship next to it.
           echo "LD_LIBRARY_PATH=$(dirname "$server")" >> "$GITHUB_ENV"
       - run: npm run test:models
-      # The cognitive core judged by Jev on real local models.
+      # The cognitive core, judged, on real local models.
       - run: npm run eval -- --suite cognitive --out eval-results/cognitive.json
         env:
           AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}

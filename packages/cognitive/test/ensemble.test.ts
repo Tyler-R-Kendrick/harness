@@ -3,7 +3,7 @@ import { CognitiveError, Ensemble, mirrorCapabilities } from "@harness/cognitive
 import type { BenchmarkResult, Embedder, GenerationEvent, Generator, Judge, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
 
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
-  return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native", "browser"], license: "MIT", downloadBytes: 1, benchmarks: [], ...extra };
+  return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native", "browser"], license: "MIT", downloadBytes: 1, benchmarks: [], ...extra } as ModelDescriptor;
 }
 const win = (benchmark: string, score: number, task: TaskCategory = "text-embedding"): BenchmarkResult => ({ benchmark, task, metric: "m", score, higherIsBetter: true });
 
@@ -117,17 +117,17 @@ describe("Ensemble", () => {
 
   it("EN1.9 judge, route and compress delegate to members serving those tasks", async () => {
     const e = new Ensemble({ platform: "native" });
-    e.register(descriptor("jev", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge }));
-    e.register(descriptor("needle", ["tool-calling"], ["router"]), async () => ({
+    e.register(descriptor("judge-a", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge }));
+    e.register(descriptor("router-a", ["tool-calling"], ["router"]), async () => ({
       router: { route: async (r) => ({ calls: [{ name: r.tools[0]!.name, arguments: {} }], confidence: 1, reasoning: "" }) },
     }));
-    e.register(descriptor("lingua", ["prompt-compression"], ["compressor"]), async () => ({
+    e.register(descriptor("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
       compressor: { compress: async (r) => ({ text: r.text.slice(0, 2), originalTokens: 4, compressedTokens: 2 }) },
     }));
     expect(await e.judge({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ ok: { type: "boolean", probability: 0.9 } });
     expect((await e.route({ input: "go", tools: [{ name: "t", description: "", parameters: {} }] })).calls).toEqual([{ name: "t", arguments: {} }]);
     expect((await e.compress({ text: "abcd", rate: 0.5 })).text).toBe("ab");
-    expect(e.candidates("judgment").map((c) => c.id)).toEqual(["jev"]);
+    expect(e.candidates("judgment").map((c) => c.id)).toEqual(["judge-a"]);
   });
 
   it("EN1.11 per-task preferences break ties that benchmarks cannot", () => {
@@ -148,7 +148,7 @@ describe("Ensemble", () => {
 });
 
 describe("extensions", () => {
-  const memory = { id: "memory", models: [{ descriptor: descriptor("gemma", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: embedder(7) }) }] };
+  const memory = { id: "memory", models: [{ descriptor: descriptor("embedder-a", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: embedder(7) }) }] };
 
   it("EN2.1 an extension brings its models at runtime, and takes them away again; capabilities follow", async () => {
     const e = new Ensemble({ platform: "native" });
@@ -163,7 +163,7 @@ describe("extensions", () => {
     uninstall();
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     expect(e.members()).toEqual([]);
-    expect(events).toContain("gemma:removed");
+    expect(events).toContain("embedder-a:removed");
     await expect(e.embed([{ kind: "query", text: "x" }])).rejects.toMatchObject({ code: "no_member" });
     uninstall();
     expect(e.install(memory)).toBeTypeOf("function");
@@ -200,9 +200,9 @@ describe("extensions", () => {
     mirrorCapabilities(e, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
     const uninstall = e.install(memory);
     expect(offered.has("memory")).toBe(true);
-    e.revoke("gemma", "no memory to spare");
+    e.revoke("embedder-a", "no memory to spare");
     expect(offered.has("memory")).toBe(false);
-    e.restore("gemma");
+    e.restore("embedder-a");
     expect(offered.has("memory")).toBe(true);
     uninstall();
     expect(offered.has("memory")).toBe(false);
@@ -214,9 +214,9 @@ describe("failover on calls", () => {
   const answering: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: 0.9 } }) };
   const request = { state: "s", questions: { ok: { type: "boolean" as const, instructions: "?" } } };
   const setup = (first: Judge) => {
-    const e = new Ensemble({ platform: "native", preferences: { judgment: ["jev", "clm"] } });
-    e.register(descriptor("jev", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge: first }));
-    e.register(descriptor("clm", ["judgment"], ["judge"]), async () => ({ judge: answering }));
+    const e = new Ensemble({ platform: "native", preferences: { judgment: ["judge-a", "judge-b"] } });
+    e.register(descriptor("judge-a", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge: first }));
+    e.register(descriptor("judge-b", ["judgment"], ["judge"]), async () => ({ judge: answering }));
     return e;
   };
 
@@ -224,7 +224,7 @@ describe("failover on calls", () => {
     for (const error of [Object.assign(new Error("Payment Required"), { statusCode: 402 }), Object.assign(new Error("fetch failed"), { isRetryable: true }), Object.assign(new Error("Bad Gateway"), { statusCode: 502 })]) {
       const e = setup(failing(error));
       expect(await e.judge(request)).toEqual({ ok: { type: "boolean", probability: 0.9 } });
-      expect(e.members().find((m) => m.id === "jev")).toMatchObject({ state: "failed", reason: error.message });
+      expect(e.members().find((m) => m.id === "judge-a")).toMatchObject({ state: "failed", reason: error.message });
     }
   });
 
@@ -232,14 +232,14 @@ describe("failover on calls", () => {
     for (const error of [Object.assign(new Error("invalid questions"), { statusCode: 422 }), Object.assign(new Error("bad request"), { statusCode: 400 }), new Error("bug")]) {
       const e = setup(failing(error));
       await expect(e.judge(request)).rejects.toBe(error);
-      expect(e.state("jev")).toBe("ready");
+      expect(e.state("judge-a")).toBe("ready");
     }
   });
 
   it("EN3.3 when every member is unavailable the last service error is reported", async () => {
     const e = new Ensemble({ platform: "native" });
     const down = Object.assign(new Error("Service Unavailable"), { statusCode: 503 });
-    e.register(descriptor("jev", ["judgment"], ["judge"]), async () => ({ judge: failing(down) }));
+    e.register(descriptor("judge-a", ["judgment"], ["judge"]), async () => ({ judge: failing(down) }));
     await expect(e.judge(request)).rejects.toBe(down);
     await expect(e.judge(request)).rejects.toMatchObject({ code: "no_member" });
   });

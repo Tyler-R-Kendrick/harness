@@ -1,6 +1,5 @@
-import { wilsonInterval } from "@harness/cognitive";
-import { clm, clmAvailable, EvaluationJudge, jev } from "@harness/models";
-import type { ClmOptions } from "@harness/models";
+import { CognitiveError, wilsonInterval } from "@harness/cognitive";
+import type { Ensemble } from "@harness/cognitive";
 import type { Answer, Judge, Question, State } from "./judge.ts";
 import { caseVerdict, questionVerdict } from "./verdict.ts";
 import type { Expectation, Verdict } from "./verdict.ts";
@@ -46,45 +45,44 @@ export interface EvalReport {
 /** Thrown by a subject that cannot run without access it does not have. */
 export class BlockedError extends Error {}
 
-/** How the judge is reached: an AI Gateway credential for Jev, or a local clm-serve for CLM. */
-export type Credential = "api-key" | "oidc" | "local";
-
-export function resolveGatewayCredential(env: Readonly<Record<string, string | undefined>>): Credential | undefined {
-  if (env["AI_GATEWAY_API_KEY"]) return "api-key";
-  if (env["VERCEL_OIDC_TOKEN"]) return "oidc";
-  return undefined;
-}
+/** The judge for a run, or why there is none (every case is then blocked). */
+export type JudgeChoice = { readonly judge: Judge } | { readonly judge?: undefined; readonly unavailable: string };
 
 const PLACEHOLDERS = new Set(["", "resolved-by-runner", "unknown", "HEAD"]);
-const NO_CREDENTIAL = "No judge: set AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN for Jev, or run clm-serve (CLM_BASE_URL) for CLM";
+const NO_JUDGE = { provider: "none", modelId: "none" };
 
-/** Jev when there is an AI Gateway credential; otherwise CLM when clm-serve answers; otherwise none, and cases are blocked. */
-export async function chooseJudge(env: Readonly<Record<string, string | undefined>>, options: { readonly clm?: ClmOptions } = {}): Promise<{ judge: Judge; credential: Credential | undefined }> {
-  const credential = resolveGatewayCredential(env);
-  if (credential) return { judge: new EvaluationJudge(jev()), credential };
-  if (await clmAvailable(options.clm)) return { judge: new EvaluationJudge(clm(options.clm)), credential: "local" };
-  return { judge: new EvaluationJudge(jev()), credential: undefined };
+/**
+ * The best judge the host can reach now: the ensemble's judgment models in order of
+ * preference, each tried until one loads (a hosted model needs its credential, a local
+ * one its server). Without one, the reasons each failed.
+ */
+export async function chooseJudge(ensemble: Ensemble): Promise<JudgeChoice> {
+  try {
+    const { id, port } = await ensemble.resolve("judgment", "judge");
+    const { runtime } = ensemble.members().find((m) => m.id === id)!.descriptor;
+    return { judge: { identity: { provider: runtime, modelId: id }, evaluate: (request) => port.evaluate(request) } };
+  } catch (e) {
+    if (!(e instanceof CognitiveError)) throw e;
+    const reasons = ensemble.members().flatMap((m) => (m.descriptor.tasks.includes("judgment") && m.reason ? [`${m.id}: ${m.reason}`] : []));
+    return { unavailable: `No judge could be reached${reasons.length ? `: ${reasons.join("; ")}` : ""}` };
+  }
 }
 
-/** Run eval cases. A missing credential or denied access is `blocked`, never a pass. */
-export async function runEvals(
-  cases: readonly EvalCase[],
-  judge: Judge,
-  options: { credential: Credential | undefined; sourceRevision?: string },
-): Promise<EvalReport> {
+/** Run eval cases. No judge, or denied access, is `blocked`, never a pass. */
+export async function runEvals(cases: readonly EvalCase[], choice: JudgeChoice, options: { sourceRevision?: string } = {}): Promise<EvalReport> {
   if (options.sourceRevision !== undefined && PLACEHOLDERS.has(options.sourceRevision)) {
     throw new Error(`source revision "${options.sourceRevision}" is a placeholder; pass the real commit`);
   }
   const startedAt = new Date().toISOString();
   const results: EvalResult[] = [];
-  for (const c of cases) results.push(await runCase(c, judge, options.credential));
+  for (const c of cases) results.push(await runCase(c, choice));
   const count = (v: Verdict) => results.filter((r) => r.verdict === v).length;
   const passed = count("passed");
   const failed = count("failed");
   return {
     schemaVersion: "harness.eval/v1",
     sourceRevision: options.sourceRevision,
-    judge: judge.identity,
+    judge: choice.judge?.identity ?? NO_JUDGE,
     startedAt,
     finishedAt: new Date().toISOString(),
     results,
@@ -99,11 +97,12 @@ export async function runEvals(
   };
 }
 
-async function runCase(c: EvalCase, judge: Judge, credential: Credential | undefined): Promise<EvalResult> {
+async function runCase(c: EvalCase, choice: JudgeChoice): Promise<EvalResult> {
   const started = performance.now();
   const base = { id: c.id, description: c.description };
   const done = (rest: Omit<EvalResult, "id" | "description" | "durationMs">): EvalResult => ({ ...base, ...rest, durationMs: Math.round(performance.now() - started) });
-  if (credential === undefined) return done({ verdict: "blocked", reason: NO_CREDENTIAL });
+  if (!choice.judge) return done({ verdict: "blocked", reason: choice.unavailable });
+  const { judge } = choice;
   let state: State;
   try {
     state = await c.subject();

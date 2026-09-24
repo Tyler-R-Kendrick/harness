@@ -14,6 +14,9 @@
       ],
       "locality": "hosted",
       "runtime": "ai-gateway",
+      "run": {
+        "model": "typesafe-ai/jev"
+      },
       "platforms": [
         "native",
         "browser"
@@ -34,7 +37,14 @@
         "judge"
       ],
       "locality": "local",
-      "runtime": "clm-serve",
+      "runtime": "typesafe-api",
+      "run": {
+        "baseUrl": "http://127.0.0.1:8700",
+        "model": "clm-latest",
+        "health": "/health",
+        "baseUrlEnv": "CLM_BASE_URL",
+        "apiKeyEnv": "CLM_API_KEY"
+      },
       "platforms": [
         "native"
       ],
@@ -66,7 +76,17 @@
         "router"
       ],
       "locality": "local",
-      "runtime": "needle-wasm",
+      "runtime": "cactus-wasm",
+      "run": {
+        "loader": "wasm/needle.js",
+        "wasm": "wasm/needle.wasm",
+        "weights": "needle3.cact",
+        "prefix": "needle",
+        "env": {
+          "NEEDLE_TELEMETRY": "0",
+          "DO_NOT_TRACK": "1"
+        }
+      },
       "platforms": [
         "native",
         "browser"
@@ -108,6 +128,9 @@
       ],
       "locality": "local",
       "runtime": "transformers.js",
+      "run": {
+        "dtype": "uint8"
+      },
       "platforms": [
         "native",
         "browser"
@@ -125,6 +148,11 @@
             "sha256": "d5ce58e66eb569a219d7c8f7d3e4680a8e0cdd2a0d7cf047b5049aac8a37e370"
           }
         ]
+      },
+      "compression": {
+        "window": 510,
+        "subwords": "wordpiece",
+        "keepLabel": 1
       }
     },
     {
@@ -146,6 +174,17 @@
       ],
       "locality": "local",
       "runtime": "transformers.js",
+      "run": {
+        "dtype": {
+          "embed_tokens": "q4",
+          "vision_encoder": "q4",
+          "decoder_model_merged": "q4"
+        },
+        "modelClass": "Qwen3_5ForConditionalGeneration",
+        "template": {
+          "enable_thinking": false
+        }
+      },
       "platforms": [
         "native",
         "browser"
@@ -205,6 +244,13 @@
       ],
       "locality": "local",
       "runtime": "llama.cpp-server",
+      "run": {
+        "model": "Ornith-1.5-9B-Q4_K_M.gguf",
+        "args": [
+          "--reasoning-budget",
+          "0"
+        ]
+      },
       "platforms": [
         "native"
       ],
@@ -237,6 +283,15 @@
       ],
       "locality": "local",
       "runtime": "transformers.js",
+      "run": {
+        "dtype": {
+          "embed_tokens": "q4",
+          "vision_encoder": "q4",
+          "decoder_model_merged": "q4"
+        },
+        "modelClass": "LightOnOcrForConditionalGeneration",
+        "imagesFirst": true
+      },
       "platforms": [
         "native",
         "browser"
@@ -295,6 +350,10 @@
       ],
       "locality": "local",
       "runtime": "llama.cpp-server",
+      "run": {
+        "model": "ATH-MaaS_OvisOCR2-Q8_0.gguf",
+        "projector": "mmproj-ATH-MaaS_OvisOCR2-f16.gguf"
+      },
       "platforms": [
         "native"
       ],
@@ -330,6 +389,28 @@
       ],
       "locality": "local",
       "runtime": "onnxruntime",
+      "run": {
+        "model": "onnxruntime/cpu_and_mobile/cpu-int4-kld-block-128/model.onnx",
+        "tap": {
+          "node": "/model/layers.15/input_layernorm/SkipLayerNorm",
+          "steerInput": 1,
+          "residOutput": 3,
+          "layer": 14
+        },
+        "decoder": {
+          "layers": 28,
+          "kvHeads": 8,
+          "headSize": 128,
+          "hidden": 2048
+        },
+        "endTokens": [
+          "<|im_end|>",
+          "<|endoftext|>"
+        ],
+        "template": {
+          "enable_thinking": false
+        }
+      },
       "platforms": [
         "native"
       ],

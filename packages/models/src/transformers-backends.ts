@@ -28,9 +28,9 @@ async function runtime(options: TransformersOptions): Promise<Transformers> {
 
 /**
  * Match Python transformers' image-processor defaults where a model's config leaves a
- * flag out. Qwen3.5's preprocessor_config.json gives image_mean/std but no
- * do_normalize: Python defaults it to true, transformers.js reads undefined and skips
- * normalization, so the vision tower sees shifted colours (pure red reads as pink).
+ * flag out. A preprocessor_config.json may give image_mean/std but no do_normalize:
+ * Python defaults it to true, transformers.js reads undefined and skips normalization,
+ * so the vision tower sees shifted colours (pure red reads as pink).
  */
 export function applyImageProcessorDefaults(imageProcessor: Record<string, unknown> | undefined): void {
   if (imageProcessor && imageProcessor["do_normalize"] === undefined && Array.isArray(imageProcessor["image_mean"]) && Array.isArray(imageProcessor["image_std"])) {
@@ -44,11 +44,15 @@ const serial = () => {
   return <T>(task: () => Promise<T>): Promise<T> => mutex.runExclusive(task);
 };
 
-export async function loadEmbeddingGemmaBackend(options: TransformersOptions & { readonly dtype?: "q4" | "q8" | "fp32" }): Promise<EmbeddingBackend> {
+/** Weight precision: one for the whole model, or one per ONNX file (e.g. { decoder_model_merged: "q4" }). */
+export type Dtype = string | Readonly<Record<string, string>>;
+
+/** An embedding model exported with a pooled, normalized sentence_embedding output. */
+export async function loadFeatureExtractionBackend(options: TransformersOptions & { readonly dtype: Dtype }): Promise<EmbeddingBackend> {
   const t = await runtime(options);
   const from = { revision: options.revision };
   const tokenizer = await t.AutoTokenizer.from_pretrained(options.repo, from);
-  const model = await t.AutoModel.from_pretrained(options.repo, { ...from, dtype: options.dtype ?? "q4", ...(options.device ? { device: options.device } : {}) });
+  const model = await t.AutoModel.from_pretrained(options.repo, { ...from, dtype: options.dtype as never, ...(options.device ? { device: options.device } : {}) });
   const queue = serial();
   return {
     embed: (texts) =>
@@ -60,16 +64,16 @@ export async function loadEmbeddingGemmaBackend(options: TransformersOptions & {
   };
 }
 
-export async function loadLinguaBackend(options: TransformersOptions & { readonly dtype?: "uint8" | "int8" | "q4" | "fp32" }): Promise<TokenClassifierBackend> {
+/** A token classifier whose label `keepLabel` means "keep this token". */
+export async function loadTokenClassificationBackend(options: TransformersOptions & { readonly dtype: Dtype; readonly keepLabel: number }): Promise<TokenClassifierBackend> {
   const t = await runtime(options);
   const from = { revision: options.revision };
   const tokenizer = await t.AutoTokenizer.from_pretrained(options.repo, from);
-  const model = await t.AutoModelForTokenClassification.from_pretrained(options.repo, { ...from, dtype: options.dtype ?? "uint8", ...(options.device ? { device: options.device } : {}) });
+  const model = await t.AutoModelForTokenClassification.from_pretrained(options.repo, { ...from, dtype: options.dtype as never, ...(options.device ? { device: options.device } : {}) });
   const specials = (tokenizer("", { add_special_tokens: true }).input_ids as { tolist(): bigint[][] }).tolist()[0]!.map(Number);
   const [cls, sep] = [specials[0]!, specials.at(-1)!];
   const queue = serial();
   return {
-    style: "wordpiece",
     tokenize: (text) => tokenizer.tokenize(text),
     keepProbabilities: (tokens) =>
       queue(async () => {
@@ -78,21 +82,22 @@ export async function loadLinguaBackend(options: TransformersOptions & { readonl
         const input_ids = new t.Tensor("int64", BigInt64Array.from(ids.map((id) => BigInt(id))), shape);
         const attention_mask = new t.Tensor("int64", new BigInt64Array(ids.length).fill(1n), shape);
         const { logits } = (await model({ input_ids, attention_mask })) as { logits: { tolist(): number[][][] } };
-        // LLMLingua-2: P(keep) is softmax index 1, per token; drop the CLS/SEP positions.
+        // P(keep) is the keep label's softmax, per token; drop the CLS/SEP positions.
         return logits
           .tolist()[0]!
           .slice(1, -1)
-          .map(([drop, keep]) => 1 / (1 + Math.exp(drop! - keep!)));
+          .map((row) => 1 / row.reduce((sum, x) => sum + Math.exp(x - row[options.keepLabel]!), 0));
       }),
   };
 }
 
 export async function loadVisionChatBackend(
   options: TransformersOptions & {
-    readonly modelClass: "Qwen3_5ForConditionalGeneration" | "LightOnOcrForConditionalGeneration";
-    readonly dtype: Readonly<Record<string, string>>;
+    /** The transformers.js model class, e.g. an image-text-to-text ...ForConditionalGeneration. */
+    readonly modelClass: string;
+    readonly dtype: Dtype;
     readonly templateOptions?: Readonly<Record<string, unknown>>;
-    /** Pixtral-style processors (LightOnOCR) take (images, text); Qwen's take (text, images). */
+    /** Some processors (Pixtral-style) take (images, text); most take (text, images). */
     readonly imagesFirst?: boolean;
   },
 ): Promise<ChatBackend> {
@@ -100,7 +105,8 @@ export async function loadVisionChatBackend(
   const from = { revision: options.revision };
   const processor = await t.AutoProcessor.from_pretrained(options.repo, from);
   applyImageProcessorDefaults((processor as unknown as { image_processor?: Record<string, unknown> }).image_processor);
-  const ModelClass = t[options.modelClass] as unknown as { from_pretrained(repo: string, o: object): Promise<{ generate(o: object): Promise<{ dims: number[] }> }> };
+  const ModelClass = (t as unknown as Record<string, unknown>)[options.modelClass] as { from_pretrained(repo: string, o: object): Promise<{ generate(o: object): Promise<{ dims: number[] }> }> } | undefined;
+  if (!ModelClass) throw new Error(`transformers.js has no model class ${options.modelClass}`);
   const model = await ModelClass.from_pretrained(options.repo, { ...from, dtype: options.dtype, ...(options.device ? { device: options.device } : {}) });
   const queue = serial();
   return {
@@ -140,16 +146,15 @@ export async function loadChatTokenizer(
     /** A folder inside the repo holding the tokenizer (ONNX exports keep one per variant). */
     readonly subfolder?: string;
     readonly templateOptions?: Readonly<Record<string, unknown>>;
-    /** Tokens that end a turn; default Qwen's <|im_end|> and <|endoftext|>. */
-    readonly endTokens?: readonly string[];
+    /** Tokens that end a turn. */
+    readonly endTokens: readonly string[];
   },
 ): Promise<TokenizerLike> {
   const t = await runtime(options);
   const tokenizer = await t.AutoTokenizer.from_pretrained(options.repo, { revision: options.revision, ...(options.subfolder ? { subfolder: options.subfolder } : {}) } as never);
-  const endNames = options.endTokens ?? ["<|im_end|>", "<|endoftext|>"];
-  const endTokens = tokenizer.convert_tokens_to_ids([...endNames]) as number[];
+  const endTokens = tokenizer.convert_tokens_to_ids([...options.endTokens]) as number[];
   endTokens.forEach((id, i) => {
-    if (!id) throw new Error(`the tokenizer has no token ${endNames[i]}`);
+    if (!id) throw new Error(`the tokenizer has no token ${options.endTokens[i]}`);
   });
   const toTemplate = (m: ChatMessage): Record<string, unknown> => {
     if (m.role === "user" && typeof m.content !== "string") {

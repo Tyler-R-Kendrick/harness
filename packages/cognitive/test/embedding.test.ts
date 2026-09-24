@@ -1,25 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { cosine, EMBEDDING_GEMMA_DIMENSIONS, embeddingGemmaPrompt, truncateEmbedding } from "@harness/cognitive";
+import { cosine, embeddingPrompt, truncateEmbedding } from "@harness/cognitive";
 
 const norm = (v: Float32Array) => Math.hypot(...v);
 
-describe("EmbeddingGemma prompts", () => {
-  it("EG1.1 a query defaults to the search-result task prefix", () => {
-    expect(embeddingGemmaPrompt({ kind: "query", text: "which planet is red?" })).toBe("task: search result | query: which planet is red?");
+/** An embedding model's prompts from its catalog entry. */
+const config = { query: "task: {task} | query: {text}", document: "title: {title} | text: {text}", defaults: { task: "search result", title: "none" } };
+
+describe("embedding prompts", () => {
+  it("EG1.1 a query fills the model's query template, with the catalog's default task", () => {
+    expect(embeddingPrompt(config, { kind: "query", text: "which planet is red?" })).toBe("task: search result | query: which planet is red?");
   });
 
-  it("EG1.2 a query carries its task name", () => {
-    expect(embeddingGemmaPrompt({ kind: "query", text: "x", task: "code retrieval" })).toBe("task: code retrieval | query: x");
-    expect(embeddingGemmaPrompt({ kind: "query", text: "x", task: "sentence similarity" })).toBe("task: sentence similarity | query: x");
+  it("EG1.2 a query's own task replaces the default", () => {
+    expect(embeddingPrompt(config, { kind: "query", text: "x", task: "code retrieval" })).toBe("task: code retrieval | query: x");
   });
 
-  it("EG1.3 a document carries its title, or none", () => {
-    expect(embeddingGemmaPrompt({ kind: "document", text: "Mars is red." })).toBe("title: none | text: Mars is red.");
-    expect(embeddingGemmaPrompt({ kind: "document", text: "Mars is red.", title: "Planets" })).toBe("title: Planets | text: Mars is red.");
+  it("EG1.3 a document fills the document template, with its title or the default", () => {
+    expect(embeddingPrompt(config, { kind: "document", text: "Mars is red." })).toBe("title: none | text: Mars is red.");
+    expect(embeddingPrompt(config, { kind: "document", text: "Mars is red.", title: "Planets" })).toBe("title: Planets | text: Mars is red.");
   });
 
-  it("EG1.4 the Matryoshka sizes are 768, 512, 256 and 128", () => {
-    expect([...EMBEDDING_GEMMA_DIMENSIONS]).toEqual([768, 512, 256, 128]);
+  it("EG1.4 a model without templates beyond {text} sees the bare text; unknown placeholders are empty", () => {
+    expect(embeddingPrompt({ query: "{text}", document: "{text}" }, { kind: "query", text: "hi", task: "ignored" })).toBe("hi");
+    expect(embeddingPrompt({ query: "[{missing}]{text}", document: "{text}" }, { kind: "query", text: "hi" })).toBe("[]hi");
   });
 });
 

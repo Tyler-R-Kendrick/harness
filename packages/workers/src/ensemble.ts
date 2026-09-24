@@ -33,7 +33,7 @@ function toContent(prompt: readonly unknown[]): { parts: ContentPart[]; hasImage
 
 /**
  * Session worker backed by the cognitive core: each turn runs on the best generator
- * the ensemble has for the task (Ornith natively, Qwen3.5 in a browser), and turns
+ * the ensemble has for the task (whichever the host runs), and turns
  * with images go to the vision task. Keeps per-session history.
  */
 export class EnsembleWorker implements Worker {

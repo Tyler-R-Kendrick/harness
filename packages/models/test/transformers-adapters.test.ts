@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { EmbeddingGemmaEmbedder, LinguaCompressor, VisionChatDocumentParser, VisionChatGenerator } from "@harness/models";
+import { PromptedEmbedder, TokenClassifierCompressor, VisionChatDocumentParser, VisionChatGenerator } from "@harness/models";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "@harness/models";
-import type { GenerationEvent } from "@harness/cognitive";
+import type { CompressionConfig, EmbeddingConfig, GenerationEvent } from "@harness/cognitive";
 import { compressorContract, embedderContract, generatorContract, HashEmbedder } from "@harness/testkit";
 
 async function collect(stream: AsyncIterable<GenerationEvent>): Promise<GenerationEvent[]> {
@@ -10,13 +10,16 @@ async function collect(stream: AsyncIterable<GenerationEvent>): Promise<Generati
   return out;
 }
 
+/** An embedding model's catalog settings: prompts per input kind and the sizes it truncates to. */
+const EMBEDDING: EmbeddingConfig = { query: "Q({task}) {text}", document: "D({title}) {text}", defaults: { task: "search", title: "none" }, dimensions: [96, 64, 32] };
+
 class RecordingEmbeddingBackend implements EmbeddingBackend {
   readonly batches: string[][] = [];
-  readonly #inner = new HashEmbedder(768);
+  readonly #inner = new HashEmbedder(96);
   async embed(texts: readonly string[]): Promise<Float32Array[]> {
     this.batches.push([...texts]);
-    const sparse = await this.#inner.embed(texts.map((text) => ({ kind: "document" as const, text: text.replace(/^(task: [^|]+\| query: |title: [^|]+\| text: )/, "") })));
-    // Real EmbeddingGemma vectors are dense; add a small floor so every prefix is non-zero.
+    const sparse = await this.#inner.embed(texts.map((text) => ({ kind: "document" as const, text: text.replace(/^[QD]\([^)]*\) /, "") })));
+    // Real embedding vectors are dense; add a small floor so every prefix is non-zero.
     return sparse.map((v) => {
       const dense = v.map((x) => x + 0.01);
       const n = Math.hypot(...dense);
@@ -25,32 +28,32 @@ class RecordingEmbeddingBackend implements EmbeddingBackend {
   }
 }
 
-describe("EmbeddingGemma adapter", () => {
-  it("EA1.1 prefixes queries and documents as EmbeddingGemma was trained, and batches requests", async () => {
+describe("prompted embedder", () => {
+  it("EA1.1 prompts queries and documents as the model's catalog entry says, and batches requests", async () => {
     const backend = new RecordingEmbeddingBackend();
-    const e = new EmbeddingGemmaEmbedder(backend, { batchSize: 2 });
+    const e = new PromptedEmbedder(backend, EMBEDDING, { batchSize: 2 });
     await e.embed([
       { kind: "query", text: "red planet?" },
       { kind: "document", text: "Mars.", title: "Planets" },
       { kind: "query", text: "code", task: "code retrieval" },
     ]);
-    expect(backend.batches).toEqual([["task: search result | query: red planet?", "title: Planets | text: Mars."], ["task: code retrieval | query: code"]]);
+    expect(backend.batches).toEqual([["Q(search) red planet?", "D(Planets) Mars."], ["Q(code retrieval) code"]]);
+    expect(e.dimensions).toBe(96);
   });
 
   it("EA1.2 truncates to a Matryoshka size and rejects sizes the model was not trained for", async () => {
-    const e = new EmbeddingGemmaEmbedder(new RecordingEmbeddingBackend());
-    const [v] = await e.embed([{ kind: "document", text: "hello" }], { dimensions: 256 });
-    expect(v!.length).toBe(256);
+    const e = new PromptedEmbedder(new RecordingEmbeddingBackend(), EMBEDDING);
+    const [v] = await e.embed([{ kind: "document", text: "hello" }], { dimensions: 32 });
+    expect(v!.length).toBe(32);
     expect(Math.hypot(...v!)).toBeCloseTo(1, 5);
-    await expect(e.embed([{ kind: "document", text: "hello" }], { dimensions: 300 })).rejects.toThrow(/768, 512, 256, 128/);
+    await expect(e.embed([{ kind: "document", text: "hello" }], { dimensions: 50 })).rejects.toThrow("the model embeds in 96, 64, 32 dimensions, not 50");
   });
 });
 
-embedderContract("EmbeddingGemma adapter over a hashing backend", () => new EmbeddingGemmaEmbedder(new RecordingEmbeddingBackend()), { sizes: [512, 128] });
+embedderContract("prompted embedder over a hashing backend", () => new PromptedEmbedder(new RecordingEmbeddingBackend(), EMBEDDING), { sizes: [64, 32] });
 
 /** A WordPiece-ish tokenizer with a classifier that scores stopwords low. */
 class FakeClassifier implements TokenClassifierBackend {
-  readonly style = "wordpiece" as const;
   readonly chunks: number[] = [];
   tokenize(text: string): string[] {
     return text.split(/\s+/).filter(Boolean).flatMap((w) => (w.length > 6 ? [w.slice(0, 4), `##${w.slice(4)}`] : [w]));
@@ -61,9 +64,11 @@ class FakeClassifier implements TokenClassifierBackend {
   }
 }
 
-describe("LLMLingua-2 adapter", () => {
+const COMPRESSION: CompressionConfig = { window: 510, subwords: "wordpiece", keepLabel: 1 };
+
+describe("token-classifier compressor", () => {
   it("LA1.1 scores tokens, rebuilds words and keeps the ones above the rate's threshold", async () => {
-    const c = new LinguaCompressor(new FakeClassifier());
+    const c = new TokenClassifierCompressor(new FakeClassifier(), COMPRESSION);
     // 14 tokens, 5 of them stopwords: keeping 70% drops exactly the stopwords.
     const r = await c.compress({ text: "Meeting is scheduled for Thursday at noon in the boardroom", rate: 0.7 });
     expect(r.text).toBe("Meeting scheduled Thursday noon boardroom");
@@ -71,15 +76,21 @@ describe("LLMLingua-2 adapter", () => {
     expect(r.compressedTokens).toBeLessThan(r.originalTokens);
   });
 
+  it("LA1.3 subwords join by the tokenizer's style from the catalog", async () => {
+    const pieces: TokenClassifierBackend = { tokenize: () => ["▁Meet", "ing", "▁the", "▁board"], keepProbabilities: async (t) => t.map((x) => (x === "▁the" ? 0.05 : 0.9)) };
+    const r = await new TokenClassifierCompressor(pieces, { ...COMPRESSION, subwords: "sentencepiece" }).compress({ text: "-", rate: 0.75 });
+    expect(r.text).toBe("Meeting board");
+  });
+
   it("LA1.2 long inputs are classified in windows the encoder can take", async () => {
     const classifier = new FakeClassifier();
-    const c = new LinguaCompressor(classifier, { window: 4 });
+    const c = new TokenClassifierCompressor(classifier, { ...COMPRESSION, window: 4 });
     await c.compress({ text: "one two three . four five six seven . eight", rate: 0.5 });
     expect(classifier.chunks).toEqual([4, 4, 2]);
   });
 });
 
-compressorContract("LLMLingua-2 adapter over a fake classifier", () => new LinguaCompressor(new FakeClassifier()));
+compressorContract("token-classifier compressor over a fake classifier", () => new TokenClassifierCompressor(new FakeClassifier(), COMPRESSION));
 
 class ScriptedChatBackend implements ChatBackend {
   readonly requests: ChatBackendRequest[] = [];
@@ -103,7 +114,7 @@ class ScriptedChatBackend implements ChatBackend {
   }
 }
 
-describe("vision chat generator (Qwen3.5 on transformers.js)", () => {
+describe("vision chat generator on transformers.js", () => {
   it("VG1.1 converts messages and images for the chat template and streams parsed events", async () => {
     const backend = new ScriptedChatBackend(() => ({ text: "<think>look</think>A cat.<|im_end|>" }));
     const g = new VisionChatGenerator(backend, { maxTokens: 64 });
@@ -173,7 +184,7 @@ generatorContract("vision chat generator over a scripted backend", () =>
   new VisionChatGenerator(new ScriptedChatBackend((r) => ({ text: r.tools.length ? "<tool_call>{\"name\":\"get_weather\",\"arguments\":{\"city\":\"Lagos\"}}</tool_call>" : "Paris" }))),
 );
 
-describe("vision chat document parser (LightOnOCR-2 on transformers.js)", () => {
+describe("vision chat document parser on transformers.js", () => {
   it("VD1.1 sends each page image alone, with the instruction when given, and returns its Markdown", async () => {
     const backend = new ScriptedChatBackend((r) => ({ text: `# Page with ${r.images[0]!.data.length} bytes<|im_end|>` }));
     const parser = new VisionChatDocumentParser(backend, { maxTokens: 1024 });

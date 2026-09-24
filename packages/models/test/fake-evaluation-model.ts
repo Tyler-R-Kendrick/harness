@@ -2,11 +2,11 @@ import type { Experimental_EvaluationModelV4, Experimental_EvaluationModelV4Call
 
 type Answer = { type: "boolean"; probability: number } | { type: "choice"; choice: string; probabilities?: Record<string, number> } | { type: "score"; score: number };
 
-/** A scripted EvaluationModelV4 standing in for Jev in deterministic tests. */
+/** A scripted EvaluationModelV4 standing in for a judge model in deterministic tests. */
 export class FakeEvaluationModel implements Experimental_EvaluationModelV4 {
   readonly specificationVersion = "v4";
   readonly provider = "fake";
-  readonly modelId = "fake-jev";
+  readonly modelId = "fake-judge";
   readonly supportedQuestionTypes = ["boolean", "choice", "score"] as const;
   readonly calls: Experimental_EvaluationModelV4CallOptions[] = [];
   readonly #answer: (options: Experimental_EvaluationModelV4CallOptions) => Record<string, Answer>;

@@ -117,7 +117,7 @@ export class ScriptedJudge implements Judge {
 
 const STOPWORDS = new Set(["a", "an", "the", "of", "to", "and", "or", "is", "are", "was", "in", "on", "at", "for", "that", "this", "it", "be", "with", "as", "by"]);
 
-/** LLMLingua-shaped compressor that scores stopwords low: exercises the real word selection. */
+/** A token-classifier-shaped compressor that scores stopwords low: exercises the real word selection. */
 export class HeuristicCompressor implements Compressor {
   async compress(request: CompressRequest): Promise<Compression> {
     const tokens = request.text.split(/\s+/).filter((w) => w !== "");

@@ -9,8 +9,8 @@ import type { Embedder } from "@harness/cognitive";
  * index (pure JS, so the same on every platform). Items may belong to a session.
  */
 export interface MemoryOptions {
-  /** Embedding size; EmbeddingGemma truncates to 768, 512, 256 or 128 (default 256). */
-  readonly dimensions?: number;
+  /** Embedding size of the index; every embedder that serves memory must produce it (see sharedEmbeddingSize). */
+  readonly dimensions: number;
   /** A previous `save()`, to continue from. */
   readonly saved?: unknown;
   /** Called after every change, e.g. to persist `save()`. */
@@ -47,9 +47,9 @@ export class Memory {
   readonly #index: ReturnType<typeof index>;
   readonly #onChange: ((memory: Memory) => void) | undefined;
 
-  constructor(embedder: Pick<Embedder, "embed">, options: MemoryOptions = {}) {
+  constructor(embedder: Pick<Embedder, "embed">, options: MemoryOptions) {
     this.#embedder = embedder;
-    this.#dimensions = options.dimensions ?? 256;
+    this.#dimensions = options.dimensions;
     this.#index = index(this.#dimensions);
     this.#onChange = options.onChange;
     if (options.saved !== undefined) {

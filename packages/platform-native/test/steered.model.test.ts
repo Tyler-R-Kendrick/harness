@@ -1,42 +1,47 @@
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { BehaviorEngine, compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
-import type { GenerationEvent } from "@harness/cognitive";
-import { behaviorHook, loadChatTokenizer, OnnxSteerableSession, qwenTap, SteeredGenerator } from "@harness/models";
-import { ModelFiles, steerableModel } from "@harness/platform-native";
+import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
+import type { BehaviorPack } from "@harness/behavior";
+import type { GenerationEvent, Generator } from "@harness/cognitive";
+import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 import { generatorContract } from "@harness/testkit";
-import { catalogEntry, modelCacheDir } from "./models-env.ts";
+import { modelCacheDir } from "./models-env.ts";
 
-// The local kernel on real weights: Qwen3-1.7B's int4 export, patched with a steering
-// tap at layer 14, driven by a behavior graph over real SAE features
-// (adamkarvonen/qwen3-1.7b-saes, rows in packages/behavior/fixtures).
+// The local kernel on real weights, loaded by the host as in production: the catalog's
+// onnxruntime model, patched with its steering tap, driven by the behavior graph and SAE
+// rows in packages/behavior/fixtures that were made for it.
+const kernelModel = loadCatalog().models.find((m) => m.runtime === "onnxruntime")!;
 const fixtures = join(import.meta.dirname, "../../behavior/fixtures");
+const hosts: ReturnType<typeof buildNativeEnsemble>[] = [];
+afterAll(async () => {
+  await Promise.all(hosts.map((h) => h.close()));
+});
 const once = <T>(make: () => Promise<T>) => {
   let p: Promise<T> | undefined;
   return () => (p ??= make());
 };
-const kernel = once(async () => {
-  const m = catalogEntry("Qwen/Qwen3-1.7B");
-  const file = m.artifact.files[0]!.path;
-  const source = await new ModelFiles({ dir: join(modelCacheDir, "gguf") }).path(m.artifact, file);
-  const model = await steerableModel({ source, tap: qwenTap(14, 2048), dir: join(modelCacheDir, "steerable") });
-  const session = await OnnxSteerableSession.create({ model, layer: 14, config: { layers: 28, kvHeads: 8, headSize: 128, hidden: 2048 } });
-  const tokenizer = await loadChatTokenizer({
-    repo: m.artifact.repo,
-    revision: m.artifact.revision,
-    subfolder: dirname(file),
-    cacheDir: join(modelCacheDir, "transformers"),
-    templateOptions: { enable_thinking: false },
-  });
-  const graph = parseGraph(JSON.parse(await readFile(join(fixtures, "qwen3-1.7b-host.graph.json"), "utf8")));
-  const pack = compilePack(graph, parseSaeRows(await readFile(join(fixtures, "qwen3-1.7b-l14-rows.json"), "utf8")));
-  return { session, tokenizer, graph, pack };
+async function kernel(behavior?: BehaviorPack): Promise<Generator> {
+  const host = buildNativeEnsemble({ cacheDir: modelCacheDir, allowHosted: false, catalog: { models: [kernelModel], preferences: {} }, ...(behavior ? { behavior } : {}) });
+  hosts.push(host);
+  return (await host.ensemble.resolve("steered-chat", "generator")).port;
+}
+const behavior = once(async () => {
+  const files = await readdir(fixtures);
+  const read = async (f: string) => readFile(join(fixtures, f), "utf8");
+  const graphs = await Promise.all(files.filter((f) => f.endsWith(".graph.json")).map(async (f) => parseGraph(JSON.parse(await read(f)))));
+  const graph = graphs.find((g) => g.model.id === kernelModel.id);
+  if (!graph) throw new Error(`no behavior graph fixture for ${kernelModel.id}`);
+  const rowFiles = files.filter((f) => f.endsWith("-rows.json"));
+  const rows = (await Promise.all(rowFiles.map(read))).find((text) => (JSON.parse(text) as { source: { model: string } }).source.model === kernelModel.id);
+  if (!rows) throw new Error(`no SAE rows fixture for ${kernelModel.id}`);
+  return { graph, pack: compilePack(graph, parseSaeRows(rows)) };
 });
+const steered = once(async () => kernel((await behavior()).pack));
+const plain = once(() => kernel());
 
-async function reply(content: string, steered: boolean) {
-  const { session, tokenizer, pack } = await kernel();
-  const g = new SteeredGenerator({ session, tokenizer, ...(steered ? { hook: behaviorHook(new BehaviorEngine(pack)) } : {}) });
+async function reply(content: string, isSteered: boolean) {
+  const g = await (isSteered ? steered() : plain());
   const events: GenerationEvent[] = [];
   for await (const e of g.generate({ messages: [{ role: "user", content }], maxTokens: 40 })) events.push(e);
   return {
@@ -46,15 +51,12 @@ async function reply(content: string, steered: boolean) {
   };
 }
 
-generatorContract("Qwen3-1.7B steerable kernel, unsteered, real weights", async () => {
-  const { session, tokenizer } = await kernel();
-  return new SteeredGenerator({ session, tokenizer, maxTokens: 64 });
-});
+generatorContract(`${kernelModel.id} steerable kernel, unsteered, real weights`, plain);
 
 describe("the steerable kernel with a behavior graph, real weights", () => {
-  it("KS1.1 the host graph parses, for this model and layer", async () => {
-    const { graph, session } = await kernel();
-    expect(graph.model).toEqual({ id: "Qwen/Qwen3-1.7B", layer: session.layer });
+  it("KS1.1 the host graph parses, for this model and the layer its tap carries", async () => {
+    const { graph } = await behavior();
+    expect(graph.model).toEqual({ id: kernelModel.id, layer: kernelModel.runtime === "onnxruntime" ? kernelModel.run.tap.layer : -1 });
   });
 
   it("KS1.2 an insult turns the anger sensor on while reading the prompt: the host is soothing before it says a word", async () => {

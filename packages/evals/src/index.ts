@@ -1,9 +1,8 @@
-export { clm, EvaluationJudge, JEV_MODEL_ID, jev } from "./judge.ts";
 export type { Answer, Judge, Question, State } from "./judge.ts";
 export { caseVerdict, questionVerdict } from "./verdict.ts";
 export type { Expectation, Verdict } from "./verdict.ts";
-export { BlockedError, chooseJudge, isAccessError, resolveGatewayCredential, runEvals } from "./runner.ts";
-export type { Credential, EvalCase, EvalReport, EvalResult } from "./runner.ts";
+export { BlockedError, chooseJudge, isAccessError, runEvals } from "./runner.ts";
+export type { EvalCase, EvalReport, EvalResult, JudgeChoice } from "./runner.ts";
 export { runSession } from "./session.ts";
 export type { TurnResult } from "./session.ts";
 export { calibrationSuite } from "./suites/calibration.ts";

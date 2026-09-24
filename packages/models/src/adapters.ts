@@ -1,11 +1,13 @@
-import { ChatStreamParser, chunkTokens, compressWords, EMBEDDING_GEMMA_DIMENSIONS, embeddingGemmaPrompt, parseChatOutput, truncateEmbedding, wordsFromTokens } from "@harness/cognitive";
+import { ChatStreamParser, chunkTokens, compressWords, embeddingPrompt, parseChatOutput, truncateEmbedding, wordsFromTokens } from "@harness/cognitive";
 import type {
   ChatMessage,
   Compression,
+  CompressionConfig,
   CompressRequest,
   Compressor,
   DocumentParser,
   Embedder,
+  EmbeddingConfig,
   EmbedInput,
   GenerateRequest,
   GenerationEvent,
@@ -16,55 +18,61 @@ import type {
   ToolSpec,
 } from "@harness/cognitive";
 
-// ---- EmbeddingGemma ------------------------------------------------------------------
+// ---- embedding models ----------------------------------------------------------------
 
-/** Runs the model on already-prefixed texts; returns unit vectors of 768 dimensions. */
+/** Runs an embedding model on already-prompted texts; returns unit vectors of its native size. */
 export interface EmbeddingBackend {
   embed(texts: readonly string[]): Promise<Float32Array[]>;
 }
 
-export class EmbeddingGemmaEmbedder implements Embedder {
-  readonly dimensions = 768;
+/**
+ * An embedding model that is prompted per input kind (query or document) and truncates
+ * to the sizes it was trained for, both from its catalog entry.
+ */
+export class PromptedEmbedder implements Embedder {
+  readonly dimensions: number;
   readonly #backend: EmbeddingBackend;
+  readonly #config: EmbeddingConfig;
   readonly #batchSize: number;
 
-  constructor(backend: EmbeddingBackend, options: { batchSize?: number } = {}) {
+  constructor(backend: EmbeddingBackend, config: EmbeddingConfig, options: { batchSize?: number } = {}) {
     this.#backend = backend;
+    this.#config = config;
+    this.dimensions = config.dimensions[0]!;
     this.#batchSize = options.batchSize ?? 16;
   }
 
   async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: number } = {}): Promise<Float32Array[]> {
     const size = options.dimensions ?? this.dimensions;
-    if (!EMBEDDING_GEMMA_DIMENSIONS.includes(size)) throw new Error(`EmbeddingGemma supports ${EMBEDDING_GEMMA_DIMENSIONS.join(", ")} dimensions, not ${size}`);
-    const prompts = inputs.map(embeddingGemmaPrompt);
+    if (!this.#config.dimensions.includes(size)) throw new Error(`the model embeds in ${this.#config.dimensions.join(", ")} dimensions, not ${size}`);
+    const prompts = inputs.map((input) => embeddingPrompt(this.#config, input));
     const out: Float32Array[] = [];
     for (let i = 0; i < prompts.length; i += this.#batchSize) out.push(...(await this.#backend.embed(prompts.slice(i, i + this.#batchSize))));
     return size === this.dimensions ? out : out.map((v) => truncateEmbedding(v, size));
   }
 }
 
-// ---- LLMLingua-2 ---------------------------------------------------------------------
+// ---- token-classification compressors ------------------------------------------------
 
 /** The token classifier: subword tokens of a text, and P(keep) for each token in a window. */
 export interface TokenClassifierBackend {
-  readonly style: "wordpiece" | "sentencepiece";
   tokenize(text: string): readonly string[];
   keepProbabilities(tokens: readonly string[]): Promise<readonly number[]>;
 }
 
 /**
- * LLMLingua-2 prompt compression: the classifier scores every token, windows of up to
- * 510 tokens are thresholded separately (as in the reference implementation), and the
- * surviving words are joined in order.
+ * Prompt compression by a token classifier: it scores every token, windows (the model's
+ * context, from its catalog entry) are thresholded separately, and the surviving words
+ * are joined in order.
  */
-export class LinguaCompressor implements Compressor {
+export class TokenClassifierCompressor implements Compressor {
   readonly #backend: TokenClassifierBackend;
-  readonly #window: number;
+  readonly #config: CompressionConfig;
   readonly #keepDigits: boolean;
 
-  constructor(backend: TokenClassifierBackend, options: { window?: number; keepDigits?: boolean } = {}) {
+  constructor(backend: TokenClassifierBackend, config: CompressionConfig, options: { keepDigits?: boolean } = {}) {
     this.#backend = backend;
-    this.#window = options.window ?? 510;
+    this.#config = config;
     this.#keepDigits = options.keepDigits ?? false;
   }
 
@@ -72,12 +80,12 @@ export class LinguaCompressor implements Compressor {
     const tokens = this.#backend.tokenize(request.text);
     const kept: string[] = [];
     let compressedTokens = 0;
-    for (const [start, end] of chunkTokens(tokens, this.#window)) {
+    for (const [start, end] of chunkTokens(tokens, this.#config.window)) {
       const window = tokens.slice(start, end);
       const probs = await this.#backend.keepProbabilities(window);
       const words = wordsFromTokens(
         window.map((text, i) => ({ text, keep: probs[i]!, special: false })),
-        this.#backend.style,
+        this.#config.subwords,
       );
       for (const w of compressWords(words, { rate: request.rate, keepDigits: this.#keepDigits, ...(request.forceTokens ? { forceTokens: request.forceTokens } : {}) })) {
         kept.push(w.text);
@@ -88,7 +96,7 @@ export class LinguaCompressor implements Compressor {
   }
 }
 
-// ---- vision chat models (Qwen3.5, LightOnOCR-2) on transformers.js ------------------
+// ---- vision chat models on transformers.js ---------------------------------------------
 
 export type TemplatePart = { readonly type: "text"; readonly text: string } | { readonly type: "image" };
 
@@ -175,7 +183,7 @@ async function* stream(backend: ChatBackend, request: ChatBackendRequest): Async
   }
 }
 
-/** A chat model with vision (Qwen3.5 in the browser and natively) as a cognitive Generator. */
+/** A chat model with vision, in the browser and natively, as a cognitive Generator. */
 export class VisionChatGenerator implements Generator {
   readonly #backend: ChatBackend;
   readonly #maxTokens: number;
@@ -210,7 +218,7 @@ export class VisionChatGenerator implements Generator {
   }
 }
 
-/** A page-to-Markdown vision model (LightOnOCR-2) as a cognitive DocumentParser: one page per generation. */
+/** A page-to-Markdown vision model as a cognitive DocumentParser: one page per generation. */
 export class VisionChatDocumentParser implements DocumentParser {
   readonly #backend: ChatBackend;
   readonly #maxTokens: number;

@@ -4,9 +4,9 @@ import type { Ensemble, ImageInput } from "@harness/cognitive";
 import type { EvalCase } from "../runner.ts";
 
 /**
- * The cognitive core judged by Jev: each case runs real work on the ensemble (tool
- * decisions, compression, OCR, vision, retrieval) and Jev decides whether the result
- * is right. Every state names the model that produced it.
+ * The cognitive core, judged: each case runs real work on the ensemble (tool
+ * decisions, compression, OCR, vision, retrieval) and the judge decides whether the
+ * result is right. Every state names the model that produced it.
  */
 
 const TOOLS = [

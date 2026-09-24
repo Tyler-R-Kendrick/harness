@@ -59,7 +59,7 @@ describe("memory", () => {
     expect(await restored.recall("vault key", { minScore: 0.1 })).toEqual(await memory.recall("vault key", { minScore: 0.1 }));
     expect(await restored.remember([{ text: "next" }])).toEqual(["m2"]);
     expect(() => new Memory(e, { dimensions: 64, saved })).toThrow(/32.*64|dimensions/);
-    expect(() => new Memory(e, { saved: { format: "other" } })).toThrow(/memory/);
+    expect(() => new Memory(e, { dimensions: 32, saved: { format: "other" } })).toThrow(/memory/);
   });
 
   it("ME1.4 every change is announced, so the host can persist it", async () => {

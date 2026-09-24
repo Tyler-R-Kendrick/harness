@@ -13,6 +13,9 @@
       ],
       "locality": "local",
       "runtime": "transformers.js",
+      "run": {
+        "dtype": "q4"
+      },
       "platforms": [
         "native",
         "browser"
@@ -34,6 +37,20 @@
             "bytes": 196725760,
             "sha256": "599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02"
           }
+        ]
+      },
+      "embedding": {
+        "query": "task: {task} | query: {text}",
+        "document": "title: {title} | text: {text}",
+        "defaults": {
+          "task": "search result",
+          "title": "none"
+        },
+        "dimensions": [
+          768,
+          512,
+          256,
+          128
         ]
       }
     }

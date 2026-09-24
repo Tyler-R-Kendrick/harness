@@ -2,7 +2,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { FileByteCache, loadNeedleModule } from "@harness/platform-native";
+import { FileByteCache, loadEmscriptenModule } from "@harness/platform-native";
 
 const dirs: string[] = [];
 async function tempDir(): Promise<string> {
@@ -33,17 +33,17 @@ describe("native model cache", () => {
 
   it("MC2.1 loads an Emscripten factory from source with CommonJS globals and hands it the WASM bytes", async () => {
     const source = `
-      var createNeedle = (() => async function (moduleArg = {}) {
+      var createEngine = (() => async function (moduleArg = {}) {
         const fs = require("node:fs");
         return { gotWasm: moduleArg.wasmBinary.length, hasFs: typeof fs.readFileSync, dir: typeof __dirname };
       })();
-      if (typeof exports === "object" && typeof module === "object") { module.exports = createNeedle; module.exports.default = createNeedle; }
+      if (typeof exports === "object" && typeof module === "object") { module.exports = createEngine; module.exports.default = createEngine; }
     `;
-    const m = (await loadNeedleModule(new TextEncoder().encode(source), new Uint8Array(9))) as unknown as Record<string, unknown>;
+    const m = (await loadEmscriptenModule(new TextEncoder().encode(source), new Uint8Array(9))) as unknown as Record<string, unknown>;
     expect(m).toEqual({ gotWasm: 9, hasFs: "function", dir: "string" });
   });
 
   it("MC2.2 a source that exports no factory is refused", async () => {
-    await expect(loadNeedleModule(new TextEncoder().encode("module.exports = 42;"), new Uint8Array(1))).rejects.toThrow(/factory/);
+    await expect(loadEmscriptenModule(new TextEncoder().encode("module.exports = 42;"), new Uint8Array(1))).rejects.toThrow(/factory/);
   });
 });

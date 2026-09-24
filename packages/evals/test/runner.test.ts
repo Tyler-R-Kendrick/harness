@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { BlockedError, chooseJudge, EvaluationJudge, resolveGatewayCredential, runEvals } from "@harness/evals";
+import { Ensemble } from "@harness/cognitive";
+import type { ModelDescriptor } from "@harness/cognitive";
+import { BlockedError, chooseJudge, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
+import { EvaluationJudge } from "@harness/models";
 import { FakeEvaluationModel } from "../../models/test/fake-evaluation-model.ts";
 
 const yesCase = (id: string, reply: string): EvalCase => ({
@@ -11,21 +14,23 @@ const yesCase = (id: string, reply: string): EvalCase => ({
   expect: { correct: { type: "boolean", expect: true } },
 });
 
-const judgeFrom = (p: (state: unknown) => number) =>
-  new EvaluationJudge(new FakeEvaluationModel((o) => ({ correct: { type: "boolean", probability: p(o.state) } })));
+const judgeFrom = (p: (state: unknown) => number) => ({
+  judge: new EvaluationJudge(new FakeEvaluationModel((o) => ({ correct: { type: "boolean", probability: p(o.state) } }))),
+});
 
 describe("runEvals", () => {
-  it("EV3.1 without a gateway credential every case is blocked and the judge is never called", async () => {
-    const model = new FakeEvaluationModel(() => ({}));
-    const report = await runEvals([yesCase("a", "4")], new EvaluationJudge(model), { credential: undefined });
-    expect(report.results).toEqual([expect.objectContaining({ id: "a", verdict: "blocked", reason: expect.stringMatching(/AI_GATEWAY_API_KEY/) })]);
-    expect(model.calls).toEqual([]);
+  it("EV3.1 without a judge every case is blocked, with the reason, and the report names no judge", async () => {
+    let ran = false;
+    const report = await runEvals([{ ...yesCase("a", "4"), subject: async () => ((ran = true), {}) }], { unavailable: "No judge could be reached: j: down" });
+    expect(report.results).toEqual([expect.objectContaining({ id: "a", verdict: "blocked", reason: "No judge could be reached: j: down" })]);
+    expect(ran).toBe(false);
+    expect(report.judge).toEqual({ provider: "none", modelId: "none" });
     expect(report.summary).toMatchObject({ total: 1, blocked: 1, passed: 0 });
   });
 
   it("EV3.2 verdicts come from the judge's typed answers", async () => {
     const judge = judgeFrom((s) => ((s as { reply: string }).reply === "4" ? 0.95 : (s as { reply: string }).reply === "5" ? 0.05 : 0.6));
-    const report = await runEvals([yesCase("good", "4"), yesCase("bad", "5"), yesCase("unsure", "four-ish")], judge, { credential: "api-key" });
+    const report = await runEvals([yesCase("good", "4"), yesCase("bad", "5"), yesCase("unsure", "four-ish")], judge);
     expect(report.results.map((r) => [r.id, r.verdict])).toEqual([
       ["good", "passed"],
       ["bad", "failed"],
@@ -37,7 +42,7 @@ describe("runEvals", () => {
 
   it("EV3.3 the pass rate carries a Wilson interval over decided cases only", async () => {
     const judge = judgeFrom(() => 0.95);
-    const report = await runEvals([yesCase("a", "4"), yesCase("b", "4")], judge, { credential: "api-key" });
+    const report = await runEvals([yesCase("a", "4"), yesCase("b", "4")], judge);
     expect(report.summary.passRate).toMatchObject({ successes: 2, trials: 2, interval: [expect.any(Number), 1] });
     expect(report.summary.passRate.interval[0]).toBeLessThan(0.5);
   });
@@ -46,7 +51,7 @@ describe("runEvals", () => {
     const judge = judgeFrom(() => 0.95);
     const blocked: EvalCase = { ...yesCase("b", "4"), subject: async () => { throw new BlockedError("model worker needs gateway access"); } };
     const crashed: EvalCase = { ...yesCase("c", "4"), subject: async () => { throw new Error("daemon exploded"); } };
-    const report = await runEvals([blocked, crashed], judge, { credential: "api-key" });
+    const report = await runEvals([blocked, crashed], judge);
     expect(report.results).toEqual([
       expect.objectContaining({ id: "b", verdict: "blocked", reason: "model worker needs gateway access" }),
       expect.objectContaining({ id: "c", verdict: "failed", reason: expect.stringMatching(/daemon exploded/) }),
@@ -54,46 +59,54 @@ describe("runEvals", () => {
   });
 
   it("EV3.5 a judge authentication failure is blocked; other judge failures are inconclusive", async () => {
-    const authFail = new EvaluationJudge(new FakeEvaluationModel(() => { throw Object.assign(new Error("unauthorized"), { statusCode: 401 }); }));
-    const flaky = new EvaluationJudge(new FakeEvaluationModel(() => { throw new Error("socket hang up"); }));
-    expect((await runEvals([yesCase("a", "4")], authFail, { credential: "api-key" })).results[0]).toMatchObject({ verdict: "blocked" });
-    expect((await runEvals([yesCase("a", "4")], flaky, { credential: "api-key" })).results[0]).toMatchObject({ verdict: "inconclusive", reason: expect.stringMatching(/socket hang up/) });
+    const authFail = { judge: new EvaluationJudge(new FakeEvaluationModel(() => { throw Object.assign(new Error("unauthorized"), { statusCode: 401 }); })) };
+    const flaky = { judge: new EvaluationJudge(new FakeEvaluationModel(() => { throw new Error("socket hang up"); })) };
+    expect((await runEvals([yesCase("a", "4")], authFail)).results[0]).toMatchObject({ verdict: "blocked" });
+    expect((await runEvals([yesCase("a", "4")], flaky)).results[0]).toMatchObject({ verdict: "inconclusive", reason: expect.stringMatching(/socket hang up/) });
   });
 
   it("EV3.6 wrapped access errors (e.g. inside a retry error) are still recognised", async () => {
-    const wrapped = new EvaluationJudge(
-      new FakeEvaluationModel(() => {
-        throw Object.assign(new Error("retries exhausted"), { errors: [Object.assign(new Error("forbidden"), { name: "GatewayForbiddenError" })] });
-      }),
-    );
-    expect((await runEvals([yesCase("a", "4")], wrapped, { credential: "oidc" })).results[0]).toMatchObject({ verdict: "blocked" });
+    const wrapped = {
+      judge: new EvaluationJudge(
+        new FakeEvaluationModel(() => {
+          throw Object.assign(new Error("retries exhausted"), { errors: [Object.assign(new Error("forbidden"), { name: "GatewayForbiddenError" })] });
+        }),
+      ),
+    };
+    expect((await runEvals([yesCase("a", "4")], wrapped)).results[0]).toMatchObject({ verdict: "blocked" });
   });
 
   it("EV3.7 the report identifies the judge and the source revision", async () => {
-    const report = await runEvals([yesCase("a", "4")], judgeFrom(() => 0.9), { credential: "api-key", sourceRevision: "abc123" });
-    expect(report).toMatchObject({ schemaVersion: "harness.eval/v1", sourceRevision: "abc123", judge: { provider: "fake", modelId: "fake-jev" } });
-    await expect(runEvals([], judgeFrom(() => 1), { credential: undefined, sourceRevision: "resolved-by-runner" })).rejects.toThrow(/placeholder/);
+    const report = await runEvals([yesCase("a", "4")], judgeFrom(() => 0.9), { sourceRevision: "abc123" });
+    expect(report).toMatchObject({ schemaVersion: "harness.eval/v1", sourceRevision: "abc123", judge: { provider: "fake", modelId: "fake-judge" } });
+    await expect(runEvals([], judgeFrom(() => 1), { sourceRevision: "resolved-by-runner" })).rejects.toThrow(/placeholder/);
   });
 });
 
-describe("resolveGatewayCredential", () => {
-  it("EV4.1 prefers an API key, accepts an OIDC token, and reports absence", () => {
-    expect(resolveGatewayCredential({ AI_GATEWAY_API_KEY: "k", VERCEL_OIDC_TOKEN: "t" })).toBe("api-key");
-    expect(resolveGatewayCredential({ VERCEL_OIDC_TOKEN: "t" })).toBe("oidc");
-    expect(resolveGatewayCredential({ AI_GATEWAY_API_KEY: "" })).toBeUndefined();
-    expect(resolveGatewayCredential({})).toBeUndefined();
+describe("chooseJudge", () => {
+  const judgeModel = (id: string, locality: "hosted" | "local"): ModelDescriptor =>
+    ({ id, name: id, publisher: "p", tasks: ["judgment"], ports: ["judge"], locality, platforms: ["native"], license: "x", downloadBytes: 0, runtime: "ai-gateway", run: { model: id }, benchmarks: [] }) as ModelDescriptor;
+
+  it("EV3.8 the judge is the preferred judgment model that loads; failures are reasons, and none left blocks every case", async () => {
+    const ensemble = new Ensemble({ platform: "native", preferences: { judgment: ["hosted-judge", "local-judge"] } });
+    ensemble.register(judgeModel("hosted-judge", "hosted"), async () => {
+      throw new Error("no credential");
+    });
+    ensemble.register(judgeModel("local-judge", "local"), async () => ({ judge: judgeFrom(() => 0.9).judge }));
+    const choice = await chooseJudge(ensemble);
+    expect(choice.judge?.identity).toEqual({ provider: "ai-gateway", modelId: "local-judge" });
+    expect((await runEvals([yesCase("a", "4")], choice)).results[0]).toMatchObject({ verdict: "passed" });
+
+    ensemble.revoke("local-judge", "revoked");
+    const none = await chooseJudge(ensemble);
+    expect(none).toEqual({ unavailable: "No judge could be reached: hosted-judge: no credential; local-judge: revoked" });
+    expect(await chooseJudge(new Ensemble({ platform: "native" }))).toEqual({ unavailable: "No judge could be reached" });
   });
 
-  it("EV3.8 the judge is Jev with an AI Gateway credential, else CLM when clm-serve answers, else none (blocked)", async () => {
-    const up = (async () => Response.json({ ok: true })) as typeof fetch;
-    const down = (async () => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch;
-    const jevChoice = await chooseJudge({ AI_GATEWAY_API_KEY: "k" }, { clm: { fetch: up } });
-    expect([jevChoice.credential, jevChoice.judge.identity.modelId]).toEqual(["api-key", "typesafe-ai/jev"]);
-    const clmChoice = await chooseJudge({}, { clm: { baseUrl: "http://127.0.0.1:8700", fetch: up } });
-    expect([clmChoice.credential, clmChoice.judge.identity.modelId]).toEqual(["local", "clm-latest"]);
-    const none = await chooseJudge({}, { clm: { fetch: down } });
-    expect(none.credential).toBeUndefined();
-    expect((await runEvals([yesCase("a", "4")], none.judge, { credential: none.credential })).results[0]).toMatchObject({ verdict: "blocked", reason: expect.stringMatching(/clm-serve/) });
+  it("EV3.9 errors other than having no judge are not hidden", async () => {
+    const ensemble = new Ensemble({ platform: "native" });
+    ensemble.register(judgeModel("j", "local"), async () => ({ judge: judgeFrom(() => 1).judge }));
+    const broken = Object.assign(ensemble, { resolve: async () => Promise.reject(new TypeError("bug")) });
+    await expect(chooseJudge(broken)).rejects.toThrow("bug");
   });
 });
-

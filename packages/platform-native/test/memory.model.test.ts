@@ -4,8 +4,8 @@ import { invokeCognitive } from "@harness/cognitive";
 import { buildNativeEnsemble } from "@harness/platform-native";
 import { modelCacheDir } from "./models-env.ts";
 
-// Memory on real weights: EmbeddingGemma (pinned, sha256-verified) behind Orama.
-describe("memory with EmbeddingGemma, real weights", () => {
+// Memory on real weights: memory's embedding model (pinned, sha256-verified) behind Orama.
+describe("memory with its embedding model, real weights", () => {
   it("MM1.1 recalls the note that answers a question, keeps sessions apart, and survives a restart", async () => {
     let saved: unknown;
     const cacheDir = modelCacheDir;

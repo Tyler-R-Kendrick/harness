@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { LOCALITIES, PLATFORMS, PORT_KINDS, RUNTIMES, TASK_CATEGORIES, TASK_PORTS } from "./models.ts";
-import type { ModelDescriptor, TaskCategory } from "./models.ts";
+import { LOCALITIES, PLATFORMS, PORT_KINDS, TASK_CATEGORIES, TASK_PORTS } from "./models.ts";
+import type { BenchmarkResult, RUNTIMES, TaskCategory } from "./models.ts";
+
+/** A catalog model with its benchmark results attached. */
+export type ModelDescriptor = ModelEntry & { readonly benchmarks: readonly BenchmarkResult[] };
 
 /**
  * Catalog data is not code: models, task preferences and benchmark results live in JSON
@@ -15,31 +18,103 @@ const task = z.enum(TASK_CATEGORIES);
 const Artifact = z.strictObject({
   repo: id,
   revision: z.string().regex(/^[0-9a-f]{40}$/, "a pinned commit, never a branch"),
-  files: z.array(z.strictObject({ path: id, bytes: z.int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/) })).min(1),
+  files: z.array(z.strictObject({ path: id, bytes: z.int().positive(), sha256: z.string().regex(/^[0-9a-f]{64}$/) })).min(1).readonly(),
+});
+
+/** Chat-template options passed through to the model's template (e.g. turning thinking off). */
+const template = z.record(z.string(), z.unknown());
+const env = z.record(z.string(), z.string());
+
+/** How each runtime runs a model; file names refer to the model's artifact. */
+const RUN = {
+  /** A model on the Vercel AI Gateway, by its gateway id. */
+  "ai-gateway": z.strictObject({ model: id }),
+  /** A server speaking TypeSafe's evaluation API; env names override the address and key. */
+  "typesafe-api": z.strictObject({ baseUrl: z.url(), model: id, health: id.exactOptional(), baseUrlEnv: id.exactOptional(), apiKeyEnv: id.exactOptional() }),
+  /**
+   * Cactus's WASM engine: an Emscripten loader, its WASM and the weights. `prefix` names
+   * the engine's C API (`<prefix>_load`, `_init`, `_reset`, `_complete`, `_embed`); `env`
+   * is set before loading (e.g. to turn telemetry off).
+   */
+  "cactus-wasm": z.strictObject({ loader: id, wasm: id, weights: id, prefix: z.string().regex(/^[a-z_][a-z0-9_]*$/), env: env.exactOptional() }),
+  /** A transformers.js model at the artifact's repo and revision. */
+  "transformers.js": z.strictObject({
+    dtype: z.union([id, z.record(z.string(), id)]),
+    /** The transformers.js class of a generator or document parser (image-text-to-text). */
+    modelClass: id.exactOptional(),
+    /** Processors that take (images, text) rather than (text, images). */
+    imagesFirst: z.boolean().exactOptional(),
+    template: template.exactOptional(),
+  }),
+  /** llama.cpp's llama-server on a GGUF file (and its multimodal projector). */
+  "llama.cpp-server": z.strictObject({ model: id, projector: id.exactOptional(), args: z.array(z.string()).exactOptional() }),
+  /**
+   * An ONNX decoder patched with a steering tap (see makeSteerable): the node whose summed
+   * residual is read and steered, and the layer whose SAE features it carries. Its
+   * tokenizer and chat template come from the model file's folder in the artifact.
+   */
+  onnxruntime: z.strictObject({
+    model: id,
+    tap: z.strictObject({ node: id, steerInput: z.int().min(0), residOutput: z.int().min(0), layer: z.int().min(0) }),
+    decoder: z.strictObject({ layers: z.int().positive(), kvHeads: z.int().positive(), headSize: z.int().positive(), hidden: z.int().positive() }),
+    endTokens: z.array(id).min(1),
+    template: template.exactOptional(),
+  }),
+} satisfies Record<(typeof RUNTIMES)[number], z.ZodType>;
+
+/** What an embedding model expects: prompt templates ({text}, and optional {task}/{title}) and the sizes it can truncate to (native first). */
+const Embedding = z.strictObject({ query: id, document: id, defaults: z.record(z.string(), z.string()).exactOptional(), dimensions: z.array(z.int().positive()).min(1).readonly() });
+/** A token-classification compressor: its window and how its tokenizer marks subwords. */
+const Compression = z.strictObject({ window: z.int().positive(), subwords: z.enum(["wordpiece", "sentencepiece"]), keepLabel: z.int().min(0) });
+
+const Base = z.strictObject({
+  id,
+  name: id,
+  publisher: id,
+  tasks: z.array(task).min(1).readonly(),
+  ports: z.array(z.enum(PORT_KINDS)).min(1).readonly(),
+  locality: z.enum(LOCALITIES),
+  platforms: z.array(z.enum(PLATFORMS)).min(1).readonly(),
+  license: id,
+  /** Weight bytes a client downloads; 0 for hosted models. */
+  downloadBytes: z.int().min(0),
+  notes: z.string().exactOptional(),
+  artifact: Artifact.exactOptional(),
+  embedding: Embedding.exactOptional(),
+  compression: Compression.exactOptional(),
 });
 
 const Model = z
-  .strictObject({
-    id,
-    name: id,
-    publisher: id,
-    tasks: z.array(task).min(1),
-    ports: z.array(z.enum(PORT_KINDS)).min(1),
-    locality: z.enum(LOCALITIES),
-    runtime: z.enum(RUNTIMES),
-    platforms: z.array(z.enum(PLATFORMS)).min(1),
-    license: id,
-    /** Weight bytes a client downloads; 0 for hosted models. */
-    downloadBytes: z.int().min(0),
-    notes: z.string().exactOptional(),
-    artifact: Artifact.exactOptional(),
-  })
+  .discriminatedUnion("runtime", [
+    Base.extend({ runtime: z.literal("ai-gateway"), run: RUN["ai-gateway"] }),
+    Base.extend({ runtime: z.literal("typesafe-api"), run: RUN["typesafe-api"] }),
+    Base.extend({ runtime: z.literal("cactus-wasm"), run: RUN["cactus-wasm"] }),
+    Base.extend({ runtime: z.literal("transformers.js"), run: RUN["transformers.js"] }),
+    Base.extend({ runtime: z.literal("llama.cpp-server"), run: RUN["llama.cpp-server"] }),
+    Base.extend({ runtime: z.literal("onnxruntime"), run: RUN.onnxruntime }),
+  ])
   .superRefine((m, ctx) => {
-    for (const t of m.tasks) if (!TASK_PORTS[t].some((p) => m.ports.includes(p))) ctx.addIssue({ code: "custom", message: `no port of ${m.id} serves ${t}`, path: ["tasks"] });
-    if (m.locality === "hosted" && (m.artifact || m.downloadBytes !== 0)) ctx.addIssue({ code: "custom", message: "a hosted model downloads nothing", path: ["artifact"] });
-    if (m.locality === "local" && !m.artifact) ctx.addIssue({ code: "custom", message: "a local model pins its weights", path: ["artifact"] });
-    if (m.artifact && m.downloadBytes !== m.artifact.files.reduce((sum, f) => sum + f.bytes, 0)) ctx.addIssue({ code: "custom", message: "downloadBytes is the sum of the artifact's files", path: ["downloadBytes"] });
+    const issue = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
+    for (const t of m.tasks) if (!TASK_PORTS[t].some((p) => m.ports.includes(p))) issue(`no port of ${m.id} serves ${t}`, "tasks");
+    if (m.locality === "hosted" && (m.artifact || m.downloadBytes !== 0)) issue("a hosted model downloads nothing", "artifact");
+    if (m.locality === "local" && !m.artifact) issue("a local model pins its weights", "artifact");
+    if (m.artifact && m.downloadBytes !== m.artifact.files.reduce((sum, f) => sum + f.bytes, 0)) issue("downloadBytes is the sum of the artifact's files", "downloadBytes");
+    // A category's settings come exactly with its port, so a host can read the port from them.
+    if (m.ports.includes("embedder") !== (m.embedding !== undefined)) issue("an embedder, and only an embedder, says how it is prompted and which sizes it has", "embedding");
+    if (m.ports.includes("compressor") !== (m.compression !== undefined)) issue("a compressor, and only a compressor, gives its window and subword style", "compression");
+    if (m.runtime === "transformers.js" && (m.ports.includes("generator") || m.ports.includes("document-parser")) !== (m.run.modelClass !== undefined)) {
+      issue("a transformers.js generator or document parser, and only those, names its model class", "run", "modelClass");
+    }
+    const files = new Set(m.artifact?.files.map((f) => f.path));
+    for (const key of ["loader", "wasm", "weights", "model", "projector"] as const) {
+      const file = (m.run as Record<string, unknown>)[key];
+      if (typeof file === "string" && m.runtime !== "ai-gateway" && m.runtime !== "typesafe-api" && !files.has(file)) issue(`${file} is not a file of the artifact`, "run", key);
+    }
   });
+
+export type ModelEntry = z.output<typeof Model>;
+export type EmbeddingConfig = z.output<typeof Embedding>;
+export type CompressionConfig = z.output<typeof Compression>;
 
 export const CatalogFileSchema = z
   .strictObject({

@@ -23,11 +23,6 @@ export interface Tap {
   readonly elemType?: number;
 }
 
-/** resid_post of Qwen3 layer L is the sum inside layer L+1's fused input layernorm (onnxruntime-genai exports). */
-export function qwenTap(layer: number, hidden: number): Tap {
-  return { node: `/model/layers.${layer + 1}/input_layernorm/SkipLayerNorm`, steerInput: 1, residOutput: 3, layer, hidden };
-}
-
 // ---- protobuf wire format ------------------------------------------------------------
 
 const utf8 = new TextEncoder();

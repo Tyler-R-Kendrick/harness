@@ -11,6 +11,7 @@ const descriptor = (id: string, scores: readonly (number | null)[], bytes: numbe
   ports: ["generator"],
   locality: "local",
   runtime: "transformers.js",
+  run: { dtype: "q4" },
   platforms: ["native"],
   license: "MIT",
   downloadBytes: bytes,

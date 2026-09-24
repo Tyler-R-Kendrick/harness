@@ -1,4 +1,4 @@
-"""Make a Qwen3 ONNX export (onnxruntime-genai layout) steerable at one layer.
+"""Make an onnxruntime-genai decoder export steerable at one layer.
 
 Adds, at resid_post of layer L (the sum inside layer L+1's input layernorm):
   - output `resid.L`  [batch, sequence, hidden]: the residual stream after layer L
@@ -24,7 +24,7 @@ def make_steerable(model: onnx.ModelProto, layer: int, hidden: int) -> onnx.Mode
     target = f"/model/layers.{layer + 1}/input_layernorm/SkipLayerNorm"
     index = next((i for i, n in enumerate(g.node) if n.name == target), None)
     if index is None:
-        raise SystemExit(f"no node {target}: is this an onnxruntime-genai Qwen3 export, and is layer {layer} not the last?")
+        raise SystemExit(f"no node {target}: is this an onnxruntime-genai decoder export, and is layer {layer} not the last?")
     node = g.node[index]
     if node.op_type != "SkipSimplifiedLayerNormalization":
         raise SystemExit(f"{target} is {node.op_type}, expected SkipSimplifiedLayerNormalization")

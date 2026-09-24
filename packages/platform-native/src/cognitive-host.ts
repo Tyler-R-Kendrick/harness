@@ -2,34 +2,33 @@ import { dirname, join } from "node:path";
 import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { Ensemble } from "@harness/cognitive";
-import type { Catalog, ModelDescriptor, Ports } from "@harness/cognitive";
+import type { Catalog, ModelDescriptor, Ports, Runtime } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
-  EmbeddingGemmaEmbedder,
-  clm,
-  clmAvailable,
+  CactusWasmEngine,
   EvaluationJudge,
-  jev,
-  LinguaCompressor,
+  gatewayEvaluationModel,
   LanguageModelDocumentParser,
   LanguageModelGenerator,
   llamaServer,
   loadChatTokenizer,
-  loadEmbeddingGemmaBackend,
-  loadLinguaBackend,
+  loadFeatureExtractionBackend,
+  loadTokenClassificationBackend,
   loadVisionChatBackend,
-  NeedleEngine,
   OnnxSteerableSession,
-  qwenTap,
+  PromptedEmbedder,
+  serviceAvailable,
   SteeredGenerator,
+  TokenClassifierCompressor,
+  typesafeApiEvaluationModel,
   VisionChatDocumentParser,
   VisionChatGenerator,
 } from "@harness/models";
-import type { ClmOptions, OrtLike } from "@harness/models";
-import { Memory, memoryExtension } from "@harness/memory";
+import type { CactusModule, OrtLike } from "@harness/models";
+import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
 import { LlamaServerProcess } from "./llama-server-process.ts";
-import { FileByteCache, loadNeedleModule } from "./model-cache.ts";
+import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { loadCatalog } from "./catalog-files.ts";
 import { ModelFiles } from "./model-files.ts";
 import { steerableModel } from "./steerable-model.ts";
@@ -37,12 +36,13 @@ import { steerableModel } from "./steerable-model.ts";
 export interface NativeEnsembleOptions {
   /** Where model files are cached. */
   readonly cacheDir: string;
-  /** llama.cpp's llama-server binary; without it the GGUF models (Ornith, OvisOCR2) are not registered. */
+  /** llama.cpp's llama-server binary; without it the llama.cpp-server models are not registered. */
   readonly llamaServer?: string;
-  /** Allow hosted models (Jev on the AI Gateway). Default true. */
+  /** Allow hosted models (e.g. on the AI Gateway). Default true. */
   readonly allowHosted?: boolean;
   /** Register only these catalog ids. */
   readonly only?: readonly string[];
+  /** Fetches weights, and reaches model servers. */
   readonly fetch?: typeof fetch;
   /** Catalog to register from; defaults to the cognitive core's data files. */
   readonly catalog?: Catalog;
@@ -52,9 +52,7 @@ export interface NativeEnsembleOptions {
   readonly onnxruntime?: unknown;
   /** Behavior pack the steerable kernel runs; without one it generates unsteered. */
   readonly behavior?: BehaviorPack;
-  /** Where clm-serve answers (CLM, the local judge used when Jev cannot be). */
-  readonly clm?: ClmOptions;
-  /** Environment to read credentials from (default process.env). */
+  /** Environment to read credentials and server addresses from (default process.env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Install memory: its embedding model, vector recall and session memory. */
   readonly memory?: {
@@ -62,89 +60,121 @@ export interface NativeEnsembleOptions {
     readonly saved?: unknown;
     /** Called with Memory.save() after every change. */
     readonly persist?: (saved: unknown) => void;
+    /** Index size; defaults to the largest size all of memory's embedding models produce. */
     readonly dimensions?: number;
     /** Memory's models; defaults to memory's data files. */
     readonly catalog?: Catalog;
   };
 }
 
-/** Qwen3-1.7B's decoder shape and the layer its public SAEs read (resid_post 14). */
-const KERNEL = { layer: 14, config: { layers: 28, kvHeads: 8, headSize: 128, hidden: 2048 } };
-
-const QWEN_DTYPE = { embed_tokens: "q4", vision_encoder: "q4", decoder_model_merged: "q4" };
+type Of<R extends Runtime> = Extract<ModelDescriptor, { runtime: R }>;
+type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
 
 /**
  * The native host's cognitive core: every catalog model that can run here, registered
- * with a loader that fetches and verifies its pinned weights on first use.
+ * with its runtime's loader, which fetches and verifies the pinned weights on first
+ * use. Nothing here knows a model: the catalog entry says which runtime runs it, how
+ * (its `run` settings) and which ports it serves.
  */
 export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; close(): Promise<void> } {
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
+  const env = options.env ?? process.env;
   const ensemble = new Ensemble({ platform: "native", preferences: catalog.preferences, selection: { allowHosted } });
   const fetchFn = options.fetch ?? fetch;
   const artifacts = new ArtifactStore({ fetch: fetchFn, cache: new FileByteCache(join(options.cacheDir, "artifacts")) });
   const files = new ModelFiles({ dir: join(options.cacheDir, "gguf"), fetch: fetchFn });
-  const transformersCache = join(options.cacheDir, "transformers");
   const servers: LlamaServerProcess[] = [];
   const pinned = (m: ModelDescriptor) => ({
     repo: m.artifact!.repo,
     revision: m.artifact!.revision,
-    cacheDir: transformersCache,
+    cacheDir: join(options.cacheDir, "transformers"),
     ...(options.transformers === undefined ? {} : { module: options.transformers }),
   });
-  const serve = async (m: ModelDescriptor, withProjector: boolean, args: readonly string[] = []) => {
-    const paths = await Promise.all(m.artifact!.files.map((f) => files.path(m.artifact!, f.path)));
-    const server = await LlamaServerProcess.start({ binary: options.llamaServer!, model: paths[0]!, args, ...(withProjector ? { mmproj: paths[1]! } : {}) });
-    servers.push(server);
-    return server;
-  };
+  const serves = (m: ModelDescriptor, port: keyof Ports) => m.ports.includes(port);
 
-  const loaders: Record<string, ((m: ModelDescriptor) => Promise<Ports>) | undefined> = {
-    // Without a credential Jev fails to load, and the next judge (CLM) takes over.
-    "typesafe-ai/jev": async () => {
-      const env = options.env ?? process.env;
+  const loaders: Loaders = {
+    // Without a credential the model fails to load, and the next one for the task takes over.
+    "ai-gateway": async (m) => {
       if (!env["AI_GATEWAY_API_KEY"] && !env["VERCEL_OIDC_TOKEN"]) throw new Error("no AI Gateway credential (AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN)");
-      return { judge: new EvaluationJudge(jev()) };
+      return { judge: new EvaluationJudge(gatewayEvaluationModel(m.run.model)) };
     },
-    "Contrastive-LM/CLM-v0.1-8B": async () => {
-      const clmOptions = { ...options.clm, ...(options.fetch && !options.clm?.fetch ? { fetch: options.fetch } : {}) };
-      if (!(await clmAvailable(clmOptions))) throw new Error("clm-serve is not answering; start it (github.com/Contrastive-LM/CLM) or set CLM_BASE_URL");
-      return { judge: new EvaluationJudge(clm(clmOptions)) };
+    "typesafe-api": async (m) => {
+      const baseUrl = ((m.run.baseUrlEnv && env[m.run.baseUrlEnv]) || m.run.baseUrl).replace(/\/$/, "");
+      if (m.run.health && !(await serviceAvailable(`${baseUrl}${m.run.health}`, fetchFn))) {
+        throw new Error(`${m.name} is not answering at ${baseUrl}; start its server${m.run.baseUrlEnv ? ` or set ${m.run.baseUrlEnv}` : ""}`);
+      }
+      const apiKey = m.run.apiKeyEnv ? env[m.run.apiKeyEnv] : undefined;
+      return { judge: new EvaluationJudge(typesafeApiEvaluationModel({ baseUrl, model: m.run.model, fetch: fetchFn, ...(apiKey ? { apiKey } : {}) })) };
     },
-    "Cactus-Compute/needle3": async (m) => {
-      process.env["NEEDLE_TELEMETRY"] ??= "0";
-      process.env["DO_NOT_TRACK"] ??= "1";
-      const [js, wasm, weights] = await Promise.all(["wasm/needle.js", "wasm/needle.wasm", "needle3.cact"].map((p) => artifacts.file(m.artifact!, p)));
-      const engine = await NeedleEngine.create(await loadNeedleModule(js!, wasm!), weights!);
+    "cactus-wasm": async (m) => {
+      // The engine reads the real process environment.
+      for (const [k, v] of Object.entries(m.run.env ?? {})) process.env[k] ??= v;
+      const [loader, wasm, weights] = await Promise.all([m.run.loader, m.run.wasm, m.run.weights].map((p) => artifacts.file(m.artifact!, p)));
+      const engine = await CactusWasmEngine.create(await loadEmscriptenModule<CactusModule>(loader!, wasm!, m.run.loader), weights!, m.run.prefix);
       return { router: engine };
     },
-    "google/embeddinggemma-300m": async (m) => ({ embedder: new EmbeddingGemmaEmbedder(await loadEmbeddingGemmaBackend({ ...pinned(m), dtype: "q4" })) }),
-    "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank": async (m) => ({ compressor: new LinguaCompressor(await loadLinguaBackend({ ...pinned(m), dtype: "uint8" })) }),
-    "Qwen/Qwen3.5-0.8B": async (m) => ({
-      generator: new VisionChatGenerator(await loadVisionChatBackend({ ...pinned(m), modelClass: "Qwen3_5ForConditionalGeneration", dtype: QWEN_DTYPE, templateOptions: { enable_thinking: false } })),
-    }),
-    "lightonai/LightOnOCR-2-1B": async (m) => ({
-      "document-parser": new VisionChatDocumentParser(await loadVisionChatBackend({ ...pinned(m), modelClass: "LightOnOcrForConditionalGeneration", dtype: QWEN_DTYPE, imagesFirst: true })),
-    }),
-    // Thinking off by default: answers arrive promptly on CPU instead of after long reasoning.
-    "ornith-ai/Ornith-1.5-9B": options.llamaServer ? async (m) => ({ generator: new LanguageModelGenerator(llamaServer({ baseUrl: (await serve(m, false, ["--reasoning-budget", "0"])).baseUrl })) }) : undefined,
-    "Qwen/Qwen3-1.7B": async (m) => {
-      const file = m.artifact!.files[0]!.path;
-      const model = await steerableModel({ source: await files.path(m.artifact!, file), tap: qwenTap(KERNEL.layer, KERNEL.config.hidden), dir: join(options.cacheDir, "steerable") });
-      const session = await OnnxSteerableSession.create({ model, ...KERNEL, ...(options.onnxruntime === undefined ? {} : { runtime: options.onnxruntime as OrtLike }) });
-      const tokenizer = await loadChatTokenizer({ ...pinned(m), subfolder: dirname(file), templateOptions: { enable_thinking: false } });
+    "transformers.js": async (m) => {
+      const at = { ...pinned(m), dtype: m.run.dtype };
+      const chat = m.run.modelClass
+        ? await loadVisionChatBackend({
+            ...at,
+            modelClass: m.run.modelClass,
+            ...(m.run.template ? { templateOptions: m.run.template } : {}),
+            ...(m.run.imagesFirst ? { imagesFirst: true } : {}),
+          })
+        : undefined;
+      return {
+        ...(m.embedding ? { embedder: new PromptedEmbedder(await loadFeatureExtractionBackend(at), m.embedding) } : {}),
+        ...(m.compression ? { compressor: new TokenClassifierCompressor(await loadTokenClassificationBackend({ ...at, keepLabel: m.compression.keepLabel }), m.compression) } : {}),
+        ...(chat && serves(m, "generator") ? { generator: new VisionChatGenerator(chat) } : {}),
+        ...(chat && serves(m, "document-parser") ? { "document-parser": new VisionChatDocumentParser(chat) } : {}),
+      };
+    },
+    ...(options.llamaServer
+      ? {
+          "llama.cpp-server": async (m: Of<"llama.cpp-server">) => {
+            const path = (file: string) => files.path(m.artifact!, file);
+            const server = await LlamaServerProcess.start({
+              binary: options.llamaServer!,
+              model: await path(m.run.model),
+              ...(m.run.projector ? { mmproj: await path(m.run.projector) } : {}),
+              ...(m.run.args ? { args: m.run.args } : {}),
+            });
+            servers.push(server);
+            const model = llamaServer({ baseUrl: server.baseUrl });
+            return {
+              ...(serves(m, "generator") ? { generator: new LanguageModelGenerator(model) } : {}),
+              ...(serves(m, "document-parser") ? { "document-parser": new LanguageModelDocumentParser(model) } : {}),
+            };
+          },
+        }
+      : {}),
+    onnxruntime: async (m) => {
+      const { run } = m;
+      const model = await steerableModel({ source: await files.path(m.artifact!, run.model), tap: { ...run.tap, hidden: run.decoder.hidden }, dir: join(options.cacheDir, "steerable") });
+      const session = await OnnxSteerableSession.create({ model, layer: run.tap.layer, config: run.decoder, ...(options.onnxruntime === undefined ? {} : { runtime: options.onnxruntime as OrtLike }) });
+      // ONNX exports keep the tokenizer and chat template beside the model file.
+      const folder = dirname(run.model);
+      const tokenizer = await loadChatTokenizer({ ...pinned(m), endTokens: run.endTokens, ...(folder === "." ? {} : { subfolder: folder }), ...(run.template ? { templateOptions: run.template } : {}) });
       return { generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: behaviorHook(new BehaviorEngine(options.behavior)) } : {}) }) };
     },
-    "ATH-MaaS/OvisOCR2": options.llamaServer ? async (m) => ({ "document-parser": new LanguageModelDocumentParser(llamaServer({ baseUrl: (await serve(m, true)).baseUrl })) }) : undefined,
   };
+  const loaderFor = (m: ModelDescriptor) => loaders[m.runtime] as ((m: ModelDescriptor) => Promise<Ports>) | undefined;
 
   for (const m of catalog.models) {
-    const load = loaders[m.id];
+    const load = loaderFor(m);
     if (!load || !m.platforms.includes("native") || (!allowHosted && m.locality === "hosted")) continue;
     if (options.only && !options.only.includes(m.id)) continue;
     ensemble.register(m, () => load(m));
   }
-  const memory = options.memory && installMemory(ensemble, options.memory, (m) => loaders[m.id]!(m));
+  const memory =
+    options.memory &&
+    installMemory(ensemble, options.memory, (m) => {
+      const load = loaderFor(m);
+      if (!load) throw new Error(`no ${m.runtime} runtime on this host`);
+      return load(m);
+    });
   return {
     ensemble,
     ...(memory ? { memory } : {}),
@@ -156,11 +186,12 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
 
 function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOptions["memory"]>, load: (m: ModelDescriptor) => Promise<Ports>): Memory {
   const { persist } = options;
+  const { models } = options.catalog ?? loadCatalog({ package: "@harness/memory" });
   const memory = new Memory(ensemble, {
-    ...(options.dimensions === undefined ? {} : { dimensions: options.dimensions }),
+    dimensions: options.dimensions ?? sharedEmbeddingSize(models),
     ...(options.saved === undefined ? {} : { saved: options.saved }),
     ...(persist ? { onChange: (m: Memory) => persist(m.save()) } : {}),
   });
-  ensemble.install(memoryExtension({ memory, models: (options.catalog ?? loadCatalog({ package: "@harness/memory" })).models, load }));
+  ensemble.install(memoryExtension({ memory, models, load }));
   return memory;
 }

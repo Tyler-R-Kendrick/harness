@@ -36,14 +36,14 @@ function server(chunks: (body: Record<string, unknown>) => Chunk[] | Record<stri
   return { f: f as typeof fetch, requests };
 }
 
-describe("AI SDK language models as generators, over llama-server (Ornith)", () => {
+describe("AI SDK language models as generators, over llama-server", () => {
   it("LS1.1 posts an OpenAI chat request with tools and streams text, reasoning and the finish reason", async () => {
     const { f, requests } = server(() => [delta({ reasoning_content: "think" }), delta({ content: "Hel" }), delta({ content: "lo" }), delta({}, "stop")]);
-    const g = new LanguageModelGenerator(llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f, model: "ornith" }));
+    const g = new LanguageModelGenerator(llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f, model: "local-model" }));
     const events = await collect(g.generate({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "t", description: "d", parameters: { type: "object" } }], maxTokens: 50 }));
     expect(requests[0]!.url).toBe("http://127.0.0.1:8080/v1/chat/completions");
     expect(requests[0]!.body).toMatchObject({
-      model: "ornith",
+      model: "local-model",
       stream: true,
       max_tokens: 50,
       messages: [{ role: "user", content: "hi" }],
@@ -111,7 +111,7 @@ generatorContract("llama-server generator over a fake server", () => {
   return new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f }));
 });
 
-describe("AI SDK language models as document parsers, over llama-server (OvisOCR2)", () => {
+describe("AI SDK language models as document parsers, over llama-server", () => {
   it("LD1.1 sends each page image with the instruction and returns the Markdown", async () => {
     const { f, requests } = server(() => ({ id: "chatcmpl-1", choices: [{ index: 0, message: { role: "assistant", content: "| a | b |\n|---|---|" }, finish_reason: "stop" }] }));
     const parser = new LanguageModelDocumentParser(llamaServer({ baseUrl: "http://x", fetch: f }), { instruction: "Convert the page to Markdown." });

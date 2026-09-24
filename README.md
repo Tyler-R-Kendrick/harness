@@ -23,19 +23,27 @@ Status of every feature: [`docs/features.md`](docs/features.md). Development rul
 
 ## Cognitive core
 
-The daemon hosts an ensemble of models and routes each task to the best one it can run:
+The daemon hosts an ensemble of models and routes each task to the best one it can run.
+No code names a model: code is written per model category (judges, tool routers,
+embedders, compressors, generators, document parsers) and per runtime (AI Gateway,
+TypeSafe-API servers, Cactus WASM, transformers.js, llama.cpp-server, a steerable ONNX
+kernel). Which models exist, how each runtime runs them (`run`), and a category's
+settings (an embedder's prompts and sizes, a compressor's window) are catalog data in
+`packages/cognitive/data/catalog.json`, so a model is swapped by editing JSON.
 
-| Model | For | Where |
+The shipped catalog currently lists:
+
+| Model | Category | Runtime |
 |---|---|---|
-| Jev (TypeSafe) | judgments with calibrated probabilities | hosted, AI Gateway |
-| CLM 8B (Contrastive-LM) | the same judgments, locally: used when Jev has no key or budget | native, clm-serve |
-| Needle 3 (Cactus) | tool calling, extraction, embeddings | local WASM |
-| LLMLingua-2 | prompt compression | local, transformers.js |
-| Qwen3.5 0.8B | chat and vision; the browser LLM | local, transformers.js |
-| LightOnOCR-2 1B | documents, OCR, tables | local, transformers.js |
-| Ornith 1.5 9B | coding, reasoning, tools | native, llama-server |
-| OvisOCR2 | documents, OCR, tables (strongest) | native, llama-server |
-| Qwen3 1.7B | steered chat: the local kernel | native, onnxruntime |
+| Jev (TypeSafe) | judge | hosted, AI Gateway |
+| CLM 8B (Contrastive-LM) | judge (the local fallback without a key or budget) | TypeSafe-API server (clm-serve) |
+| Needle 3 (Cactus) | tool router | Cactus WASM |
+| LLMLingua-2 | compressor | transformers.js |
+| Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
+| LightOnOCR-2 1B | document parser | transformers.js |
+| Ornith 1.5 9B | generator (coding, reasoning, tools) | llama.cpp-server |
+| OvisOCR2 | document parser | llama.cpp-server |
+| Qwen3 1.7B | steered generator: the local kernel | onnxruntime (steerable) |
 
 Models declare task categories and published benchmark results. Selection compares two
 models only on benchmarks they both report with the same metric and setting, and every
@@ -49,8 +57,8 @@ node packages/platform-native/src/main.ts --stdio --cognitive [--llama-server /p
 
 ### Memory (an extension)
 
-The core carries no embedding model. Memory brings one (EmbeddingGemma 300M) when it is
-installed, and the daemon then offers `memory` and `cognitive.text-embedding` in its
+The core carries no embedding model. Memory brings its own (listed in
+`packages/memory/data/catalog.json`; EmbeddingGemma 300M today) when it is installed, and the daemon then offers `memory` and `cognitive.text-embedding` in its
 capability registry. Clients call `memory.remember` and `memory.recall` through
 `_harness/cognitive/invoke`; the ensemble worker recalls related memories from other
 sessions into each turn and remembers the turn afterwards. The index is Orama (pure JS),
@@ -64,8 +72,9 @@ node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.
 
 Like a game character's state machine, a behavior graph reads features of a sparse
 autoencoder (SAE) from the model's residual stream and steers the next token with
-others. Qwen3-1.7B's int4 export is patched once with a steering tap at layer 14, where
-public SAEs exist; sensors see every prompt token, so the state changes before the reply.
+others. The kernel's ONNX export is patched once with the steering tap its catalog entry
+names (for the shipped kernel, layer 14, where public SAEs exist); sensors see every
+prompt token, so the state changes before the reply.
 
 ```sh
 node packages/platform-native/src/main.ts --stdio --cognitive \
@@ -114,10 +123,12 @@ Workers:
 
 ## Evals
 
-LLM-as-judge evals use [Jev](https://docs.typesafe.ai) (`typesafe-ai/jev`) through the
-Vercel AI Gateway, or [CLM](https://github.com/Contrastive-LM/CLM) locally when there is
-no gateway credential. CLM's `clm-serve` speaks TypeSafe's API, so the same AI SDK
-provider talks to both; the report names the judge that answered.
+LLM-as-judge evals use the best judge the host can reach: the catalog's judgment models
+in preference order, each tried until one loads. With the shipped catalog that is
+[Jev](https://docs.typesafe.ai) through the Vercel AI Gateway when there is a gateway
+credential, else [CLM](https://github.com/Contrastive-LM/CLM) when its `clm-serve` answers
+(it speaks TypeSafe's API, so the same AI SDK provider talks to both). The report names
+the judge that answered.
 
 ```sh
 AI_GATEWAY_API_KEY=... npm run eval -- --out eval-results/results.json
@@ -130,12 +141,12 @@ There are two suites:
 - `harness`: end-to-end turns through the daemon core with the deterministic echo
   worker; the judge checks the prompt round-trip, turn order and permission routing.
 
-Jev and CLM are the only models the evals call. In the daemon too, judgment goes to
-Jev first and fails over to CLM when Jev cannot load (no credential) or its service
-becomes unavailable (out of budget, unauthorized, down).
+The judge is the only model the evals call. In the daemon too, judgment fails over to
+the next judge when one cannot load (no credential, server down) or its service becomes
+unavailable (out of budget, unauthorized, down).
 
-Every result is `passed`, `failed`, `inconclusive` or `blocked`. A missing credential
-is reported as `blocked`, never as a pass.
+Every result is `passed`, `failed`, `inconclusive` or `blocked`. No reachable judge is
+reported as `blocked`, never as a pass.
 
 ## Layout
 
@@ -147,4 +158,4 @@ is reported as `blocked`, never as a pass.
 | `packages/testkit` | Deterministic ports, daemon driver, storage contract suite |
 | `packages/workers` | Echo worker and model worker (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
-| `packages/evals` | eval runner (Jev, or CLM locally), suites, CLI |
+| `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |

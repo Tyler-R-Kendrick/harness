@@ -7,7 +7,6 @@ const data = (file: string) => JSON.parse(readFileSync(new URL(`../data/${file}`
 const catalogFile = data("catalog.json");
 const benchmarksFile = data("benchmarks.json");
 const { models: MODEL_CATALOG, preferences: TASK_PREFERENCES } = parseCatalog(catalogFile, benchmarksFile);
-const top = (task: TaskCategory, platform: Platform) => rankForTask(task, MODEL_CATALOG, { platform, prefer: TASK_PREFERENCES[task] ?? [] })[0]?.id;
 
 /** The shipped catalog with one change; parsing it must fail and say why. */
 const refused = (edit: (catalog: typeof catalogFile, benchmarks: typeof benchmarksFile) => void) => {
@@ -16,36 +15,54 @@ const refused = (edit: (catalog: typeof catalogFile, benchmarks: typeof benchmar
   edit(catalog, benchmarks);
   return expect(() => parseCatalog(catalog, benchmarks));
 };
-const model = (catalog: typeof catalogFile, id: string) => catalog.models.find((m) => m["id"] === id)!;
+/** Tests pick models by runtime and category, never by name, so they hold whatever the catalog lists. */
+const byRuntime = (catalog: typeof catalogFile, runtime: string) => catalog.models.find((m) => m["runtime"] === runtime)!;
+const hosted = byRuntime(catalogFile, "ai-gateway")["id"] as string;
+const c0 = () => catalogFile.models[0]!["id"] as string;
+const esc = (id: string) => id.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
 describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
   it("CT1.1 the shipped data parses: every model's tasks are served by its ports, and benchmarks attach to their models", () => {
     expect(MODEL_CATALOG).toHaveLength(catalogFile.models.length);
     for (const m of MODEL_CATALOG) for (const t of m.tasks) expect(TASK_PORTS[t].some((p) => m.ports.includes(p)), `${m.id} ${t}`).toBe(true);
     expect(MODEL_CATALOG.flatMap((m) => m.benchmarks)).toHaveLength(benchmarksFile.rows.length);
-    expect(MODEL_CATALOG.find((m) => m.id === "Qwen/Qwen3.5-0.8B")!.benchmarks).toContainEqual({ benchmark: "MMLU-Pro", task: "chat", metric: "accuracy", score: 29.7, higherIsBetter: true, setting: "non-thinking" });
-    expect(MODEL_CATALOG.find((m) => m.id === "typesafe-ai/jev")!.benchmarks).toContainEqual({ benchmark: "JevBench v1.0 (242 decisions)", task: "judgment", metric: "ECE", score: 0.027, higherIsBetter: false });
+    for (const [id, task, benchmark, metric, score, better, setting] of benchmarksFile.rows as [string, TaskCategory, string, string, number, string, string?][]) {
+      expect(MODEL_CATALOG.find((m) => m.id === id)!.benchmarks).toContainEqual({ benchmark, task, metric, score, higherIsBetter: better === "higher", ...(setting ? { setting } : {}) });
+    }
   });
 
   it("CT1.2 a model entry that cannot be right is refused, naming where", () => {
-    refused((c) => (model(c, "typesafe-ai/jev")["tasks"] = ["judgment", "chat"])).toThrow(/no port of typesafe-ai\/jev serves chat/);
-    refused((c) => c.models.push(structuredClone(c.models[0]!))).toThrow(/model typesafe-ai\/jev is listed twice/);
-    refused((c) => (model(c, "typesafe-ai/jev")["downloadBytes"] = 5)).toThrow(/a hosted model downloads nothing/);
-    refused((c) => delete model(c, "Cactus-Compute/needle3")["artifact"]).toThrow(/a local model pins its weights/);
-    refused((c) => (model(c, "Cactus-Compute/needle3")["downloadBytes"] = 1)).toThrow(/downloadBytes is the sum/);
-    refused((c) => ((model(c, "Cactus-Compute/needle3")["artifact"] as { revision: string }).revision = "main")).toThrow(/a pinned commit, never a branch/);
-    refused((c) => ((model(c, "Cactus-Compute/needle3")["artifact"] as { files: { sha256: string }[] }).files[0]!.sha256 = "abc")).toThrow(/sha256/);
-    refused((c) => (model(c, "Cactus-Compute/needle3")["runtime"] = "tensorflow")).toThrow(/runtime/);
-    refused((c) => (model(c, "Cactus-Compute/needle3")["colour"] = "blue")).toThrow(/colour/);
+    refused((c) => (byRuntime(c, "ai-gateway")["tasks"] = ["judgment", "chat"])).toThrow(new RegExp(`no port of ${esc(hosted)} serves chat`));
+    refused((c) => c.models.push(structuredClone(c.models[0]!))).toThrow(new RegExp(`model ${esc(c0())} is listed twice`));
+    refused((c) => (byRuntime(c, "ai-gateway")["downloadBytes"] = 5)).toThrow(/a hosted model downloads nothing/);
+    refused((c) => delete byRuntime(c, "cactus-wasm")["artifact"]).toThrow(/a local model pins its weights/);
+    refused((c) => (byRuntime(c, "cactus-wasm")["downloadBytes"] = 1)).toThrow(/downloadBytes is the sum/);
+    refused((c) => ((byRuntime(c, "cactus-wasm")["artifact"] as { revision: string }).revision = "main")).toThrow(/a pinned commit, never a branch/);
+    refused((c) => ((byRuntime(c, "cactus-wasm")["artifact"] as { files: { sha256: string }[] }).files[0]!.sha256 = "abc")).toThrow(/sha256/);
+    refused((c) => (byRuntime(c, "cactus-wasm")["runtime"] = "tensorflow")).toThrow(/runtime/);
+    refused((c) => (byRuntime(c, "cactus-wasm")["colour"] = "blue")).toThrow(/colour/);
+  });
+
+  it("CT1.8 run settings belong to the runtime, name files of the artifact, and category settings come exactly with their port", () => {
+    refused((c) => ((byRuntime(c, "cactus-wasm")["run"] as Record<string, unknown>)["weights"] = "missing.bin")).toThrow(/missing.bin is not a file of the artifact/);
+    refused((c) => ((byRuntime(c, "cactus-wasm")["run"] as Record<string, unknown>)["prefix"] = "Bad-Prefix")).toThrow(/prefix/);
+    refused((c) => ((byRuntime(c, "cactus-wasm")["run"] as Record<string, unknown>)["dtype"] = "q4")).toThrow(/dtype/);
+    const compressor = (c: typeof catalogFile) => c.models.find((m) => (m["ports"] as string[]).includes("compressor"))!;
+    refused((c) => delete compressor(c)["compression"]).toThrow(/a compressor, and only a compressor/);
+    refused((c) => (byRuntime(c, "cactus-wasm")["compression"] = { window: 8, subwords: "wordpiece", keepLabel: 1 })).toThrow(/a compressor, and only a compressor/);
+    refused((c) => (byRuntime(c, "cactus-wasm")["embedding"] = { query: "{text}", document: "{text}", dimensions: [8] })).toThrow(/an embedder, and only an embedder/);
+    const vision = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "transformers.js" && (m["ports"] as string[]).includes("generator"))!;
+    refused((c) => delete (vision(c)["run"] as Record<string, unknown>)["modelClass"]).toThrow(/names its model class/);
+    refused((c) => ((compressor(c)["run"] as Record<string, unknown>)["modelClass"] = "X")).toThrow(/names its model class/);
   });
 
   it("CT1.3 preferences and benchmark rows must name catalog models that serve the task", () => {
-    refused((c) => ((c["preferences"] as Record<string, string[]>)["coding"] = ["typesafe-ai/jev"])).toThrow(/typesafe-ai\/jev does not serve coding/);
+    refused((c) => ((c["preferences"] as Record<string, string[]>)["coding"] = [hosted])).toThrow(new RegExp(`${esc(hosted)} does not serve coding`));
     refused((_, b) => b.rows.push(["nobody/model", "chat", "X", "acc", 1, "higher"])).toThrow(/nobody\/model is not a catalog model serving chat/);
-    refused((_, b) => b.rows.push(["typesafe-ai/jev", "chat", "X", "acc", 1, "higher"])).toThrow(/typesafe-ai\/jev is not a catalog model serving chat/);
-    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", 1, "sideways"])).toThrow(/rows\[\d+\]\[5\]/);
-    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", 1, "higher", "s", "extra"])).toThrow(/at most 7 fields/);
-    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", "high", "higher"])).toThrow(/rows\[\d+\]\[4\]/);
+    refused((_, b) => b.rows.push([hosted, "chat", "X", "acc", 1, "higher"])).toThrow(new RegExp(`${esc(hosted)} is not a catalog model serving chat`));
+    refused((_, b) => b.rows.push([hosted, "judgment", "X", "acc", 1, "sideways"])).toThrow(/rows\[\d+\]\[5\]/);
+    refused((_, b) => b.rows.push([hosted, "judgment", "X", "acc", 1, "higher", "s", "extra"])).toThrow(/at most 7 fields/);
+    refused((_, b) => b.rows.push([hosted, "judgment", "X", "acc", "high", "higher"])).toThrow(/rows\[\d+\]\[4\]/);
   });
 
   it("CT1.10 each data file names its JSON Schema, and the schemas are generated from the parser", async () => {
@@ -62,42 +79,30 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     expect(uncovered("browser")).toEqual(["text-embedding", "coding", "steered-chat"]);
   });
 
-  it("CT1.5 the judges are Jev, the only hosted model, and CLM, its local fallback", () => {
-    expect(MODEL_CATALOG.filter((m) => m.tasks.includes("judgment")).map((m) => [m.id, m.locality])).toEqual([
-      ["typesafe-ai/jev", "hosted"],
-      ["Contrastive-LM/CLM-v0.1-8B", "local"],
-    ]);
-    expect(top("judgment", "native")).toBe("typesafe-ai/jev");
-    expect(rankForTask("judgment", MODEL_CATALOG, { platform: "native", allowHosted: false, prefer: TASK_PREFERENCES["judgment"] ?? [] })[0]?.id).toBe("Contrastive-LM/CLM-v0.1-8B");
-    expect(MODEL_CATALOG.filter((m) => m.locality === "hosted").map((m) => [m.id, m.runtime])).toEqual([["typesafe-ai/jev", "ai-gateway"]]);
+  it("CT1.5 judging works without keys: every hosted judge has a local fallback, which takes over when hosted models are off", () => {
+    const judges = MODEL_CATALOG.filter((m) => m.tasks.includes("judgment"));
+    expect(judges.some((m) => m.locality === "hosted")).toBe(true);
+    const fallback = rankForTask("judgment", MODEL_CATALOG, { platform: "native", allowHosted: false, prefer: TASK_PREFERENCES["judgment"] ?? [] })[0];
+    expect(fallback?.descriptor.locality).toBe("local");
   });
 
-  it("CT1.6 the browser only gets models that run there, and Ornith and OvisOCR2 stay native", () => {
-    const browser = MODEL_CATALOG.filter((m) => m.platforms.includes("browser")).map((m) => m.id);
-    expect(browser).not.toContain("ornith-ai/Ornith-1.5-9B");
-    expect(browser).not.toContain("ATH-MaaS/OvisOCR2");
-    for (const m of MODEL_CATALOG.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "needle-wasm"]).toContain(m.runtime);
+  it("CT1.6 browser models run on browser runtimes; server and patched-ONNX runtimes stay native", () => {
+    for (const m of MODEL_CATALOG.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "cactus-wasm"], m.id).toContain(m.runtime);
+    for (const m of MODEL_CATALOG.filter((x) => x.runtime === "llama.cpp-server" || x.runtime === "onnxruntime")) expect(m.platforms, m.id).toEqual(["native"]);
   });
 
-  it("CT1.7 selection follows the published evidence", () => {
-    // Needle 3's own chart: Needle wins tool calling 2 of 3 against Qwen3.5-0.8B...
-    expect(top("tool-calling", "browser")).toBe("Cactus-Compute/needle3");
-    // ...and loses structured extraction 0 of 3.
-    expect(top("structured-extraction", "browser")).toBe("Qwen/Qwen3.5-0.8B");
-    expect(top("prompt-compression", "browser")).toBe("microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank");
-    expect(top("document-parsing", "browser")).toBe("lightonai/LightOnOCR-2-1B");
-    expect(top("document-parsing", "native")).toBe("ATH-MaaS/OvisOCR2");
-    expect(top("chat", "browser")).toBe("Qwen/Qwen3.5-0.8B");
-    expect(top("chat", "native")).toBe("ornith-ai/Ornith-1.5-9B");
-    expect(top("coding", "native")).toBe("ornith-ai/Ornith-1.5-9B");
-    expect(top("vision-qa", "browser")).toBe("Qwen/Qwen3.5-0.8B");
-    expect(top("judgment", "native")).toBe("typesafe-ai/jev");
+  it("CT1.7 every task preference names models in the order selection breaks ties by", () => {
+    for (const [task, ids] of Object.entries(TASK_PREFERENCES) as [TaskCategory, readonly string[]][]) {
+      const ranked = rankForTask(task, MODEL_CATALOG, { platform: "native", prefer: ids }).map((r) => r.id);
+      const tied = ids.filter((id) => ranked.includes(id) && MODEL_CATALOG.find((m) => m.id === id)!.benchmarks.every((b) => b.task !== task));
+      expect(ranked.filter((id) => tied.includes(id)), task).toEqual(tied);
+    }
   });
 
-  it("CT1.9 steered chat is the local steerable kernel alone: Qwen3-1.7B, whose layers have public SAEs", () => {
-    expect(MODEL_CATALOG.filter((m) => m.tasks.includes("steered-chat")).map((m) => [m.id, m.locality, m.runtime])).toEqual([["Qwen/Qwen3-1.7B", "local", "onnxruntime"]]);
-    expect(top("steered-chat", "native")).toBe("Qwen/Qwen3-1.7B");
+  it("CT1.9 steered chat is served only by local models on the steerable ONNX runtime", () => {
+    const steered = MODEL_CATALOG.filter((m) => m.tasks.includes("steered-chat"));
+    expect(steered.length).toBeGreaterThan(0);
+    for (const m of steered) expect([m.locality, m.runtime]).toEqual(["local", "onnxruntime"]);
     expect(TASK_PORTS["steered-chat"]).toEqual(["generator"]);
   });
-
 });

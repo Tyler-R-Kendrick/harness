@@ -4,7 +4,7 @@ import type { ScoredToken } from "@harness/cognitive";
 
 const t = (text: string, keep: number, special = false): ScoredToken => ({ text, keep, special });
 
-describe("LLMLingua-2 compression (pure part)", () => {
+describe("token-classification compression (pure part)", () => {
   it("LL1.1 WordPiece tokens join into words; '##' continues a word; the word keeps the mean probability", () => {
     const words = wordsFromTokens([t("[CLS]", 0, true), t("The", 0.9), t("comp", 0.2), t("##ress", 0.4), t("##ion", 0.6), t("[SEP]", 0, true)], "wordpiece");
     expect(words).toEqual([
@@ -56,7 +56,7 @@ describe("LLMLingua-2 compression (pure part)", () => {
       { text: "total", keep: 0.9, tokens: 1 },
       { text: "the", keep: 0.05, tokens: 1 },
     ];
-    // Forced words count at p=1 in the threshold, as in LLMLingua-2: at rate .25 they use up the budget.
+    // Forced words count at p=1 in the threshold, as in the reference implementation: at rate .25 they use up the budget.
     expect(compressWords(words, { rate: 0.25, forceTokens: ["Invoice"], keepDigits: true }).map((w) => w.text)).toEqual(["Invoice", "#4521"]);
     expect(compressWords(words, { rate: 0.8, forceTokens: ["Invoice"], keepDigits: true }).map((w) => w.text)).toEqual(["Invoice", "#4521", "total"]);
     expect(compressWords(words, { rate: 0.25 }).map((w) => w.text)).toEqual(["total"]);

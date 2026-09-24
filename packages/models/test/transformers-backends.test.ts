@@ -3,7 +3,7 @@ import { applyImageProcessorDefaults, loadChatTokenizer } from "@harness/models"
 
 describe("transformers.js image processor defaults", () => {
   it("TB1.1 a config with mean/std but no do_normalize gets Python's default of normalizing", () => {
-    // Qwen3.5's preprocessor_config.json omits do_normalize; Python defaults it to true,
+    // A preprocessor_config.json may omit do_normalize; Python defaults it to true,
     // transformers.js 4.3.0 reads it as undefined and feeds unnormalized pixels (red looks pink).
     const ip: Record<string, unknown> = { image_mean: [0.5, 0.5, 0.5], image_std: [0.5, 0.5, 0.5], do_normalize: undefined };
     applyImageProcessorDefaults(ip);
@@ -23,13 +23,13 @@ describe("transformers.js image processor defaults", () => {
 
 // ---- the backends against a fake transformers.js module --------------------------------------
 
-import { loadEmbeddingGemmaBackend, loadLinguaBackend, loadVisionChatBackend } from "@harness/models";
+import { loadFeatureExtractionBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "@harness/models";
 import { fakeTransformers } from "./fake-transformers.ts";
 
 describe("transformers.js backends", () => {
   it("TB2.1 the embedding backend loads the pinned revision and returns one Float32Array per text", async () => {
     const { module, log } = fakeTransformers();
-    const b = await loadEmbeddingGemmaBackend({ repo: "r/emb", revision: "abc", module, cacheDir: "/cache" });
+    const b = await loadFeatureExtractionBackend({ repo: "r/emb", revision: "abc", module, cacheDir: "/cache", dtype: "q4" });
     const out = await b.embed(["a", "b"]);
     expect(out.map((v) => Array.from(v))).toEqual([
       [0, 1],
@@ -41,9 +41,9 @@ describe("transformers.js backends", () => {
     expect(log.find((l) => l.name === "tokenizer")!.args[1]).toEqual({ padding: true, truncation: true });
   });
 
-  it("TB2.2 the LLMLingua backend wraps each window in CLS/SEP and returns softmax P(keep) per token", async () => {
+  it("TB2.2 the token-classification backend wraps each window in CLS/SEP and returns the keep label's softmax per token", async () => {
     const { module, log } = fakeTransformers();
-    const b = await loadLinguaBackend({ repo: "r/lingua", revision: "abc", module, device: "cpu" });
+    const b = await loadTokenClassificationBackend({ repo: "r/classifier", revision: "abc", module, device: "cpu", dtype: "uint8", keepLabel: 1 });
     expect(b.tokenize("one two three")).toEqual(["one", "two", "three"]);
     const probs = await b.keepProbabilities(["one", "three"]);
     expect(log.find((l) => l.name === "classify")!.args[0]).toEqual([101, 3, 5, 102]);
@@ -51,11 +51,14 @@ describe("transformers.js backends", () => {
     expect(probs[0]).toBeCloseTo(0.5, 9);
     expect(probs[1]).toBeCloseTo(1 / (1 + Math.exp(-1)), 9);
     expect(probs).toHaveLength(2);
+    // the other label, as keep: its softmax is the complement
+    const inverse = await loadTokenClassificationBackend({ repo: "r/classifier", revision: "abc", module, dtype: "uint8", keepLabel: 0 });
+    expect((await inverse.keepProbabilities(["one", "three"]))[1]).toBeCloseTo(1 - 1 / (1 + Math.exp(-1)), 9);
   });
 
   it("TB2.3 the vision chat backend fixes the image defaults, templates tools and streams the reply", async () => {
     const { module, log, processor } = fakeTransformers();
-    const b = await loadVisionChatBackend({ repo: "r/qwen", revision: "abc", module, modelClass: "Qwen3_5ForConditionalGeneration", dtype: { decoder: "q4" }, templateOptions: { enable_thinking: false } });
+    const b = await loadVisionChatBackend({ repo: "r/vision", revision: "abc", module, modelClass: "AcmeVisionForConditionalGeneration", dtype: { decoder: "q4" }, templateOptions: { enable_thinking: false } });
     expect(processor.image_processor["do_normalize"]).toBe(true);
     let text = "";
     const r = await b.generate(
@@ -71,7 +74,7 @@ describe("transformers.js backends", () => {
 
   it("TB2.4 Pixtral-style processors get images first; text-only prompts get text alone", async () => {
     const { module, log } = fakeTransformers();
-    const ocr = await loadVisionChatBackend({ repo: "r/ocr", revision: "abc", module, modelClass: "LightOnOcrForConditionalGeneration", dtype: {}, imagesFirst: true });
+    const ocr = await loadVisionChatBackend({ repo: "r/ocr", revision: "abc", module, modelClass: "PixtralLikeForConditionalGeneration", dtype: {}, imagesFirst: true });
     const img = { mediaType: "image/png", data: new Uint8Array([1]) };
     await ocr.generate({ messages: [], images: [img, img], tools: [], maxTokens: 5 }, () => {}, () => false);
     expect(log.filter((l) => l.name === "processor")[0]!.args).toEqual([[{ image: "image/png" }, { image: "image/png" }], "PROMPT"]);
@@ -79,9 +82,13 @@ describe("transformers.js backends", () => {
     expect(log.filter((l) => l.name === "processor")[1]!.args).toEqual(["PROMPT"]);
   });
 
+  it("TB2.6 a model class transformers.js does not have is an error", async () => {
+    await expect(loadVisionChatBackend({ repo: "r/vision", revision: "abc", module: fakeTransformers().module, modelClass: "NoSuchModel", dtype: "q4" })).rejects.toThrow("transformers.js has no model class NoSuchModel");
+  });
+
   it("TB2.5 stopping interrupts generation; reaching the token budget reports hitLimit; calls never overlap", async () => {
     const { module } = fakeTransformers({ generated: ["a", "b", "c", "d"] });
-    const b = await loadVisionChatBackend({ repo: "r/qwen", revision: "abc", module, modelClass: "Qwen3_5ForConditionalGeneration", dtype: {} });
+    const b = await loadVisionChatBackend({ repo: "r/vision", revision: "abc", module, modelClass: "AcmeVisionForConditionalGeneration", dtype: {} });
     let seen = "";
     await b.generate({ messages: [], images: [], tools: [], maxTokens: 10 }, (d) => (seen += d), () => seen.length >= 2);
     expect(seen).toBe("ab");
@@ -111,7 +118,7 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
 
   it("TB3.1 loads the pinned tokenizer, templates messages and tools, and encodes without adding special tokens", async () => {
     const { module, log } = fakeTokenizerModule();
-    const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", subfolder: "cpu", module, templateOptions: { enable_thinking: false } });
+    const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", subfolder: "cpu", module, endTokens: ["<|im_end|>", "<|endoftext|>"], templateOptions: { enable_thinking: false } });
     const tools = [{ name: "search", description: "find", parameters: { type: "object" } }];
     const ids = tok.encodeChat(
       [
@@ -142,7 +149,7 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
     expect(tok.endTokens).toEqual([7, 8]);
   });
 
-  it("TB3.2 end tokens can be named; without tools none are templated; images are refused", async () => {
+  it("TB3.2 end tokens are the ones named; without tools none are templated; images are refused", async () => {
     const { module, log } = fakeTokenizerModule();
     const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<eos>"] });
     expect(tok.endTokens).toEqual([9]);

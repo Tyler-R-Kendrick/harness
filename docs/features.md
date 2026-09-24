@@ -100,50 +100,53 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Ports: judge, tool router, embedder, compressor, generator (text + vision), document parser | built | `cognitive/ports.ts`; contract suites JC, RC, EC, CC, GC, DC run against fakes and real adapters |
 | Task taxonomy mapped to ports (15 categories, including `steered-chat`) | built | `TASK_CATEGORIES`, `TASK_PORTS`; CT1.1, CT1.9 |
 | Model catalog, preferences and benchmarks as data: JSON files (`packages/cognitive/data`, one set per extension) with generated JSON Schemas, loaded by the host at runtime and parsed (pinned commits, sha256 weights, ports serving tasks, benchmark rows naming models) | built | CT1.1–CT1.3, CT1.10, CH1.1; 9 models (below) |
-| Benchmark-driven selection with head-to-head records, curated tie-breaks, explanations | built | SE1.1–SE1.8, SE2.1–SE2.2 (property), CT1.7 |
+| Model-agnostic code: adapters per category (judge, router, embedder, compressor, generator, document parser) and runtime (`ai-gateway`, `typesafe-api`, `cactus-wasm`, `transformers.js`, `llama.cpp-server`, `onnxruntime`); each entry's `run` settings and category settings (embedding prompts and sizes, compression window and subword style) are catalog data, parsed per runtime; category settings come exactly with their port | built | CT1.8, CH1.1–CH3.2, EA1.x, LA1.x, ND1.8, TB2.x; tests pick models by runtime or port, never by id |
+| Benchmark-driven selection with head-to-head records, curated tie-breaks, explanations | built | SE1.1–SE1.8, SE2.1–SE2.2 (property), CT1.7, CH1.3 |
 | Ensemble: lazy load, failover to next-ranked member, runtime revoke/restore, state events | built | EN1.1–EN1.11 |
-| Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9, CA2.1–CA2.6; live: Needle decides and is accepted (cognitive.tool-decision subject) |
-| LLMLingua-2 word scoring, rate threshold, windowing (pure) | built | LL1.1–LL2.1 |
-| EmbeddingGemma prompts and Matryoshka truncation | built | EG1.1–EG2.4 |
-| ChatML / qwen3_xml streaming parser (Qwen3.5, Ornith) | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
+| Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9, CA2.1–CA2.6; live: the router decides and is accepted (cognitive.tool-decision subject) |
+| Token-classification compression: word scoring (WordPiece or SentencePiece subwords), rate threshold, windowing (pure) | built | LL1.1–LL2.1, LA1.1–LA1.3 |
+| Embedding prompts from the model's templates, and Matryoshka truncation to its sizes | built | EG1.1–EG2.4, EA1.1–EA1.2 |
+| ChatML / qwen3_xml streaming parser | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
 | Failover on calls: a member whose service is unavailable (HTTP status other than 400/422, or retryable) is taken out and the next member answers | built | EN3.1–EN3.3 |
 | Capabilities mirrored from the ensemble (`cognitive.<task>`, plus each installed extension's id) | built | CM1.1, EN2.4, NH2.1, DM9.7 |
 | Extensions: models and `<extension>.<op>` operations installed and removed at runtime; the daemon admits an extension's operations only while its capability is offered | built | EN2.1–EN2.4, CS3.1, DM9.12 |
 | ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.11, CS1.1–CS1.6, CS2.1–CS2.5, NH2.1–NH2.2 |
 | Ensemble worker (sessions on the best generator; images → vision) | built | EW1.1–EW1.5; CLI `--worker ensemble` |
 | Candidate-strategy math (coverage, attempts, voting, precision, mixtures, Wilson) | built | AM1–AM5 |
-| Local kernel: steerable ONNX (residual tap + steering input spliced into the graph), KV-cached decode loop, steering hook per token | built | OS1.1–OS1.5, OR1.x, SG1.1–SG1.10, SK1.1–SK1.3, CH2.5; real Qwen3-1.7B: zero steering is bit-identical, residual moves by exactly the vector (KS1.4, `check_steerable.py`) |
+| Local kernel: steerable ONNX (residual tap + steering input spliced into the graph, tap and decoder shape from the catalog), KV-cached decode loop, steering hook per token | built | OS1.1–OS1.4, OR1.x, SG1.1–SG1.10, SK1.1–SK1.3, CH2.5; real Qwen3-1.7B: zero steering is bit-identical, residual moves by exactly the vector (KS1.4, `check_steerable.py`) |
 | Behavior state graphs over SAE features: sensors with hysteresis and hold, nested states with summed steering, priority/specificity transitions, host events, snapshots, replay | built | `packages/behavior`; BV1–BV2, BE1–BE3, BP1–BP2, property tests |
 | SAE rows files: only the rows a graph uses, cut from a full SAE (`tools/model-lab/sae_rows.py`), b_dec folded into the bias | built | SR1.1–SR2.1; fixture: 6 labelled features of adamkarvonen/qwen3-1.7b-saes layer 14 (MIT) |
 | Behavior graph driving the real kernel: the prompt is sensed token by token (skipping the attention sink), so the state changes before the reply | built | KS1.2 insult → `soothing`, KS1.3 happy news → `cheerful` (reply changes), KS1.4 neutral → no change; fixture `qwen3-1.7b-host.graph.json` |
 | Behavior per session (state in the session log, transitions as hook events, plugins raising events) | not started | The native host runs one optional pack for the kernel (`behavior` option) |
 | Remote models as retrieval for the steered local kernel | not started | Steering is local only: hosted APIs expose no residual stream |
 | Steerable kernel in the browser (onnxruntime-web) | not started | Native only; the int4 export's contrib ops are unverified on web |
-| Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Needle WASM); no browser platform layer yet |
+| Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Cactus WASM); no browser platform layer yet |
 | Tool use through the daemon's permission flow from the ensemble worker | not started | |
 | Execution configurations, performance registry learned from our own runs, value of information | not started | Selection uses published benchmarks only |
 | Constrained generation, code mode, planning; agents and skills; templates and improvement loops | not started | |
 
-### Ensemble members
+### Ensemble members (the shipped catalog; data, not code)
+
+Every native local model is tested on real weights by `catalog.model.test.ts`, by its category: routers RW1.1–RW1.3, embedders RW2.1, compressors RW3.1, chat generators RW4.1–RW4.3 (tools and vision when its tasks say so), document parsers RW5.1, each with its port's contract suite.
 
 | Model | Tasks | Runs | Verified on real weights |
 |---|---|---|---|
 | Jev 1.13 (TypeSafe AI) | judgment, classification | hosted (AI Gateway) | evals (live run: calibration 5/5) |
 | CLM 8B v0.1 (Contrastive-LM) | judgment, classification: Jev's local fallback | clm-serve (TypeSafe's API; Qwen3-8B encoder), native | CL1.1–CL1.2 against clm-serve's wire format; CH2.2; not yet run against a live clm-serve (needs its encoder on a GPU) |
-| Needle 3 (Cactus Compute) | tool calling, extraction, classification, embeddings | WASM, native + browser | NM1.1–NM1.3 + router/embedder contracts |
-| EmbeddingGemma 300M (brought by memory, not in the core catalog) | text embeddings | transformers.js, native + browser | EM1.1 + embedder contract (768/512/256/128), MM1.1 |
-| LLMLingua-2 (mBERT) | prompt compression | transformers.js, native + browser | LM1.1 + compressor contract |
-| Qwen3.5 0.8B | chat, reasoning, tools, extraction, vision QA, OCR, documents, charts | transformers.js, native + browser (the browser LLM) | QM1.1–QM1.3 + generator contract |
-| LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | DM1.1 + document-parser contract |
-| Ornith 1.5 9B | chat, reasoning, coding, tools | llama-server, native only | OM1.1 + generator contract, CI `models` job only (llama.cpp releases are not reachable from this dev sandbox) |
-| OvisOCR2 | OCR, document parsing, tables | llama-server, native only | OV1.1, CI `models` job only |
+| Needle 3 (Cactus Compute) | tool calling, extraction, classification | Cactus WASM, native + browser | RW1.1–RW1.3 + router contract |
+| EmbeddingGemma 300M (brought by memory, not in the core catalog) | text embeddings | transformers.js, native + browser | RW2.1 + embedder contract (768/512/256/128), MM1.1 |
+| LLMLingua-2 (mBERT) | prompt compression | transformers.js, native + browser | RW3.1 + compressor contract |
+| Qwen3.5 0.8B | chat, reasoning, tools, extraction, vision QA, OCR, documents, charts | transformers.js, native + browser (the browser LLM) | RW4.1–RW4.3 + generator contract |
+| LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | RW5.1 + document-parser contract |
+| Ornith 1.5 9B | chat, reasoning, coding, tools | llama.cpp-server, native only | RW4.1–RW4.2 + generator contract, CI `models` job only (llama.cpp releases are not reachable from this dev sandbox) |
+| OvisOCR2 | OCR, document parsing, tables | llama.cpp-server, native only | RW5.1 + document-parser contract, CI `models` job only |
 | Qwen3 1.7B (steerable kernel) | steered chat | onnxruntime, native only; patched at layer 14 on first use | KS1.1–KS1.4 + generator contract |
 
 ## H. Knowledge modeling
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Memory as a cognitive-core extension (`@harness/memory`): brings the embedding model; the core has none of its own | built | MX1.1, CH1.1, CH3.1 |
+| Memory as a cognitive-core extension (`@harness/memory`): brings the embedding model; the core has none of its own; the index size is the largest size its embedding models share | built | MX1.1, MX2.1–MX2.2, CH1.1, CH3.1–CH3.2 |
 | Vector memory: remember text (as documents), recall by meaning (as queries), per-session filters, JSON save/restore; Orama index, pure JS on every platform | built | ME1.1–ME1.4; real weights MM1.1 |
 | ACP `memory.remember` / `memory.recall` through `_harness/cognitive/invoke` | built | MX1.2–MX1.3, DM9.12 |
 | Session memory: each turn gets related memories from other sessions and is remembered afterwards | built | EW1.7; CLI `--worker ensemble --memory <file>` |
@@ -189,7 +192,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Native background service (Node): stdio/socket, file storage, workers | built | NS1, NS2, NH1; tested on Linux only |
-| Native model hosting: verified artifact cache, streamed GGUF files, Needle loader, llama-server processes, ensemble builder | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH2.4; CLI `--cognitive` |
+| Native model hosting: verified artifact cache, streamed GGUF files, Emscripten loader, llama-server processes, ensemble builder with one loader per runtime | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH3.2; CLI `--cognitive` |
 | Browser extension, browser tab/PWA, remote API, mobile | not started | Core is pure (lint + tsconfig enforced) so it can run there |
 
 ## N. Federation
@@ -202,9 +205,9 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Evals with Jev as judge (typesafe-ai/jev via Vercel AI Gateway), CLM locally without a credential | built | EV1–EV7, EV3.8; without a gateway credential or a running clm-serve cases are `blocked` |
+| Evals judged by the best reachable judgment model from the catalog, in preference order with failover (shipped: Jev via the AI Gateway, else CLM locally) | built | EV1–EV7, EV3.8–EV3.9, EV6.1; with no reachable judge cases are `blocked`, with each judge's reason |
 | Judge calibration suite | built | `calibration` suite; live run 2026-09-24: 5/5, including both known-bad cases |
-| End-to-end harness suite (daemon, judged by Jev) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. Jev and CLM are the only models the evals call |
+| End-to-end harness suite (daemon, judged) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. The judge is the only model the evals call |
 | OTel/ATIF export; outcome contracts; protected acceptance suites | not started | |
 
 ## P. Reliability, provenance and lifecycle
@@ -214,7 +217,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Deterministic core (injected clock/entropy); trace parity | built | DM8.1 |
 | Fault-injection properties | built | EF5.1 (effects), HK5.1 (plugin crashes), SL4, TG4.1 |
 | Mutation testing with a break threshold | built | Stryker over core, protocol, cognitive |
-| Model tests on real weights (`*.model.test.ts`) | built | `npm run test:models`, CI `models` job; found and fixed: unnormalized Qwen3.5 images, Pixtral argument order, generation not stopped on early exit |
+| Model tests on real weights (`*.model.test.ts`) | built | `npm run test:models`, CI `models` job; found and fixed: unnormalized images when a processor config omits do_normalize, Pixtral argument order, generation not stopped on early exit |
 | TLA+ model; combinatorial conformance; provenance (SLSA/in-toto/TUF); retention | not started | |
 
 ## Q. Clients

@@ -4,15 +4,15 @@ import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
 import { HashEmbedder, HeuristicCompressor, KeywordRouter, ScriptedJudge, StubDocumentParser } from "@harness/testkit";
 
 function d(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor {
-  return { id, name: `Model ${id}`, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
+  return { id, name: `Model ${id}`, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] };
 }
 
 function ensemble() {
   const e = new Ensemble({ platform: "native" });
-  e.register(d("jev", ["judgment"], ["judge"]), async () => ({ judge: new ScriptedJudge(() => ({ type: "boolean", probability: 0.8 })) }));
-  e.register(d("needle", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-  e.register(d("gemma", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(8) }));
-  e.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
+  e.register(d("judge-a", ["judgment"], ["judge"]), async () => ({ judge: new ScriptedJudge(() => ({ type: "boolean", probability: 0.8 })) }));
+  e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
+  e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(8) }));
+  e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
   e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
   return e;
 }
@@ -22,21 +22,21 @@ const tools = [{ name: "set_timer", description: "Start a timer", parameters: { 
 describe("cognitive service (ACP operations on the ensemble)", () => {
   it("CS1.1 every result names the model that served it", async () => {
     const e = ensemble();
-    expect(await invokeCognitive(e, "judge", { state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ model: "jev", answers: { ok: { type: "boolean", probability: 0.8 } } });
-    expect(await invokeCognitive(e, "route", { input: "start a timer", tools })).toMatchObject({ model: "needle", calls: [{ name: "set_timer" }] });
+    expect(await invokeCognitive(e, "judge", { state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ model: "judge-a", answers: { ok: { type: "boolean", probability: 0.8 } } });
+    expect(await invokeCognitive(e, "route", { input: "start a timer", tools })).toMatchObject({ model: "router-a", calls: [{ name: "set_timer" }] });
     expect(await invokeCognitive(e, "decide-tools", { input: "start a timer", tools })).toMatchObject({ calls: [{ name: "set_timer" }], decidedBy: expect.any(String) });
   });
 
   it("CS1.2 embeddings come back as plain arrays, truncated when asked", async () => {
     const r = (await invokeCognitive(ensemble(), "embed", { inputs: [{ kind: "query", text: "hi there" }], dimensions: 4 })) as { model: string; vectors: number[][] };
-    expect(r.model).toBe("gemma");
+    expect(r.model).toBe("embedder-a");
     expect(Array.isArray(r.vectors[0])).toBe(true);
     expect(r.vectors[0]).toHaveLength(4);
   });
 
   it("CS1.3 compression and document parsing work from JSON (pages as base64)", async () => {
     const e = ensemble();
-    expect(await invokeCognitive(e, "compress", { text: "the meeting is on Thursday at noon", rate: 0.5 })).toMatchObject({ model: "lingua", originalTokens: 7 });
+    expect(await invokeCognitive(e, "compress", { text: "the meeting is on Thursday at noon", rate: 0.5 })).toMatchObject({ model: "compressor-a", originalTokens: 7 });
     const parsed = (await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQID" }] })) as { model: string; pages: { markdown: string }[] };
     expect(parsed.model).toBe("ocr");
     expect(parsed.pages[0]!.markdown).toContain("3 bytes");
@@ -57,7 +57,7 @@ describe("cognitive service (ACP operations on the ensemble)", () => {
     const status = (await invokeCognitive(e, "status", {})) as { platform: string; members: { id: string; state: string; reason?: string }[]; tasks: Record<string, { id: string }[]> };
     expect(status.platform).toBe("native");
     expect(status.members.find((m) => m.id === "ocr")).toMatchObject({ state: "revoked", reason: "no GPU", name: "Model ocr" });
-    expect(status.tasks["judgment"]!.map((r) => r.id)).toEqual(["jev"]);
+    expect(status.tasks["judgment"]!.map((r) => r.id)).toEqual(["judge-a"]);
     expect(status.tasks["document-parsing"]).toEqual([]);
   });
 });
@@ -66,9 +66,9 @@ describe("cognitive service input handling", () => {
   function recording() {
     const seen: Record<string, unknown[]> = { route: [], embed: [], compress: [], parse: [] };
     const e = new Ensemble({ platform: "native" });
-    e.register(d("needle", ["tool-calling"], ["router"]), async () => ({ router: { route: async (r) => (seen["route"]!.push(r), { calls: [], confidence: 1, reasoning: "" }) } }));
-    e.register(d("gemma", ["text-embedding"], ["embedder"]), async () => ({ embedder: { dimensions: 2, embed: async (i, o) => (seen["embed"]!.push([i, o]), i.map(() => Float32Array.from([1, 0]))) } }));
-    e.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: { compress: async (r) => (seen["compress"]!.push(r), { text: r.text, originalTokens: 1, compressedTokens: 1 }) } }));
+    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: { route: async (r) => (seen["route"]!.push(r), { calls: [], confidence: 1, reasoning: "" }) } }));
+    e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: { dimensions: 2, embed: async (i, o) => (seen["embed"]!.push([i, o]), i.map(() => Float32Array.from([1, 0]))) } }));
+    e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: { compress: async (r) => (seen["compress"]!.push(r), { text: r.text, originalTokens: 1, compressedTokens: 1 }) } }));
     e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": { parse: async (r) => (seen["parse"]!.push(r), { pages: [] }) } }));
     return { e, seen };
   }

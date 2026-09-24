@@ -20,21 +20,18 @@ const { values } = parseArgs({
   },
 });
 
-// The cognitive suite downloads and runs the local models (set HARNESS_MODEL_CACHE, and
-// LLAMA_SERVER for the GGUF models), so it runs only when asked for by name.
-let native: ReturnType<typeof buildNativeEnsemble> | undefined;
+// Models load on first use: the judge always, and the cognitive suite's local models
+// (set HARNESS_MODEL_CACHE, and LLAMA_SERVER for llama.cpp models) only when that suite
+// is asked for by name.
+const native = buildNativeEnsemble({
+  cacheDir: process.env["HARNESS_MODEL_CACHE"] ?? join(homedir(), ".cache", "harness", "models"),
+  ...(process.env["LLAMA_SERVER"] ? { llamaServer: process.env["LLAMA_SERVER"] } : {}),
+  memory: {},
+});
 const suites: Record<string, () => readonly EvalCase[]> = {
   calibration: () => calibrationSuite,
   harness: () => harnessSuite,
-  cognitive: () => {
-    native ??= buildNativeEnsemble({
-      cacheDir: process.env["HARNESS_MODEL_CACHE"] ?? join(homedir(), ".cache", "harness", "models"),
-      ...(process.env["LLAMA_SERVER"] ? { llamaServer: process.env["LLAMA_SERVER"] } : {}),
-      memory: {},
-    });
-    const ensemble = native.ensemble;
-    return cognitiveSuite(async () => ensemble);
-  },
+  cognitive: () => cognitiveSuite(async () => native.ensemble),
 };
 const selected = values.suite === "all" ? ["calibration", "harness"] : values.suite.split(",");
 const unknown = selected.filter((s) => !(s in suites));
@@ -54,13 +51,9 @@ function sourceRevision(): string | undefined {
 
 const cases = selected.flatMap((s) => suites[s]!());
 const revision = sourceRevision();
-const { judge, credential } = await chooseJudge(process.env);
-const report = await runEvals(cases, judge, {
-  credential,
-  ...(revision === undefined ? {} : { sourceRevision: revision }),
-});
+const report = await runEvals(cases, await chooseJudge(native.ensemble), revision === undefined ? {} : { sourceRevision: revision });
 
-await native?.close();
+await native.close();
 await mkdir(dirname(values.out), { recursive: true });
 await writeFile(values.out, `${JSON.stringify(report, null, 2)}\n`);
 

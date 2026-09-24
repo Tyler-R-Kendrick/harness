@@ -50,10 +50,10 @@ async function available<T>(get: () => Promise<T>): Promise<T | undefined> {
 }
 
 /**
- * Decide which tools to call, cheapest model first. The router (e.g. Needle) answers
- * with a calibrated confidence: confident answers are taken, middling ones are put to
- * the judge (Jev), and uncertain or invalid ones escalate to a generator (e.g.
- * Ornith natively, Qwen in the browser). Every step is recorded in the trace.
+ * Decide which tools to call, cheapest model first. The tool router answers with a
+ * calibrated confidence: confident answers are taken, middling ones are put to the
+ * judge, and uncertain or invalid ones escalate to a generator. Every step is recorded
+ * in the trace.
  */
 export async function decideToolCalls(
   ensemble: Ensemble,

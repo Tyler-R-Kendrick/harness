@@ -12,7 +12,7 @@ import type { EmbedInput } from "./embedding.ts";
 // Requests that can arrive as JSON (see service.ts) are defined as schemas; their
 // types are the schemas' outputs, so a parsed request is a port request as is.
 
-// ---- judgment (Jev's typed questions) -------------------------------------------
+// ---- judgment (typed questions) ------------------------------------------------
 
 export const JudgeQuestionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("boolean"), instructions: z.string(), criteria: z.object({ true: z.string().nullable().exactOptional(), false: z.string().nullable().exactOptional() }).exactOptional() }),

@@ -53,7 +53,7 @@ export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
 
 export const LOCALITIES = ["local", "hosted"] as const;
 export type Locality = (typeof LOCALITIES)[number];
-export const RUNTIMES = ["ai-gateway", "needle-wasm", "transformers.js", "llama.cpp-server", "onnxruntime", "clm-serve"] as const;
+export const RUNTIMES = ["ai-gateway", "typesafe-api", "cactus-wasm", "transformers.js", "llama.cpp-server", "onnxruntime"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
 
 export interface BenchmarkResult {
@@ -80,19 +80,5 @@ export interface Artifact {
   readonly files: readonly ArtifactFile[];
 }
 
-export interface ModelDescriptor {
-  readonly id: string;
-  readonly name: string;
-  readonly publisher: string;
-  readonly tasks: readonly TaskCategory[];
-  readonly ports: readonly PortKind[];
-  readonly locality: Locality;
-  readonly runtime: Runtime;
-  readonly platforms: readonly Platform[];
-  readonly license: string;
-  /** Bytes a client must download to run it; 0 for hosted models. */
-  readonly downloadBytes: number;
-  readonly benchmarks: readonly BenchmarkResult[];
-  readonly artifact?: Artifact;
-  readonly notes?: string;
-}
+/** A catalog model, as parsed from the catalog data (see catalog.ts). */
+export type { ModelDescriptor } from "./catalog.ts";

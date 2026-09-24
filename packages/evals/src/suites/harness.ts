@@ -4,7 +4,7 @@ import { runSession } from "../session.ts";
 
 /**
  * End-to-end harness behavior. Prompts go through the real daemon core with the
- * deterministic echo worker, so the only model in the pipeline is the Jev judge,
+ * deterministic echo worker, so the only model in the pipeline is the judge,
  * which checks what the multiplexer did: replies, turn order and permission routing.
  */
 export const harnessSuite: readonly EvalCase[] = [
