@@ -1,6 +1,6 @@
 import type { Judge as CognitiveJudge, JudgeAnswer, JudgeQuestion, JudgeState } from "@harness/cognitive";
 
-export { JEV_MODEL_ID, JevJudge } from "@harness/models";
+export { clm, EvaluationJudge, JEV_MODEL_ID, jev } from "@harness/models";
 
 export type Answer = JudgeAnswer;
 export type Question = JudgeQuestion;

@@ -7,7 +7,10 @@ import {
   ArtifactStore,
   behaviorHook,
   EmbeddingGemmaEmbedder,
-  JevJudge,
+  clm,
+  clmAvailable,
+  EvaluationJudge,
+  jev,
   LinguaCompressor,
   LanguageModelDocumentParser,
   LanguageModelGenerator,
@@ -23,7 +26,7 @@ import {
   VisionChatDocumentParser,
   VisionChatGenerator,
 } from "@harness/models";
-import type { OrtLike } from "@harness/models";
+import type { ClmOptions, OrtLike } from "@harness/models";
 import { Memory, memoryExtension } from "@harness/memory";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadNeedleModule } from "./model-cache.ts";
@@ -48,6 +51,10 @@ export interface NativeEnsembleOptions {
   readonly onnxruntime?: unknown;
   /** Behavior pack the steerable kernel runs; without one it generates unsteered. */
   readonly behavior?: BehaviorPack;
+  /** Where clm-serve answers (CLM, the local judge used when Jev cannot be). */
+  readonly clm?: ClmOptions;
+  /** Environment to read credentials from (default process.env). */
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** Install memory: its embedding model, vector recall and session memory. */
   readonly memory?: {
     /** A previous Memory.save(), to continue from. */
@@ -89,7 +96,17 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
   };
 
   const loaders: Record<string, ((m: ModelDescriptor) => Promise<Ports>) | undefined> = {
-    "typesafe-ai/jev": async () => ({ judge: new JevJudge() }),
+    // Without a credential Jev fails to load, and the next judge (CLM) takes over.
+    "typesafe-ai/jev": async () => {
+      const env = options.env ?? process.env;
+      if (!env["AI_GATEWAY_API_KEY"] && !env["VERCEL_OIDC_TOKEN"]) throw new Error("no AI Gateway credential (AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN)");
+      return { judge: new EvaluationJudge(jev()) };
+    },
+    "Contrastive-LM/CLM-v0.1-8B": async () => {
+      const clmOptions = { ...options.clm, ...(options.fetch && !options.clm?.fetch ? { fetch: options.fetch } : {}) };
+      if (!(await clmAvailable(clmOptions))) throw new Error("clm-serve is not answering; start it (github.com/Contrastive-LM/CLM) or set CLM_BASE_URL");
+      return { judge: new EvaluationJudge(clm(clmOptions)) };
+    },
     "Cactus-Compute/needle3": async (m) => {
       process.env["NEEDLE_TELEMETRY"] ??= "0";
       process.env["DO_NOT_TRACK"] ??= "1";

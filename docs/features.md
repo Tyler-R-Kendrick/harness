@@ -106,6 +106,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | LLMLingua-2 word scoring, rate threshold, windowing (pure) | built | LL1.1–LL2.1 |
 | EmbeddingGemma prompts and Matryoshka truncation | built | EG1.1–EG2.4 |
 | ChatML / qwen3_xml streaming parser (Qwen3.5, Ornith) | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
+| Failover on calls: a member whose service is unavailable (HTTP status other than 400/422, or retryable) is taken out and the next member answers | built | EN3.1–EN3.3 |
 | Capabilities mirrored from the ensemble (`cognitive.<task>`, plus each installed extension's id) | built | CM1.1, EN2.4, NH2.1, DM9.7 |
 | Extensions: models and `<extension>.<op>` operations installed and removed at runtime; the daemon admits an extension's operations only while its capability is offered | built | EN2.1–EN2.4, CS3.1, DM9.12 |
 | ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.11, CS1.1–CS1.6, CS2.1–CS2.5, NH2.1–NH2.2 |
@@ -128,6 +129,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Model | Tasks | Runs | Verified on real weights |
 |---|---|---|---|
 | Jev 1.13 (TypeSafe AI) | judgment, classification | hosted (AI Gateway) | evals (live run: calibration 5/5) |
+| CLM 8B v0.1 (Contrastive-LM) | judgment, classification: Jev's local fallback | clm-serve (TypeSafe's API; Qwen3-8B encoder), native | CL1.1–CL1.2 against clm-serve's wire format; CH2.2; not yet run against a live clm-serve (needs its encoder on a GPU) |
 | Needle 3 (Cactus Compute) | tool calling, extraction, classification, embeddings | WASM, native + browser | NM1.1–NM1.3 + router/embedder contracts |
 | EmbeddingGemma 300M (brought by memory, not in the core catalog) | text embeddings | transformers.js, native + browser | EM1.1 + embedder contract (768/512/256/128), MM1.1 |
 | LLMLingua-2 (mBERT) | prompt compression | transformers.js, native + browser | LM1.1 + compressor contract |
@@ -200,9 +202,9 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Evals with Jev as judge (typesafe-ai/jev via Vercel AI Gateway) | built | EV1–EV7; live runs need `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` and are otherwise `blocked` |
+| Evals with Jev as judge (typesafe-ai/jev via Vercel AI Gateway), CLM locally without a credential | built | EV1–EV7, EV3.8; without a gateway credential or a running clm-serve cases are `blocked` |
 | Judge calibration suite | built | `calibration` suite; live run 2026-09-24: 5/5, including both known-bad cases |
-| End-to-end harness suite (daemon, judged by Jev) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. Jev is the only model the evals call |
+| End-to-end harness suite (daemon, judged by Jev) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. Jev and CLM are the only models the evals call |
 | OTel/ATIF export; outcome contracts; protected acceptance suites | not started | |
 
 ## P. Reliability, provenance and lifecycle

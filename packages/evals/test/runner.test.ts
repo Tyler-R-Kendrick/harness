@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BlockedError, JevJudge, resolveGatewayCredential, runEvals } from "@harness/evals";
+import { BlockedError, chooseJudge, EvaluationJudge, resolveGatewayCredential, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
 import { FakeEvaluationModel } from "../../models/test/fake-evaluation-model.ts";
 
@@ -12,12 +12,12 @@ const yesCase = (id: string, reply: string): EvalCase => ({
 });
 
 const judgeFrom = (p: (state: unknown) => number) =>
-  new JevJudge({ model: new FakeEvaluationModel((o) => ({ correct: { type: "boolean", probability: p(o.state) } })) });
+  new EvaluationJudge(new FakeEvaluationModel((o) => ({ correct: { type: "boolean", probability: p(o.state) } })));
 
 describe("runEvals", () => {
   it("EV3.1 without a gateway credential every case is blocked and the judge is never called", async () => {
     const model = new FakeEvaluationModel(() => ({}));
-    const report = await runEvals([yesCase("a", "4")], new JevJudge({ model }), { credential: undefined });
+    const report = await runEvals([yesCase("a", "4")], new EvaluationJudge(model), { credential: undefined });
     expect(report.results).toEqual([expect.objectContaining({ id: "a", verdict: "blocked", reason: expect.stringMatching(/AI_GATEWAY_API_KEY/) })]);
     expect(model.calls).toEqual([]);
     expect(report.summary).toMatchObject({ total: 1, blocked: 1, passed: 0 });
@@ -54,18 +54,18 @@ describe("runEvals", () => {
   });
 
   it("EV3.5 a judge authentication failure is blocked; other judge failures are inconclusive", async () => {
-    const authFail = new JevJudge({ model: new FakeEvaluationModel(() => { throw Object.assign(new Error("unauthorized"), { statusCode: 401 }); }) });
-    const flaky = new JevJudge({ model: new FakeEvaluationModel(() => { throw new Error("socket hang up"); }) });
+    const authFail = new EvaluationJudge(new FakeEvaluationModel(() => { throw Object.assign(new Error("unauthorized"), { statusCode: 401 }); }));
+    const flaky = new EvaluationJudge(new FakeEvaluationModel(() => { throw new Error("socket hang up"); }));
     expect((await runEvals([yesCase("a", "4")], authFail, { credential: "api-key" })).results[0]).toMatchObject({ verdict: "blocked" });
     expect((await runEvals([yesCase("a", "4")], flaky, { credential: "api-key" })).results[0]).toMatchObject({ verdict: "inconclusive", reason: expect.stringMatching(/socket hang up/) });
   });
 
   it("EV3.6 wrapped access errors (e.g. inside a retry error) are still recognised", async () => {
-    const wrapped = new JevJudge({
-      model: new FakeEvaluationModel(() => {
+    const wrapped = new EvaluationJudge(
+      new FakeEvaluationModel(() => {
         throw Object.assign(new Error("retries exhausted"), { errors: [Object.assign(new Error("forbidden"), { name: "GatewayForbiddenError" })] });
       }),
-    });
+    );
     expect((await runEvals([yesCase("a", "4")], wrapped, { credential: "oidc" })).results[0]).toMatchObject({ verdict: "blocked" });
   });
 
@@ -83,4 +83,17 @@ describe("resolveGatewayCredential", () => {
     expect(resolveGatewayCredential({ AI_GATEWAY_API_KEY: "" })).toBeUndefined();
     expect(resolveGatewayCredential({})).toBeUndefined();
   });
+
+  it("EV3.8 the judge is Jev with an AI Gateway credential, else CLM when clm-serve answers, else none (blocked)", async () => {
+    const up = (async () => Response.json({ ok: true })) as typeof fetch;
+    const down = (async () => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch;
+    const jevChoice = await chooseJudge({ AI_GATEWAY_API_KEY: "k" }, { clm: { fetch: up } });
+    expect([jevChoice.credential, jevChoice.judge.identity.modelId]).toEqual(["api-key", "typesafe-ai/jev"]);
+    const clmChoice = await chooseJudge({}, { clm: { baseUrl: "http://127.0.0.1:8700", fetch: up } });
+    expect([clmChoice.credential, clmChoice.judge.identity.modelId]).toEqual(["local", "clm-latest"]);
+    const none = await chooseJudge({}, { clm: { fetch: down } });
+    expect(none.credential).toBeUndefined();
+    expect((await runEvals([yesCase("a", "4")], none.judge, { credential: none.credential })).results[0]).toMatchObject({ verdict: "blocked", reason: expect.stringMatching(/clm-serve/) });
+  });
 });
+

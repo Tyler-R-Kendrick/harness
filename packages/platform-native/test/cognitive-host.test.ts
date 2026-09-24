@@ -8,6 +8,7 @@ describe("native cognitive host", () => {
     expect(ensemble.members().map((m) => m.id).sort()).toEqual([
       "ATH-MaaS/OvisOCR2",
       "Cactus-Compute/needle3",
+      "Contrastive-LM/CLM-v0.1-8B",
       "Qwen/Qwen3-1.7B",
       "Qwen/Qwen3.5-0.8B",
       "lightonai/LightOnOCR-2-1B",
@@ -97,10 +98,17 @@ describe("native cognitive host loaders", () => {
     await close();
   });
 
-  it("CH2.2 the Jev judge is constructed for the hosted judgment task", async () => {
-    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-") });
-    expect((await ensemble.resolve("judgment", "judge")).id).toBe("typesafe-ai/jev");
-    await close();
+  it("CH2.2 judgment goes to Jev with an AI Gateway credential, and to CLM (clm-serve) without one", async () => {
+    const clmServe = (async (url: string | URL | Request) => (String(url).endsWith("/health") ? Response.json({ ok: true }) : new Response("", { status: 404 }))) as typeof fetch;
+    const withKey = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), env: { AI_GATEWAY_API_KEY: "k" }, clm: { fetch: clmServe } });
+    expect((await withKey.ensemble.resolve("judgment", "judge")).id).toBe("typesafe-ai/jev");
+    const withoutKey = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), env: {}, clm: { fetch: clmServe } });
+    expect((await withoutKey.ensemble.resolve("judgment", "judge")).id).toBe("Contrastive-LM/CLM-v0.1-8B");
+    expect(withoutKey.ensemble.members().find((m) => m.id === "typesafe-ai/jev")).toMatchObject({ state: "failed", reason: expect.stringMatching(/AI Gateway credential/) });
+    const neither = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), env: {}, clm: { fetch: (async () => Promise.reject(new Error("ECONNREFUSED"))) as typeof fetch } });
+    await expect(neither.ensemble.resolve("judgment", "judge")).rejects.toMatchObject({ code: "no_member" });
+    expect(neither.ensemble.members().find((m) => m.id === "Contrastive-LM/CLM-v0.1-8B")).toMatchObject({ reason: expect.stringMatching(/clm-serve is not answering/) });
+    await Promise.all([withKey.close(), withoutKey.close(), neither.close()]);
   });
 
   it("CH2.3 Needle loads from verified artifacts and routes", async () => {

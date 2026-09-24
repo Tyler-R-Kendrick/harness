@@ -1,6 +1,7 @@
 export { ArtifactIntegrityError, ArtifactStore, MemoryByteCache, sha256Hex } from "./artifacts.ts";
 export type { ByteCache } from "./artifacts.ts";
-export { JEV_MODEL_ID, JevJudge } from "./jev.ts";
+export { clm, clmAvailable, EvaluationJudge, JEV_MODEL_ID, jev } from "./judge.ts";
+export type { ClmOptions } from "./judge.ts";
 export { NeedleEngine } from "./needle.ts";
 export type { NeedleModule } from "./needle.ts";
 export { EmbeddingGemmaEmbedder, LinguaCompressor, VisionChatDocumentParser, VisionChatGenerator } from "./adapters.ts";

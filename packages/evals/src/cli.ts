@@ -3,8 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
-import { JevJudge } from "./judge.ts";
-import { resolveGatewayCredential, runEvals } from "./runner.ts";
+import { chooseJudge, runEvals } from "./runner.ts";
 import type { EvalCase } from "./runner.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -55,8 +54,9 @@ function sourceRevision(): string | undefined {
 
 const cases = selected.flatMap((s) => suites[s]!());
 const revision = sourceRevision();
-const report = await runEvals(cases, new JevJudge(), {
-  credential: resolveGatewayCredential(process.env),
+const { judge, credential } = await chooseJudge(process.env);
+const report = await runEvals(cases, judge, {
+  credential,
   ...(revision === undefined ? {} : { sourceRevision: revision }),
 });
 

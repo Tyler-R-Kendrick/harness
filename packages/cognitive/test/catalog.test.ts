@@ -46,8 +46,13 @@ describe("model catalog", () => {
     expect(uncovered("browser")).toEqual(["text-embedding", "coding", "steered-chat"]);
   });
 
-  it("CT1.5 Jev, through the AI Gateway, is the only judge and the only hosted model", () => {
-    expect(MODEL_CATALOG.filter((m) => m.tasks.includes("judgment")).map((m) => m.id)).toEqual(["typesafe-ai/jev"]);
+  it("CT1.5 the judges are Jev, the only hosted model, and CLM, its local fallback", () => {
+    expect(MODEL_CATALOG.filter((m) => m.tasks.includes("judgment")).map((m) => [m.id, m.locality])).toEqual([
+      ["typesafe-ai/jev", "hosted"],
+      ["Contrastive-LM/CLM-v0.1-8B", "local"],
+    ]);
+    expect(top("judgment", "native")).toBe("typesafe-ai/jev");
+    expect(rankForTask("judgment", MODEL_CATALOG, { platform: "native", allowHosted: false, prefer: TASK_PREFERENCES["judgment"] ?? [] })[0]?.id).toBe("Contrastive-LM/CLM-v0.1-8B");
     expect(MODEL_CATALOG.filter((m) => m.locality === "hosted").map((m) => [m.id, m.runtime])).toEqual([["typesafe-ai/jev", "ai-gateway"]]);
   });
 

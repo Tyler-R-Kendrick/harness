@@ -1,4 +1,6 @@
 import { wilsonInterval } from "@harness/cognitive";
+import { clm, clmAvailable, EvaluationJudge, jev } from "@harness/models";
+import type { ClmOptions } from "@harness/models";
 import type { Answer, Judge, Question, State } from "./judge.ts";
 import { caseVerdict, questionVerdict } from "./verdict.ts";
 import type { Expectation, Verdict } from "./verdict.ts";
@@ -44,7 +46,8 @@ export interface EvalReport {
 /** Thrown by a subject that cannot run without access it does not have. */
 export class BlockedError extends Error {}
 
-export type Credential = "api-key" | "oidc";
+/** How the judge is reached: an AI Gateway credential for Jev, or a local clm-serve for CLM. */
+export type Credential = "api-key" | "oidc" | "local";
 
 export function resolveGatewayCredential(env: Readonly<Record<string, string | undefined>>): Credential | undefined {
   if (env["AI_GATEWAY_API_KEY"]) return "api-key";
@@ -53,7 +56,15 @@ export function resolveGatewayCredential(env: Readonly<Record<string, string | u
 }
 
 const PLACEHOLDERS = new Set(["", "resolved-by-runner", "unknown", "HEAD"]);
-const NO_CREDENTIAL = "No Vercel AI Gateway credential: set AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN";
+const NO_CREDENTIAL = "No judge: set AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN for Jev, or run clm-serve (CLM_BASE_URL) for CLM";
+
+/** Jev when there is an AI Gateway credential; otherwise CLM when clm-serve answers; otherwise none, and cases are blocked. */
+export async function chooseJudge(env: Readonly<Record<string, string | undefined>>, options: { readonly clm?: ClmOptions } = {}): Promise<{ judge: Judge; credential: Credential | undefined }> {
+  const credential = resolveGatewayCredential(env);
+  if (credential) return { judge: new EvaluationJudge(jev()), credential };
+  if (await clmAvailable(options.clm)) return { judge: new EvaluationJudge(clm(options.clm)), credential: "local" };
+  return { judge: new EvaluationJudge(jev()), credential: undefined };
+}
 
 /** Run eval cases. A missing credential or denied access is `blocked`, never a pass. */
 export async function runEvals(

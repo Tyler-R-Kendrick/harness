@@ -50,7 +50,7 @@ export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
 };
 
 export type Locality = "local" | "hosted";
-export type Runtime = "ai-gateway" | "needle-wasm" | "transformers.js" | "llama.cpp-server" | "onnxruntime";
+export type Runtime = "ai-gateway" | "needle-wasm" | "transformers.js" | "llama.cpp-server" | "onnxruntime" | "clm-serve";
 
 export interface BenchmarkResult {
   /** Benchmark name with version or split, e.g. "MTEB (Multilingual, v2)". */

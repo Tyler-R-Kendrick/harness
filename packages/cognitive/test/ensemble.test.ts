@@ -209,3 +209,39 @@ describe("extensions", () => {
   });
 });
 
+describe("failover on calls", () => {
+  const failing = (error: unknown): Judge => ({ evaluate: async () => Promise.reject(error) });
+  const answering: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: 0.9 } }) };
+  const request = { state: "s", questions: { ok: { type: "boolean" as const, instructions: "?" } } };
+  const setup = (first: Judge) => {
+    const e = new Ensemble({ platform: "native", preferences: { judgment: ["jev", "clm"] } });
+    e.register(descriptor("jev", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge: first }));
+    e.register(descriptor("clm", ["judgment"], ["judge"]), async () => ({ judge: answering }));
+    return e;
+  };
+
+  it("EN3.1 a member whose service is unavailable (out of budget, unauthorized, down) is taken out and the next one answers", async () => {
+    for (const error of [Object.assign(new Error("Payment Required"), { statusCode: 402 }), Object.assign(new Error("fetch failed"), { isRetryable: true }), Object.assign(new Error("Bad Gateway"), { statusCode: 502 })]) {
+      const e = setup(failing(error));
+      expect(await e.judge(request)).toEqual({ ok: { type: "boolean", probability: 0.9 } });
+      expect(e.members().find((m) => m.id === "jev")).toMatchObject({ state: "failed", reason: error.message });
+    }
+  });
+
+  it("EN3.2 a request the service rejects, or a plain error, is the caller's to see: no failover", async () => {
+    for (const error of [Object.assign(new Error("invalid questions"), { statusCode: 422 }), Object.assign(new Error("bad request"), { statusCode: 400 }), new Error("bug")]) {
+      const e = setup(failing(error));
+      await expect(e.judge(request)).rejects.toBe(error);
+      expect(e.state("jev")).toBe("ready");
+    }
+  });
+
+  it("EN3.3 when every member is unavailable the last service error is reported", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const down = Object.assign(new Error("Service Unavailable"), { statusCode: 503 });
+    e.register(descriptor("jev", ["judgment"], ["judge"]), async () => ({ judge: failing(down) }));
+    await expect(e.judge(request)).rejects.toBe(down);
+    await expect(e.judge(request)).rejects.toMatchObject({ code: "no_member" });
+  });
+});
+

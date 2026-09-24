@@ -38,6 +38,12 @@ export interface CognitiveExtension {
   readonly operations?: Readonly<Record<string, (input: unknown) => Promise<unknown>>>;
 }
 
+/** AI SDK call errors carry these: a status other than a rejected request, or retryable (e.g. the connection failed). */
+function serviceUnavailable(e: unknown): boolean {
+  const { statusCode, isRetryable } = (typeof e === "object" && e !== null ? e : {}) as { statusCode?: unknown; isRetryable?: unknown };
+  return isRetryable === true || (typeof statusCode === "number" && statusCode !== 400 && statusCode !== 422);
+}
+
 export class CognitiveError extends Error {
   readonly code: "no_member";
   constructor(code: "no_member", message: string) {
@@ -182,23 +188,23 @@ export class Ensemble {
   }
 
   async judge(request: JudgeRequest): Promise<Record<string, JudgeAnswer>> {
-    return (await this.#use("judgment", "judge")).port.evaluate(request);
+    return this.#call("judgment", "judge", (port) => port.evaluate(request));
   }
 
   async route(request: RouteRequest): Promise<Routing> {
-    return (await this.#use("tool-calling", "router")).port.route(request);
+    return this.#call("tool-calling", "router", (port) => port.route(request));
   }
 
   async embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: number }): Promise<Float32Array[]> {
-    return (await this.#use("text-embedding", "embedder")).port.embed(inputs, options);
+    return this.#call("text-embedding", "embedder", (port) => port.embed(inputs, options));
   }
 
   async compress(request: CompressRequest): Promise<Compression> {
-    return (await this.#use("prompt-compression", "compressor")).port.compress(request);
+    return this.#call("prompt-compression", "compressor", (port) => port.compress(request));
   }
 
   async parseDocument(request: ParseRequest, task: TaskCategory = "document-parsing"): Promise<{ readonly pages: readonly ParsedPage[] }> {
-    return (await this.#use(task, "document-parser")).port.parse(request);
+    return this.#call(task, "document-parser", (port) => port.parse(request));
   }
 
   async *generate(request: GenerateRequest, task: TaskCategory = "chat"): AsyncIterable<GenerationEvent> {
@@ -209,6 +215,29 @@ export class Ensemble {
   /** The member and port that would serve `task` now, loading it if needed. */
   async resolve<K extends PortKind>(task: TaskCategory, kind: K): Promise<{ id: string; port: PortMap[K] }> {
     return this.#use(task, kind);
+  }
+
+  /**
+   * Run a call on the best member, moving to the next when the member's service is
+   * unavailable (out of budget, unauthorized, down); a rejected request is the caller's.
+   */
+  async #call<K extends PortKind, T>(task: TaskCategory, kind: K, call: (port: PortMap[K]) => Promise<T>): Promise<T> {
+    let unavailable: unknown;
+    for (;;) {
+      let chosen: { id: string; port: PortMap[K] };
+      try {
+        chosen = await this.#use(task, kind);
+      } catch (e) {
+        throw unavailable ?? e;
+      }
+      try {
+        return await call(chosen.port);
+      } catch (e) {
+        if (!serviceUnavailable(e)) throw e;
+        unavailable = e;
+        this.#set(this.#members.get(chosen.id)!, "failed", e instanceof Error ? e.message : String(e));
+      }
+    }
   }
 
   async #use<K extends PortKind>(task: TaskCategory, kind: K): Promise<{ id: string; port: PortMap[K] }> {

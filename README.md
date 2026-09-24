@@ -28,6 +28,7 @@ The daemon hosts an ensemble of models and routes each task to the best one it c
 | Model | For | Where |
 |---|---|---|
 | Jev (TypeSafe) | judgments with calibrated probabilities | hosted, AI Gateway |
+| CLM 8B (Contrastive-LM) | the same judgments, locally: used when Jev has no key or budget | native, clm-serve |
 | Needle 3 (Cactus) | tool calling, extraction, embeddings | local WASM |
 | LLMLingua-2 | prompt compression | local, transformers.js |
 | Qwen3.5 0.8B | chat and vision; the browser LLM | local, transformers.js |
@@ -114,18 +115,24 @@ Workers:
 ## Evals
 
 LLM-as-judge evals use [Jev](https://docs.typesafe.ai) (`typesafe-ai/jev`) through the
-Vercel AI Gateway:
+Vercel AI Gateway, or [CLM](https://github.com/Contrastive-LM/CLM) locally when there is
+no gateway credential. CLM's `clm-serve` speaks TypeSafe's API, so the same AI SDK
+provider talks to both; the report names the judge that answered.
 
 ```sh
 AI_GATEWAY_API_KEY=... npm run eval -- --out eval-results/results.json
+# or, with clm-serve running (CLM_BASE_URL, default http://127.0.0.1:8700):
+npm run eval -- --out eval-results/results.json
 ```
 
 There are two suites:
 - `calibration`: checks the judge on known good and bad examples.
 - `harness`: end-to-end turns through the daemon core with the deterministic echo
-  worker; Jev judges the prompt round-trip, turn order and permission routing.
+  worker; the judge checks the prompt round-trip, turn order and permission routing.
 
-Jev is the only model the evals call.
+Jev and CLM are the only models the evals call. In the daemon too, judgment goes to
+Jev first and fails over to CLM when Jev cannot load (no credential) or its service
+becomes unavailable (out of budget, unauthorized, down).
 
 Every result is `passed`, `failed`, `inconclusive` or `blocked`. A missing credential
 is reported as `blocked`, never as a pass.
@@ -140,4 +147,4 @@ is reported as `blocked`, never as a pass.
 | `packages/testkit` | Deterministic ports, daemon driver, storage contract suite |
 | `packages/workers` | Echo worker and model worker (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
-| `packages/evals` | Jev judge, eval runner, suites, CLI |
+| `packages/evals` | eval runner (Jev, or CLM locally), suites, CLI |
