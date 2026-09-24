@@ -33,6 +33,7 @@ export type {
   Ports,
   RouteRequest,
   Routing,
+  StateEvent,
   ToolRouter,
   ToolSpec,
 } from "./ports.ts";

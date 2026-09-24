@@ -13,7 +13,8 @@
     "@ai-sdk/provider": "4.0.18",
     "@harness/cognitive": "0.0.0",
     "@huggingface/transformers": "4.3.0",
-    "ai": "7.0.113"
+    "ai": "7.0.113",
+    "@harness/behavior": "0.0.0"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0",

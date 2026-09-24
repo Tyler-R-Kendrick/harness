@@ -100,7 +100,15 @@ export type ChatMessage =
 
 export type FinishReason = "stop" | "length" | "tool-calls" | "error";
 
-export type GenerationEvent = ChatEvent | { readonly type: "finish"; readonly reason: FinishReason };
+/** A steered model's behavior state changed (see @harness/behavior). */
+export interface StateEvent {
+  readonly type: "state";
+  readonly state: string;
+  readonly from?: string;
+  readonly cause?: string;
+}
+
+export type GenerationEvent = ChatEvent | StateEvent | { readonly type: "finish"; readonly reason: FinishReason };
 
 export interface GenerateRequest {
   readonly messages: readonly ChatMessage[];

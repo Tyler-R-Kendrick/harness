@@ -50,6 +50,11 @@ export class BehaviorEngine {
     return this.#state;
   }
 
+  /** The residual-stream layer this engine's SAE features belong to. */
+  get layer(): number {
+    return this.#pack.graph.model.layer;
+  }
+
   steering(): Float32Array | undefined {
     return this.#pack.steering[this.#state];
   }

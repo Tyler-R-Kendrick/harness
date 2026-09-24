@@ -9,3 +9,5 @@ export { LlamaServerDocumentParser, LlamaServerGenerator } from "./llama-server.
 export type { LlamaServerOptions } from "./llama-server.ts";
 export { applyImageProcessorDefaults, loadEmbeddingGemmaBackend, loadLinguaBackend, loadVisionChatBackend } from "./transformers-backends.ts";
 export type { TransformersOptions } from "./transformers-backends.ts";
+export { behaviorHook, SteeredGenerator } from "./steerable.ts";
+export type { StateChange, SteerableSession, SteeredGeneratorOptions, SteeringHook, TokenizerLike } from "./steerable.ts";
