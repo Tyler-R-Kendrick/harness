@@ -11,3 +11,7 @@ export { applyImageProcessorDefaults, loadEmbeddingGemmaBackend, loadLinguaBacke
 export type { TransformersOptions } from "./transformers-backends.ts";
 export { behaviorHook, SteeredGenerator } from "./steerable.ts";
 export type { StateChange, SteerableSession, SteeredGeneratorOptions, SteeringHook, TokenizerLike } from "./steerable.ts";
+export { encodeNode, encodeValueInfo, int, lengthDelimited, makeSteerable, qwenTap, str, varint } from "./onnx-steer.ts";
+export type { Tap } from "./onnx-steer.ts";
+export { OnnxSteerableSession } from "./onnx-session.ts";
+export type { DecoderConfig, OrtLike, OrtTensorLike } from "./onnx-session.ts";

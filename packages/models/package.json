@@ -14,7 +14,9 @@
     "@harness/cognitive": "0.0.0",
     "@huggingface/transformers": "4.3.0",
     "ai": "7.0.113",
-    "@harness/behavior": "0.0.0"
+    "@harness/behavior": "0.0.0",
+    "onnxruntime-node": "1.30.0",
+    "onnxruntime-web": "1.30.0"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0",
