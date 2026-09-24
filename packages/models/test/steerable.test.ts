@@ -236,5 +236,21 @@ describe("constrained steered generation", () => {
     const plain = new FakeSession([3, 0]);
     expect(text(await collect(new SteeredGenerator({ session: plain, tokenizer }).generate({ messages: [{ role: "user", content: "a" }], constraint: { type: "regex", pattern: "b" } })))).toBe("c");
   });
+
+  it("SG2.4 a hook factory gives every generation its own behavior state, so one conversation's state does not leak into the next", async () => {
+    let made = 0;
+    const hook = (): SteeringHook => {
+      const id = ++made;
+      return { layer: 5, initial: () => Float32Array.from([id, 0]), at: () => ({ steering: Float32Array.from([id, 0]) }) };
+    };
+    const session = new FakeSession([1, 0, 1, 0]);
+    const g = new SteeredGenerator({ session, tokenizer, hook });
+    await collect(g.generate({ messages: [{ role: "user", content: "a" }] }));
+    await collect(g.generate({ messages: [{ role: "user", content: "a" }] }));
+    expect(made).toBe(2);
+    expect(session.calls.map((c) => c.steer?.[0])).toEqual([1, 1, 2, 2]);
+    const wrong = new SteeredGenerator({ session, tokenizer, hook: () => ({ ...hook(), layer: 9 }) });
+    await expect(collect(wrong.generate({ messages: [{ role: "user", content: "a" }] }))).rejects.toThrow("the hook reads layer 9 but the session taps layer 5");
+  });
 });
 

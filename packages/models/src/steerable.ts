@@ -86,7 +86,8 @@ function sample(logits: Float32Array, temperature: number, topP: number, random:
 export interface SteeredGeneratorOptions {
   readonly session: SteerableSession;
   readonly tokenizer: TokenizerLike;
-  readonly hook?: SteeringHook;
+  /** A hook shared by every generation, or a factory that gives each generation its own (its own behavior state). */
+  readonly hook?: SteeringHook | (() => SteeringHook);
   readonly temperature?: number;
   readonly topP?: number;
   readonly random?: () => number;
@@ -101,7 +102,7 @@ export class SteeredGenerator implements Generator {
   readonly #turn = new Mutex();
 
   constructor(options: SteeredGeneratorOptions) {
-    if (options.hook && options.hook.layer !== options.session.layer) {
+    if (options.hook && typeof options.hook !== "function" && options.hook.layer !== options.session.layer) {
       throw new Error(`the hook reads layer ${options.hook.layer} but the session taps layer ${options.session.layer}`);
     }
     this.#o = options;
@@ -127,7 +128,9 @@ export class SteeredGenerator implements Generator {
   }
 
   async *#decode(request: GenerateRequest, max: number, constraint: TokenConstraint | undefined): AsyncIterable<GenerationEvent> {
-    const { session, tokenizer, hook } = this.#o;
+    const { session, tokenizer } = this.#o;
+    const hook = typeof this.#o.hook === "function" ? this.#o.hook() : this.#o.hook;
+    if (hook && hook.layer !== session.layer) throw new Error(`the hook reads layer ${hook.layer} but the session taps layer ${session.layer}`);
     session.reset();
     let input = tokenizer.encodeChat(request.messages, request.tools);
     let steer = hook?.initial();

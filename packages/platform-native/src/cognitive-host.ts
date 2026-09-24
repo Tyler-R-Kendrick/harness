@@ -196,7 +196,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       const build = constrainer(m);
       const constrain = build && tokenizer.vocabulary ? await build({ tokens: tokenizer.vocabulary(), stopTokens: tokenizer.endTokens }) : undefined;
       return {
-        generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: behaviorHook(new BehaviorEngine(options.behavior)) } : {}), ...(constrain ? { constrain } : {}) }),
+        generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: () => behaviorHook(new BehaviorEngine(options.behavior!)) } : {}), ...(constrain ? { constrain } : {}) }),
       };
     },
   };
