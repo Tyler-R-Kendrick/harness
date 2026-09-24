@@ -87,10 +87,23 @@ jobs:
       - name: Download llama.cpp
         env:
           GH_TOKEN: ${{ github.token }}
+        # The Linux build has shipped as .zip and as .tar.gz; take whichever the release has,
+        # and list the assets if neither matches so the pattern can be fixed from the log.
         run: |
-          gh release download --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --dir /tmp/llama
-          unzip -q /tmp/llama/*.zip -d /tmp/llama
-          echo "LLAMA_SERVER=$(find /tmp/llama -name llama-server -type f | head -1)" >> "$GITHUB_ENV"
+          gh release download --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama \
+            || { gh release view --repo ggml-org/llama.cpp --json assets --jq '.assets[].name'; exit 1; }
+          for f in /tmp/llama/*; do
+            case "$f" in
+              *.zip) unzip -q "$f" -d /tmp/llama ;;
+              *.tar.gz) tar -xzf "$f" -C /tmp/llama ;;
+            esac
+          done
+          server="$(find /tmp/llama -name llama-server -type f | head -1)"
+          test -n "$server" || { echo "no llama-server in the release archive"; find /tmp/llama -maxdepth 3; exit 1; }
+          chmod +x "$server"
+          echo "LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+          # Its shared libraries ship next to it.
+          echo "LD_LIBRARY_PATH=$(dirname "$server")" >> "$GITHUB_ENV"
       - run: npm run test:models
       # The cognitive core judged by Jev on real local models.
       - run: npm run eval -- --suite cognitive --out eval-results/cognitive.json
