@@ -1,0 +1,15 @@
+{
+  "name": "@harness/workers",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Portable session workers: a deterministic echo worker and an in-process model worker (AI SDK, e.g. via Vercel AI Gateway).",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/core": "0.0.0",
+    "ai": "7.0.113"
+  }
+}

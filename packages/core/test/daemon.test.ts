@@ -390,6 +390,51 @@ describe("Daemon: permission routing (MX3)", () => {
   });
 });
 
+describe("Daemon: permission edge cases", () => {
+  function pending(d: DaemonDriver) {
+    const sessionId = openSession(d, "c1");
+    d.send("c1", { jsonrpc: "2.0", id: 1, method: "session/prompt", params: { sessionId, prompt: [] } });
+    const { turnId } = promptCommand(d.commands());
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: { toolCallId: "t" }, options: [{ optionId: "ok", name: "OK", kind: "allow_once" }] });
+    const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
+    return { sessionId, turnId, req };
+  }
+
+  it("MX3.22 an approver that detaches loses its outstanding request; on reattach it gets a fresh one", () => {
+    const { d } = setup();
+    const { sessionId, turnId, req } = pending(d);
+    d.request("c1", "_harness/session/detach", { sessionId });
+    d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
+    expect(d.commands()).toEqual([]);
+    d.request("c1", "_harness/session/attach", { sessionId });
+    const fresh = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
+    expect(fresh.id).not.toBe(req.id);
+    d.send("c1", { jsonrpc: "2.0", id: fresh.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
+    expect(d.commands()).toEqual([{ type: "permission", sessionId, turnId, requestId: "p", outcome: { outcome: "selected", optionId: "ok" } }]);
+  });
+
+  it("MX3.23 a turn that ends with a permission still open cancels it everywhere", () => {
+    const { d } = setup();
+    const { sessionId, turnId, req } = pending(d);
+    d.worker({ type: "end", sessionId, turnId, stopReason: "end_turn" });
+    expect(d.commands()).toEqual([{ type: "permission", sessionId, turnId, requestId: "p", outcome: { outcome: "cancelled" } }]);
+    expect(d.inbox("c1")).toEqual([
+      { jsonrpc: "2.0", method: "$/cancel_request", params: { requestId: req.id } },
+      { jsonrpc: "2.0", id: 1, result: { stopReason: "end_turn" } },
+    ]);
+  });
+
+  it("MX3.24 a response from a different connection than the one asked is ignored", () => {
+    const { d } = setup();
+    const { sessionId, req } = pending(d);
+    d.connect("c2", ALICE);
+    d.initialize("c2");
+    d.request("c2", "_harness/session/attach", { sessionId, grants: ["observe"] });
+    d.send("c2", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
+    expect(d.commands()).toEqual([]);
+  });
+});
+
 describe("Daemon: flow control (MX2)", () => {
   it("MX2.12 a profile client that stops acking is switched to resync; a stock client is not", () => {
     const { d } = setup({ flowCapacity: 2 });
