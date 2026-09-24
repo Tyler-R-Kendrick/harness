@@ -6,6 +6,7 @@ Every client, plugin and peer daemon talks to it over ACP. Plugins are external 
 that react to broadcast hook events and coordinate as sagas.
 
 Feature scope and status: `docs/features.md`. Update it in the same change as the code.
+Architecture decisions and when to revisit them: `docs/decisions/`.
 
 ## Layout
 
