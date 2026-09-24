@@ -13,6 +13,10 @@ export const HARNESS_METHODS = {
   sessionDetach: "_harness/session/detach",
   sessionAck: "_harness/session/ack",
   sessionTree: "_harness/session/tree",
+  /** Notification: a daemon-side session event (turn/permission lifecycle) with its log offset. */
+  sessionEvent: "_harness/session/event",
+  /** Notification: the subscriber fell too far behind and must re-attach from `head`. */
+  sessionResync: "_harness/session/resync",
   capabilitiesList: "_harness/capabilities/list",
   capabilitiesOffer: "_harness/capabilities/offer",
   capabilitiesWithdraw: "_harness/capabilities/withdraw",
