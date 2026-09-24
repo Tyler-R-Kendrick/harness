@@ -7,3 +7,4 @@ export { LlamaServerProcess } from "./llama-server-process.ts";
 export type { LlamaServerStart } from "./llama-server-process.ts";
 export { buildNativeEnsemble } from "./cognitive-host.ts";
 export type { NativeEnsembleOptions } from "./cognitive-host.ts";
+export { steerableModel } from "./steerable-model.ts";

@@ -14,7 +14,8 @@
     "@harness/workers": "0.0.0",
     "@ai-sdk/gateway": "4.0.91",
     "@harness/models": "0.0.0",
-    "@harness/cognitive": "0.0.0"
+    "@harness/cognitive": "0.0.0",
+    "@harness/behavior": "0.0.0"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

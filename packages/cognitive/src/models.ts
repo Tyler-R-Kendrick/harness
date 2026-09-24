@@ -22,6 +22,8 @@ export const TASK_CATEGORIES = [
   "document-parsing",
   "table-extraction",
   "chart-understanding",
+  /** Chat through the local kernel, steered by a behavior graph over SAE features. */
+  "steered-chat",
 ] as const;
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 
@@ -44,10 +46,11 @@ export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
   "document-parsing": ["document-parser", "generator"],
   "table-extraction": ["document-parser", "generator"],
   "chart-understanding": ["document-parser", "generator"],
+  "steered-chat": ["generator"],
 };
 
 export type Locality = "local" | "hosted";
-export type Runtime = "ai-gateway" | "needle-wasm" | "transformers.js" | "llama.cpp-server";
+export type Runtime = "ai-gateway" | "needle-wasm" | "transformers.js" | "llama.cpp-server" | "onnxruntime";
 
 export interface BenchmarkResult {
   /** Benchmark name with version or split, e.g. "MTEB (Multilingual, v2)". */

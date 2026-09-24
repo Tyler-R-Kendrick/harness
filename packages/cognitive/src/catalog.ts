@@ -249,6 +249,26 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       { benchmark: "OmniDocBench v1.6", task: "table-extraction", metric: "table TEDS", score: 94.76, source: "https://huggingface.co/StarDoc-AI/TeleOCR", reportedBy: "third-party" },
     ]),
   },
+  {
+    id: "Qwen/Qwen3-1.7B",
+    name: "Qwen3 1.7B (steerable kernel)",
+    publisher: "Qwen",
+    tasks: ["steered-chat"],
+    ports: ["generator"],
+    locality: "local",
+    runtime: "onnxruntime",
+    platforms: ["native"],
+    license: "Apache-2.0",
+    downloadBytes: 1408943689,
+    notes:
+      "The local kernel: onnxruntime-genai's int4 CPU export, patched with a steering tap at layer 14 (resid_post), where adamkarvonen/qwen3-1.7b-saes (MIT) has 65k-feature BatchTopK SAEs with Neuronpedia labels. Chosen for steerability, not benchmark rank.",
+    artifact: {
+      repo: "onnx-community/Qwen3-1.7B-ONNX",
+      revision: "cc6a06a21d614e9b8e92a6adfab1074d4e7d2438",
+      files: [{ path: "onnxruntime/cpu_and_mobile/cpu-int4-kld-block-128/model.onnx", bytes: 1408943689, sha256: "9fddc5a0a7f9c51132c376db8fe44774b17a8e42d721c4d289ade16af87da0bd" }],
+    },
+    benchmarks: [],
+  },
 ];
 
 /**
@@ -271,4 +291,5 @@ export const TASK_PREFERENCES: Partial<Record<TaskCategory, readonly string[]>> 
   "document-parsing": ["ATH-MaaS/OvisOCR2", "lightonai/LightOnOCR-2-1B", "Qwen/Qwen3.5-0.8B"],
   "table-extraction": ["ATH-MaaS/OvisOCR2", "lightonai/LightOnOCR-2-1B"],
   "chart-understanding": ["Qwen/Qwen3.5-0.8B"],
+  "steered-chat": ["Qwen/Qwen3-1.7B"],
 };

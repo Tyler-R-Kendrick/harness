@@ -33,12 +33,15 @@ function toContent(prompt: readonly unknown[]): { parts: ContentPart[]; hasImage
 export class EnsembleWorker implements Worker {
   readonly #ensemble: GeneratingEnsemble;
   readonly #system: string | undefined;
+  readonly #task: TaskCategory;
   #history = new Map<string, ChatMessage[]>();
   #cancelled = new Set<string>();
 
-  constructor(options: { ensemble: GeneratingEnsemble; system?: string }) {
+  /** `task` is what text turns ask the ensemble for: "chat" by default, "steered-chat" for the local kernel. */
+  constructor(options: { ensemble: GeneratingEnsemble; system?: string; task?: TaskCategory }) {
     this.#ensemble = options.ensemble;
     this.#system = options.system;
+    this.#task = options.task ?? "chat";
   }
 
   async run(command: PromptCommand, emit: Emit): Promise<void> {
@@ -51,7 +54,7 @@ export class EnsembleWorker implements Worker {
     let stopReason: StopReason = "end_turn";
     let reply = "";
     try {
-      for await (const event of this.#ensemble.generate({ messages }, hasImage ? "vision-qa" : "chat")) {
+      for await (const event of this.#ensemble.generate({ messages }, hasImage ? "vision-qa" : this.#task)) {
         if (this.#cancelled.has(key)) {
           stopReason = "cancelled";
           break;
@@ -61,6 +64,10 @@ export class EnsembleWorker implements Worker {
           emit({ type: "update", ...base, update: textChunk(event.text) });
         } else if (event.type === "reasoning") {
           emit({ type: "update", ...base, update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: event.text } } });
+        } else if (event.type === "state") {
+          const { type: _, ...behavior } = event;
+          const description = event.from === undefined ? event.state : `${event.from} → ${event.state}${event.cause === undefined ? "" : ` (${event.cause})`}`;
+          emit({ type: "update", ...base, update: { sessionUpdate: "notice", severity: "info", title: `Behavior: ${event.state}`, description, _meta: { harness: { behavior } } } });
         } else if (event.type === "finish") stopReason = STOP_REASONS[event.reason] ?? "end_turn";
       }
       if (stopReason !== "cancelled") this.#history.set(command.sessionId, [...messages, { role: "assistant", content: reply }]);

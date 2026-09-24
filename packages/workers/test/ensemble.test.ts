@@ -87,4 +87,29 @@ describe("EnsembleWorker", () => {
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "cancelled" });
     expect(events.filter((e) => e.type === "update")).toEqual([]);
   });
+
+  it("EW1.6 a worker for steered chat asks for that task, and behavior transitions reach the client as notices", async () => {
+    const ensemble = new FakeEnsemble(() => [{ type: "state", state: "soothing", from: "neutral", cause: "sensor userAngry on" }, { type: "text", text: "Sorry" }, { type: "finish", reason: "stop" }]);
+    const { events, done } = run(new EnsembleWorker({ ensemble, task: "steered-chat" }), [{ type: "text", text: "you idiot" }]);
+    await done;
+    expect(ensemble.calls[0]!.task).toBe("steered-chat");
+    expect(events[0]).toEqual({
+      type: "update",
+      sessionId: "s1",
+      turnId: "t1",
+      update: {
+        sessionUpdate: "notice",
+        severity: "info",
+        title: "Behavior: soothing",
+        description: "neutral → soothing (sensor userAngry on)",
+        _meta: { harness: { behavior: { state: "soothing", from: "neutral", cause: "sensor userAngry on" } } },
+      },
+    });
+    // a state with no recorded origin still names the state
+    const bare = new FakeEnsemble(() => [{ type: "state", state: "calm" }, { type: "state", state: "alert", from: "calm" }, { type: "finish", reason: "stop" }]);
+    const second = run(new EnsembleWorker({ ensemble: bare }), [{ type: "text", text: "x" }]);
+    await second.done;
+    expect(second.events[0]).toMatchObject({ update: { title: "Behavior: calm", description: "calm", _meta: { harness: { behavior: { state: "calm" } } } } });
+    expect(second.events[1]).toMatchObject({ update: { description: "calm → alert" } });
+  });
 });

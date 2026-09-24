@@ -7,6 +7,7 @@ describe("native cognitive host", () => {
     expect(ensemble.members().map((m) => m.id).sort()).toEqual([
       "ATH-MaaS/OvisOCR2",
       "Cactus-Compute/needle3",
+      "Qwen/Qwen3-1.7B",
       "Qwen/Qwen3.5-0.8B",
       "google/embeddinggemma-300m",
       "lightonai/LightOnOCR-2-1B",
@@ -55,6 +56,9 @@ import { afterEach } from "vitest";
 import { MODEL_CATALOG } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
+import { encodeModel } from "../../models/test/onnx-builder.ts";
+import { compilePack } from "@harness/behavior";
+import type { BehaviorGraph } from "@harness/behavior";
 
 const tmp: string[] = [];
 afterEach(async () => {
@@ -146,6 +150,98 @@ require("node:http").createServer((req, res) => {
     expect(pages[0]!.markdown).toBe("# Page");
     const args = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(argsFile, "utf8"))) as string[];
     expect(args).toEqual(expect.arrayContaining(["--mmproj"]));
+    await close();
+  });
+
+  // ---- the steerable kernel ------------------------------------------------------------------
+  const KERNEL_FILE = "onnxruntime/cpu_and_mobile/cpu-int4-kld-block-128/model.onnx";
+  /** A one-node model carrying the tap the Qwen3 patch looks for at layer 14. */
+  const kernelOnnx = () =>
+    encodeModel({
+      opsets: { "": 17, "com.microsoft": 1 },
+      inputs: [
+        { name: "x", elemType: 1, dims: [1, 2, 4] },
+        { name: "skip", elemType: 1, dims: [1, 2, 4] },
+      ],
+      outputs: [{ name: "normed", elemType: 1, dims: [1, 2, 4] }],
+      initializers: [{ name: "gamma", dims: [4], floats: [1, 1, 1, 1] }],
+      nodes: [{ name: "/model/layers.15/input_layernorm/SkipLayerNorm", opType: "SkipSimplifiedLayerNormalization", domain: "com.microsoft", inputs: ["x", "skip", "gamma"], outputs: ["normed", "", "", "sum"] }],
+    });
+  /** A stand-in onnxruntime whose model answers token 1, then <|im_end|> (id 10 in the fake tokenizer). */
+  function fakeOrt() {
+    const created: string[] = [];
+    const steers: number[][] = [];
+    class Tensor {
+      type: string;
+      data: ArrayLike<number | bigint>;
+      dims: number[];
+      constructor(type: string, data: ArrayLike<number | bigint>, dims: number[]) {
+        this.type = type;
+        this.data = data;
+        this.dims = dims;
+      }
+    }
+    let step = 0;
+    const session = {
+      inputNames: ["input_ids", "steer.14"],
+      run: async (feeds: Record<string, Tensor>) => {
+        steers.push(Array.from(feeds["steer.14"]!.data as Float32Array).slice(0, 2));
+        const n = feeds["input_ids"]!.dims[1]!;
+        const logits = new Float32Array(n * 16);
+        logits[(n - 1) * 16 + (step++ === 0 ? 1 : 10)] = 1;
+        const out: Record<string, Tensor> = { logits: new Tensor("float32", logits, [1, n, 16]), "resid.14": new Tensor("float32", new Float32Array(n * 2048), [1, n, 2048]) };
+        for (let l = 0; l < 28; l++) for (const k of ["key", "value"]) out[`present.${l}.${k}`] = new Tensor("float32", new Float32Array(0), [1, 8, 0, 128]);
+        return out;
+      },
+    };
+    return { runtime: { Tensor, InferenceSession: { create: async (path: string) => (created.push(path), session) } }, created, steers };
+  }
+
+  it("CH2.5 the steerable kernel patches its verified export once, and serves steered chat", async () => {
+    const cacheDir = await tempDir("cache-");
+    const files = { [KERNEL_FILE]: kernelOnnx() };
+    const { module, log } = fakeTransformers();
+    const ort = fakeOrt();
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir, allowHosted: false, catalog: [withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)], fetch: fakeHub(files), transformers: module, onnxruntime: ort.runtime });
+    let reply = "";
+    for await (const e of ensemble.generate({ messages: [{ role: "user", content: "hi" }] }, "steered-chat")) if (e.type === "text") reply += e.text;
+    expect(reply).toBe("a");
+    expect(ort.created).toHaveLength(1);
+    expect(ort.created[0]!.startsWith(join(cacheDir, "steerable"))).toBe(true);
+    // the tokenizer comes from the export's own folder, with thinking off
+    expect(log.find((l) => l.name === "tokenizer.load")!.args[1]).toMatchObject({ revision: entry("Qwen/Qwen3-1.7B").artifact!.revision, subfolder: "onnxruntime/cpu_and_mobile/cpu-int4-kld-block-128" });
+    expect(log.find((l) => l.name === "chat-template")!.args[1]).toMatchObject({ enable_thinking: false });
+    // no behavior pack: unsteered
+    expect(ort.steers.every((v) => v.every((x) => x === 0))).toBe(true);
+    await close();
+  });
+
+  it("CH2.6 with a behavior pack the kernel steers by the pack's current state", async () => {
+    const graph: BehaviorGraph = {
+      version: 1,
+      id: "warm",
+      model: { id: "Qwen/Qwen3-1.7B", layer: 14 },
+      initial: "warm",
+      features: { joy: 0 },
+      sensors: {},
+      states: { warm: { steer: { joy: 3 } } },
+      transitions: [],
+    };
+    const unit = (i: number) => Float32Array.from({ length: 2048 }, (_, j) => (j === i ? 1 : 0));
+    const behavior = compilePack(graph, { dims: 2048, width: 1, encoder: (i) => ({ weights: unit(i), bias: 0, threshold: 0 }), decoder: unit });
+    const files = { [KERNEL_FILE]: kernelOnnx() };
+    const ort = fakeOrt();
+    const { ensemble, close } = buildNativeEnsemble({
+      cacheDir: await tempDir("cache-"),
+      allowHosted: false,
+      catalog: [withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)],
+      fetch: fakeHub(files),
+      transformers: fakeTransformers().module,
+      onnxruntime: ort.runtime,
+      behavior,
+    });
+    for await (const _ of ensemble.generate({ messages: [{ role: "user", content: "hi" }] }, "steered-chat"));
+    expect(ort.steers[0]).toEqual([3, 0]);
     await close();
   });
 });

@@ -40,10 +40,10 @@ describe("model catalog", () => {
       }
   });
 
-  it("CT1.4 natively every task has a model; in the browser every task but coding does", () => {
+  it("CT1.4 natively every task has a model; in the browser every task but coding and steered chat does", () => {
     const uncovered = (platform: Platform) => TASK_CATEGORIES.filter((t) => rankForTask(t, MODEL_CATALOG, { platform }).length === 0);
     expect(uncovered("native")).toEqual([]);
-    expect(uncovered("browser")).toEqual(["coding"]);
+    expect(uncovered("browser")).toEqual(["coding", "steered-chat"]);
   });
 
   it("CT1.5 Jev, through the AI Gateway, is the only judge and the only hosted model", () => {
@@ -74,8 +74,18 @@ describe("model catalog", () => {
     expect(top("judgment", "native")).toBe("typesafe-ai/jev");
   });
 
+  it("CT1.9 steered chat is the local steerable kernel alone: Qwen3-1.7B, whose layers have public SAEs", () => {
+    expect(MODEL_CATALOG.filter((m) => m.tasks.includes("steered-chat")).map((m) => [m.id, m.locality, m.runtime])).toEqual([["Qwen/Qwen3-1.7B", "local", "onnxruntime"]]);
+    expect(top("steered-chat", "native")).toBe("Qwen/Qwen3-1.7B");
+    expect(TASK_PORTS["steered-chat"]).toEqual(["generator"]);
+  });
+
   it("CT1.8 preferences only name catalog models that serve the task", () => {
     for (const [task, ids] of Object.entries(TASK_PREFERENCES))
       for (const id of ids ?? []) expect(MODEL_CATALOG.find((m) => m.id === id)?.tasks, `${task} ${id}`).toContain(task);
+  });
+
+  it("CT1.10 the catalog is reviewed data: pinned weights, hashes, sources and preferences change only with the reviewed snapshot", async () => {
+    await expect(JSON.stringify({ models: MODEL_CATALOG, preferences: TASK_PREFERENCES }, null, 1)).toMatchFileSnapshot("./catalog.snapshot.json");
   });
 });
