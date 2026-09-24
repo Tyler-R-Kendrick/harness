@@ -98,18 +98,25 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Ports: judge, tool router, embedder, compressor, generator (text + vision), document parser | built | `cognitive/ports.ts`; contract suites JC, RC, EC, CC, GC, DC run against fakes and real adapters |
-| Task taxonomy mapped to ports (14 categories) | built | `TASK_CATEGORIES`, `TASK_PORTS`; CT1.1 |
-| Model catalog: pinned revisions, sha256 weights, sourced benchmarks (vendor vs third-party) | built | CT1.2–CT1.3; 8 models (below) |
+| Task taxonomy mapped to ports (15 categories, including `steered-chat`) | built | `TASK_CATEGORIES`, `TASK_PORTS`; CT1.1, CT1.9 |
+| Model catalog: pinned revisions, sha256 weights, sourced benchmarks (vendor vs third-party) | built | CT1.2–CT1.3; 9 models (below); CT1.10 reviewed snapshot guards every pinned hash and source |
 | Benchmark-driven selection with head-to-head records, curated tie-breaks, explanations | built | SE1.1–SE1.8, SE2.1–SE2.2 (property), CT1.7 |
 | Ensemble: lazy load, failover to next-ranked member, runtime revoke/restore, state events | built | EN1.1–EN1.11 |
-| Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9; live: Needle decides and is accepted (cognitive.tool-decision subject) |
+| Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9, CA2.1–CA2.6; live: Needle decides and is accepted (cognitive.tool-decision subject) |
 | LLMLingua-2 word scoring, rate threshold, windowing (pure) | built | LL1.1–LL2.1 |
 | EmbeddingGemma prompts and Matryoshka truncation | built | EG1.1–EG2.4 |
 | ChatML / qwen3_xml streaming parser (Qwen3.5, Ornith) | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
 | Capabilities mirrored from the ensemble (`cognitive.<task>`) | built | CM1.1, NH2.1, DM9.7 |
-| ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.8, CS1.1–CS1.6, NH2.1–NH2.2 |
+| ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.11, CS1.1–CS1.6, CS2.1–CS2.5, NH2.1–NH2.2 |
 | Ensemble worker (sessions on the best generator; images → vision) | built | EW1.1–EW1.5; CLI `--worker ensemble` |
 | Candidate-strategy math (coverage, attempts, voting, precision, mixtures, Wilson) | built | AM1–AM5 |
+| Local kernel: steerable ONNX (residual tap + steering input spliced into the graph), KV-cached decode loop, steering hook per token | built | OS1.1–OS1.5, OR1.x, SG1.1–SG1.10, SK1.1–SK1.3, CH2.5; real Qwen3-1.7B: zero steering is bit-identical, residual moves by exactly the vector (KS1.4, `check_steerable.py`) |
+| Behavior state graphs over SAE features: sensors with hysteresis and hold, nested states with summed steering, priority/specificity transitions, host events, snapshots, replay | built | `packages/behavior`; BV1–BV2, BE1–BE3, BP1–BP2, property tests |
+| SAE rows files: only the rows a graph uses, cut from a full SAE (`tools/model-lab/sae_rows.py`), b_dec folded into the bias | built | SR1.1–SR2.1; fixture: 6 labelled features of adamkarvonen/qwen3-1.7b-saes layer 14 (MIT) |
+| Behavior graph driving the real kernel: the prompt is sensed token by token (skipping the attention sink), so the state changes before the reply | built | KS1.2 insult → `soothing`, KS1.3 happy news → `cheerful` (reply changes), KS1.4 neutral → no change; fixture `qwen3-1.7b-host.graph.json` |
+| Behavior per session (state in the session log, transitions as hook events, plugins raising events) | not started | The native host runs one optional pack for the kernel (`behavior` option) |
+| Remote models as retrieval for the steered local kernel | not started | Steering is local only: hosted APIs expose no residual stream |
+| Steerable kernel in the browser (onnxruntime-web) | not started | Native only; the int4 export's contrib ops are unverified on web |
 | Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Needle WASM); no browser platform layer yet |
 | Tool use through the daemon's permission flow from the ensemble worker | not started | |
 | Execution configurations, performance registry learned from our own runs, value of information | not started | Selection uses published benchmarks only |
@@ -127,6 +134,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | DM1.1 + document-parser contract |
 | Ornith 1.5 9B | chat, reasoning, coding, tools | llama-server, native only | OM1.1 + generator contract, CI `models` job only (llama.cpp releases are not reachable from this dev sandbox) |
 | OvisOCR2 | OCR, document parsing, tables | llama-server, native only | OV1.1, CI `models` job only |
+| Qwen3 1.7B (steerable kernel) | steered chat | onnxruntime, native only; patched at layer 14 on first use | KS1.1–KS1.4 + generator contract |
 
 ## H. Knowledge modeling
 

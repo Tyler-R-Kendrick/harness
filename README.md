@@ -35,6 +35,7 @@ The daemon hosts an ensemble of models and routes each task to the best one it c
 | LightOnOCR-2 1B | documents, OCR, tables | local, transformers.js |
 | Ornith 1.5 9B | coding, reasoning, tools | native, llama-server |
 | OvisOCR2 | documents, OCR, tables (strongest) | native, llama-server |
+| Qwen3 1.7B | steered chat: the local kernel | native, onnxruntime |
 
 Models declare task categories and published benchmark results. Selection compares two
 models only on benchmarks they both report with the same metric and setting, and every
@@ -45,6 +46,23 @@ commit and verified by sha256 before use.
 ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
 node packages/platform-native/src/main.ts --stdio --cognitive [--llama-server /path/to/llama-server] [--no-hosted]
 ```
+
+### Behavior graphs (the local kernel)
+
+Like a game character's state machine, a behavior graph reads features of a sparse
+autoencoder (SAE) from the model's residual stream and steers the next token with
+others. Qwen3-1.7B's int4 export is patched once with a steering tap at layer 14, where
+public SAEs exist; sensors see every prompt token, so the state changes before the reply.
+
+```sh
+node packages/platform-native/src/main.ts --stdio --cognitive \
+  --behavior packages/behavior/fixtures/qwen3-1.7b-host.graph.json \
+  --sae-rows packages/behavior/fixtures/qwen3-1.7b-l14-rows.json
+```
+
+With that graph an insult moves the host to `soothing` (apology steering) and happy news
+to `cheerful` (joy steering); a neutral question leaves it unsteered. Steering is local
+only: hosted models expose no residual stream.
 
 Clients and plugins call `_harness/cognitive/invoke` with an `op` of `judge`, `route`,
 `decide-tools`, `embed`, `compress` or `parse`; `--worker ensemble` runs sessions on the

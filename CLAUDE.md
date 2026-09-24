@@ -14,11 +14,15 @@ Feature scope and status: `docs/features.md`. Update it in the same change as th
 | `packages/protocol` | ACP framing, JSON-RPC envelopes, `_harness` profile | pure |
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
 | `packages/cognitive` | cognitive core: model ports, task taxonomy, catalog + benchmarks, selection, ensemble, cascade | pure |
+| `packages/behavior` | behavior state graphs over SAE features: validation, packs, the engine | pure |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
 | `packages/models` | model adapters: Jev, Needle 3 (WASM), transformers.js models, llama-server models | portable |
 | `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, CLI | host |
 | `packages/evals` | eval runner; Jev (`typesafe-ai/jev` via Vercel AI Gateway) as judge | host |
+
+`tools/model-lab` holds offline Python tools that produce files the product loads (steerable
+exports, SAE rows); nothing in `packages/` imports it.
 
 "Pure" packages may not use host globals, Node builtins, `Date.now`, `new Date()` or
 `Math.random`; ESLint enforces this and their tsconfig has no DOM/Node types. Time,
