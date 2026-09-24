@@ -17,6 +17,7 @@
     "@harness/cognitive": "0.0.0",
     "@huggingface/transformers": "4.3.0",
     "ai": "7.0.113",
+    "async-mutex": "0.5.0",
     "onnxruntime-node": "1.30.0",
     "onnxruntime-web": "1.30.0"
   },

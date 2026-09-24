@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
@@ -77,7 +78,7 @@ export class LlamaServerProcess {
         child.kill("SIGKILL");
         throw new Error(`llama-server not ready after ${options.readyTimeoutMs ?? 600_000} ms: ${stderr.trim()}`);
       }
-      await new Promise((r) => setTimeout(r, poll));
+      await sleep(poll);
     }
   }
 

@@ -1,4 +1,5 @@
 import type * as TransformersModule from "@huggingface/transformers";
+import { Mutex } from "async-mutex";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "./adapters.ts";
 import type { ChatMessage } from "@harness/cognitive";
 import type { TokenizerLike } from "./steerable.ts";
@@ -38,14 +39,10 @@ export function applyImageProcessorDefaults(imageProcessor: Record<string, unkno
 }
 
 /** Serialize calls: one ONNX session must not run two generations at once. */
-function serial() {
-  let tail: Promise<unknown> = Promise.resolve();
-  return <T>(task: () => Promise<T>): Promise<T> => {
-    const run = tail.then(task, task);
-    tail = run.catch(() => undefined);
-    return run;
-  };
-}
+const serial = () => {
+  const mutex = new Mutex();
+  return <T>(task: () => Promise<T>): Promise<T> => mutex.runExclusive(task);
+};
 
 export async function loadEmbeddingGemmaBackend(options: TransformersOptions & { readonly dtype?: "q4" | "q8" | "fp32" }): Promise<EmbeddingBackend> {
   const t = await runtime(options);

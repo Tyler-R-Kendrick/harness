@@ -1,3 +1,4 @@
+import { Mutex } from "async-mutex";
 import { ChatStreamParser } from "@harness/cognitive";
 import type { ChatMessage, GenerateRequest, GenerationEvent, Generator, ToolSpec } from "@harness/cognitive";
 import type { BehaviorEngine } from "@harness/behavior";
@@ -91,7 +92,7 @@ export interface SteeredGeneratorOptions {
 export class SteeredGenerator implements Generator {
   readonly #o: SteeredGeneratorOptions;
   /** One session holds one KV cache, so generations take turns. */
-  #turn: Promise<void> = Promise.resolve();
+  readonly #turn = new Mutex();
 
   constructor(options: SteeredGeneratorOptions) {
     if (options.hook && options.hook.layer !== options.session.layer) {
@@ -101,10 +102,7 @@ export class SteeredGenerator implements Generator {
   }
 
   async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
-    const previous = this.#turn;
-    let release!: () => void;
-    this.#turn = new Promise((resolve) => (release = resolve));
-    await previous;
+    const release = await this.#turn.acquire();
     try {
       yield* this.#run(request);
     } finally {
