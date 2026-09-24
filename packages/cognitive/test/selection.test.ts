@@ -8,7 +8,6 @@ const bench = (benchmark: string, score: number, extra: Partial<BenchmarkResult>
   metric: "accuracy",
   score,
   higherIsBetter: true,
-  source: "https://example.test/card",
   ...extra,
 });
 
@@ -93,7 +92,7 @@ describe("benchmark-driven model selection", () => {
     const b = model("b", [bench("X", 2)]);
     const [first, second] = rankForTask("chat", [b, a], { platform: "native" });
     expect(first).toMatchObject({ id: "a", wins: 1, losses: 0 });
-    expect(first!.evidence).toEqual([{ against: "b", benchmark: "X", metric: "accuracy", setting: undefined, ours: 3, theirs: 2, source: "https://example.test/card" }]);
+    expect(first!.evidence).toEqual([{ against: "b", benchmark: "X", metric: "accuracy", setting: undefined, ours: 3, theirs: 2 }]);
     expect(second).toMatchObject({ id: "b", wins: 0, losses: 1 });
   });
 

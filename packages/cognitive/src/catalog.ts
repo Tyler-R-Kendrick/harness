@@ -1,26 +1,16 @@
-import type { BenchmarkResult, ModelDescriptor, TaskCategory } from "./models.ts";
+import { BENCHMARKS } from "./benchmark-table.ts";
+import { benchmarksOf, parseBenchmarks } from "./benchmarks.ts";
+import type { ModelDescriptor, TaskCategory } from "./models.ts";
 
 /**
  * The cognitive core's model ensemble. Embedding models are not here: memory brings
  * its own as an extension (@harness/memory). Every local model is pinned to a commit with
  * hashed weight files (downloadBytes counts weights; small config and tokenizer files
- * are fetched at the same revision). Benchmark numbers are copied from the cited
- * source, which also states conditions; they describe the published checkpoint, not
- * necessarily the quantization we run.
+ * are fetched at the same revision). Benchmark results live in benchmark-table.ts, ours
+ * to edit, and are attached to each model here.
  */
 
-type Result = Omit<BenchmarkResult, "higherIsBetter"> & { readonly higherIsBetter?: boolean };
-const results = (list: readonly Result[]): BenchmarkResult[] => list.map((r) => ({ higherIsBetter: true, ...r }));
-
-const JEV_THIRD_PARTY = "https://raw.githubusercontent.com/dhruvmehra/jevbench/main/docs/results/2026-09-22-n500-summary.md";
-const NEEDLE_CHART = "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg";
-// Needle 3's chart runs the shipped CQ2 engine against f16 baselines on the same splits.
-const CHART = "Needle 3 card chart";
-const QWEN_CARD = "https://huggingface.co/Qwen/Qwen3.5-0.8B";
-const ORNITH_CARD = "https://huggingface.co/ornith-ai/Ornith-1.5-9B";
-const LINGUA_PAPER = "https://arxiv.org/html/2403.12968v2";
-
-export const MODEL_CATALOG: readonly ModelDescriptor[] = [
+const MODELS: readonly Omit<ModelDescriptor, "benchmarks">[] = [
   {
     id: "typesafe-ai/jev",
     name: "Jev 1.13",
@@ -33,14 +23,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
     license: "proprietary (hosted API)",
     downloadBytes: 0,
     notes: "Typed judgments (boolean, choice, score) with probabilities. Closed weights; needs an AI Gateway credential.",
-    benchmarks: results([
-      { benchmark: "JevBench v1.0 (242 decisions)", task: "judgment", metric: "accuracy", score: 96.3, source: "https://benchmarkheaven.com/jev-models/v1", reportedBy: "third-party" },
-      { benchmark: "JevBench v1.0 (242 decisions)", task: "judgment", metric: "ECE", score: 0.027, higherIsBetter: false, source: "https://benchmarkheaven.com/jev-models/v1", reportedBy: "third-party" },
-      { benchmark: "SST-2 (n=500)", task: "classification", metric: "accuracy", score: 95.4, source: JEV_THIRD_PARTY, reportedBy: "third-party" },
-      { benchmark: "SST-2 (n=500)", task: "classification", metric: "ECE", score: 0.026, higherIsBetter: false, source: JEV_THIRD_PARTY, reportedBy: "third-party" },
-      { benchmark: "AG News (n=500)", task: "classification", metric: "accuracy", score: 84.3, source: JEV_THIRD_PARTY, reportedBy: "third-party" },
-      { benchmark: "Banking77 (n=500)", task: "classification", metric: "accuracy", score: 76.4, source: JEV_THIRD_PARTY, reportedBy: "third-party" },
-    ]),
   },
   {
     id: "Contrastive-LM/CLM-v0.1-8B",
@@ -60,7 +42,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       revision: "87655cb835bd76fd66c2da78e1e3709f7fa11a94",
       files: [{ path: "CLM_v0.1-8B.pt", bytes: 75557149, sha256: "b2b4a8c9c2d39263eff78a351eb909a342ce9b3bf21a3f07c1d1bf15f1c4eda5" }],
     },
-    benchmarks: [],
   },
   {
     id: "Cactus-Compute/needle3",
@@ -83,14 +64,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
         { path: "wasm/needle.js", bytes: 62502, sha256: "d00ec67ec7e03e4720dfc6c3dad95a0540afd00169a983ce3fabcd7aeaa0fa93" },
       ],
     },
-    benchmarks: results([
-      { benchmark: "Mobile Actions (961)", task: "tool-calling", metric: "exact-call accuracy", score: 86.0, setting: CHART, source: NEEDLE_CHART },
-      { benchmark: "DroidCall (200)", task: "tool-calling", metric: "exact calls in order", score: 47.0, setting: CHART, source: NEEDLE_CHART },
-      { benchmark: "BFCL v4 (3,641)", task: "tool-calling", metric: "AST-match accuracy", score: 50.2, setting: CHART, source: NEEDLE_CHART },
-      { benchmark: "DSTC8 (1,813 turns)", task: "structured-extraction", metric: "field micro-F1", score: 40.7, setting: CHART, source: NEEDLE_CHART },
-      { benchmark: "SNIPS gold (700)", task: "structured-extraction", metric: "field micro-F1", score: 30.2, setting: CHART, source: NEEDLE_CHART },
-      { benchmark: "SNIPS 7-way (700)", task: "structured-extraction", metric: "field micro-F1", score: 24.7, setting: CHART, source: NEEDLE_CHART },
-    ]),
   },
   {
     id: "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
@@ -109,11 +82,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       revision: "db67b6283d60e7190b32a6b8a8a87c87a6c1375a",
       files: [{ path: "onnx/model_uint8.onnx", bytes: 178094427, sha256: "d5ce58e66eb569a219d7c8f7d3e4680a8e0cdd2a0d7cf047b5049aac8a37e370" }],
     },
-    benchmarks: results([
-      { benchmark: "MeetingBank QA", task: "prompt-compression", metric: "exact match", score: 85.82, setting: "3.0x, GPT-3.5-Turbo target", source: LINGUA_PAPER },
-      { benchmark: "LongBench (avg)", task: "prompt-compression", metric: "score", score: 38.2, setting: "2k-token budget (5x), GPT-3.5-Turbo target", source: LINGUA_PAPER },
-      { benchmark: "LongBench (avg)", task: "prompt-compression", metric: "score", score: 41.9, setting: "3k-token budget (3x), GPT-3.5-Turbo target", source: LINGUA_PAPER },
-    ]),
   },
   {
     id: "Qwen/Qwen3.5-0.8B",
@@ -139,30 +107,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
         { path: "onnx/vision_encoder_q4.onnx_data", bytes: 68267008, sha256: "98aebedf02fc5414fd1c7f06a6580b42e272600ace9ecd33bfbc479a0c541c64" },
       ],
     },
-    benchmarks: results([
-      { benchmark: "MMLU-Pro", task: "chat", metric: "accuracy", score: 29.7, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "MMLU-Pro", task: "chat", metric: "accuracy", score: 42.3, setting: "thinking", source: QWEN_CARD },
-      { benchmark: "MMLU-Redux", task: "chat", metric: "accuracy", score: 48.5, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "IFEval", task: "chat", metric: "accuracy", score: 52.1, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "SuperGPQA", task: "reasoning", metric: "accuracy", score: 16.9, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "GPQA", task: "reasoning", metric: "accuracy", score: 11.9, setting: "thinking", source: QWEN_CARD },
-      { benchmark: "BFCL-V4", task: "tool-calling", metric: "score", score: 25.3, setting: "thinking", source: QWEN_CARD },
-      { benchmark: "TAU2-Bench", task: "tool-calling", metric: "score", score: 11.6, setting: "thinking", source: QWEN_CARD },
-      { benchmark: "Mobile Actions (961)", task: "tool-calling", metric: "exact-call accuracy", score: 76.0, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "DroidCall (200)", task: "tool-calling", metric: "exact calls in order", score: 28.0, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "BFCL v4 (3,641)", task: "tool-calling", metric: "AST-match accuracy", score: 56.8, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "DSTC8 (1,813 turns)", task: "structured-extraction", metric: "field micro-F1", score: 49.0, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "SNIPS gold (700)", task: "structured-extraction", metric: "field micro-F1", score: 35.0, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "SNIPS 7-way (700)", task: "structured-extraction", metric: "field micro-F1", score: 34.0, setting: CHART, source: NEEDLE_CHART, reportedBy: "third-party" },
-      { benchmark: "MMMU", task: "vision-qa", metric: "accuracy", score: 47.4, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "RealWorldQA", task: "vision-qa", metric: "accuracy", score: 61.6, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "MMBench-EN-DEV v1.1", task: "vision-qa", metric: "accuracy", score: 68.0, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "OCRBench", task: "ocr", metric: "score", score: 79.1, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "CC-OCR", task: "ocr", metric: "score", score: 66.7, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "OmniDocBench v1.5", task: "document-parsing", metric: "overall", score: 70.6, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "MMLongBench-Doc", task: "document-parsing", metric: "accuracy", score: 28.1, setting: "non-thinking", source: QWEN_CARD },
-      { benchmark: "CharXiv (RQ)", task: "chart-understanding", metric: "accuracy", score: 38.2, setting: "non-thinking", source: QWEN_CARD },
-    ]),
   },
   {
     id: "ornith-ai/Ornith-1.5-9B",
@@ -181,15 +125,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       revision: "abdd624b12ebf020b767fff532ff44fe552b28c3",
       files: [{ path: "Ornith-1.5-9B-Q4_K_M.gguf", bytes: 5780090816, sha256: "70c112196e0b7023803c9762752e46d29e612a92c83f995bc3ba1ceb07e8fab6" }],
     },
-    benchmarks: results([
-      { benchmark: "SWE-bench Verified", task: "coding", metric: "resolved %", score: 70.6, setting: "OpenHands, 256K context", source: ORNITH_CARD },
-      { benchmark: "SWE-bench Pro", task: "coding", metric: "resolved %", score: 47.5, setting: "OpenHands, 256K context", source: ORNITH_CARD },
-      { benchmark: "Terminal-Bench 2.1", task: "coding", metric: "accuracy", score: 46.2, setting: "Terminus-2, 128K context", source: ORNITH_CARD },
-      { benchmark: "GPQA Diamond", task: "reasoning", metric: "accuracy", score: 86.4, source: ORNITH_CARD },
-      { benchmark: "HLE", task: "reasoning", metric: "accuracy", score: 20.2, setting: "no tools", source: ORNITH_CARD },
-      { benchmark: "MCP-Atlas", task: "tool-calling", metric: "score", score: 54.2, setting: "thinking, 500-task public subset", source: ORNITH_CARD },
-      { benchmark: "Toolathlon-Verified", task: "tool-calling", metric: "score", score: 41.2, setting: "128K token limit", source: ORNITH_CARD },
-    ]),
   },
   {
     id: "lightonai/LightOnOCR-2-1B",
@@ -215,7 +150,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
         { path: "onnx/vision_encoder_q4.onnx_data", bytes: 264593408, sha256: "dcb27f3c4072a948f907b3ca4e9f49c2266b77b2ef0218788a09a0f3827c45b7" },
       ],
     },
-    benchmarks: results([{ benchmark: "olmOCR-Bench", task: "document-parsing", metric: "overall", score: 83.2, source: "https://arxiv.org/html/2601.14251" }]),
   },
   {
     id: "ATH-MaaS/OvisOCR2",
@@ -237,11 +171,6 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
         { path: "mmproj-ATH-MaaS_OvisOCR2-f16.gguf", bytes: 204987040, sha256: "4e0e9cb9d79dd0f423ba152a51816aa82a1f1a9d1a0190b6f67b2cd4cc5dd681" },
       ],
     },
-    benchmarks: results([
-      { benchmark: "OmniDocBench v1.6", task: "document-parsing", metric: "overall", score: 96.58, source: "https://arxiv.org/abs/2607.13639" },
-      { benchmark: "OmniDocBench v1.6", task: "ocr", metric: "text edit distance", score: 0.025, higherIsBetter: false, source: "https://huggingface.co/StarDoc-AI/TeleOCR", reportedBy: "third-party" },
-      { benchmark: "OmniDocBench v1.6", task: "table-extraction", metric: "table TEDS", score: 94.76, source: "https://huggingface.co/StarDoc-AI/TeleOCR", reportedBy: "third-party" },
-    ]),
   },
   {
     id: "Qwen/Qwen3-1.7B",
@@ -261,9 +190,12 @@ export const MODEL_CATALOG: readonly ModelDescriptor[] = [
       revision: "cc6a06a21d614e9b8e92a6adfab1074d4e7d2438",
       files: [{ path: "onnxruntime/cpu_and_mobile/cpu-int4-kld-block-128/model.onnx", bytes: 1408943689, sha256: "9fddc5a0a7f9c51132c376db8fe44774b17a8e42d721c4d289ade16af87da0bd" }],
     },
-    benchmarks: [],
   },
 ];
+
+const ROWS = parseBenchmarks(BENCHMARKS);
+
+export const MODEL_CATALOG: readonly ModelDescriptor[] = MODELS.map((m) => ({ ...m, benchmarks: benchmarksOf(ROWS, m.id) }));
 
 /**
  * Tie-break order per task, used only when benchmarks cannot separate models (they

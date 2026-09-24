@@ -5,7 +5,7 @@ import type { BenchmarkResult, Embedder, GenerationEvent, Generator, Judge, Mode
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
   return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native", "browser"], license: "MIT", downloadBytes: 1, benchmarks: [], ...extra };
 }
-const win = (benchmark: string, score: number, task: TaskCategory = "text-embedding"): BenchmarkResult => ({ benchmark, task, metric: "m", score, higherIsBetter: true, source: "https://example.test" });
+const win = (benchmark: string, score: number, task: TaskCategory = "text-embedding"): BenchmarkResult => ({ benchmark, task, metric: "m", score, higherIsBetter: true });
 
 const embedder = (tag: number): Embedder => ({ dimensions: 1, embed: async (inputs) => inputs.map(() => new Float32Array([tag])) });
 const judge: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: 0.9 } }) };

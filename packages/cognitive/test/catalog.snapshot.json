@@ -22,58 +22,46 @@
    "notes": "Typed judgments (boolean, choice, score) with probabilities. Closed weights; needs an AI Gateway credential.",
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "JevBench v1.0 (242 decisions)",
      "task": "judgment",
+     "benchmark": "JevBench v1.0 (242 decisions)",
      "metric": "accuracy",
      "score": 96.3,
-     "source": "https://benchmarkheaven.com/jev-models/v1",
-     "reportedBy": "third-party"
+     "higherIsBetter": true
     },
     {
-     "higherIsBetter": false,
-     "benchmark": "JevBench v1.0 (242 decisions)",
      "task": "judgment",
+     "benchmark": "JevBench v1.0 (242 decisions)",
      "metric": "ECE",
      "score": 0.027,
-     "source": "https://benchmarkheaven.com/jev-models/v1",
-     "reportedBy": "third-party"
+     "higherIsBetter": false
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SST-2 (n=500)",
      "task": "classification",
+     "benchmark": "SST-2 (n=500)",
      "metric": "accuracy",
      "score": 95.4,
-     "source": "https://raw.githubusercontent.com/dhruvmehra/jevbench/main/docs/results/2026-09-22-n500-summary.md",
-     "reportedBy": "third-party"
+     "higherIsBetter": true
     },
     {
-     "higherIsBetter": false,
-     "benchmark": "SST-2 (n=500)",
      "task": "classification",
+     "benchmark": "SST-2 (n=500)",
      "metric": "ECE",
      "score": 0.026,
-     "source": "https://raw.githubusercontent.com/dhruvmehra/jevbench/main/docs/results/2026-09-22-n500-summary.md",
-     "reportedBy": "third-party"
+     "higherIsBetter": false
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "AG News (n=500)",
      "task": "classification",
+     "benchmark": "AG News (n=500)",
      "metric": "accuracy",
      "score": 84.3,
-     "source": "https://raw.githubusercontent.com/dhruvmehra/jevbench/main/docs/results/2026-09-22-n500-summary.md",
-     "reportedBy": "third-party"
+     "higherIsBetter": true
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "Banking77 (n=500)",
      "task": "classification",
+     "benchmark": "Banking77 (n=500)",
      "metric": "accuracy",
      "score": 76.4,
-     "source": "https://raw.githubusercontent.com/dhruvmehra/jevbench/main/docs/results/2026-09-22-n500-summary.md",
-     "reportedBy": "third-party"
+     "higherIsBetter": true
     }
    ]
   },
@@ -153,58 +141,52 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "Mobile Actions (961)",
      "task": "tool-calling",
+     "benchmark": "Mobile Actions (961)",
      "metric": "exact-call accuracy",
      "score": 86,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "DroidCall (200)",
      "task": "tool-calling",
+     "benchmark": "DroidCall (200)",
      "metric": "exact calls in order",
      "score": 47,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "BFCL v4 (3,641)",
      "task": "tool-calling",
+     "benchmark": "BFCL v4 (3,641)",
      "metric": "AST-match accuracy",
      "score": 50.2,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "DSTC8 (1,813 turns)",
      "task": "structured-extraction",
+     "benchmark": "DSTC8 (1,813 turns)",
      "metric": "field micro-F1",
      "score": 40.7,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SNIPS gold (700)",
      "task": "structured-extraction",
+     "benchmark": "SNIPS gold (700)",
      "metric": "field micro-F1",
      "score": 30.2,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SNIPS 7-way (700)",
      "task": "structured-extraction",
+     "benchmark": "SNIPS 7-way (700)",
      "metric": "field micro-F1",
      "score": 24.7,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     }
    ]
   },
@@ -240,31 +222,28 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "MeetingBank QA",
      "task": "prompt-compression",
+     "benchmark": "MeetingBank QA",
      "metric": "exact match",
      "score": 85.82,
-     "setting": "3.0x, GPT-3.5-Turbo target",
-     "source": "https://arxiv.org/html/2403.12968v2"
+     "higherIsBetter": true,
+     "setting": "3.0x, GPT-3.5-Turbo target"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "LongBench (avg)",
      "task": "prompt-compression",
+     "benchmark": "LongBench (avg)",
      "metric": "score",
      "score": 38.2,
-     "setting": "2k-token budget (5x), GPT-3.5-Turbo target",
-     "source": "https://arxiv.org/html/2403.12968v2"
+     "higherIsBetter": true,
+     "setting": "2k-token budget (5x), GPT-3.5-Turbo target"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "LongBench (avg)",
      "task": "prompt-compression",
+     "benchmark": "LongBench (avg)",
      "metric": "score",
      "score": 41.9,
-     "setting": "3k-token budget (3x), GPT-3.5-Turbo target",
-     "source": "https://arxiv.org/html/2403.12968v2"
+     "higherIsBetter": true,
+     "setting": "3k-token budget (3x), GPT-3.5-Turbo target"
     }
    ]
   },
@@ -332,208 +311,180 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "MMLU-Pro",
      "task": "chat",
+     "benchmark": "MMLU-Pro",
      "metric": "accuracy",
      "score": 29.7,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MMLU-Pro",
      "task": "chat",
+     "benchmark": "MMLU-Pro",
      "metric": "accuracy",
      "score": 42.3,
-     "setting": "thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MMLU-Redux",
      "task": "chat",
+     "benchmark": "MMLU-Redux",
      "metric": "accuracy",
      "score": 48.5,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "IFEval",
      "task": "chat",
+     "benchmark": "IFEval",
      "metric": "accuracy",
      "score": 52.1,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SuperGPQA",
      "task": "reasoning",
+     "benchmark": "SuperGPQA",
      "metric": "accuracy",
      "score": 16.9,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "GPQA",
      "task": "reasoning",
+     "benchmark": "GPQA",
      "metric": "accuracy",
      "score": 11.9,
-     "setting": "thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "BFCL-V4",
      "task": "tool-calling",
+     "benchmark": "BFCL-V4",
      "metric": "score",
      "score": 25.3,
-     "setting": "thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "TAU2-Bench",
      "task": "tool-calling",
+     "benchmark": "TAU2-Bench",
      "metric": "score",
      "score": 11.6,
-     "setting": "thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "Mobile Actions (961)",
      "task": "tool-calling",
+     "benchmark": "Mobile Actions (961)",
      "metric": "exact-call accuracy",
      "score": 76,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "DroidCall (200)",
      "task": "tool-calling",
+     "benchmark": "DroidCall (200)",
      "metric": "exact calls in order",
      "score": 28,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "BFCL v4 (3,641)",
      "task": "tool-calling",
+     "benchmark": "BFCL v4 (3,641)",
      "metric": "AST-match accuracy",
      "score": 56.8,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "DSTC8 (1,813 turns)",
      "task": "structured-extraction",
+     "benchmark": "DSTC8 (1,813 turns)",
      "metric": "field micro-F1",
      "score": 49,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SNIPS gold (700)",
      "task": "structured-extraction",
+     "benchmark": "SNIPS gold (700)",
      "metric": "field micro-F1",
      "score": 35,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SNIPS 7-way (700)",
      "task": "structured-extraction",
+     "benchmark": "SNIPS 7-way (700)",
      "metric": "field micro-F1",
      "score": 34,
-     "setting": "Needle 3 card chart",
-     "source": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/assets/benchmarks.svg",
-     "reportedBy": "third-party"
+     "higherIsBetter": true,
+     "setting": "Needle 3 card chart"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MMMU",
      "task": "vision-qa",
+     "benchmark": "MMMU",
      "metric": "accuracy",
      "score": 47.4,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "RealWorldQA",
      "task": "vision-qa",
+     "benchmark": "RealWorldQA",
      "metric": "accuracy",
      "score": 61.6,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MMBench-EN-DEV v1.1",
      "task": "vision-qa",
+     "benchmark": "MMBench-EN-DEV v1.1",
      "metric": "accuracy",
      "score": 68,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "OCRBench",
      "task": "ocr",
+     "benchmark": "OCRBench",
      "metric": "score",
      "score": 79.1,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "CC-OCR",
      "task": "ocr",
+     "benchmark": "CC-OCR",
      "metric": "score",
      "score": 66.7,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "OmniDocBench v1.5",
      "task": "document-parsing",
+     "benchmark": "OmniDocBench v1.5",
      "metric": "overall",
      "score": 70.6,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MMLongBench-Doc",
      "task": "document-parsing",
+     "benchmark": "MMLongBench-Doc",
      "metric": "accuracy",
      "score": 28.1,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "CharXiv (RQ)",
      "task": "chart-understanding",
+     "benchmark": "CharXiv (RQ)",
      "metric": "accuracy",
      "score": 38.2,
-     "setting": "non-thinking",
-     "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B"
+     "higherIsBetter": true,
+     "setting": "non-thinking"
     }
    ]
   },
@@ -571,66 +522,59 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "SWE-bench Verified",
      "task": "coding",
+     "benchmark": "SWE-bench Verified",
      "metric": "resolved %",
      "score": 70.6,
-     "setting": "OpenHands, 256K context",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "OpenHands, 256K context"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "SWE-bench Pro",
      "task": "coding",
+     "benchmark": "SWE-bench Pro",
      "metric": "resolved %",
      "score": 47.5,
-     "setting": "OpenHands, 256K context",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "OpenHands, 256K context"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "Terminal-Bench 2.1",
      "task": "coding",
+     "benchmark": "Terminal-Bench 2.1",
      "metric": "accuracy",
      "score": 46.2,
-     "setting": "Terminus-2, 128K context",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "Terminus-2, 128K context"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "GPQA Diamond",
      "task": "reasoning",
+     "benchmark": "GPQA Diamond",
      "metric": "accuracy",
      "score": 86.4,
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "HLE",
      "task": "reasoning",
+     "benchmark": "HLE",
      "metric": "accuracy",
      "score": 20.2,
-     "setting": "no tools",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "no tools"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "MCP-Atlas",
      "task": "tool-calling",
+     "benchmark": "MCP-Atlas",
      "metric": "score",
      "score": 54.2,
-     "setting": "thinking, 500-task public subset",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "thinking, 500-task public subset"
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "Toolathlon-Verified",
      "task": "tool-calling",
+     "benchmark": "Toolathlon-Verified",
      "metric": "score",
      "score": 41.2,
-     "setting": "128K token limit",
-     "source": "https://huggingface.co/ornith-ai/Ornith-1.5-9B"
+     "higherIsBetter": true,
+     "setting": "128K token limit"
     }
    ]
   },
@@ -693,12 +637,11 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "olmOCR-Bench",
      "task": "document-parsing",
+     "benchmark": "olmOCR-Bench",
      "metric": "overall",
      "score": 83.2,
-     "source": "https://arxiv.org/html/2601.14251"
+     "higherIsBetter": true
     }
    ]
   },
@@ -740,30 +683,25 @@
    },
    "benchmarks": [
     {
-     "higherIsBetter": true,
-     "benchmark": "OmniDocBench v1.6",
      "task": "document-parsing",
+     "benchmark": "OmniDocBench v1.6",
      "metric": "overall",
      "score": 96.58,
-     "source": "https://arxiv.org/abs/2607.13639"
+     "higherIsBetter": true
     },
     {
-     "higherIsBetter": false,
-     "benchmark": "OmniDocBench v1.6",
      "task": "ocr",
+     "benchmark": "OmniDocBench v1.6",
      "metric": "text edit distance",
      "score": 0.025,
-     "source": "https://huggingface.co/StarDoc-AI/TeleOCR",
-     "reportedBy": "third-party"
+     "higherIsBetter": false
     },
     {
-     "higherIsBetter": true,
-     "benchmark": "OmniDocBench v1.6",
      "task": "table-extraction",
+     "benchmark": "OmniDocBench v1.6",
      "metric": "table TEDS",
      "score": 94.76,
-     "source": "https://huggingface.co/StarDoc-AI/TeleOCR",
-     "reportedBy": "third-party"
+     "higherIsBetter": true
     }
    ]
   },

@@ -41,6 +41,8 @@ export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./lingu
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./lingua.ts";
 export { decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
+export { benchmarksOf, parseBenchmarks } from "./benchmarks.ts";
+export type { BenchmarkRow } from "./benchmarks.ts";
 export { MODEL_CATALOG, TASK_PREFERENCES } from "./catalog.ts";
 export { invokeCognitive, mirrorCapabilities } from "./service.ts";
 export type { CognitiveOperation, ExtensionOperation } from "./service.ts";

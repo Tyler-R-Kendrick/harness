@@ -61,10 +61,6 @@ export interface BenchmarkResult {
   readonly higherIsBetter: boolean;
   /** Conditions the number depends on, e.g. "thinking", "768d". Only equal settings are compared. */
   readonly setting?: string;
-  /** Where the number was published. */
-  readonly source: string;
-  /** Who produced the number; absent means the model's publisher. */
-  readonly reportedBy?: "vendor" | "third-party";
 }
 
 export interface ArtifactFile {

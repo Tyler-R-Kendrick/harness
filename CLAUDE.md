@@ -65,8 +65,10 @@ npm run test:mutation   # Stryker; `break` threshold in stryker.config.mjs
 npm run test:models     # when touching packages/models or the catalog
 ```
 
-Benchmark numbers in the catalog must cite their source, mark third-party numbers, and
-only be compared when benchmark, metric and setting match.
+Benchmark results live in compact tables we own and edit by hand
+(`packages/cognitive/src/benchmark-table.ts`, and memory's own): one
+`model|task|benchmark|metric|score|setting` row each, `<n` for lower-is-better. They are
+compared only when benchmark, metric and setting match.
 
 Never lower a coverage or mutation threshold, skip a test, or add a production mock to
 get green. Kill surviving mutants with tests, or document why a mutant is equivalent.

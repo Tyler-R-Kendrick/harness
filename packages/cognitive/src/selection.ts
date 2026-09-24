@@ -18,7 +18,6 @@ export interface Evidence {
   readonly setting: string | undefined;
   readonly ours: number;
   readonly theirs: number;
-  readonly source: string;
 }
 
 export interface Ranked {
@@ -61,7 +60,7 @@ export function rankForTask(task: TaskCategory, models: readonly ModelDescriptor
       for (const [k, ours] of results.get(a.id)!) {
         const theirs = results.get(b.id)!.get(k);
         if (!theirs) continue;
-        a.evidence.push({ against: b.id, benchmark: ours.benchmark, metric: ours.metric, setting: ours.setting, ours: ours.score, theirs: theirs.score, source: ours.source });
+        a.evidence.push({ against: b.id, benchmark: ours.benchmark, metric: ours.metric, setting: ours.setting, ours: ours.score, theirs: theirs.score });
         const diff = ours.higherIsBetter ? ours.score - theirs.score : theirs.score - ours.score;
         net += Math.sign(diff);
       }

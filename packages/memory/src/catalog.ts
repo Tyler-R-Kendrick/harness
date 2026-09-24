@@ -1,9 +1,8 @@
+import { benchmarksOf, parseBenchmarks } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
+import { BENCHMARKS } from "./benchmark-table.ts";
 
-const GEMMA_CARD = "https://huggingface.co/google/embeddinggemma-300m";
-
-/** The embedding models memory brings to the cognitive core; pinned like the core catalog. */
-export const MEMORY_MODELS: readonly ModelDescriptor[] = [
+const MODELS: readonly Omit<ModelDescriptor, "benchmarks">[] = [
   {
     id: "google/embeddinggemma-300m",
     name: "EmbeddingGemma 300M",
@@ -24,10 +23,10 @@ export const MEMORY_MODELS: readonly ModelDescriptor[] = [
         { path: "onnx/model_q4.onnx_data", bytes: 196725760, sha256: "599962c3143b040de2dd05e5975be3e9091dd067cacc6a8f7186e3203bab9e02" },
       ],
     },
-    benchmarks: [
-      { benchmark: "MTEB (Multilingual, v2)", task: "text-embedding", metric: "mean (task)", score: 61.15, setting: "768d", higherIsBetter: true, source: GEMMA_CARD },
-      { benchmark: "MTEB (English, v2)", task: "text-embedding", metric: "mean (task)", score: 69.67, setting: "768d", higherIsBetter: true, source: GEMMA_CARD },
-      { benchmark: "MTEB (Code, v1)", task: "text-embedding", metric: "mean (task)", score: 68.76, setting: "768d", higherIsBetter: true, source: GEMMA_CARD },
-    ],
   },
 ];
+
+const ROWS = parseBenchmarks(BENCHMARKS);
+
+/** The embedding models memory brings to the cognitive core; pinned like the core catalog. */
+export const MEMORY_MODELS: readonly ModelDescriptor[] = MODELS.map((m) => ({ ...m, benchmarks: benchmarksOf(ROWS, m.id) }));

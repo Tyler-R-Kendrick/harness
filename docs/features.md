@@ -99,7 +99,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 |---|---|---|
 | Ports: judge, tool router, embedder, compressor, generator (text + vision), document parser | built | `cognitive/ports.ts`; contract suites JC, RC, EC, CC, GC, DC run against fakes and real adapters |
 | Task taxonomy mapped to ports (15 categories, including `steered-chat`) | built | `TASK_CATEGORIES`, `TASK_PORTS`; CT1.1, CT1.9 |
-| Model catalog: pinned revisions, sha256 weights, sourced benchmarks (vendor vs third-party) | built | CT1.2–CT1.3; 9 models (below); CT1.10 reviewed snapshot guards every pinned hash and source |
+| Model catalog: pinned revisions, sha256 weights; benchmark results from our own hand-edited table (`benchmark-table.ts`, one `model\|task\|benchmark\|metric\|score\|setting` row each) | built | BK1.1–BK1.3, CT1.2–CT1.3; 9 models (below); CT1.10 reviewed snapshot guards every pinned hash and benchmark |
 | Benchmark-driven selection with head-to-head records, curated tie-breaks, explanations | built | SE1.1–SE1.8, SE2.1–SE2.2 (property), CT1.7 |
 | Ensemble: lazy load, failover to next-ranked member, runtime revoke/restore, state events | built | EN1.1–EN1.11 |
 | Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9, CA2.1–CA2.6; live: Needle decides and is accepted (cognitive.tool-decision subject) |

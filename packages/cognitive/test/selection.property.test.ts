@@ -15,7 +15,7 @@ const descriptor = (id: string, scores: readonly (number | null)[], bytes: numbe
   license: "MIT",
   downloadBytes: bytes,
   benchmarks: scores.flatMap((s, i) =>
-    s === null ? [] : [{ benchmark: `B${i}`, task: "chat" as const, metric: "acc", score: s, higherIsBetter: true, source: "https://example.test" }],
+    s === null ? [] : [{ benchmark: `B${i}`, task: "chat" as const, metric: "acc", score: s, higherIsBetter: true }],
   ),
 });
 

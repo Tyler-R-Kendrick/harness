@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { MODEL_CATALOG, rankForTask, TASK_CATEGORIES, TASK_PORTS, TASK_PREFERENCES } from "@harness/cognitive";
+import { MODEL_CATALOG, parseBenchmarks, rankForTask, TASK_CATEGORIES, TASK_PORTS, TASK_PREFERENCES } from "@harness/cognitive";
+import { BENCHMARKS } from "../src/benchmark-table.ts";
 import type { Platform, TaskCategory } from "@harness/cognitive";
 
 const top = (task: TaskCategory, platform: Platform) => rankForTask(task, MODEL_CATALOG, { platform, prefer: TASK_PREFERENCES[task] ?? [] })[0]?.id;
@@ -31,13 +32,10 @@ describe("model catalog", () => {
     }
   });
 
-  it("CT1.3 every benchmark cites an https source and belongs to a task the model claims", () => {
-    for (const m of MODEL_CATALOG)
-      for (const b of m.benchmarks) {
-        expect(b.source, `${m.id} ${b.benchmark}`).toMatch(/^https:\/\//);
-        expect(m.tasks, `${m.id} ${b.benchmark}`).toContain(b.task);
-        expect(Number.isFinite(b.score)).toBe(true);
-      }
+  it("CT1.3 every row of the benchmark table names a catalog model and a task that model claims", () => {
+    const rows = parseBenchmarks(BENCHMARKS);
+    for (const r of rows) expect(MODEL_CATALOG.find((m) => m.id === r.model)?.tasks, `${r.model} ${r.benchmark}`).toContain(r.task);
+    expect(MODEL_CATALOG.flatMap((m) => m.benchmarks)).toHaveLength(rows.length);
   });
 
   it("CT1.4 natively every task but text embedding has a model (memory brings that); the browser also lacks coding and steered chat", () => {
@@ -89,7 +87,7 @@ describe("model catalog", () => {
       for (const id of ids ?? []) expect(MODEL_CATALOG.find((m) => m.id === id)?.tasks, `${task} ${id}`).toContain(task);
   });
 
-  it("CT1.10 the catalog is reviewed data: pinned weights, hashes, sources and preferences change only with the reviewed snapshot", async () => {
+  it("CT1.10 the catalog is reviewed data: pinned weights, hashes, benchmarks and preferences change only with the reviewed snapshot", async () => {
     await expect(JSON.stringify({ models: MODEL_CATALOG, preferences: TASK_PREFERENCES }, null, 1)).toMatchFileSnapshot("./catalog.snapshot.json");
   });
 });
