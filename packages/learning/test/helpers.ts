@@ -29,7 +29,7 @@ export function setup(options: { reflect?: (request: GenerateRequest) => string;
   const judge = new ScriptedJudge(options.judge);
   const router = new KeywordRouter();
   const register = (id: string, tasks: ModelDescriptor["tasks"], ports: ModelDescriptor["ports"], p: Ports) => ensemble.register(descriptor(id, tasks, ports), async () => p);
-  register("generator-a", ["reasoning", "chat"], ["generator"], { generator });
+  register("generator-a", ["reasoning", "chat", "coding", "vision-qa"], ["generator"], { generator });
   if (!options.noJudge) register("judge-a", ["judgment"], ["judge"], { judge });
   if (!options.noRouter) register("router-a", ["tool-calling"], ["router"], { router });
   register("embedder-a", ["text-embedding"], ["embedder"], { embedder: new HashEmbedder(64) });

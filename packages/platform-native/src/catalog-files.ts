@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { parseCatalog } from "@harness/cognitive";
 import type { Catalog } from "@harness/cognitive";
 import { parseSettings } from "@harness/learning";
+import { parsePluginSettings } from "@harness/learning-plugins";
+import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
 
 const require = createRequire(import.meta.url);
@@ -21,4 +23,9 @@ export function loadCatalog(from: { readonly package: "@harness/cognitive" | "@h
 /** Read and parse learning's settings (thresholds and prompts) at startup: its own data file by default, or a tweaked copy. */
 export function loadLearningSettings(file: string = require.resolve("@harness/learning/data/settings.json")): Settings {
   return parseSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse the learning plugins' settings (prompts, thresholds): their own data file by default, or a tweaked copy. */
+export function loadPluginSettings(file: string = require.resolve("@harness/learning-plugins/data/settings.json")): PluginSettings {
+  return parsePluginSettings(JSON.parse(readFileSync(file, "utf8")));
 }

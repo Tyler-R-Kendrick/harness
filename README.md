@@ -82,7 +82,18 @@ thresholds and prompts are in `packages/learning/data/settings.json`.
 
 ```sh
 node packages/platform-native/src/main.ts --stdio --worker ensemble \
-  --memory ~/.harness/memory.json --learning ~/.harness/learning.json
+  --memory ~/.harness/memory.json --learning ~/.harness/learning.json --workflows ~/.harness/workflows
+```
+
+With `--workflows`, learning ships four plugins. The workflow builder compiles learned
+procedures into deterministic workflow code. The skill builder writes an agent skill that
+runs such a workflow. The tool builder has a model write a tool as workflow code (code mode),
+checked before it is kept. The recording teacher turns transcripts, input events and screen
+frames into demonstrations. Workflows run durably in a QuickJS sandbox: every tool call and
+model question is journaled, so an interrupted run resumes where it stopped.
+
+```sh
+harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env":"staging"}'
 ```
 
 ### Behavior graphs (the local kernel)
@@ -178,3 +189,5 @@ reported as `blocked`, never as a pass.
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
+| `packages/workflows` | Durable workflows as code: QuickJS sandbox, journaled effects, library, extension (portable) |
+| `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |

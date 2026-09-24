@@ -38,6 +38,12 @@
     },
     {
       "path": "../learning"
+    },
+    {
+      "path": "../workflows"
+    },
+    {
+      "path": "../learning-plugins"
     }
   ]
 }

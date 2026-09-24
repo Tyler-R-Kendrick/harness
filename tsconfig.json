@@ -20,6 +20,12 @@
       "path": "packages/learning"
     },
     {
+      "path": "packages/workflows"
+    },
+    {
+      "path": "packages/learning-plugins"
+    },
+    {
       "path": "packages/models"
     },
     {

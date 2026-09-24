@@ -1,0 +1,23 @@
+{
+  "name": "@harness/learning-plugins",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Learning plugins: a workflow builder (deterministic workflow code from learned procedures), a skill builder (agent skills that run durable workflows), a code-mode tool builder, and a teacher that turns recordings into demonstrations. Portable.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "@harness/learning": "0.0.0",
+    "@harness/workflows": "0.0.0",
+    "zod": "4.6.5",
+    "@scure/base": "2.4.0"
+  },
+  "devDependencies": {
+    "@harness/memory": "0.0.0",
+    "@harness/testkit": "0.0.0"
+  }
+}

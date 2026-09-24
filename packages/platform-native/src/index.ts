@@ -8,4 +8,5 @@ export type { LlamaServerStart } from "./llama-server-process.ts";
 export { buildNativeEnsemble } from "./cognitive-host.ts";
 export type { NativeEnsembleOptions } from "./cognitive-host.ts";
 export { steerableModel } from "./steerable-model.ts";
-export { loadCatalog, loadLearningSettings } from "./catalog-files.ts";
+export { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
+export { WorkflowFiles } from "./workflow-files.ts";

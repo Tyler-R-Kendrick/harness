@@ -300,4 +300,18 @@ require("node:http").createServer((req, res) => {
     expect(() => buildNativeEnsemble({ cacheDir: "/nonexistent", learning: {} })).toThrow("learning requires memory");
     await Promise.all([first.close(), second.close()]);
   });
+
+  it("CH3.4 with workflows, learning gets the shipped plugins: a learned procedure becomes a workflow that runs durably from the library", async () => {
+    const dir = await tempDir("workflows-");
+    const reflection = JSON.stringify({ operations: [{ op: "add", kind: "procedure", title: "greet", text: "greet the user", steps: ["say hello"] }] });
+    const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: 128 }, learning: {}, workflows: { dir } });
+    host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/thinker", tasks: ["reasoning", "chat"], ports: ["generator"] } as never, async () => ({ generator: new ScriptedGenerator((r) => (String(r.messages[0]!.content).startsWith("You distil") ? reflection : "Hello!")) }));
+    expect(host.ensemble.extensions()).toEqual(["memory", "workflows", "learning"]);
+    expect(((await invokeCognitive(host.ensemble, "learning.status", {})) as { plugins: { id: string }[] }).plugins.map((p) => p.id)).toEqual(["workflow-builder", "skill-builder", "tool-builder", "recording-teacher"]);
+    await invokeCognitive(host.ensemble, "learning.observe", { id: "t1", task: "greet", steps: [], outcome: { status: "success" } });
+    expect(await invokeCognitive(host.ensemble, "learning.materialize", { target: "workflow", lessons: ["l1"] })).toMatchObject({ name: "greet" });
+    expect(await invokeCognitive(host.ensemble, "workflows.run", { name: "greet", input: {}, run: "g1" })).toMatchObject({ status: "completed", output: { steps: ["Hello!"] } });
+    expect(await invokeCognitive(host.ensemble, "workflows.run", { name: "greet", input: {}, run: "g1" })).toMatchObject({ status: "completed", performed: 0 });
+    await host.close();
+  });
 });

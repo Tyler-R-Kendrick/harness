@@ -27,6 +27,7 @@ const { values } = parseArgs({
     "sae-rows": { type: "string" },
     memory: { type: "string" },
     learning: { type: "string" },
+    workflows: { type: "string" },
   },
 });
 
@@ -34,7 +35,7 @@ if (!values.stdio && values.socket === undefined) {
   process.stderr.write(
     "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble] [--model <gateway id>]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
-      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]]]\n",
+      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]]\n",
   );
   process.exit(2);
 }
@@ -67,6 +68,7 @@ const cognitive =
         ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
+        ...(values.workflows === undefined ? {} : { workflows: { dir: values.workflows } }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;

@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 // node_modules symlinks. Stryker runs tests in a sandbox copy; symlinks would point
 // back at the unmutated originals and every mutant would falsely "survive".
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
-const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning"];
+const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins"];
 
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
@@ -26,7 +26,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts"],
-      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts"],
+      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts"],
       reporter: ["text-summary", "json-summary", "html"],
       thresholds: { lines: 95, branches: 90, functions: 95, statements: 95 },
     },

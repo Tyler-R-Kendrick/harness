@@ -29,9 +29,13 @@ import type { CactusModule, OrtLike } from "@harness/models";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
 import { Learning, learningExtension, Plugins } from "@harness/learning";
 import type { Settings } from "@harness/learning";
+import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
+import { workflowsExtension } from "@harness/workflows";
+import type { ToolExecutor } from "@harness/workflows";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
-import { loadCatalog, loadLearningSettings } from "./catalog-files.ts";
+import { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
+import { WorkflowFiles } from "./workflow-files.ts";
 import { ModelFiles } from "./model-files.ts";
 import { steerableModel } from "./steerable-model.ts";
 
@@ -75,8 +79,14 @@ export interface NativeEnsembleOptions {
     readonly persist?: (saved: unknown) => void;
     /** Thresholds and prompts; defaults to learning's data file. */
     readonly settings?: Settings;
-    /** Plugins the client brings (skills, workflows, tool building, teaching). */
+    /** Plugins; with workflows installed, defaults to the workflow, skill and tool builders and the recording teacher. */
     readonly plugins?: Plugins;
+  };
+  /** Install durable workflows, kept in this directory (one file each, with run journals). */
+  readonly workflows?: {
+    readonly dir: string;
+    /** Tools beyond the library's own workflows. */
+    readonly tools?: ToolExecutor;
   };
 }
 
@@ -89,7 +99,7 @@ type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
  * use. Nothing here knows a model: the catalog entry says which runtime runs it, how
  * (its `run` settings) and which ports it serves.
  */
-export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; close(): Promise<void> } {
+export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; workflows?: WorkflowFiles; close(): Promise<void> } {
   if (options.learning && !options.memory) throw new Error("learning requires memory: install memory too");
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
@@ -189,11 +199,17 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       if (!load) throw new Error(`no ${m.runtime} runtime on this host`);
       return load(m);
     });
-  const learning = memory && options.learning && installLearning(ensemble, memory, options.learning);
+  const workflows = options.workflows && new WorkflowFiles(options.workflows.dir);
+  if (workflows) {
+    const tools = options.workflows!.tools;
+    ensemble.install(workflowsExtension({ library: workflows, journal: (run) => workflows.journal(run), ensemble, ...(tools ? { tools } : {}) }));
+  }
+  const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {
     ensemble,
     ...(memory ? { memory } : {}),
     ...(learning ? { learning } : {}),
+    ...(workflows ? { workflows } : {}),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
     },
@@ -212,7 +228,18 @@ function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOp
   return memory;
 }
 
-function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullable<NativeEnsembleOptions["learning"]>): Learning {
+/** The plugins that ship: builders keep what they make in the workflow library, so skills and tools run as durable workflows. */
+function defaultPlugins(ensemble: Ensemble, library: WorkflowFiles): Plugins {
+  const settings = loadPluginSettings();
+  const plugins = new Plugins();
+  plugins.use(workflowBuilder({ reasoner: ensemble, library, settings }));
+  plugins.use(skillBuilder({ reasoner: ensemble, library, settings }));
+  plugins.use(toolBuilder({ reasoner: ensemble, library, settings }));
+  plugins.use(recordingTeacher({ reasoner: ensemble, settings }));
+  return plugins;
+}
+
+function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullable<NativeEnsembleOptions["learning"]>, workflows: WorkflowFiles | undefined): Learning {
   const { persist } = options;
   const learning = new Learning({
     reasoner: ensemble,
@@ -221,6 +248,7 @@ function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullabl
     ...(options.saved === undefined ? {} : { saved: options.saved }),
     ...(persist ? { onChange: (l: Learning) => persist(l.save()) } : {}),
   });
-  ensemble.install(learningExtension({ learning, reasoner: ensemble, plugins: options.plugins ?? new Plugins() }));
+  const plugins = options.plugins ?? (workflows ? defaultPlugins(ensemble, workflows) : new Plugins());
+  ensemble.install(learningExtension({ learning, reasoner: ensemble, plugins }));
   return learning;
 }

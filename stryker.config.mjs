@@ -6,7 +6,7 @@ export default {
   plugins: ["@stryker-mutator/vitest-runner"],
   vitest: { configFile: "vitest.mutation.config.ts", related: false },
   mutate: [
-    "packages/{core,protocol,cognitive,behavior,memory,learning}/src/**/*.ts",
+    "packages/{core,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins}/src/**/*.ts",
     "!packages/*/src/index.ts",
   ],
   coverageAnalysis: "perTest",
