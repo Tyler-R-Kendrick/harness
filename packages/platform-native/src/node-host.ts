@@ -4,7 +4,9 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { Daemon } from "@harness/core";
-import type { AgentInfo, Identity, Output, SnapshotStorage, WorkerCommand } from "@harness/core";
+import type { AgentInfo, CognitiveWork, Identity, Output, SnapshotStorage, WorkerCommand } from "@harness/core";
+import { invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
+import type { Ensemble } from "@harness/cognitive";
 import { ERROR_CODES, NdjsonDecoder, encodeFrame, failure } from "@harness/protocol";
 import type { Worker } from "@harness/workers";
 import { FileStorage } from "./file-storage.ts";
@@ -19,6 +21,8 @@ export interface NodeHostOptions {
   readonly flowCapacity?: number;
   readonly permissionTimeoutMs?: number;
   readonly tickMs?: number;
+  /** The cognitive core's model ensemble; its tasks become `cognitive.*` capabilities. */
+  readonly cognitive?: Ensemble;
 }
 
 interface ConnectionIo {
@@ -36,6 +40,8 @@ export class NodeHost {
   readonly #worker: Worker;
   readonly #identity: Identity;
   readonly #storage: SnapshotStorage | undefined;
+  readonly #ensemble: Ensemble | undefined;
+  readonly #stopMirror: () => void;
   readonly #connections = new Map<string, ConnectionIo>();
   readonly #turns = new Set<Promise<void>>();
   readonly #ticker: ReturnType<typeof setInterval>;
@@ -49,6 +55,13 @@ export class NodeHost {
     this.#worker = options.worker;
     this.#identity = options.identity;
     this.#storage = storage;
+    this.#ensemble = options.cognitive;
+    this.#stopMirror = this.#ensemble
+      ? mirrorCapabilities(this.#ensemble, {
+          offer: (name) => this.daemon.offerPlatformCapability({ name, version: 1, trust: "trusted" }),
+          withdraw: (name) => this.daemon.withdrawPlatformCapability(name),
+        })
+      : () => {};
     this.#ticker = setInterval(() => this.#apply(this.daemon.tick()), options.tickMs ?? 1_000);
     this.#ticker.unref();
   }
@@ -112,6 +125,7 @@ export class NodeHost {
   /** Stop accepting connections, let running turns finish, and flush state. */
   async close(): Promise<void> {
     clearInterval(this.#ticker);
+    this.#stopMirror();
     const server = this.#server;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     for (const io of this.#connections.values()) io.close();
@@ -124,6 +138,7 @@ export class NodeHost {
   #apply(outputs: Output[]): void {
     for (const o of outputs) {
       if (o.kind === "send") this.#write(o.connectionId, o.message);
+      else if (o.kind === "cognitive") this.#think(o.work);
       else this.#dispatch(o.command);
     }
     if (outputs.length > 0) this.#persist();
@@ -142,6 +157,18 @@ export class NodeHost {
         .finally(() => this.#turns.delete(turn));
       this.#turns.add(turn);
     }
+  }
+
+  /** Run cognitive work on the ensemble and report the result to the daemon. */
+  #think(work: CognitiveWork): void {
+    const ensemble = this.#ensemble;
+    const job = (ensemble ? invokeCognitive(ensemble, work.op, work.input) : Promise.reject(new Error("the cognitive core is not enabled on this host (start with --cognitive)")))
+      .then(
+        (value) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: true, value })),
+        (e: unknown) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: false, message: e instanceof Error ? e.message : String(e) })),
+      )
+      .finally(() => this.#turns.delete(job));
+    this.#turns.add(job);
   }
 
   #write(connectionId: string, message: object): void {

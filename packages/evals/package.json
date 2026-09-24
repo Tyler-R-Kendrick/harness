@@ -15,7 +15,9 @@
     "@harness/core": "0.0.0",
     "@harness/workers": "0.0.0",
     "@ai-sdk/provider": "4.0.18",
-    "@harness/models": "0.0.0"
+    "@harness/models": "0.0.0",
+    "sharp": "0.35.4",
+    "@harness/platform-native": "0.0.0"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0"

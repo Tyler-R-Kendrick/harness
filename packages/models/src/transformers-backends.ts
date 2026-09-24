@@ -11,12 +11,14 @@ export interface TransformersOptions {
   readonly device?: "cpu" | "wasm" | "webgpu";
   /** Node only: where transformers.js caches downloads. Browsers use the Cache API. */
   readonly cacheDir?: string;
+  /** The transformers.js module to use; defaults to importing @huggingface/transformers. */
+  readonly module?: unknown;
 }
 
 type Transformers = typeof TransformersModule;
 
 async function runtime(options: TransformersOptions): Promise<Transformers> {
-  const t = await import("@huggingface/transformers");
+  const t = (options.module as Transformers | undefined) ?? (await import("@huggingface/transformers"));
   if (options.cacheDir !== undefined) t.env.cacheDir = options.cacheDir;
   return t;
 }

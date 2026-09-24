@@ -23,6 +23,10 @@ export const HARNESS_METHODS = {
   hooksSubscribe: "_harness/hooks/subscribe",
   hooksPoll: "_harness/hooks/poll",
   hooksAck: "_harness/hooks/ack",
+  /** Run a cognitive-core operation (judge, route, embed, compress, parse, decide-tools) on the platform's models. */
+  cognitiveInvoke: "_harness/cognitive/invoke",
+  /** The model ensemble: members, their state, and the ranking per task. */
+  cognitiveStatus: "_harness/cognitive/status",
 } as const;
 
 /** ACP methods the daemon uses from the base protocol. */

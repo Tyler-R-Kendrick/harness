@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # onnxruntime-node (via transformers.js) otherwise downloads CUDA libraries at install.
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -58,4 +62,42 @@ jobs:
         if: always()
         with:
           name: eval-results
+          path: eval-results
+
+  models:
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 120
+    env:
+      HARNESS_MODEL_CACHE: /mnt/harness-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: sudo mkdir -p "$HARNESS_MODEL_CACHE" && sudo chown "$USER" "$HARNESS_MODEL_CACHE"
+      # Weights are pinned by revision and sha256 in the catalog, so the cache key follows it.
+      - uses: actions/cache@v4
+        with:
+          path: /mnt/harness-models
+          key: models-${{ hashFiles('packages/cognitive/src/catalog.ts') }}
+      # llama-server serves the native-only GGUF models (Ornith, OvisOCR2).
+      - name: Download llama.cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --dir /tmp/llama
+          unzip -q /tmp/llama/*.zip -d /tmp/llama
+          echo "LLAMA_SERVER=$(find /tmp/llama -name llama-server -type f | head -1)" >> "$GITHUB_ENV"
+      - run: npm run test:models
+      # The cognitive core judged by Jev on real local models.
+      - run: npm run eval -- --suite cognitive --out eval-results/cognitive.json
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cognitive-eval-results
           path: eval-results

@@ -21,6 +21,35 @@ Status of every feature: [`docs/features.md`](docs/features.md). Development rul
 - **Capabilities.** Clients can offer and withdraw capabilities at runtime.
 - **Stock ACP clients work**, verified with the official ACP SDK client.
 
+## Cognitive core
+
+The daemon hosts an ensemble of models and routes each task to the best one it can run:
+
+| Model | For | Where |
+|---|---|---|
+| Jev (TypeSafe) | judgments with calibrated probabilities | hosted, AI Gateway |
+| Needle 3 (Cactus) | tool calling, extraction, embeddings | local WASM |
+| EmbeddingGemma 300M | text embeddings | local, transformers.js |
+| LLMLingua-2 | prompt compression | local, transformers.js |
+| Qwen3.5 0.8B | chat and vision; the browser LLM | local, transformers.js |
+| LightOnOCR-2 1B | documents, OCR, tables | local, transformers.js |
+| Ornith 1.5 9B | coding, reasoning, tools | native, llama-server |
+| OvisOCR2 | documents, OCR, tables (strongest) | native, llama-server |
+
+Models declare task categories and published benchmark results. Selection compares two
+models only on benchmarks they both report with the same metric and setting, and every
+choice comes with its evidence (`_harness/cognitive/status`). Weights are pinned to a
+commit and verified by sha256 before use.
+
+```sh
+ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci
+node packages/platform-native/src/main.ts --stdio --cognitive [--llama-server /path/to/llama-server] [--no-hosted]
+```
+
+Clients and plugins call `_harness/cognitive/invoke` with an `op` of `judge`, `route`,
+`decide-tools`, `embed`, `compress` or `parse`; `--worker ensemble` runs sessions on the
+best generator.
+
 ## Quick start
 
 Requires Node 22.18+ (TypeScript runs directly, no build step).

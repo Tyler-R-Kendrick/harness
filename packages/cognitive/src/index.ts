@@ -41,3 +41,5 @@ export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./lingua.ts"
 export { decideToolCalls, DEFAULT_CASCADE } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
 export { MODEL_CATALOG, TASK_PREFERENCES } from "./catalog.ts";
+export { decodeBase64, invokeCognitive, mirrorCapabilities } from "./service.ts";
+export type { CognitiveOperation } from "./service.ts";

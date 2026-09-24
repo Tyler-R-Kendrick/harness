@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { calibrationSuite, harnessSuite } from "@harness/evals";
+import { calibrationSuite, cognitiveSuite, harnessSuite } from "@harness/evals";
+import { Ensemble } from "@harness/cognitive";
+import type { GenerationEvent, ModelDescriptor, TaskCategory } from "@harness/cognitive";
+import { HashEmbedder, HeuristicCompressor, KeywordRouter, StubDocumentParser } from "@harness/testkit";
 
 /** Every `name` a question refers to in backticks must exist in the judged state. */
 function referencedKeys(instructions: unknown): string[] {
@@ -45,5 +48,31 @@ describe("eval suites", () => {
     const allowed = (await harnessSuite.find((c) => c.id === "harness.permission-allowed")!.subject()) as Record<string, unknown>;
     expect(allowed).toMatchObject({ policy: "allow", stopReason: "end_turn" });
     expect(allowed["reply"]).toContain(allowed["prompt"]);
+  });
+
+  it("EV8.1 cognitive cases run real ensemble work and expose every field their questions reference", async () => {
+    const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
+    const ensemble = new Ensemble({ platform: "native" });
+    ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
+    ensemble.register(d("emb", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(32) }));
+    ensemble.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
+    ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
+    ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({
+      generator: {
+        async *generate(): AsyncIterable<GenerationEvent> {
+          yield { type: "text", text: "A circle and a square." };
+          yield { type: "finish", reason: "stop" };
+        },
+      },
+    }));
+    const suite = cognitiveSuite(async () => ensemble);
+    expect(new Set(suite.map((c) => c.id)).size).toBe(suite.length);
+    expect(suite.map((c) => c.id)).toEqual(["cognitive.tool-decision", "cognitive.compression-keeps-facts", "cognitive.document-ocr", "cognitive.vision-answer", "cognitive.retrieval"]);
+    for (const c of suite) {
+      const state = (await c.subject()) as Record<string, unknown>;
+      for (const q of Object.values(c.questions)) for (const key of referencedKeys(q.instructions)) expect(state, `${c.id} -> ${key}`).toHaveProperty(key);
+      expect(state, c.id).toHaveProperty("model");
+      expect(Object.keys(c.expect).sort()).toEqual(Object.keys(c.questions).sort());
+    }
   });
 });

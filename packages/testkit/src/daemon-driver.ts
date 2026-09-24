@@ -1,4 +1,4 @@
-import type { Daemon, Identity, Output, WorkerCommand, WorkerEvent } from "@harness/core";
+import type { CognitiveResult, CognitiveWork, Daemon, Identity, Output, WorkerCommand, WorkerEvent } from "@harness/core";
 
 interface Envelope {
   jsonrpc: "2.0";
@@ -14,6 +14,7 @@ export class DaemonDriver {
   readonly daemon: Daemon;
   #inboxes = new Map<string, Envelope[]>();
   #commands: WorkerCommand[] = [];
+  #cognitive: CognitiveWork[] = [];
   #nextId = 1;
 
   constructor(daemon: Daemon) {
@@ -66,6 +67,18 @@ export class DaemonDriver {
     this.#collect(this.daemon.tick());
   }
 
+  /** Report the result of cognitive work the daemon handed out. */
+  cognitiveResult(requestId: string, result: CognitiveResult): void {
+    this.#collect(this.daemon.cognitiveResult(requestId, result));
+  }
+
+  /** Drain cognitive work for the host. */
+  cognitive(): CognitiveWork[] {
+    const out = this.#cognitive;
+    this.#cognitive = [];
+    return out;
+  }
+
   /** Drain messages delivered to a connection. */
   inbox(connectionId: string): Envelope[] {
     const messages = this.#inboxes.get(connectionId) ?? [];
@@ -83,6 +96,7 @@ export class DaemonDriver {
   #collect(outputs: Output[]): void {
     for (const o of outputs) {
       if (o.kind === "worker") this.#commands.push(o.command);
+      else if (o.kind === "cognitive") this.#cognitive.push(o.work);
       else if (o.kind === "send") {
         const inbox = this.#inboxes.get(o.connectionId);
         if (!inbox) throw new Error(`daemon sent to unknown or disconnected connection ${o.connectionId}`);

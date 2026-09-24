@@ -33,7 +33,8 @@ export async function runSession(
         const message = o.message as Record<string, unknown>;
         if (message["method"] === "session/request_permission") answerPermission(message);
         else inbox.push(message);
-      } else if (o.command.type === "prompt") running.push(worker.run(o.command, (e) => apply(daemon.workerEvent(e))));
+      } else if (o.kind !== "worker") continue;
+      else if (o.command.type === "prompt") running.push(worker.run(o.command, (e) => apply(daemon.workerEvent(e))));
       else if (o.command.type === "cancel") worker.cancel(o.command.sessionId, o.command.turnId);
       else worker.permission(o.command);
     }

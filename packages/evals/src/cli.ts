@@ -6,7 +6,11 @@ import { parseArgs } from "node:util";
 import { JevJudge } from "./judge.ts";
 import { resolveGatewayCredential, runEvals } from "./runner.ts";
 import type { EvalCase } from "./runner.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { buildNativeEnsemble } from "@harness/platform-native";
 import { calibrationSuite } from "./suites/calibration.ts";
+import { cognitiveSuite } from "./suites/cognitive.ts";
 import { harnessSuite } from "./suites/harness.ts";
 
 const { values } = parseArgs({
@@ -17,11 +21,22 @@ const { values } = parseArgs({
   },
 });
 
+// The cognitive suite downloads and runs the local models (set HARNESS_MODEL_CACHE, and
+// LLAMA_SERVER for the GGUF models), so it runs only when asked for by name.
+let native: ReturnType<typeof buildNativeEnsemble> | undefined;
 const suites: Record<string, () => readonly EvalCase[]> = {
   calibration: () => calibrationSuite,
   harness: () => harnessSuite,
+  cognitive: () => {
+    native ??= buildNativeEnsemble({
+      cacheDir: process.env["HARNESS_MODEL_CACHE"] ?? join(homedir(), ".cache", "harness", "models"),
+      ...(process.env["LLAMA_SERVER"] ? { llamaServer: process.env["LLAMA_SERVER"] } : {}),
+    });
+    const ensemble = native.ensemble;
+    return cognitiveSuite(async () => ensemble);
+  },
 };
-const selected = values.suite === "all" ? Object.keys(suites) : values.suite.split(",");
+const selected = values.suite === "all" ? ["calibration", "harness"] : values.suite.split(",");
 const unknown = selected.filter((s) => !(s in suites));
 if (unknown.length > 0) {
   process.stderr.write(`unknown suite(s): ${unknown.join(", ")}; choose from ${Object.keys(suites).join(", ")}, all\n`);
@@ -44,6 +59,7 @@ const report = await runEvals(cases, new JevJudge(), {
   ...(revision === undefined ? {} : { sourceRevision: revision }),
 });
 
+await native?.close();
 await mkdir(dirname(values.out), { recursive: true });
 await writeFile(values.out, `${JSON.stringify(report, null, 2)}\n`);
 

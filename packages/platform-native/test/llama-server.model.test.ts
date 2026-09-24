@@ -31,7 +31,7 @@ async function collect(stream: AsyncIterable<GenerationEvent>): Promise<Generati
 
 const ornith = once(async () => {
   const m = catalogEntry("ornith-ai/Ornith-1.5-9B");
-  const server = await LlamaServerProcess.start({ binary: binary(), model: await files.path(m.artifact, m.artifact.files[0]!.path), contextSize: 8192 });
+  const server = await LlamaServerProcess.start({ binary: binary(), model: await files.path(m.artifact, m.artifact.files[0]!.path), contextSize: 8192, args: ["--reasoning-budget", "0"] });
   servers.push(server);
   return new LlamaServerGenerator({ baseUrl: server.baseUrl });
 });

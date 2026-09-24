@@ -75,7 +75,32 @@ export type WorkerEvent =
     }
   | { readonly type: "end"; readonly sessionId: string; readonly turnId: string; readonly stopReason: StopReason };
 
-export type Output = { readonly kind: "send"; readonly connectionId: string; readonly message: object } | { readonly kind: "worker"; readonly command: WorkerCommand };
+/** Cognitive-core operations clients can ask for, and the task each one needs a model for. */
+export const COGNITIVE_OPS = {
+  judge: "judgment",
+  route: "tool-calling",
+  "decide-tools": "tool-calling",
+  embed: "text-embedding",
+  compress: "prompt-compression",
+  parse: "document-parsing",
+} as const;
+export type CognitiveOp = keyof typeof COGNITIVE_OPS | "status";
+
+/** Model work the daemon hands to the host, which runs its ensemble and reports back. */
+export interface CognitiveWork {
+  readonly requestId: string;
+  readonly op: CognitiveOp;
+  /** The task whose `cognitive.<task>` capability gated this work; undefined for status. */
+  readonly task: string | undefined;
+  readonly input: unknown;
+}
+
+export type CognitiveResult = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string };
+
+export type Output =
+  | { readonly kind: "send"; readonly connectionId: string; readonly message: object }
+  | { readonly kind: "worker"; readonly command: WorkerCommand }
+  | { readonly kind: "cognitive"; readonly work: CognitiveWork };
 
 type LogPayload =
   | { readonly update: Readonly<Record<string, unknown>>; readonly origin?: string }
@@ -174,8 +199,11 @@ export class Daemon {
   readonly #sessions = new Map<string, Session>();
   readonly #outbound = new Map<string, { connectionId: string; sessionId: string; requestId: string }>();
   readonly #capabilities = new CapabilityRegistry();
+  /** Cognitive work awaiting the host: requestId -> the client request to answer. */
+  readonly #cognitive = new Map<string, { connectionId: string; id: JsonRpcId }>();
   #hooks: HookBus;
   #outboundSeq = 0;
+  #cognitiveSeq = 0;
   #out: Output[] = [];
 
   constructor(deps: DaemonDeps) {
@@ -194,6 +222,7 @@ export class Daemon {
       for (const session of this.#sessions.values()) if (session.subscribers.has(connectionId)) this.#detach(session, connectionId);
       this.#capabilities.withdraw(`conn:${connectionId}`, this.#now());
       this.#publishCapabilityEvents();
+      for (const [requestId, pending] of this.#cognitive) if (pending.connectionId === connectionId) this.#cognitive.delete(requestId);
       this.#connections.delete(connectionId);
     });
   }
@@ -238,8 +267,25 @@ export class Daemon {
     this.#publishCapabilityEvents();
   }
 
+  /** Withdraw a capability the platform offered, e.g. when the model behind it fails or the hardware goes away. */
+  withdrawPlatformCapability(name: string): void {
+    this.#capabilities.withdraw("platform", this.#now(), name);
+    this.#publishCapabilityEvents();
+  }
+
   capabilities(): CapabilityOffer[] {
     return this.#capabilities.inventory();
+  }
+
+  /** The host finished cognitive work; answer the client that asked, if it is still connected. */
+  cognitiveResult(requestId: string, result: CognitiveResult): Output[] {
+    return this.#run(() => {
+      const pending = this.#cognitive.get(requestId);
+      if (!pending) return;
+      this.#cognitive.delete(requestId);
+      if (!this.#connections.has(pending.connectionId)) return;
+      this.#send(pending.connectionId, result.ok ? success(pending.id, result.value) : failure(pending.id, ERROR_CODES.internalError, result.message || "cognitive operation failed"));
+    });
   }
 
   snapshot(): DaemonSnapshot {
@@ -332,6 +378,10 @@ export class Daemon {
         return {};
       case HARNESS_METHODS.hooksSubscribe:
         return this.#hooksSubscribe(conn, params);
+      case HARNESS_METHODS.cognitiveInvoke:
+        return this.#cognitiveInvoke(conn, id, params);
+      case HARNESS_METHODS.cognitiveStatus:
+        return this.#cognitiveWork(conn, id, "status", undefined, params);
       case HARNESS_METHODS.hooksPoll: {
         const r = this.#hooks.poll(this.#plugin(conn), params["max"] === undefined ? Number.POSITIVE_INFINITY : int(params["max"], "max"));
         if (!r.ok) throw invalidParams(r.error.message);
@@ -421,6 +471,24 @@ export class Daemon {
     if (!r.ok) throw new RpcError(ERROR_CODES.conflict, r.error.message);
     this.#publishCapabilityEvents();
     return {};
+  }
+
+  #cognitiveInvoke(conn: Connection, id: JsonRpcId, params: Record<string, unknown>): typeof DEFER {
+    const op = params["op"];
+    if (typeof op !== "string" || !Object.hasOwn(COGNITIVE_OPS, op)) throw invalidParams(`op must be one of ${Object.keys(COGNITIVE_OPS).join(", ")}`);
+    if (!("input" in params)) throw invalidParams("input is required");
+    const task = COGNITIVE_OPS[op as keyof typeof COGNITIVE_OPS];
+    if (!this.#capabilities.inventory().some((c) => c.name === `cognitive.${task}`)) {
+      throw new RpcError(ERROR_CODES.notFound, `no model serves ${task} on this platform`);
+    }
+    return this.#cognitiveWork(conn, id, op as CognitiveOp, task, params["input"]);
+  }
+
+  #cognitiveWork(conn: Connection, id: JsonRpcId, op: CognitiveOp, task: string | undefined, input: unknown): typeof DEFER {
+    const requestId = `cog-${++this.#cognitiveSeq}`;
+    this.#cognitive.set(requestId, { connectionId: conn.id, id });
+    this.#out.push({ kind: "cognitive", work: { requestId, op, task, input } });
+    return DEFER;
   }
 
   #hooksSubscribe(conn: Connection, params: Record<string, unknown>): unknown {

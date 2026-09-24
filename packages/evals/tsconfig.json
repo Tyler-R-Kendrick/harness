@@ -26,6 +26,9 @@
     },
     {
       "path": "../models"
+    },
+    {
+      "path": "../platform-native"
     }
   ]
 }
