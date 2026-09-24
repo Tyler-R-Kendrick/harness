@@ -43,4 +43,22 @@ describe("learning as a cognitive-core extension", () => {
     await expect(invokeCognitive(ensemble, "learning.recall", undefined)).rejects.toThrow(/invalid learning.recall input/);
     await expect(invokeCognitive(ensemble, "learning.observe", { task: "no id" })).rejects.toThrow(/invalid trajectory/);
   });
+
+  it("LX1.3 each operation parses its own input, and passes it on as given", async () => {
+    const { ensemble, extension, memory, learning } = installed();
+    ensemble.install(memoryExtension({ memory, models: [], load: async () => ({}) }));
+    ensemble.install(extension);
+    await invokeCognitive(ensemble, "learning.observe", { id: "t1", task: "deploy to staging", steps: [], outcome: { status: "success" } });
+    const recalls: unknown[] = [];
+    const recall = learning.recall.bind(learning);
+    learning.recall = async (task, options) => (recalls.push(options), recall(task, options));
+    await invokeCognitive(ensemble, "learning.recall", { task: "deploy" });
+    await invokeCognitive(ensemble, "learning.recall", { task: "deploy", limit: 2 });
+    expect(recalls).toEqual([{}, { limit: 2 }]);
+    expect(await invokeCognitive(ensemble, "learning.plan", { task: "summarize", tools: [{ name: "t" }] })).toMatchObject({ rung: "native" });
+    await expect(invokeCognitive(ensemble, "learning.build-tool", {})).rejects.toThrow(/invalid learning.build-tool input/);
+    await expect(invokeCognitive(ensemble, "learning.materialize", { target: "workflow", lessons: [] })).rejects.toThrow(/invalid learning.materialize input/);
+    await expect(invokeCognitive(ensemble, "learning.plan", {})).rejects.toThrow(/invalid learning.plan input/);
+  });
 });
+

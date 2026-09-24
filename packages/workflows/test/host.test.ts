@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Ensemble, invokeCognitive } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
-import { MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
+import { askEnsemble, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
 import { MemoryStorage, ScriptedGenerator } from "@harness/testkit";
 
 const greet = parseWorkflow({
@@ -79,4 +79,29 @@ describe("workflow library and host", () => {
     await expect(invokeCognitive(ensemble, "workflows.run", { name: "welcome" })).rejects.toThrow(/invalid workflows.run input/);
     await expect(invokeCognitive(ensemble, "workflows.get", { name: "nope" })).rejects.toThrow("no workflow nope");
   });
+
+  it("WH1.6 a nested workflow that fails fails its caller's step; a run without input gets {}", async () => {
+    const broken = parseWorkflow({ name: "broken", description: "", inputs: {}, code: "async function workflow() { throw new Error('inner'); }" });
+    const caller = parseWorkflow({ name: "caller", description: "", inputs: {}, code: "async function workflow(input, ctx) { return [input, await ctx.tool('broken', {})]; }" });
+    const h = new WorkflowHost({ library: new MemoryLibrary([broken, caller]), journal: () => new MemoryStorage(), ask: async () => "" });
+    await expect(h.run("caller", {}, "r1")).rejects.toThrow("workflow broken failed: Error: inner");
+    expect(h.library).toBeInstanceOf(MemoryLibrary);
+    const echo = parseWorkflow({ name: "echo", description: "", inputs: {}, code: "async function workflow(input) { return input; }" });
+    const ensemble = { generate: async function* () {} } as never;
+    const ext = workflowsExtension({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), ensemble });
+    expect(await ext.operations!["run"]!({ name: "echo", run: "r" })).toMatchObject({ output: {} });
+    await expect(ext.operations!["get"]!(undefined)).rejects.toThrow(/invalid workflows.get input/);
+  });
+
+  it("WH1.7 the ensemble answers a workflow's question as a chat turn, and the library lists by name", async () => {
+    const asked: unknown[] = [];
+    const ensemble = { generate: async function* (request: unknown, task: unknown) { asked.push([request, task]); yield { type: "reasoning", text: "hmm" }; yield { type: "text", text: "Yes" }; yield { type: "text", text: "." }; } };
+    expect(await askEnsemble(ensemble as never)("Ready?")).toBe("Yes.");
+    expect(asked).toEqual([[{ messages: [{ role: "user", content: "Ready?" }] }, "chat"]]);
+    const library = new MemoryLibrary([welcome, greet]);
+    expect((await library.list()).map((w) => w.name)).toEqual(["greet", "welcome"]);
+    await library.put({ ...greet, name: "a-first" });
+    expect((await library.list()).map((w) => w.name)).toEqual(["a-first", "greet", "welcome"]);
+  });
 });
+

@@ -26,13 +26,26 @@ const __ctx = Object.freeze({
 });
 `;
 
-const LIMITS = { memoryBytes: 64 * 1024 * 1024, stackBytes: 1024 * 1024 };
+const LIMITS = { memoryBytes: 64 * 1024 * 1024, stackBytes: 256 * 1024 };
 /** Interrupt checks allowed before a run is stopped; counted, not timed, so it is deterministic. */
 export const DEFAULT_BUDGET = 5_000_000;
 
+/** Read a handle and release it. (Releasing frees WASM memory; nothing in a run can observe it.) */
+function take<T>(handle: QuickJSHandle, read: (handle: QuickJSHandle) => T): T {
+  try {
+    return read(handle);
+  } finally {
+    // Stryker disable next-line all: frees WASM memory, not observable
+    handle.dispose();
+  }
+}
+
+/** A thrown value as text: "Name: message" for errors, the value itself otherwise. */
 function describe(ctx: QuickJSContext, handle: QuickJSHandle): string {
-  const e = ctx.dump(handle) as { name?: unknown; message?: unknown } | undefined;
-  return e && typeof e === "object" && "message" in e ? `${String(e.name ?? "Error")}: ${String(e.message)}` : String(e);
+  const e = ctx.dump(handle) as unknown;
+  if (typeof e !== "object" || e === null || !("message" in e)) return String(e);
+  const { name, message } = e as { name?: unknown; message: unknown };
+  return `${String(name ?? "Error")}: ${String(message)}`;
 }
 
 function fresh(qjs: QuickJSWASMModule, budget: number): QuickJSContext {
@@ -40,14 +53,25 @@ function fresh(qjs: QuickJSWASMModule, budget: number): QuickJSContext {
   runtime.setMemoryLimit(LIMITS.memoryBytes);
   runtime.setMaxStackSize(LIMITS.stackBytes);
   let ticks = 0;
+  // Stryker disable next-line EqualityOperator: one interrupt check more or less is the same budget
   runtime.setInterruptHandler(() => ++ticks > budget);
   return runtime.newContext();
 }
 
+/**
+ * Release a run's context and runtime. A run that ended badly (out of memory, say) can
+ * leave the WebAssembly instance unable to free it; that instance is then dropped, so
+ * the next run starts on a fresh one and no workflow can break the ones after it.
+ */
 function dispose(ctx: QuickJSContext): void {
   const runtime = ctx.runtime;
-  ctx.dispose();
-  runtime.dispose();
+  try {
+    // Stryker disable next-line all: frees WASM memory, not observable
+    ctx.dispose();
+    runtime.dispose();
+  } catch {
+    module = undefined;
+  }
 }
 
 /** Compile workflow code and confirm it defines `workflow(input, ctx)`, without running it. */
@@ -55,14 +79,8 @@ export async function checkWorkflow(code: string): Promise<{ ok: true } | { ok: 
   const ctx = fresh(await quickjs(), DEFAULT_BUDGET);
   try {
     const result = ctx.evalCode(`${PRELUDE}\n${code}\n;typeof workflow === "function"`, "workflow.js");
-    if (result.error) {
-      const error = describe(ctx, result.error);
-      result.error.dispose();
-      return { ok: false, error };
-    }
-    const defined = ctx.dump(result.value) === true;
-    result.value.dispose();
-    return defined ? { ok: true } : { ok: false, error: "the code does not define function workflow(input, ctx)" };
+    if (result.error) return { ok: false, error: take(result.error, (h) => describe(ctx, h)) };
+    return take(result.value, (h) => ctx.dump(h) === true) ? { ok: true } : { ok: false, error: "the code does not define function workflow(input, ctx)" };
   } finally {
     dispose(ctx);
   }
@@ -88,67 +106,50 @@ export async function evaluate(
       const op = ctx.getString(opHandle) as EffectOp;
       const request = JSON.parse(ctx.getString(requestHandle)) as unknown;
       const deferred = ctx.newPromise();
-      queue.push({ deferred, settle: async () => {
-        try {
-          if (aborted) throw aborted.error;
-          const value = ctx.newString(JSON.stringify((await effect(op, request)) ?? null));
-          deferred.resolve(value);
-          value.dispose();
-        } catch (error) {
-          aborted ??= { error };
-          const e = ctx.newError("the effect failed; the run stops here and can be resumed");
-          deferred.reject(e);
-          e.dispose();
-        } finally {
-          deferred.dispose();
-        }
-      } });
+      queue.push({
+        deferred,
+        settle: async () => {
+          try {
+            take(ctx.newString(JSON.stringify((await effect(op, request)) ?? null)), (value) => deferred.resolve(value));
+          } catch (error) {
+            // The loop below stops the run before anything else settles.
+            aborted = { error };
+          }
+        },
+      });
       return deferred.handle;
     });
-    ctx.setProp(ctx.global, "__effect", bridge);
-    bridge.dispose();
-    const inputJson = ctx.newString(JSON.stringify(input ?? null));
-    ctx.setProp(ctx.global, "__input", inputJson);
-    inputJson.dispose();
+    take(bridge, (h) => ctx.setProp(ctx.global, "__effect", h));
+    take(ctx.newString(JSON.stringify(input ?? null)), (h) => ctx.setProp(ctx.global, "__input", h));
 
     const started = ctx.evalCode(`${PRELUDE}\n${code}\n;globalThis.__run = Promise.resolve().then(() => workflow(JSON.parse(__input), __ctx));`, "workflow.js");
-    if (started.error) {
-      const error = describe(ctx, started.error);
-      started.error.dispose();
-      return { ok: false, error };
-    }
-    started.value.dispose();
+    if (started.error) return { ok: false, error: take(started.error, (h) => describe(ctx, h)) };
+    take(started.value, () => undefined);
     const run = ctx.getProp(ctx.global, "__run");
     try {
       for (;;) {
         const jobs = ctx.runtime.executePendingJobs();
-        if (jobs.error) {
-          const error = describe(ctx, jobs.error);
-          jobs.error.dispose();
-          return { ok: false, error };
-        }
+        // Stryker disable next-line all: workflow code runs inside the run's promise chain, so no job can fail outside it
+        if (jobs.error) return { ok: false, error: take(jobs.error, (h) => describe(ctx, h)) };
         if (aborted) throw aborted.error;
         const state = ctx.getPromiseState(run);
-        if (state.type === "fulfilled") {
-          const value = ctx.dump(state.value) as unknown;
-          state.value.dispose();
-          return { ok: true, value: value === undefined ? null : value };
-        }
-        if (state.type === "rejected") {
-          const error = describe(ctx, state.error);
-          state.error.dispose();
-          return { ok: false, error };
-        }
+        if (state.type === "fulfilled") return { ok: true, value: take(state.value, (h) => ctx.dump(h) as unknown) ?? null };
+        if (state.type === "rejected") return { ok: false, error: take(state.error, (h) => describe(ctx, h)) };
         const next = queue.shift();
         if (!next) return { ok: false, error: "the workflow is waiting on nothing: it can never finish" };
-        await next.settle();
+        try {
+          await next.settle();
+        } finally {
+          // Stryker disable next-line all: frees WASM memory, not observable
+          next.deferred.dispose();
+        }
       }
     } finally {
-      run.dispose();
+      take(run, () => undefined);
     }
   } finally {
-    // Calls the run never reached still hold promise handles; release them before the context goes.
-    for (const { deferred } of queue.splice(0)) deferred.dispose();
+    // Stryker disable next-line all: frees the promise handles of calls the run never reached, not observable
+    for (const { deferred } of queue) deferred.dispose();
     dispose(ctx);
   }
 }

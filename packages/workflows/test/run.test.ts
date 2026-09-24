@@ -108,4 +108,22 @@ describe("durable workflows", () => {
     await expect(runWorkflow({ name: "w", code, input: {}, effects: fx, journal: new MemoryStorage() })).rejects.toThrow("a is down");
     expect(performed).toEqual([]);
   });
+
+  it("WF1.10 whatever the code throws is reported; code that does not even start fails the run; no result is null", async () => {
+    const run = (code: string) => runWorkflow({ name: "w", code, input: {}, effects: effects().fx, journal: new MemoryStorage() });
+    expect(await run("async function workflow() { throw 'plain'; }")).toMatchObject({ status: "failed", error: "plain" });
+    expect(await run("async function workflow() { throw { message: 'no name' }; }")).toMatchObject({ status: "failed", error: "Error: no name" });
+    expect(await run("async function workflow() { throw null; }")).toMatchObject({ status: "failed", error: "null" });
+    expect(await run("async function workflow( {")).toMatchObject({ status: "failed", error: expect.stringMatching(/^SyntaxError: /) });
+    expect(await run("async function workflow() {}")).toMatchObject({ status: "completed", output: null });
+  });
+
+  it("WF1.11 a workflow cannot take more than its memory or stack", async () => {
+    const run = (code: string) => runWorkflow({ name: "w", code, input: {}, effects: effects().fx, journal: new MemoryStorage() });
+    expect(await run("async function workflow() { return new Array(2e7).fill(1.5).length; }")).toMatchObject({ status: "failed", error: expect.stringMatching(/out of memory/i) });
+    expect(await run("function f(n) { return n === 0 ? 0 : 1 + f(n - 1); } async function workflow() { return f(1e6); }")).toMatchObject({ status: "failed", error: expect.stringMatching(/stack/i) });
+    // and a run that exhausted its sandbox does not break the next one
+    expect(await run("async function workflow() { return 1; }")).toMatchObject({ status: "completed", output: 1 });
+  });
 });
+

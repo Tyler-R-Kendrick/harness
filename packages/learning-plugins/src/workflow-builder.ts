@@ -15,18 +15,18 @@ export function kebab(text: string): string {
   const name = text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-|-$/g, "")
     .slice(0, 64)
-    .replace(/-+$/, "");
+    .replace(/-$/, "");
   return name || "workflow";
 }
 
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
-/** What the lessons describe: the procedures' steps in order, and everything else as guidance. */
+/** What the lessons describe: the procedures' steps in order (a procedure without steps is one step), and the other lessons as guidance. */
 function stepsAndGuidance(input: MaterializeInput): { steps: string[]; guidance: string[] } {
   const steps = input.lessons.flatMap((l) => (l.kind === "procedure" ? (l.steps ?? [l.text]) : []));
-  const guidance = input.lessons.filter((l) => l.kind !== "procedure" || !l.steps).map((l) => `${l.title}: ${l.text}`);
+  const guidance = input.lessons.filter((l) => l.kind !== "procedure").map((l) => `${l.title}: ${l.text}`);
   return { steps: steps.length ? steps : [input.purpose], guidance };
 }
 
@@ -59,7 +59,7 @@ export async function compileProcedure(options: BuilderOptions, input: Materiali
     lines.push(`  // ${i + 1}. ${oneLine(step)}`);
     if (call) lines.push(`  steps.push(await ctx.tool(${JSON.stringify(call.name)}, ${JSON.stringify(call.arguments)}));`);
     else {
-      const prompt = [`Step ${i + 1} of ${JSON.stringify(input.purpose)}: ${oneLine(step)}`, ...guidance.map((g) => `Guidance: ${oneLine(g)}`), "Context: "].join("\n");
+      const prompt = [`Step ${i + 1} of ${JSON.stringify(oneLine(input.purpose))}: ${oneLine(step)}`, ...guidance.map((g) => `Guidance: ${oneLine(g)}`), "Context: "].join("\n");
       lines.push(`  steps.push(await ctx.ask(${JSON.stringify(prompt)} + JSON.stringify({ input, steps })));`);
     }
   }

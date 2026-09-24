@@ -9,7 +9,7 @@ export default defineConfig({
   ...base,
   test: {
     ...base.test,
-    include: ["packages/{core,protocol,cognitive,behavior,memory,testkit}/test/**/*.test.ts"],
+    include: ["packages/{core,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins,testkit}/test/**/*.test.ts"],
     exclude: ["**/*.integration.test.ts", "**/node_modules/**"],
   },
 });

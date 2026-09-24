@@ -153,3 +153,98 @@ describe("names and descriptions", () => {
     expect(workflow.code).toContain('Step 1 of \\"tidy up\\": tidy up');
   });
 });
+
+describe("generated artifacts, exactly", () => {
+  const lessons: Lesson[] = [
+    { id: "l1", kind: "procedure", title: "staging  deploy", text: "deploy the web app\nto staging", when: "deploying  to staging", steps: ["run pending database migrations", "write the  release notes"], helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m1" },
+    { id: "l2", kind: "pitfall", title: "fridays", text: "never deploy on fridays", helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m2" },
+    { id: "l3", kind: "procedure", title: "smoke", text: "smoke test the site", helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m3" },
+  ];
+  const router = (confidence: number) => ({ route: async (r: { input: string }) => (r.input.includes("migrations") ? { calls: [{ name: "run_migrations", arguments: { all: true } }], confidence, reasoning: "" } : { calls: [], confidence: 0.1, reasoning: "" }) });
+
+  it("LP2.5 the workflow code for procedures, guidance and a fitting tool", async () => {
+    const workflow = await compileProcedure({ reasoner: router(0.6), settings }, { purpose: "ship  it", lessons, tools: [migrate] });
+    expect(workflow).toMatchObject({ name: "ship-it", description: "deploy the web app to staging never deploy on fridays smoke test the site. Use when deploying to staging.", inputs: { type: "object", additionalProperties: true } });
+    expect(workflow.code).toMatchInlineSnapshot(`
+      "// ship-it: ship it
+      // Compiled by the workflow builder from lessons l1, l2, l3. Deterministic: every effect goes through ctx.
+      async function workflow(input, ctx) {
+        const steps = [];
+        // 1. run pending database migrations
+        steps.push(await ctx.tool("run_migrations", {"all":true}));
+        // 2. write the release notes
+        steps.push(await ctx.ask("Step 2 of \\"ship it\\": write the release notes\\nGuidance: fridays: never deploy on fridays\\nContext: " + JSON.stringify({ input, steps })));
+        // 3. smoke test the site
+        steps.push(await ctx.ask("Step 3 of \\"ship it\\": smoke test the site\\nGuidance: fridays: never deploy on fridays\\nContext: " + JSON.stringify({ input, steps })));
+        return { steps };
+      }
+      "
+    `);
+    const below = await compileProcedure({ reasoner: router(0.59), settings }, { purpose: "ship it", lessons, tools: [migrate] });
+    expect(below.code).not.toContain("ctx.tool");
+  });
+
+  it("LP3.3 the SKILL.md for the same lessons", async () => {
+    const made = (await skillBuilder({ reasoner: router(0.9), library: new MemoryLibrary(), settings }).materialize({ purpose: "ship it", lessons, tools: [migrate] })) as { name: string; files: { path: string; content: string }[] };
+    expect(made.name).toBe("staging-deploy");
+    expect(made.files[0]!.content).toMatchInlineSnapshot(`
+      "---
+      name: staging-deploy
+      description: deploy the web app to staging never deploy on fridays smoke test the site. Use when deploying to staging.
+      ---
+
+      # staging deploy
+
+      - deploy the web app to staging (when deploying to staging)
+      - never deploy on fridays
+      - smoke test the site
+
+      ## Steps
+
+      1. run pending database migrations
+      2. write the release notes
+
+      ## Run
+
+      These steps are a durable workflow (\`workflow.json\`). Run it instead of doing the steps by hand;
+      if it is interrupted, run the same command again: finished steps are not repeated.
+
+      \`\`\`sh
+      harness-workflow run workflow.json --run <run-id> --input '<json>'
+      \`\`\`
+
+      Through a harness daemon, invoke \`workflows.run\` with \`{ "name": "staging-deploy", "run": "<run-id>", "input": {} }\`.
+      "
+    `);
+    const bare = (await skillBuilder({ reasoner: router(0.9), library: new MemoryLibrary(), settings }).materialize({ purpose: "tidy the  desk", lessons: [], tools: [] })) as { name: string; files: { content: string }[] };
+    expect(bare.name).toBe("tidy-the-desk");
+    expect(bare.files[0]!.content).toContain("# tidy the desk\n");
+    expect(bare.files[0]!.content).not.toContain("## Steps");
+  });
+
+  it("LP2.6 kebab names: runs of other characters become one hyphen, trimmed at both ends", async () => {
+    const { kebab } = await import("@harness/learning-plugins");
+    expect(kebab("  A  b__c  ")).toBe("a-b-c");
+    expect(kebab(`${"a".repeat(63)}  b`)).toBe("a".repeat(63));
+  });
+});
+
+describe("tool builder, in detail", () => {
+  const draft = (code: string) => JSON.stringify({ name: "t", description: "d", parameters: {}, code });
+  const lesson: Lesson = { id: "l1", kind: "procedure", title: "how", text: "do it", steps: ["a", "b"], helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m1" };
+
+  it("LP4.5 the request carries the task, the tools and the lessons; tool names are found however the call is spaced", async () => {
+    const s = setup({ reflect: () => draft(`async function workflow(i, ctx) { return ctx . tool ( 'missing' , {}); }`) });
+    const err = await toolBuilder({ reasoner: s.ensemble, library: new MemoryLibrary(), settings: { ...settings, toolBuilder: { ...settings.toolBuilder, attempts: 2 } } })
+      .materialize({ purpose: "p", lessons: [lesson], tools: [migrate] })
+      .catch((e: Error) => e.message);
+    expect(JSON.parse(String(s.generator.requests[0]!.messages[1]!.content))).toEqual({ task: "p", tools: [migrate], lessons: [{ title: "how", text: "do it", steps: ["a", "b"] }] });
+    expect(s.generator.requests).toHaveLength(2);
+    expect(s.generator.requests[1]!.messages.slice(2)).toEqual([
+      { role: "assistant", content: expect.stringContaining("missing") },
+      { role: "user", content: "That draft failed its check: the code calls tools that are not available: missing\nAnswer with a corrected JSON object." },
+    ]);
+    expect(err).toBe("no usable tool after 2 attempts:\n- the code calls tools that are not available: missing\n- the code calls tools that are not available: missing");
+  });
+});
+

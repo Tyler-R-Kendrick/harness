@@ -61,4 +61,24 @@ describe("recording teacher", () => {
     expect(learning.lesson("l1").sources).toEqual(["demonstration-export-the-monthly-report-1"]);
     await expect(plugins.teach(learning, { task: "x", parts: [{ modality: "events", mediaType: "application/json", data: '[{"target":"no action"}]' }] })).rejects.toThrow(/action/);
   });
+
+  it("LP5.4 lines without a speaker are the person's; the agent speaks as assistant; events may be a padded JSON array; frames are trimmed", async () => {
+    const s = setup({ reflect: () => "  presses Save  \n" });
+    const demo = await recordingTeacher({ reasoner: s.ensemble, settings }).demonstrate({
+      task: "t",
+      parts: [
+        { modality: "transcript", mediaType: "text/plain", data: "  just do it  \nagent: done" },
+        { modality: "events", mediaType: "application/json", data: '  [{"action":"open"},{"action":"call","tool":"save"}]  ' },
+        { modality: "screen", mediaType: "image/png", data: base64.encode(new Uint8Array([1])) },
+      ],
+    });
+    expect(demo.steps).toEqual([
+      { role: "user", content: "just do it" },
+      { role: "assistant", content: "done" },
+      { role: "observation", content: "open" },
+      { role: "assistant", content: "call: save", call: { name: "save", arguments: {} } },
+      { role: "observation", content: "screen 1: presses Save" },
+    ]);
+  });
 });
+

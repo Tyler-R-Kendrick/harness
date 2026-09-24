@@ -98,4 +98,27 @@ describe("the capability ladder", () => {
     expect(plan.lessons.map((l) => l.kind)).toEqual(["tool"]);
     expect(plan.playbook).toContain("csv_to_chart");
   });
+
+  it("LD1.7 thresholds are inclusive, a judge that answers another type counts as no, and the evidence says why", async () => {
+    const atThreshold = await planTask(context({ judge: judging(0.7, 0) }).ctx, { task: "summarize" });
+    expect(atThreshold.evidence).toEqual([{ rung: "native", decision: "yes", detail: "p=0.7 ≥ 0.7" }]);
+    const odd = await planTask(context({ judge: () => ({ type: "score", score: 1 }) }).ctx, { task: "summarize" });
+    expect(odd.evidence[0]).toEqual({ rung: "native", decision: "no", detail: "p=0 < 0.7" });
+    expect(odd.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "no tools are available" });
+    const unsure = await planTask(context({ judge: judging(0.1, 0) }).ctx, { task: "what is the weather in lagos city", tools: [weather] });
+    expect(unsure.evidence[1]).toEqual({ rung: "tool", decision: "yes", detail: "confidence 0.99 ≥ 0.6" });
+    const noFit = await planTask(context({ judge: judging(0.1, 0) }).ctx, { task: "zebra", tools: [weather] });
+    expect(noFit.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "no tool fits: no tool shares a word with the request" });
+  });
+
+  it("LD1.8 a router pick below the confidence bar is not used; tools with one name are offered once", async () => {
+    const s = setup({ judge: judging(0.1, 0) });
+    const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
+    const seen: number[] = [];
+    const reasoner = { ...s.ensemble, judge: s.ensemble.judge.bind(s.ensemble), generate: s.ensemble.generate.bind(s.ensemble), route: async (r: { tools: readonly ToolSpec[] }) => (seen.push(r.tools.length), { calls: [{ name: "get_weather", arguments: {} }], confidence: 0.59, reasoning: "" }) };
+    const plan = await planTask({ learning, reasoner, plugins: new Plugins(), discover: async () => [weather] }, { task: "weather", tools: [weather] });
+    expect(seen).toEqual([1]);
+    expect(plan.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "confidence 0.59 < 0.6" });
+  });
 });
+

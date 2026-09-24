@@ -123,4 +123,56 @@ describe("learning from sessions", () => {
       ["l2", 0, ["t1"]],
     ]);
   });
+
+  it("LN1.9 a reflection whose JSON is broken says so; recall can keep to kinds, and says nothing when nothing relates", async () => {
+    const script = ['{"operations": [', reply([add("deploys", "check migrations first", "procedure"), add("bananas", "bananas are yellow fruit", "insight")])];
+    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
+    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const broken = await learning.observe(deploy);
+    expect(broken.changes).toEqual([]);
+    expect(broken.rejected[0]).toMatch(/^the reflection was not valid JSON: /);
+    await learning.observe({ ...deploy, id: "t2" });
+    expect((await learning.recall("deploys check migrations first", { kinds: ["insight"] })).lessons).toEqual([]);
+    expect((await learning.recall("deploys check migrations first", { kinds: ["procedure"] })).lessons.map((l) => l.id)).toEqual(["l1"]);
+    expect(await learning.recall("zebra crossing quantum")).toEqual({ lessons: [], playbook: "" });
+  });
+
+  it("LN1.10 within one reflection, a lesson retired by one edit cannot be edited by the next; the recall limit comes from the settings", async () => {
+    const script = [reply([add("deploys", "deploy on fridays")]), reply([{ op: "harmful", id: "l1" }, { op: "harmful", id: "l1" }, { op: "helpful", id: "l1" }])];
+    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
+    const recalls: unknown[] = [];
+    const spy = { recall: (q: string, o: object) => (recalls.push(o), memory.recall(q, o)), remember: memory.remember.bind(memory), forget: memory.forget.bind(memory) } as unknown as typeof memory;
+    const learning = new Learning({ reasoner: ensemble, memory: spy, settings });
+    await learning.observe(deploy);
+    expect(await learning.observe({ ...deploy, id: "t2" })).toEqual({ changes: [{ op: "harmful", id: "l1" }, { op: "harmful", id: "l1" }, { op: "retired", id: "l1" }], rejected: ["helpful l1: no such lesson was shown"] });
+    await learning.recall("anything");
+    expect(recalls.at(-1)).toEqual({ kinds: ["lesson"], limit: settings.recall.limit, minScore: settings.recall.minScore });
+    expect(recalls[0]).toMatchObject({ limit: settings.reflection.related });
+  });
+
+  it("LN1.11 consolidation sums what merged lessons earned, keeps the oldest whichever is found first, and reports the change once", async () => {
+    const changes: number[] = [];
+    const { ensemble, memory } = setup();
+    const learning = new Learning({ reasoner: ensemble, memory, settings, onChange: () => changes.push(1) });
+    await learning.addLesson({ kind: "strategy", title: "deploys", text: "run migrations before deploying", source: "a" });
+    await learning.addLesson({ kind: "strategy", title: "deploys", text: "run migrations before deploying", source: "b" });
+    await learning.feedback("l2", true);
+    await learning.feedback("l2", false);
+    changes.length = 0;
+    expect(await learning.consolidate()).toEqual([{ op: "merged", id: "l1" }, { op: "retired", id: "l2" }]);
+    expect(learning.lessons()).toMatchObject([{ id: "l1", helpful: 2, harmful: 1, sources: ["a", "b"] }]);
+    expect(changes).toEqual([1]);
+    expect(await learning.consolidate()).toEqual([]);
+    expect(changes).toEqual([1]);
+  });
+
+  it("LN1.12 feedback adds no source, and a session already among a lesson's sources is not added twice", async () => {
+    const { ensemble, memory } = setup({ reflect: () => reply([add("deploys", "check migrations"), { op: "helpful", id: "l1" }]) });
+    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    await learning.observe(deploy);
+    await learning.feedback("l1", true);
+    await learning.observe(deploy);
+    expect(learning.lesson("l1").sources).toEqual(["t1"]);
+  });
 });
+

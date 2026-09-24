@@ -25,7 +25,7 @@ function transcriptSteps(text: string): Step[] {
     .filter(Boolean)
     .map((line) => {
       const m = /^([^:]{1,40}):\s*(.*)$/.exec(line);
-      const speaker = m?.[1]!.trim().toLowerCase();
+      const speaker = m ? m[1]!.trim().toLowerCase() : undefined;
       return { role: speaker === "assistant" || speaker === "agent" ? "assistant" : "user", content: m ? m[2]! : line };
     });
 }

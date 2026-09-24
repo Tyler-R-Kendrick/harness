@@ -65,4 +65,38 @@ describe("learning plugins", () => {
     expect(JSON.parse(String(generator.requests.at(-1)!.messages[1]!.content)).session).toMatchObject({ id: "demo-1", source: "demonstration" });
     await expect(plugins.teach(learning, { ...recording, parts: [{ modality: "audio", mediaType: "audio/ogg", data: "" }] })).rejects.toThrow("no teacher observes audio");
   });
+
+  it("PL1.4 the plugin for a target is the one that makes it; teachers are listed with what they observe and must observe every part", async () => {
+    const { learning } = await withLesson();
+    const plugins = new Plugins();
+    const inputs: unknown[] = [];
+    plugins.use({ kind: "teacher", id: "listener", modalities: ["audio"], demonstrate: async () => ({ id: "x", task: "x", steps: [], outcome: { status: "success" } }) });
+    plugins.use({ kind: "materializer", id: "workflows", target: TARGETS.workflow, materialize: async (i) => (inputs.push(i), { target: "workflow", name: "w", description: "", files: [] }) });
+    plugins.use(skills());
+    expect(plugins.list()).toEqual([
+      { kind: "teacher", id: "listener", modalities: ["audio"] },
+      { kind: "materializer", id: "workflows", target: "workflow" },
+      { kind: "materializer", id: "skills", target: "agent-skill" },
+    ]);
+    expect((await plugins.materialize(learning, { target: TARGETS.workflow, lessons: ["l1"] })).name).toBe("w");
+    expect(inputs).toEqual([{ purpose: "staging deploy", lessons: [expect.objectContaining({ id: "l1" })], tools: [] }]);
+    await expect(plugins.teach(learning, { task: "t", parts: [{ modality: "audio", mediaType: "audio/ogg", data: "" }, { modality: "screen", mediaType: "image/png", data: "" }] })).rejects.toThrow("no teacher observes audio and screen");
+    await expect(plugins.teach(learning, { task: "t", parts: [] })).rejects.toThrow(/invalid recording/);
+  });
+
+  it("PL1.5 a built tool without its own description is learned with the plugin's, and the tools on offer reach the builder", async () => {
+    const { learning } = await withLesson();
+    const plugins = new Plugins();
+    const inputs: unknown[] = [];
+    plugins.use({ kind: "materializer", id: "builder", target: TARGETS.tool, materialize: async (i) => (inputs.push(i), { target: "tool", name: "t", description: "made for you", files: [], tool: { name: "t" } }) });
+    const tools = [{ name: "a", description: "", parameters: {} }];
+    await plugins.buildTool(learning, { task: "do it", tools });
+    expect(inputs).toEqual([{ purpose: "do it", lessons: [], tools }]);
+    expect(learning.lessons().at(-1)).toMatchObject({ kind: "tool", text: "made for you", when: "do it", sources: ["built:t"] });
+    plugins.use({ kind: "materializer", id: "other", target: "none", materialize: async () => ({ target: "none", name: "n", description: "", files: [] }) });
+    const before = learning.lessons().length;
+    await expect(plugins.buildTool(learning, { task: "x" })).resolves.toMatchObject({ name: "t" });
+    expect(learning.lessons().length).toBe(before + 1);
+  });
 });
+
