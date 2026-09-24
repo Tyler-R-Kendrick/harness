@@ -2,7 +2,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
 import type { GenerationEvent } from "@harness/cognitive";
-import { LlamaServerDocumentParser, LlamaServerGenerator } from "@harness/models";
+import { LanguageModelDocumentParser, LanguageModelGenerator, llamaServer } from "@harness/models";
 import { LlamaServerProcess, ModelFiles } from "@harness/platform-native";
 import { generatorContract } from "@harness/testkit";
 import { catalogEntry, modelCacheDir } from "./models-env.ts";
@@ -33,7 +33,7 @@ const ornith = once(async () => {
   const m = catalogEntry("ornith-ai/Ornith-1.5-9B");
   const server = await LlamaServerProcess.start({ binary: binary(), model: await files.path(m.artifact, m.artifact.files[0]!.path), contextSize: 8192, args: ["--reasoning-budget", "0"] });
   servers.push(server);
-  return new LlamaServerGenerator({ baseUrl: server.baseUrl });
+  return new LanguageModelGenerator(llamaServer({ baseUrl: server.baseUrl }));
 });
 
 describe("Ornith 1.5 9B on llama-server, real weights", () => {
@@ -55,7 +55,7 @@ const ovis = once(async () => {
   const [model, mmproj] = await Promise.all(m.artifact.files.map((f) => files.path(m.artifact, f.path)));
   const server = await LlamaServerProcess.start({ binary: binary(), model: model!, mmproj: mmproj!, contextSize: 8192 });
   servers.push(server);
-  return new LlamaServerDocumentParser({ baseUrl: server.baseUrl, maxTokens: 1024 });
+  return new LanguageModelDocumentParser(llamaServer({ baseUrl: server.baseUrl }), { maxTokens: 1024 });
 });
 
 describe("OvisOCR2 on llama-server, real weights", () => {

@@ -9,8 +9,9 @@ import {
   EmbeddingGemmaEmbedder,
   JevJudge,
   LinguaCompressor,
-  LlamaServerDocumentParser,
-  LlamaServerGenerator,
+  LanguageModelDocumentParser,
+  LanguageModelGenerator,
+  llamaServer,
   loadChatTokenizer,
   loadEmbeddingGemmaBackend,
   loadLinguaBackend,
@@ -96,7 +97,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       "document-parser": new VisionChatDocumentParser(await loadVisionChatBackend({ ...pinned(m), modelClass: "LightOnOcrForConditionalGeneration", dtype: QWEN_DTYPE, imagesFirst: true })),
     }),
     // Thinking off by default: answers arrive promptly on CPU instead of after long reasoning.
-    "ornith-ai/Ornith-1.5-9B": options.llamaServer ? async (m) => ({ generator: new LlamaServerGenerator({ baseUrl: (await serve(m, false, ["--reasoning-budget", "0"])).baseUrl }) }) : undefined,
+    "ornith-ai/Ornith-1.5-9B": options.llamaServer ? async (m) => ({ generator: new LanguageModelGenerator(llamaServer({ baseUrl: (await serve(m, false, ["--reasoning-budget", "0"])).baseUrl })) }) : undefined,
     "Qwen/Qwen3-1.7B": async (m) => {
       const file = m.artifact!.files[0]!.path;
       const model = await steerableModel({ source: await files.path(m.artifact!, file), tap: qwenTap(KERNEL.layer, KERNEL.config.hidden), dir: join(options.cacheDir, "steerable") });
@@ -104,7 +105,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       const tokenizer = await loadChatTokenizer({ ...pinned(m), subfolder: dirname(file), templateOptions: { enable_thinking: false } });
       return { generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: behaviorHook(new BehaviorEngine(options.behavior)) } : {}) }) };
     },
-    "ATH-MaaS/OvisOCR2": options.llamaServer ? async (m) => ({ "document-parser": new LlamaServerDocumentParser({ baseUrl: (await serve(m, true)).baseUrl }) }) : undefined,
+    "ATH-MaaS/OvisOCR2": options.llamaServer ? async (m) => ({ "document-parser": new LanguageModelDocumentParser(llamaServer({ baseUrl: (await serve(m, true)).baseUrl })) }) : undefined,
   };
 
   for (const m of options.catalog ?? MODEL_CATALOG) {

@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { ByteCache, NeedleModule } from "@harness/models";
+import writeFileAtomic from "write-file-atomic";
 
 /**
  * Model files on disk, one file per key. Keys are hashed into file names, so no key
- * can address a path outside the directory; writes go through a temp file and a
- * rename, so a crash never leaves a partial file under a real name.
+ * can address a path outside the directory; writes are atomic, so a crash never leaves
+ * a partial file under a real name.
  */
 export class FileByteCache implements ByteCache {
   readonly #dir: string;
-  #seq = 0;
 
   constructor(dir: string) {
     this.#dir = dir;
@@ -32,16 +32,7 @@ export class FileByteCache implements ByteCache {
 
   async put(key: string, bytes: Uint8Array): Promise<void> {
     await mkdir(this.#dir, { recursive: true });
-    const target = this.#path(key);
-    const tmp = `${target}.tmp-${process.pid}-${++this.#seq}`;
-    const handle = await open(tmp, "w", 0o600);
-    try {
-      await handle.writeFile(bytes);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(tmp, target);
+    await writeFileAtomic(this.#path(key), Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), { mode: 0o600 });
   }
 }
 

@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { behaviorHook, SteeredGenerator } from "@harness/models";
 import type { SteerableSession, SteeringHook, TokenizerLike } from "@harness/models";
-import { BehaviorEngine, compilePack } from "@harness/behavior";
-import type { BehaviorGraph } from "@harness/behavior";
+import { BehaviorEngine, compilePack, defineGraph } from "@harness/behavior";
 import type { GenerationEvent } from "@harness/cognitive";
 
 /** Token ids are characters of a tiny vocabulary; id 0 ends the turn. */
@@ -157,7 +156,7 @@ describe("steered generation (the local kernel's decode loop)", () => {
 });
 
 describe("behavior hook", () => {
-  const graph: BehaviorGraph = {
+  const graph = defineGraph({
     version: 1,
     id: "g",
     model: { id: "m", layer: 5 },
@@ -169,7 +168,7 @@ describe("behavior hook", () => {
       { from: "calm", to: "guarded", when: { sensor: "threat", is: "on" } },
       { from: "guarded", to: "calm", when: { sensor: "threat", is: "off" } },
     ],
-  };
+  });
   const unit = (i: number) => Float32Array.from([0, 1].map((j) => (j === i ? 1 : 0)));
   const pack = compilePack(graph, { dims: 2, width: 4, encoder: (i) => ({ weights: unit(i), bias: 0, threshold: 0 }), decoder: unit });
 

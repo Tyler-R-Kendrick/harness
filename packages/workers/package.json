@@ -9,8 +9,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
-    "ai": "7.0.113",
-    "@harness/cognitive": "0.0.0"
+    "@scure/base": "2.4.0",
+    "ai": "7.0.113"
   }
 }

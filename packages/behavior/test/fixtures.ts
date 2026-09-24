@@ -1,11 +1,12 @@
-import type { BehaviorGraph, SaeRows } from "@harness/behavior";
+import { defineGraph } from "@harness/behavior";
+import type { SaeRows } from "@harness/behavior";
 
 /**
  * A small character: calm by default, curious when the "question" feature fires,
  * and guarded — from anywhere — when the "threat" feature fires. Curious nests under
  * calm and inherits its steering.
  */
-export const guide: BehaviorGraph = {
+export const guideSpec = {
   version: 1,
   id: "guide",
   model: { id: "Qwen/Qwen3-1.7B", layer: 14 },
@@ -27,7 +28,9 @@ export const guide: BehaviorGraph = {
     { from: "guarded", to: "calm", when: { after: 3 } },
     { from: "*", to: "calm", when: { event: "reset" } },
   ],
-};
+} as const;
+
+export const guide = defineGraph(guideSpec);
 
 /**
  * A toy SAE over a 4-d residual: feature i reads and writes axis i (unit rows,

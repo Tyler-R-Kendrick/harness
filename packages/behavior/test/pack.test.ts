@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { compilePack, parsePack, serializePack } from "@harness/behavior";
-import type { BehaviorGraph } from "@harness/behavior";
-import { axisSae, guide } from "./fixtures.ts";
+import { compilePack, parseGraph, parsePack, serializePack } from "@harness/behavior";
+import { axisSae, guide, guideSpec } from "./fixtures.ts";
 
 describe("behavior packs", () => {
   it("BP1.1 compiling keeps only the SAE rows the graph uses and precomputes each state's steering", () => {
@@ -21,9 +20,8 @@ describe("behavior packs", () => {
     });
   });
 
-  it("BP1.2 compiling refuses an invalid graph, or features beyond the SAE's width, whole", () => {
-    expect(() => compilePack({ ...guide, initial: "asleep" }, axisSae())).toThrow(/initial state asleep/);
-    const wide: BehaviorGraph = { ...guide, features: { ...guide.features, threat: 99 } };
+  it("BP1.2 compiling refuses features beyond the SAE's width, or rows of the wrong length, whole", () => {
+    const wide = parseGraph({ ...guideSpec, features: { ...guideSpec.features, threat: 99 } });
     expect(() => compilePack(wide, axisSae())).toThrow(/99.*width 16/);
     expect(() => compilePack(guide, { ...axisSae(), decoder: () => new Float32Array(3) })).toThrow(/decoder row.*4/);
   });
@@ -45,7 +43,7 @@ describe("behavior packs", () => {
     expect(() => parsePack("not json")).toThrow(/JSON/);
     expect(() => parsePack(bad((p) => ((p["format"] as unknown) = "other")))).toThrow(/format/);
     expect(() => parsePack(bad((p) => ((p["graph"] as { initial: string }).initial = "asleep")))).toThrow(/initial state asleep/);
-    expect(() => parsePack(bad((p) => ((p["dims"] as number) = 5)))).toThrow(/width/);
+    expect(() => parsePack(bad((p) => ((p["dims"] as number) = 5)))).toThrow(/expected 5/);
     expect(() => parsePack(bad((p) => ((p["steering"] as Record<string, unknown>)["calm"] = "AAAAAA==")))).toThrow(/steering/);
     expect(() => parsePack(bad((p) => ((p["sense"] as { threshold: number }[])[0]!.threshold = Number.NaN)))).toThrow(/finite|threshold/);
   });

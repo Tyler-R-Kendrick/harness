@@ -31,16 +31,15 @@ describe("SAE rows files", () => {
     expect(() => parseSaeRows(file({ 0: { ...row(0), bias: "x" } }))).toThrow(/bias/);
   });
 
-  it("SR1.3 dims, width, the feature map, indexes and thresholds are each checked", () => {
-    expect(() => parseSaeRows(file({}, { dims: 0 }))).toThrow(/dims must be a positive integer/);
-    expect(() => parseSaeRows(file({}, { width: 1.5 }))).toThrow(/width must be a positive integer/);
-    expect(() => parseSaeRows(file({}, { features: null }))).toThrow(/features must be an object/);
-    expect(() => parseSaeRows(file({ 16: row(0) }))).toThrow(/feature 16 is not an index below the width 16/);
-    expect(() => parseSaeRows(file({ "-1": row(0) }))).toThrow(/feature -1/);
-    expect(() => parseSaeRows(file({ x: row(0) }))).toThrow(/feature x/);
-    expect(() => parseSaeRows(file({ 0: { ...row(0), threshold: Infinity } }))).toThrow(/feature 0 threshold must be a finite number/);
-    expect(() => parseSaeRows(file({ 0: { ...row(0), decoder: b64([1]) } }))).toThrow(/feature 0 decoder has 1 values, expected 4/);
-    expect(() => parseSaeRows(file({ 0: { ...row(0), encoder: b64([1]) } }))).toThrow(/feature 0 encoder has 1 values/);
+  it("SR1.3 dims, width, the feature map, indexes and row lengths are each checked, naming where", () => {
+    expect(() => parseSaeRows(file({}, { dims: 0 }))).toThrow(/at dims/);
+    expect(() => parseSaeRows(file({}, { width: 1.5 }))).toThrow(/at width/);
+    expect(() => parseSaeRows(file({}, { features: null }))).toThrow(/at features/);
+    expect(() => parseSaeRows(file({ 16: row(0) }))).toThrow(/feature 16 is not below the width 16/);
+    for (const key of ["-1", "x"]) expect(() => parseSaeRows(file({ [key]: row(0) }))).toThrow(/Invalid key[\s\S]*at features/);
+    expect(() => parseSaeRows(file({ 0: { ...row(0), threshold: null } }))).toThrow(/at features\.0\.threshold/);
+    expect(() => parseSaeRows(file({ 0: { ...row(0), decoder: b64([1]) } }))).toThrow(/has 1 values, expected 4\n  → at features\.0\.decoder/);
+    expect(() => parseSaeRows(file({ 0: { ...row(0), encoder: b64([1]) } }))).toThrow(/has 1 values, expected 4\n  → at features\.0\.encoder/);
   });
 
   it("SR1.4 the encoder row carries the folded bias and threshold; the decoder row is the steering direction", () => {

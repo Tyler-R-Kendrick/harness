@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeBase64, Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
+import { Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
 import { HashEmbedder, HeuristicCompressor, KeywordRouter, ScriptedJudge, StubDocumentParser } from "@harness/testkit";
 
@@ -60,13 +60,6 @@ describe("cognitive service (ACP operations on the ensemble)", () => {
     expect(status.tasks["judgment"]!.map((r) => r.id)).toEqual(["jev"]);
     expect(status.tasks["document-parsing"]).toEqual([]);
   });
-
-  it("CS1.6 base64 decoding round-trips bytes and rejects garbage", () => {
-    expect(Array.from(decodeBase64("AQID"))).toEqual([1, 2, 3]);
-    expect(Array.from(decodeBase64("aGk="))).toEqual([104, 105]);
-    expect(Array.from(decodeBase64(""))).toEqual([]);
-    expect(() => decodeBase64("a$b=")).toThrow(/base64/);
-  });
 });
 
 describe("cognitive service input handling", () => {
@@ -80,60 +73,63 @@ describe("cognitive service input handling", () => {
     return { e, seen };
   }
 
-  it("CS2.1 each malformed field is named in the error", async () => {
+  it("CS2.1 input is parsed before any model runs, and every problem names where it is", async () => {
     const e = ensemble();
-    const cases: [Parameters<typeof invokeCognitive>[1], unknown, string][] = [
-      ["route", "text", "input must be an object"],
-      ["route", [], "input must be an object"],
-      ["route", null, "input.input must be a string"],
-      ["route", { input: "x", tools: "no" }, "tools must be an array"],
-      ["route", { input: "x", tools: [3] }, "tools[0] must be an object"],
-      ["route", { input: "x", tools: [{}] }, "tools[0].name must be a string"],
-      ["route", { input: "x", tools: [{ name: "t", parameters: [] }] }, "tools[0].parameters must be an object"],
-      ["decide-tools", { tools: [] }, "input.input must be a string"],
-      ["decide-tools", { input: "x", tools: [], policy: 3 }, "policy must be an object"],
-      ["embed", { inputs: [5] }, "inputs[0] must be an object"],
-      ["embed", { inputs: [{ kind: "query" }] }, "inputs[0].text must be a string"],
-      ["embed", { inputs: [{ kind: "summary", text: "a" }] }, "inputs[0].kind must be query or document"],
-      ["compress", { text: "x", rate: 0.5, forceTokens: [1] }, "forceTokens[0] must be a string"],
-      ["compress", { rate: 0.5 }, "text must be a string"],
-      ["parse", { pages: "x" }, "pages must be an array of { mediaType, data (base64) }"],
-      ["parse", { pages: [1] }, "pages[0] must be an object"],
-      ["parse", { pages: [{ data: "AQID" }] }, "pages[0].mediaType must be a string"],
-      ["parse", { pages: [{ mediaType: "image/png" }] }, "pages[0].data must be a string"],
+    const cases: [Parameters<typeof invokeCognitive>[1], unknown, RegExp][] = [
+      ["route", "text", /invalid route input[\s\S]*expected object/],
+      ["route", [], /expected object/],
+      ["route", null, /at input/],
+      ["route", { input: "x", tools: "no" }, /at tools/],
+      ["route", { input: "x", tools: [3] }, /at tools\[0\]/],
+      ["route", { input: "x", tools: [{}] }, /at tools\[0\]\.name/],
+      ["route", { input: "x", tools: [{ name: "t", description: 5 }] }, /at tools\[0\]\.description/],
+      ["route", { input: "x", tools: [{ name: "t", parameters: [] }] }, /at tools\[0\]\.parameters/],
+      ["decide-tools", { tools: [] }, /at input/],
+      ["decide-tools", { input: "x", tools: [], policy: 3 }, /at policy/],
+      ["judge", { questions: { ok: { type: "vote", instructions: "?" } } }, /at questions\.ok\.type/],
+      ["embed", { inputs: [5] }, /at inputs\[0\]/],
+      ["embed", { inputs: [{ kind: "query" }] }, /at inputs\[0\]\.text/],
+      ["embed", { inputs: [{ kind: "summary", text: "a" }] }, /at inputs\[0\]\.kind/],
+      ["embed", { inputs: [], dimensions: "2" }, /at dimensions/],
+      ["compress", { text: "x", rate: 0.5, forceTokens: [1] }, /at forceTokens\[0\]/],
+      ["compress", { text: "x", rate: 0 }, /at rate/],
+      ["compress", { rate: 0.5 }, /at text/],
+      ["parse", { pages: "x" }, /at pages/],
+      ["parse", { pages: [{ data: "AQID" }] }, /at pages\[0\]\.mediaType/],
+      ["parse", { pages: [{ mediaType: "image/png", data: "a$b=" }] }, /not valid base64\n  → at pages\[0\]\.data/],
+      ["parse", { pages: [], instruction: 7 }, /at instruction/],
     ];
     for (const [op, input, message] of cases) await expect(invokeCognitive(e, op, input), `${op} ${JSON.stringify(input)}`).rejects.toThrow(message);
   });
 
-  it("CS2.2 tools pass through with description and parameters, defaulting both when absent or not usable", async () => {
+  it("CS2.2 tools default their description and parameters when absent", async () => {
     const { e, seen } = recording();
-    await invokeCognitive(e, "route", { input: "go", tools: [{ name: "t", description: "d", parameters: { type: "object" } }, { name: "u" }, { name: "v", description: 5 }] });
+    await invokeCognitive(e, "route", { input: "go", tools: [{ name: "t", description: "d", parameters: { type: "object" } }, { name: "u" }] });
     expect(seen["route"]).toEqual([
       {
         input: "go",
         tools: [
           { name: "t", description: "d", parameters: { type: "object" } },
           { name: "u", description: "", parameters: {} },
-          { name: "v", description: "", parameters: {} },
         ],
       },
     ]);
   });
 
-  it("CS2.3 optional fields are forwarded only when present and well-typed", async () => {
+  it("CS2.3 optional fields reach the port only when the client sent them", async () => {
     const { e, seen } = recording();
     await invokeCognitive(e, "embed", { inputs: [{ kind: "document", text: "a" }], dimensions: 2 });
-    await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }], dimensions: "2" });
+    await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }] });
     expect(seen["embed"]).toEqual([
       [[{ kind: "document", text: "a" }], { dimensions: 2 }],
       [[{ kind: "query", text: "a" }], {}],
     ]);
     await invokeCognitive(e, "compress", { text: "a b", rate: 0.5, forceTokens: ["b"] });
     await invokeCognitive(e, "compress", { text: "a b", rate: 0.5 });
-    expect(seen["compress"]).toEqual([{ text: "a b", rate: 0.5, forceTokens: ["b"] }, { text: "a b", rate: 0.5 }]);
+    expect(seen["compress"]).toStrictEqual([{ text: "a b", rate: 0.5, forceTokens: ["b"] }, { text: "a b", rate: 0.5 }]);
     await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQ==" }], instruction: "tables only" });
-    await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQ==" }], instruction: 7 });
-    expect(seen["parse"]).toEqual([
+    await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQ==" }] });
+    expect(seen["parse"]).toStrictEqual([
       { pages: [{ mediaType: "image/png", data: Uint8Array.from([1]) }], instruction: "tables only" },
       { pages: [{ mediaType: "image/png", data: Uint8Array.from([1]) }] },
     ]);
@@ -145,14 +141,6 @@ describe("cognitive service input handling", () => {
     expect(await invokeCognitive(e, "decide-tools", { input: "start a timer", tools, policy: { act: 1, verify: 0, accept: 0.5 } })).toMatchObject({ decidedBy: "router+judge", confidence: 0.8 });
     const status = (await invokeCognitive(e, "status", {})) as { members: Record<string, unknown>[] };
     expect(status.members.every((m) => !("reason" in m))).toBe(true);
-  });
-
-  it("CS2.5 base64 padding and length are checked exactly", () => {
-    expect(Array.from(decodeBase64("aGk=="))).toEqual([104, 105]);
-    expect(Array.from(decodeBase64("aGk"))).toEqual([104, 105]);
-    expect(() => decodeBase64("aGk=a")).toThrow(/base64/);
-    expect(() => decodeBase64("aGkhY")).toThrow(/base64/);
-    expect(Array.from(decodeBase64("aGkhYQ"))).toEqual([104, 105, 33, 97]);
   });
 });
 

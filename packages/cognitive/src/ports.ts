@@ -4,15 +4,22 @@
  * for AI SDK models, WASM engines and ONNX runtimes can implement them without the
  * core depending on any of those libraries.
  */
+import { base64 } from "@scure/base";
+import { z } from "zod";
 import type { ChatEvent, ToolCall } from "./chat-format.ts";
 import type { EmbedInput } from "./embedding.ts";
 
+// Requests that can arrive as JSON (see service.ts) are defined as schemas; their
+// types are the schemas' outputs, so a parsed request is a port request as is.
+
 // ---- judgment (Jev's typed questions) -------------------------------------------
 
-export type JudgeQuestion =
-  | { readonly type: "boolean"; readonly instructions: string; readonly criteria?: { readonly true?: string | null; readonly false?: string | null } }
-  | { readonly type: "choice"; readonly instructions: string; readonly criteria: Readonly<Record<string, string | null>> }
-  | { readonly type: "score"; readonly instructions: string; readonly criteria: readonly (string | null)[] };
+export const JudgeQuestionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("boolean"), instructions: z.string(), criteria: z.object({ true: z.string().nullable().exactOptional(), false: z.string().nullable().exactOptional() }).exactOptional() }),
+  z.object({ type: z.literal("choice"), instructions: z.string(), criteria: z.record(z.string(), z.string().nullable()) }),
+  z.object({ type: z.literal("score"), instructions: z.string(), criteria: z.array(z.string().nullable()) }),
+]);
+export type JudgeQuestion = z.output<typeof JudgeQuestionSchema>;
 
 export type JudgeAnswer =
   | { readonly type: "boolean"; readonly probability: number }
@@ -32,12 +39,13 @@ export interface Judge {
 
 // ---- tool routing and extraction --------------------------------------------------
 
-export interface ToolSpec {
-  readonly name: string;
-  readonly description: string;
+export const ToolSpecSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().default(""),
   /** JSON Schema for the arguments object. */
-  readonly parameters: Readonly<Record<string, unknown>>;
-}
+  parameters: z.record(z.string(), z.unknown()).default({}),
+});
+export type ToolSpec = z.output<typeof ToolSpecSchema>;
 
 export interface RouteRequest {
   readonly input: string;
@@ -65,13 +73,14 @@ export interface Embedder {
 
 // ---- prompt compression ------------------------------------------------------------
 
-export interface CompressRequest {
-  readonly text: string;
+export const CompressRequestSchema = z.object({
+  text: z.string(),
   /** Target fraction of tokens to keep, in (0, 1]. */
-  readonly rate: number;
+  rate: z.number().gt(0).lte(1),
   /** Tokens that must survive compression. */
-  readonly forceTokens?: readonly string[];
-}
+  forceTokens: z.array(z.string()).exactOptional(),
+});
+export type CompressRequest = z.output<typeof CompressRequestSchema>;
 
 export interface Compression {
   readonly text: string;
@@ -85,6 +94,18 @@ export interface Compressor {
 
 // ---- generation (text and vision) --------------------------------------------------
 
+/** An image as JSON carries its bytes as base64. */
+export const ImageInputSchema = z.object({
+  mediaType: z.string().min(1),
+  data: z.string().transform((data, ctx) => {
+    try {
+      return base64.decode(data);
+    } catch {
+      ctx.addIssue({ code: "custom", message: "not valid base64" });
+      return z.NEVER;
+    }
+  }),
+});
 export interface ImageInput {
   readonly mediaType: string;
   readonly data: Uint8Array;
@@ -129,6 +150,7 @@ export interface ParsedPage {
   readonly raw: string;
 }
 
+export const ParseRequestSchema = z.object({ pages: z.array(ImageInputSchema), instruction: z.string().exactOptional() });
 export interface ParseRequest {
   readonly pages: readonly ImageInput[];
   readonly instruction?: string;

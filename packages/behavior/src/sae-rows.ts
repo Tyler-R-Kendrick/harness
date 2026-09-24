@@ -3,64 +3,51 @@
  * by tools/model-lab/sae_rows.py. A 65k-wide SAE is a gigabyte; the rows a behavior
  * graph needs are kilobytes, so that is what ships.
  */
-import { fromBase64 } from "./pack.ts";
+import { z } from "zod";
+import { floats } from "./floats.ts";
 import type { SaeRows } from "./pack.ts";
 
-const FORMAT = "harness.sae-rows/v1";
+const Row = z.strictObject({ encoder: floats, bias: z.number(), threshold: z.number(), decoder: floats });
 
-interface Row {
-  readonly weights: Float32Array;
-  readonly bias: number;
-  readonly threshold: number;
-  readonly decoder: Float32Array;
-}
+const RowsFile = z
+  .object({
+    format: z.literal("harness.sae-rows/v1"),
+    dims: z.int().positive(),
+    width: z.int().positive(),
+    features: z.record(z.string().regex(/^\d+$/), Row),
+  })
+  .superRefine((f, ctx) => {
+    for (const [key, row] of Object.entries(f.features)) {
+      if (Number(key) >= f.width) ctx.addIssue({ code: "custom", message: `feature ${key} is not below the width ${f.width}`, path: ["features", key] });
+      for (const part of ["encoder", "decoder"] as const) {
+        if (row[part].length !== f.dims) ctx.addIssue({ code: "custom", message: `has ${row[part].length} values, expected ${f.dims}`, path: ["features", key, part] });
+      }
+    }
+  });
 
-const positiveInt = (v: unknown, what: string): number => {
-  if (!Number.isInteger(v) || (v as number) < 1) throw new Error(`SAE rows ${what} must be a positive integer`);
-  return v as number;
-};
-
-const finite = (v: unknown, what: string): number => {
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`${what} must be a finite number`);
-  return v;
-};
-
-/** Parse and check a rows file completely; asking for a feature it does not carry throws. */
+/** Parse a rows file completely; asking the result for a feature it does not carry throws. */
 export function parseSaeRows(text: string): SaeRows {
-  let raw: Record<string, unknown>;
+  let raw: unknown;
   try {
-    raw = JSON.parse(text) as Record<string, unknown>;
+    raw = JSON.parse(text);
   } catch {
     throw new Error("SAE rows file is not valid JSON");
   }
-  if (raw["format"] !== FORMAT) throw new Error(`SAE rows format must be ${FORMAT}`);
-  const dims = positiveInt(raw["dims"], "dims");
-  const width = positiveInt(raw["width"], "width");
-  const features = raw["features"];
-  if (typeof features !== "object" || features === null) throw new Error("SAE rows features must be an object");
-  const rows = new Map<number, Row>();
-  for (const [key, value] of Object.entries(features as Record<string, Record<string, unknown>>)) {
-    const index = Number(key);
-    if (!Number.isInteger(index) || index < 0 || index >= width) throw new Error(`SAE rows feature ${key} is not an index below the width ${width}`);
-    rows.set(index, {
-      weights: fromBase64(String(value["encoder"]), dims, `feature ${index} encoder`),
-      bias: finite(value["bias"], `feature ${index} bias`),
-      threshold: finite(value["threshold"], `feature ${index} threshold`),
-      decoder: fromBase64(String(value["decoder"]), dims, `feature ${index} decoder`),
-    });
-  }
-  const get = (index: number): Row => {
-    const row = rows.get(index);
-    if (!row) throw new Error(`feature ${index} is not in the rows file`);
-    return row;
+  const result = RowsFile.safeParse(raw);
+  if (!result.success) throw new Error(`invalid SAE rows file\n${z.prettifyError(result.error)}`);
+  const { dims, width, features } = result.data;
+  const row = (index: number) => {
+    const r = features[index];
+    if (!r) throw new Error(`feature ${index} is not in the rows file`);
+    return r;
   };
   return {
     dims,
     width,
     encoder: (index) => {
-      const { weights, bias, threshold } = get(index);
-      return { weights, bias, threshold };
+      const { encoder, bias, threshold } = row(index);
+      return { weights: encoder, bias, threshold };
     },
-    decoder: (index) => get(index).decoder,
+    decoder: (index) => row(index).decoder,
   };
 }

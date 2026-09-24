@@ -57,8 +57,7 @@ import { MODEL_CATALOG } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
-import { compilePack } from "@harness/behavior";
-import type { BehaviorGraph } from "@harness/behavior";
+import { compilePack, defineGraph } from "@harness/behavior";
 
 const tmp: string[] = [];
 afterEach(async () => {
@@ -217,7 +216,7 @@ require("node:http").createServer((req, res) => {
   });
 
   it("CH2.6 with a behavior pack the kernel steers by the pack's current state", async () => {
-    const graph: BehaviorGraph = {
+    const graph = defineGraph({
       version: 1,
       id: "warm",
       model: { id: "Qwen/Qwen3-1.7B", layer: 14 },
@@ -226,7 +225,7 @@ require("node:http").createServer((req, res) => {
       sensors: {},
       states: { warm: { steer: { joy: 3 } } },
       transitions: [],
-    };
+    });
     const unit = (i: number) => Float32Array.from({ length: 2048 }, (_, j) => (j === i ? 1 : 0));
     const behavior = compilePack(graph, { dims: 2048, width: 1, encoder: (i) => ({ weights: unit(i), bias: 0, threshold: 0 }), decoder: unit });
     const files = { [KERNEL_FILE]: kernelOnnx() };

@@ -1,8 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { BehaviorEngine, compilePack, parseSaeRows, validateGraph } from "@harness/behavior";
-import type { BehaviorGraph } from "@harness/behavior";
+import { BehaviorEngine, compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import type { GenerationEvent } from "@harness/cognitive";
 import { behaviorHook, loadChatTokenizer, OnnxSteerableSession, qwenTap, SteeredGenerator } from "@harness/models";
 import { ModelFiles, steerableModel } from "@harness/platform-native";
@@ -30,7 +29,7 @@ const kernel = once(async () => {
     cacheDir: join(modelCacheDir, "transformers"),
     templateOptions: { enable_thinking: false },
   });
-  const graph = JSON.parse(await readFile(join(fixtures, "qwen3-1.7b-host.graph.json"), "utf8")) as BehaviorGraph;
+  const graph = parseGraph(JSON.parse(await readFile(join(fixtures, "qwen3-1.7b-host.graph.json"), "utf8")));
   const pack = compilePack(graph, parseSaeRows(await readFile(join(fixtures, "qwen3-1.7b-l14-rows.json"), "utf8")));
   return { session, tokenizer, graph, pack };
 });
@@ -53,9 +52,8 @@ generatorContract("Qwen3-1.7B steerable kernel, unsteered, real weights", async 
 });
 
 describe("the steerable kernel with a behavior graph, real weights", () => {
-  it("KS1.1 the host graph is valid for this model and layer", async () => {
+  it("KS1.1 the host graph parses, for this model and layer", async () => {
     const { graph, session } = await kernel();
-    expect(validateGraph(graph)).toEqual({ ok: true });
     expect(graph.model).toEqual({ id: "Qwen/Qwen3-1.7B", layer: session.layer });
   });
 

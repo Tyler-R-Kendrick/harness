@@ -3,19 +3,16 @@
  * supports Matryoshka truncation: the leading components of a vector form a
  * smaller embedding once renormalized.
  */
+import { z } from "zod";
 
-export type EmbeddingTask =
-  | "search result"
-  | "question answering"
-  | "fact checking"
-  | "classification"
-  | "clustering"
-  | "sentence similarity"
-  | "code retrieval";
+export const EMBEDDING_TASKS = ["search result", "question answering", "fact checking", "classification", "clustering", "sentence similarity", "code retrieval"] as const;
+export type EmbeddingTask = (typeof EMBEDDING_TASKS)[number];
 
-export type EmbedInput =
-  | { readonly kind: "query"; readonly text: string; readonly task?: EmbeddingTask }
-  | { readonly kind: "document"; readonly text: string; readonly title?: string };
+export const EmbedInputSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("query"), text: z.string(), task: z.enum(EMBEDDING_TASKS).exactOptional() }),
+  z.object({ kind: z.literal("document"), text: z.string(), title: z.string().exactOptional() }),
+]);
+export type EmbedInput = z.output<typeof EmbedInputSchema>;
 
 /** Sizes EmbeddingGemma-300m was trained to truncate to. */
 export const EMBEDDING_GEMMA_DIMENSIONS: readonly number[] = [768, 512, 256, 128];

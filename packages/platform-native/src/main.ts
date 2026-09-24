@@ -4,8 +4,7 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
-import { compilePack, parseSaeRows } from "@harness/behavior";
-import type { BehaviorGraph } from "@harness/behavior";
+import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { EchoWorker, EnsembleWorker, ModelWorker } from "@harness/workers";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
@@ -45,7 +44,7 @@ if ((values.behavior === undefined) !== (values["sae-rows"] === undefined)) {
 const behavior =
   values.behavior === undefined
     ? undefined
-    : compilePack(JSON.parse(readFileSync(values.behavior, "utf8")) as BehaviorGraph, parseSaeRows(readFileSync(values["sae-rows"]!, "utf8")));
+    : compilePack(parseGraph(JSON.parse(readFileSync(values.behavior, "utf8"))), parseSaeRows(readFileSync(values["sae-rows"]!, "utf8")));
 
 const cognitive =
   values.cognitive || values.worker === "ensemble"

@@ -1,4 +1,4 @@
-import { decodeBase64 } from "@harness/cognitive";
+import { base64 } from "@scure/base";
 import type { ChatMessage, ContentPart, GenerateRequest, GenerationEvent, TaskCategory } from "@harness/cognitive";
 import type { StopReason } from "@harness/core";
 import { textChunk } from "./worker.ts";
@@ -18,7 +18,7 @@ function toContent(prompt: readonly unknown[]): { parts: ContentPart[]; hasImage
     const b = block as { type?: unknown; text?: unknown; data?: unknown; mimeType?: unknown };
     if (b.type === "text" && typeof b.text === "string") parts.push({ type: "text", text: b.text });
     else if (b.type === "image" && typeof b.data === "string" && typeof b.mimeType === "string") {
-      parts.push({ type: "image", image: { mediaType: b.mimeType, data: decodeBase64(b.data) } });
+      parts.push({ type: "image", image: { mediaType: b.mimeType, data: base64.decode(b.data) } });
       hasImage = true;
     }
   }

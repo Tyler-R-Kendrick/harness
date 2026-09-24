@@ -1,6 +1,7 @@
-import { lineage } from "./graph.ts";
+import { z } from "zod";
+import { floats, toBase64 } from "./floats.ts";
+import { BehaviorGraphSchema, lineage } from "./graph.ts";
 import type { BehaviorGraph } from "./graph.ts";
-import { validateGraph } from "./validate.ts";
 
 /**
  * The rows of an SAE a graph needs. JumpReLU/ReLU SAEs compute each feature from its
@@ -23,8 +24,11 @@ export interface SensedFeature {
   readonly threshold: number;
 }
 
-/** A compiled graph: what the engine needs and nothing more. */
+declare const compiled: unique symbol;
+
+/** A compiled graph: what the engine needs and nothing more. Made only by compilePack or parsePack. */
 export interface BehaviorPack {
+  readonly [compiled]: true;
   readonly graph: BehaviorGraph;
   readonly dims: number;
   readonly sense: readonly SensedFeature[];
@@ -32,13 +36,7 @@ export interface BehaviorPack {
   readonly steering: Readonly<Record<string, Float32Array | undefined>>;
 }
 
-function refuse(graph: BehaviorGraph): void {
-  const v = validateGraph(graph);
-  if (!v.ok) throw new Error(`invalid behavior graph: ${v.problems.join("; ")}`);
-}
-
 export function compilePack(graph: BehaviorGraph, sae: SaeRows): BehaviorPack {
-  refuse(graph);
   for (const [name, index] of Object.entries(graph.features)) {
     if (index >= sae.width) throw new Error(`feature ${name} has index ${index}, beyond the SAE's width ${sae.width}`);
   }
@@ -72,44 +70,10 @@ export function compilePack(graph: BehaviorGraph, sae: SaeRows): BehaviorPack {
     }
     steering[state] = any ? v : undefined;
   }
-  return { graph, dims: sae.dims, sense, steering };
+  return seal({ graph, dims: sae.dims, sense, steering });
 }
 
-// ---- JSON serialization (floats as base64 little-endian float32) ---------------------
-
-const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-function toBase64(v: Float32Array): string {
-  const bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const n = (bytes[i]! << 16) | ((bytes[i + 1] ?? 0) << 8) | (bytes[i + 2] ?? 0);
-    const chars = Math.min(4, Math.ceil(((bytes.length - i) * 4) / 3));
-    for (let c = 0; c < 4; c++) out += c < chars ? B64[(n >> (18 - 6 * c)) & 63] : "=";
-  }
-  return out;
-}
-
-export function fromBase64(text: string, dims: number, what: string): Float32Array {
-  const clean = text.replace(/=+$/, "");
-  if (/[^A-Za-z0-9+/]/.test(clean)) throw new Error(`${what} is not valid base64`);
-  const bytes = new Uint8Array(Math.floor((clean.length * 3) / 4));
-  let bits = 0;
-  let value = 0;
-  let o = 0;
-  for (const ch of clean) {
-    value = ((value << 6) | B64.indexOf(ch)) & 0xffffff;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      bytes[o++] = (value >> bits) & 0xff;
-    }
-  }
-  if (bytes.length !== dims * 4) throw new Error(`${what} has ${bytes.length / 4} values, expected ${dims}`);
-  const v = new Float32Array(bytes.buffer);
-  if (!v.every(Number.isFinite)) throw new Error(`${what} has non-finite values`);
-  return v;
-}
+const seal = (pack: Omit<BehaviorPack, typeof compiled>) => pack as BehaviorPack;
 
 const FORMAT = "harness.behavior-pack/v1";
 
@@ -123,34 +87,36 @@ export function serializePack(pack: BehaviorPack): string {
   });
 }
 
-/** Parse and check a pack completely; anything wrong refuses the whole pack. */
+const PackJson = z
+  .strictObject({
+    format: z.literal(FORMAT),
+    graph: BehaviorGraphSchema,
+    dims: z.int().positive(),
+    sense: z.array(z.strictObject({ feature: z.string(), index: z.int().min(0), weights: floats, bias: z.number(), threshold: z.number() })),
+    steering: z.record(z.string(), floats.nullable()),
+  })
+  .superRefine((p, ctx) => {
+    const issue = (message: string, path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
+    const width = (v: Float32Array, path: (string | number)[]) => v.length !== p.dims && issue(`has ${v.length} values, expected ${p.dims}`, path);
+    const sensed = new Set(Object.values(p.graph.sensors).map((s) => s.feature));
+    if (p.sense.length !== sensed.size || !p.sense.every((s) => sensed.has(s.feature))) issue(`sense must carry exactly the sensed features: ${[...sensed].join(", ")}`, ["sense"]);
+    p.sense.forEach((s, i) => width(s.weights, ["sense", i, "weights"]));
+    for (const [state, v] of Object.entries(p.steering)) {
+      if (!Object.hasOwn(p.graph.states, state)) issue(`steering for state ${state}, which is not in the graph`, ["steering", state]);
+      else if (v) width(v, ["steering", state]);
+    }
+  });
+
+/** Parse a serialized pack; anything wrong refuses the whole pack. */
 export function parsePack(text: string): BehaviorPack {
-  let raw: Record<string, unknown>;
+  let raw: unknown;
   try {
-    raw = JSON.parse(text) as Record<string, unknown>;
+    raw = JSON.parse(text);
   } catch {
     throw new Error("behavior pack is not valid JSON");
   }
-  if (raw["format"] !== FORMAT) throw new Error(`behavior pack format must be ${FORMAT}`);
-  const graph = raw["graph"] as BehaviorGraph;
-  refuse(graph);
-  const dims = raw["dims"];
-  if (!Number.isInteger(dims) || (dims as number) < 1) throw new Error("behavior pack dims must be a positive integer");
-  const d = dims as number;
-  const sense = (raw["sense"] as Record<string, unknown>[]).map((s, i) => {
-    if (!Number.isFinite(s["bias"]) || !Number.isFinite(s["threshold"])) throw new Error(`sensed feature ${i}: bias and threshold must be finite`);
-    return {
-      feature: String(s["feature"]),
-      index: s["index"] as number,
-      weights: fromBase64(String(s["weights"]), d, `encoder row for ${String(s["feature"])} (width)`),
-      bias: s["bias"] as number,
-      threshold: s["threshold"] as number,
-    };
-  });
-  const steering: Record<string, Float32Array | undefined> = {};
-  for (const state of Object.keys(graph.states)) {
-    const v = (raw["steering"] as Record<string, unknown>)[state];
-    steering[state] = v === null || v === undefined ? undefined : fromBase64(String(v), d, `steering for ${state}`);
-  }
-  return { graph, dims: d, sense, steering };
+  const result = PackJson.safeParse(raw);
+  if (!result.success) throw new Error(`invalid behavior pack\n${z.prettifyError(result.error)}`);
+  const { graph, dims, sense, steering } = result.data;
+  return seal({ graph, dims, sense, steering: Object.fromEntries(Object.keys(graph.states).map((state) => [state, steering[state] ?? undefined])) });
 }

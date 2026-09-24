@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { makeSteerable } from "@harness/models";
+import writeFileAtomic from "write-file-atomic";
 import type { Tap } from "@harness/models";
 
 /**
@@ -21,13 +22,6 @@ export async function steerableModel(options: {
   if (await stat(target).then((s) => s.isFile(), () => false)) return target;
   const patched = (options.patch ?? makeSteerable)(await readFile(options.source), options.tap);
   await mkdir(options.dir, { recursive: true });
-  const tmp = `${target}.tmp-${process.pid}`;
-  try {
-    await writeFile(tmp, patched, { mode: 0o600 });
-    await rename(tmp, target);
-  } catch (error) {
-    await rm(tmp, { force: true });
-    throw error;
-  }
+  await writeFileAtomic(target, Buffer.from(patched.buffer, patched.byteOffset, patched.byteLength), { mode: 0o600 });
   return target;
 }

@@ -1,16 +1,15 @@
-import { mkdir, open, readFile, rename } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import writeFileAtomic from "write-file-atomic";
 import type { SnapshotStorage } from "@harness/core";
 
 /**
- * Snapshot storage in a single JSON file. Each save writes a temp file, fsyncs it and
- * renames it over the target, so a crash leaves either the old or the new snapshot.
- * Saves are serialized so the last one issued is the one that lands.
+ * Snapshot storage in a single JSON file. Saves are atomic (a crash leaves the old or
+ * the new snapshot) and serialized, so the last one issued is the one that lands.
  */
 export class FileStorage implements SnapshotStorage {
   readonly #path: string;
-  #queue: Promise<void> = Promise.resolve();
-  #seq = 0;
+  #dir: Promise<unknown> | undefined;
 
   constructor(path: string) {
     this.#path = path;
@@ -31,21 +30,10 @@ export class FileStorage implements SnapshotStorage {
     }
   }
 
-  save(snapshot: unknown): Promise<void> {
+  async save(snapshot: unknown): Promise<void> {
     const text = JSON.stringify(snapshot);
-    const tmp = `${this.#path}.tmp-${process.pid}-${++this.#seq}`;
-    const next = this.#queue.then(async () => {
-      await mkdir(dirname(this.#path), { recursive: true });
-      const handle = await open(tmp, "w", 0o600);
-      try {
-        await handle.writeFile(text, "utf8");
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-      await rename(tmp, this.#path);
-    });
-    this.#queue = next.catch(() => {});
-    return next;
+    // One shared promise keeps saves in issue order; write-file-atomic queues them from there.
+    await (this.#dir ??= mkdir(dirname(this.#path), { recursive: true }));
+    await writeFileAtomic(this.#path, text, { mode: 0o600 });
   }
 }
