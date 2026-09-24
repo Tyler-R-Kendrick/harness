@@ -40,7 +40,7 @@ export class BehaviorEngine {
     this.#pack = pack;
     const g = pack.graph;
     if (snapshot && snapshot.graph !== g.id) throw new Error(`snapshot is for graph ${snapshot.graph}, not ${g.id}`);
-    if (snapshot && !(snapshot.state in g.states)) throw new Error(`snapshot state ${snapshot.state} is not in graph ${g.id}`);
+    if (snapshot && !Object.hasOwn(g.states, snapshot.state)) throw new Error(`snapshot state ${snapshot.state} is not in graph ${g.id}`);
     this.#state = snapshot?.state ?? g.initial;
     this.#tokensInState = snapshot?.tokensInState ?? 0;
     this.#sensors = Object.fromEntries(Object.keys(g.sensors).map((name) => [name, { ...(snapshot?.sensors[name] ?? { on: false, run: 0 }) }]));

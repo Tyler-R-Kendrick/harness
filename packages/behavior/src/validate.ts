@@ -8,7 +8,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 function triggerProblem(when: Trigger | Record<string, unknown>, g: BehaviorGraph): string | undefined {
   const w = when as Record<string, unknown>;
   if ("sensor" in w) {
-    if (typeof w["sensor"] !== "string" || !(w["sensor"] in g.sensors)) return `sensor ${String(w["sensor"])} is not defined`;
+    if (typeof w["sensor"] !== "string" || !Object.hasOwn(g.sensors, w["sensor"])) return `sensor ${String(w["sensor"])} is not defined`;
     if (w["is"] !== "on" && w["is"] !== "off") return `sensor trigger must say on or off`;
     return undefined;
   }
@@ -30,7 +30,7 @@ export function validateGraph(graph: BehaviorGraph): Validation {
   if (g.version !== 1) problems.push(`version must be 1`);
   if (typeof g.id !== "string" || g.id === "") problems.push(`id must be a non-empty string`);
   if (!isRecord(g.model) || !Number.isInteger(g.model.layer) || g.model.layer < 0) problems.push(`model layer must be a non-negative integer`);
-  if (!(g.initial in states)) problems.push(`initial state ${g.initial} is not defined`);
+  if (!Object.hasOwn(states, g.initial)) problems.push(`initial state ${g.initial} is not defined`);
 
   const seen = new Map<number, string>();
   for (const [name, index] of Object.entries(features)) {
@@ -40,24 +40,24 @@ export function validateGraph(graph: BehaviorGraph): Validation {
   }
 
   for (const [name, s] of Object.entries(sensors)) {
-    if (!(s.feature in features)) problems.push(`sensor ${name} reads feature ${s.feature}, which is not defined`);
+    if (!Object.hasOwn(features, s.feature)) problems.push(`sensor ${name} reads feature ${s.feature}, which is not defined`);
     if (!(Number.isFinite(s.on) && Number.isFinite(s.off) && s.on > s.off)) problems.push(`sensor ${name}: on must be greater than off`);
     if (s.hold !== undefined && !(Number.isInteger(s.hold) && s.hold >= 1)) problems.push(`sensor ${name}: hold must be a whole number of tokens, at least 1`);
   }
 
   for (const [name, s] of Object.entries(states)) {
-    if (s.parent !== undefined && !(s.parent in states)) problems.push(`state ${name} has parent ${s.parent}, which is not defined`);
+    if (s.parent !== undefined && !Object.hasOwn(states, s.parent)) problems.push(`state ${name} has parent ${s.parent}, which is not defined`);
     else if (s.parent !== undefined && lineage(g, s.parent).includes(name)) problems.push(`state ${name} is in a parent cycle`);
     for (const [feature, strength] of Object.entries(s.steer ?? {})) {
-      if (!(feature in features)) problems.push(`state ${name} steers with feature ${feature}, which is not defined`);
+      if (!Object.hasOwn(features, feature)) problems.push(`state ${name} steers with feature ${feature}, which is not defined`);
       if (!Number.isFinite(strength) || Math.abs(strength) > max) problems.push(`state ${name}: strength ${strength} for ${feature} must be finite and within ±${max}`);
     }
   }
 
   const transitions = Array.isArray(g.transitions) ? g.transitions : [];
   transitions.forEach((t, i) => {
-    if (t.from !== "*" && !(t.from in states)) problems.push(`transition ${i} starts at ${t.from}, which is not defined`);
-    if (!(t.to in states)) problems.push(`transition ${i} goes to ${t.to}, which is not defined`);
+    if (t.from !== "*" && !Object.hasOwn(states, t.from)) problems.push(`transition ${i} starts at ${t.from}, which is not defined`);
+    if (!Object.hasOwn(states, t.to)) problems.push(`transition ${i} goes to ${t.to}, which is not defined`);
     const p = isRecord(t.when) ? triggerProblem(t.when, g) : "trigger must be an object";
     if (p) problems.push(`transition ${i}: ${p}`);
   });

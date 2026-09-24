@@ -90,7 +90,7 @@ function toBase64(v: Float32Array): string {
   return out;
 }
 
-function fromBase64(text: string, dims: number, what: string): Float32Array {
+export function fromBase64(text: string, dims: number, what: string): Float32Array {
   const clean = text.replace(/=+$/, "");
   if (/[^A-Za-z0-9+/]/.test(clean)) throw new Error(`${what} is not valid base64`);
   const bytes = new Uint8Array(Math.floor((clean.length * 3) / 4));
