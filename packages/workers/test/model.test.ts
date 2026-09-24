@@ -60,7 +60,9 @@ describe("ModelWorker", () => {
     const w = new ModelWorker({ model });
     const { events, emit } = collect();
     await w.run(cmd("hi"), emit);
-    expect(events).toContainEqual(expect.objectContaining({ type: "update", update: expect.objectContaining({ sessionUpdate: "notice", severity: "error" }) }));
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "update", update: expect.objectContaining({ sessionUpdate: "notice", severity: "error", description: expect.stringContaining("gateway unauthorized") }) }),
+    );
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });
 
@@ -87,5 +89,22 @@ describe("ModelWorker", () => {
     w.cancel("s1", "t1");
     await done;
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "cancelled" });
+  });
+});
+
+describe("ModelWorker finish reasons", () => {
+  it("WK2.6 unmapped finish reasons end the turn normally", async () => {
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: simulateReadableStream({
+          chunks: [{ type: "finish" as const, finishReason: { unified: "other" as const, raw: "other" }, usage }],
+        }),
+      }),
+    });
+    const w = new ModelWorker({ model });
+    const events: WorkerEvent[] = [];
+    await w.run(cmd("hi"), (e) => void events.push(e));
+    expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
+    expect(() => w.permission()).not.toThrow();
   });
 });

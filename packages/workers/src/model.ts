@@ -35,6 +35,8 @@ export class ModelWorker implements Worker {
     const messages: ModelMessage[] = [...history, { role: "user", content: promptText(command.prompt) }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
+    // The text stream only reports a generic "no output" error; keep the real cause.
+    let streamError: unknown;
     try {
       const result = streamText({
         model: this.#model,
@@ -42,7 +44,9 @@ export class ModelWorker implements Worker {
         messages,
         abortSignal: abort.signal,
         maxRetries: 0,
-        onError: () => {},
+        onError: ({ error }) => {
+          streamError ??= error;
+        },
       });
       for await (const delta of result.textStream) {
         reply += delta;
@@ -52,7 +56,10 @@ export class ModelWorker implements Worker {
       this.#history.set(command.sessionId, [...messages, { role: "assistant", content: reply }]);
     } catch (e) {
       if (abort.signal.aborted) stopReason = "cancelled";
-      else emit({ type: "update", ...base, update: { sessionUpdate: "notice", severity: "error", title: "Model call failed", description: e instanceof Error ? e.message : String(e) } });
+      else {
+        const cause = streamError ?? e;
+        emit({ type: "update", ...base, update: { sessionUpdate: "notice", severity: "error", title: "Model call failed", description: cause instanceof Error ? cause.message : String(cause) } });
+      }
     } finally {
       this.#aborts.delete(key);
     }
