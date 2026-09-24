@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@harness/memory": "0.0.0",
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "@harness/constrained": "0.0.0"
   }
 }

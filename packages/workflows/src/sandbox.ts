@@ -22,7 +22,7 @@ globalThis.Date = new Proxy(function Date() {}, {
 });
 const __ctx = Object.freeze({
   tool: (name, args) => __effect("tool", JSON.stringify({ name: String(name), args: args === undefined ? {} : args })).then(JSON.parse),
-  ask: (prompt) => __effect("ask", JSON.stringify({ prompt: String(prompt) })).then(JSON.parse),
+  ask: (prompt, constraint) => __effect("ask", JSON.stringify(constraint === undefined ? { prompt: String(prompt) } : { prompt: String(prompt), constraint })).then(JSON.parse),
 });
 `;
 

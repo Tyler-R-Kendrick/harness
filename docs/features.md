@@ -124,7 +124,11 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Cactus WASM); no browser platform layer yet |
 | Tool use through the daemon's permission flow from the ensemble worker | not started | |
 | Execution configurations, performance registry learned from our own runs, value of information | not started | Selection uses published benchmarks only |
-| Constrained generation, code mode, planning; agents and skills; templates and improvement loops | not started | |
+| Constrained decoding (the capability slot): a request can carry a constraint (JSON Schema, grammar, regex, or a template of fixed text and holes that reads back into its holes); the catalog says which generators enforce which kinds, and the ensemble sends a constrained request to those first | built | CN1.1–CN1.3, CT1.11 |
+| Constraint engine on XGrammar(-2) (`@harness/constrained`, WebAssembly, portable): token masks per step, templates as XGrammar-2 structural tags, jump-forward text, compiled once per constraint; a grammar XGrammar cannot parse is an error and the engine recovers on a fresh instance | built | CD1.1–CD1.7 |
+| Enforced where decoding happens: the steerable kernel's own loop masks every step and feeds forced text in one pass (jump-forward, never sampled); transformers.js generators mask through a logits processor; llama.cpp-server gets JSON Schema as structured output | built | SG2.1–SG2.3, TB2.7, TB3.3, LS1.5, CH2.7; real weights RW4.4–RW4.5 |
+| Templates for answers: learning's reflection asks for its JSON Schema; the tool builder answers in a template whose code scaffold is fixed (the model writes the name, description, parameters and body); workflows ask with `ctx.ask(prompt, constraint)` | built | LN1.2, LP4.1–LP4.6, WF1.12 |
+| Planning; agents; improvement loops | not started | |
 
 ### Ensemble members (the shipped catalog; data, not code)
 

@@ -210,6 +210,20 @@
                 ],
                 "additionalProperties": false
               },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
+              },
               "runtime": {
                 "type": "string",
                 "const": "ai-gateway"
@@ -443,6 +457,20 @@
                   "keepLabel"
                 ],
                 "additionalProperties": false
+              },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
               },
               "runtime": {
                 "type": "string",
@@ -694,6 +722,20 @@
                   "keepLabel"
                 ],
                 "additionalProperties": false
+              },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
               },
               "runtime": {
                 "type": "string",
@@ -953,6 +995,20 @@
                 ],
                 "additionalProperties": false
               },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
+              },
               "runtime": {
                 "type": "string",
                 "const": "transformers.js"
@@ -991,6 +1047,14 @@
                       "type": "string"
                     },
                     "additionalProperties": {}
+                  },
+                  "vocab": {
+                    "type": "string",
+                    "enum": [
+                      "byte_level",
+                      "byte_fallback",
+                      "raw"
+                    ]
                   }
                 },
                 "required": [
@@ -1214,6 +1278,20 @@
                   "keepLabel"
                 ],
                 "additionalProperties": false
+              },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
               },
               "runtime": {
                 "type": "string",
@@ -1459,6 +1537,20 @@
                 ],
                 "additionalProperties": false
               },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
+              },
               "runtime": {
                 "type": "string",
                 "const": "onnxruntime"
@@ -1547,6 +1639,14 @@
                       "type": "string"
                     },
                     "additionalProperties": {}
+                  },
+                  "vocab": {
+                    "type": "string",
+                    "enum": [
+                      "byte_level",
+                      "byte_fallback",
+                      "raw"
+                    ]
                   }
                 },
                 "required": [

@@ -5,6 +5,7 @@ import type {
   CompressionConfig,
   CompressRequest,
   Compressor,
+  Constraint,
   Dimensions,
   DocumentParser,
   Embedder,
@@ -114,6 +115,7 @@ export interface ChatBackendRequest {
   readonly images: readonly ImageInput[];
   readonly tools: readonly ToolSpec[];
   readonly maxTokens: number;
+  readonly constraint?: Constraint;
 }
 
 export interface ChatBackend {
@@ -196,7 +198,7 @@ export class VisionChatGenerator implements Generator {
 
   async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
     const { messages, images } = toTemplate(request.messages);
-    const text = stream(this.#backend, { messages, images, tools: request.tools ?? [], maxTokens: request.maxTokens ?? this.#maxTokens });
+    const text = stream(this.#backend, { messages, images, tools: request.tools ?? [], maxTokens: request.maxTokens ?? this.#maxTokens, ...(request.constraint ? { constraint: request.constraint } : {}) });
     const parser = new ChatStreamParser();
     let calls = 0;
     let result: IteratorResult<string, { hitLimit: boolean }>;

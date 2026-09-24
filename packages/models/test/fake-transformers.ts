@@ -18,6 +18,8 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
       convert_tokens_to_ids: (tokens: string[]) => tokens.map((t) => t.length),
       apply_chat_template: (messages: unknown, o: unknown) => (log.push({ name: "chat-template", args: [messages, o] }), "PROMPT"),
       encode: () => [5, 6],
+      // 16 tokens: letters by id (id 1 is "a"), with <|im_end|> at 10 (convert_tokens_to_ids gives it 10 too).
+      get_vocab: () => new Map(Array.from({ length: 16 }, (_, i) => [i === 10 ? "<|im_end|>" : String.fromCharCode(96 + i), i])),
       decode: (ids: number[]) => ids.map((i) => String.fromCharCode(96 + i)).join(""),
     },
   );
@@ -27,7 +29,7 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
       return { input_ids: { dims: [1, opts.promptLength ?? 5] } };
     },
     {
-      tokenizer: {},
+      tokenizer: { get_vocab: () => new Map([["<eos>", 0], ["a", 1], ["b", 2], ["<pad>", 4]]) },
       image_processor: { image_mean: [0.5, 0.5, 0.5], image_std: [0.5, 0.5, 0.5] } as Record<string, unknown>,
       apply_chat_template: (messages: unknown, o: unknown) => {
         log.push({ name: "template", args: [messages, o] });
@@ -37,13 +39,21 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
   );
   let running = 0;
   const visionModel = {
-    generate: async (o: { max_new_tokens: number; streamer: { opts: { callback_function: (t: string) => void } }; stopping_criteria: { interrupted: boolean } }) => {
+    generation_config: { eos_token_id: [0] },
+    generate: async (o: { max_new_tokens: number; streamer: { opts: { callback_function: (t: string) => void } }; stopping_criteria: { interrupted: boolean }; logits_processor?: { _call(ids: bigint[][], logits: { data: Float32Array }): unknown }[] }) => {
       running++;
       if (running > 1) throw new Error("two generations ran at once");
       let n = 0;
+      const ids: bigint[] = [7n, 7n];
       for (const t of opts.generated ?? ["Hel", "lo"]) {
         await Promise.resolve();
         if (o.stopping_criteria.interrupted) break;
+        // Each step: processors see the sequence so far and the logits, and the best logit is taken.
+        const logits = { data: new Float32Array(5).fill(1) };
+        for (const p of o.logits_processor ?? []) p._call([ids], logits);
+        const best = logits.data.indexOf(Math.max(...logits.data));
+        log.push({ name: "step", args: [Array.from(logits.data), best] });
+        ids.push(BigInt(best));
         o.streamer.opts.callback_function(t);
         n++;
       }
@@ -85,6 +95,8 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
         this.interrupted = true;
       }
     },
+    LogitsProcessor: class {},
+    LogitsProcessorList: class extends Array {},
     TextStreamer: class {
       opts: unknown;
       constructor(_t: unknown, o: unknown) {

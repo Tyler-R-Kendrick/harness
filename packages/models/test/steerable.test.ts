@@ -180,3 +180,61 @@ describe("behavior hook", () => {
     expect(hook.at(Float32Array.from([3, 0]))).toEqual({ steering: Float32Array.from([0, -2]), state: { state: "guarded", from: "calm", cause: "sensor threat on" } });
   });
 });
+
+describe("constrained steered generation", () => {
+  /** A fake constraint: allows only the ids in `allow` at each step, forces text after the first token, and is done after `doneAfter` tokens. */
+  function constraint(steps: number[][], forced: Record<number, string> = {}) {
+    const accepted: number[] = [];
+    return {
+      accepted,
+      tc: {
+        mask(logits: Float32Array) {
+          const allow = steps[accepted.length] ?? [0];
+          for (let i = 0; i < logits.length; i++) if (!allow.includes(i)) logits[i] = -Infinity;
+        },
+        accept(token: number) {
+          if (!(steps[accepted.length] ?? [0]).includes(token)) return false;
+          accepted.push(token);
+          return true;
+        },
+        forced: () => forced[accepted.length] ?? "",
+        get done() {
+          return accepted.at(-1) === 0;
+        },
+        dispose() {},
+      },
+    };
+  }
+  const withText: TokenizerLike = { ...tokenizer, encodeText: (t) => [...t].map((ch) => VOCAB.indexOf(ch)) };
+
+  it("SG2.1 a constrained request masks each step's logits and accepts every token it samples", async () => {
+    const c = constraint([[2], [3], [0]]);
+    const session = new FakeSession([1, 1, 1, 1]);
+    const g = new SteeredGenerator({ session, tokenizer: withText, constrain: async () => c.tc });
+    const events = await collect(g.generate({ messages: [{ role: "user", content: "a" }], constraint: { type: "regex", pattern: "bc" } }));
+    expect(text(events)).toBe("bc");
+    expect(c.accepted).toEqual([2, 3, 0]);
+    expect(events.at(-1)).toEqual({ type: "finish", reason: "stop" });
+  });
+
+  it("SG2.2 text the constraint forces is fed in one pass instead of sampled token by token", async () => {
+    const c = constraint([[1], [2], [3], [4], [0]], { 1: "bc" });
+    const session = new FakeSession([1, 4, 0]);
+    const g = new SteeredGenerator({ session, tokenizer: withText, constrain: async () => c.tc });
+    const events = await collect(g.generate({ messages: [{ role: "user", content: "a" }], constraint: { type: "regex", pattern: "abc ?" } }));
+    expect(text(events)).toBe("abc ");
+    expect(session.calls.map((call) => call.ids)).toEqual([[1], [1, 2, 3], [4]]);
+    expect(c.accepted).toEqual([1, 2, 3, 4, 0]);
+  });
+
+  it("SG2.3 forced text is fed only as far as the constraint takes it, and a generator without an engine ignores constraints", async () => {
+    const c = constraint([[1], [2], [0]], { 1: "bc" });
+    const session = new FakeSession([1, 0]);
+    const events = await collect(new SteeredGenerator({ session, tokenizer: withText, constrain: async () => c.tc }).generate({ messages: [{ role: "user", content: "a" }], constraint: { type: "regex", pattern: "ab" } }));
+    expect(text(events)).toBe("ab");
+    expect(session.calls[1]!.ids).toEqual([1, 2]);
+    const plain = new FakeSession([3, 0]);
+    expect(text(await collect(new SteeredGenerator({ session: plain, tokenizer }).generate({ messages: [{ role: "user", content: "a" }], constraint: { type: "regex", pattern: "b" } })))).toBe("c");
+  });
+});
+

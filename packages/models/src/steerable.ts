@@ -1,6 +1,6 @@
 import { Mutex } from "async-mutex";
 import { ChatStreamParser } from "@harness/cognitive";
-import type { ChatMessage, GenerateRequest, GenerationEvent, Generator, ToolSpec } from "@harness/cognitive";
+import type { ChatMessage, Constraint, GenerateRequest, GenerationEvent, Generator, TokenConstraint, ToolSpec } from "@harness/cognitive";
 import type { BehaviorEngine } from "@harness/behavior";
 
 /**
@@ -23,6 +23,10 @@ export interface SteerableSession {
 
 export interface TokenizerLike {
   encodeChat(messages: readonly ChatMessage[], tools?: readonly ToolSpec[]): number[];
+  /** Plain text to tokens (no special tokens); needed to feed text a constraint forces. */
+  encodeText?(text: string): number[];
+  /** Every token in id order; needed to build constraints for this tokenizer. */
+  vocabulary?(): readonly string[];
   decode(ids: readonly number[]): string;
   readonly endTokens: readonly number[];
 }
@@ -87,6 +91,8 @@ export interface SteeredGeneratorOptions {
   readonly topP?: number;
   readonly random?: () => number;
   readonly maxTokens?: number;
+  /** Constrained decoding (see @harness/constrained): a constrained request is decoded under its constraint. */
+  readonly constrain?: (constraint: Constraint) => Promise<TokenConstraint>;
 }
 
 export class SteeredGenerator implements Generator {
@@ -111,8 +117,17 @@ export class SteeredGenerator implements Generator {
   }
 
   async *#run(request: GenerateRequest): AsyncIterable<GenerationEvent> {
-    const { session, tokenizer, hook } = this.#o;
     const max = request.maxTokens ?? this.#o.maxTokens ?? 256;
+    const constraint = request.constraint && this.#o.constrain ? await this.#o.constrain(request.constraint) : undefined;
+    try {
+      yield* this.#decode(request, max, constraint);
+    } finally {
+      constraint?.dispose();
+    }
+  }
+
+  async *#decode(request: GenerateRequest, max: number, constraint: TokenConstraint | undefined): AsyncIterable<GenerationEvent> {
+    const { session, tokenizer, hook } = this.#o;
     session.reset();
     let input = tokenizer.encodeChat(request.messages, request.tools);
     let steer = hook?.initial();
@@ -137,9 +152,20 @@ export class SteeredGenerator implements Generator {
         steer = r.steering;
       }
       sink = false;
+      constraint?.mask(logits);
       const next = sample(logits, this.#o.temperature ?? 0, this.#o.topP ?? 1, this.#o.random ?? Math.random);
-      if (tokenizer.endTokens.includes(next)) break;
+      constraint?.accept(next);
+      if (tokenizer.endTokens.includes(next) || constraint?.done) break;
       generated.push(next);
+      // Jump forward: text the constraint forces is fed with this token in one pass, never sampled.
+      const taken: number[] = [];
+      if (constraint && tokenizer.encodeText) {
+        for (const id of tokenizer.encodeText(constraint.forced())) {
+          if (!constraint.accept(id)) break;
+          taken.push(id);
+        }
+      }
+      generated.push(...taken);
       const text = tokenizer.decode(generated);
       // A byte-level token can end mid-character (decoded as U+FFFD); wait for the rest.
       if (!text.endsWith("\uFFFD")) {
@@ -148,7 +174,7 @@ export class SteeredGenerator implements Generator {
         if (delta) yield* emit(parser.push(delta));
       }
       if (generated.length >= max) break;
-      input = [next];
+      input = [next, ...taken];
     }
     const rest = tokenizer.decode(generated).slice(emitted.length);
     if (rest) yield* emit(parser.push(rest));

@@ -235,6 +235,18 @@ require("node:http").createServer((req, res) => {
     await close();
   });
 
+  it("CH2.7 a constrained request to the kernel is decoded under its constraint (XGrammar over the tokenizer's vocabulary)", async () => {
+    const files = { [KERNEL.model]: kernelOnnx() };
+    const ort = fakeOrt();
+    const m = { ...kernel(files), constraints: ["regex"], run: { ...KERNEL, vocab: "raw" } } as ReturnType<typeof kernel>;
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(m), fetch: fakeHub(files), transformers: fakeTransformers().module, onnxruntime: ort.runtime });
+    let reply = "";
+    // the model would say "a" (token 1); the constraint allows only "b"
+    for await (const e of ensemble.generate({ messages: [{ role: "user", content: "hi" }], constraint: { type: "regex", pattern: "b" } }, "steered-chat")) if (e.type === "text") reply += e.text;
+    expect(reply).toBe("b");
+    await close();
+  });
+
   it("CH2.6 with a behavior pack the kernel steers by the pack's current state", async () => {
     const graph = defineGraph({
       version: 1,

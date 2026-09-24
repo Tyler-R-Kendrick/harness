@@ -98,6 +98,8 @@ describe("workflow library and host", () => {
     const ensemble = { generate: async function* (request: unknown, task: unknown) { asked.push([request, task]); yield { type: "reasoning", text: "hmm" }; yield { type: "text", text: "Yes" }; yield { type: "text", text: "." }; } };
     expect(await askEnsemble(ensemble as never)("Ready?")).toBe("Yes.");
     expect(asked).toEqual([[{ messages: [{ role: "user", content: "Ready?" }] }, "chat"]]);
+    await askEnsemble(ensemble as never)("Ready?", { type: "regex", pattern: "Yes\\." });
+    expect(asked[1]).toEqual([{ messages: [{ role: "user", content: "Ready?" }], constraint: { type: "regex", pattern: "Yes\\." } }, "chat"]);
     const library = new MemoryLibrary([welcome, greet]);
     expect((await library.list()).map((w) => w.name)).toEqual(["greet", "welcome"]);
     await library.put({ ...greet, name: "a-first" });

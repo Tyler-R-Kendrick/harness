@@ -20,7 +20,9 @@
     "@harness/memory": "0.0.0",
     "@harness/learning": "0.0.0",
     "@harness/workflows": "0.0.0",
-    "@harness/learning-plugins": "0.0.0"
+    "@harness/learning-plugins": "0.0.0",
+    "@harness/constrained": "0.0.0",
+    "@mlc-ai/web-xgrammar": "0.1.27"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.5.0",

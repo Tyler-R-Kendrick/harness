@@ -23,6 +23,9 @@
       "path": "packages/workflows"
     },
     {
+      "path": "packages/constrained"
+    },
+    {
       "path": "packages/learning-plugins"
     },
     {

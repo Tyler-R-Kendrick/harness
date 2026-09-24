@@ -82,6 +82,26 @@ describe("transformers.js backends", () => {
     expect(log.filter((l) => l.name === "processor")[1]!.args).toEqual(["PROMPT"]);
   });
 
+  it("TB2.7 a constrained request masks the logits of every step, accepting each generated token; the vocabulary comes from the tokenizer", async () => {
+    const { module, log } = fakeTransformers({ generated: ["a", "b", "!"] });
+    const vocabularies: unknown[] = [];
+    const accepted: number[] = [];
+    let disposed = 0;
+    const constrainer = async (v: unknown) => (
+      vocabularies.push(v),
+      async () => ({ mask: (l: Float32Array) => l.forEach((_, i) => (l[i] = i === [1, 2, 0][accepted.length] ? 1 : -Infinity)), accept: (id: number) => (accepted.push(id), true), forced: () => "", done: false, dispose: () => void disposed++ })
+    );
+    const b = await loadVisionChatBackend({ repo: "r/vision", revision: "abc", module, modelClass: "AcmeVisionForConditionalGeneration", dtype: "q4", constrainer });
+    expect(vocabularies).toEqual([{ tokens: ["<eos>", "a", "b", "", "<pad>"], stopTokens: [0] }]);
+    await b.generate({ messages: [], images: [], tools: [], maxTokens: 5, constraint: { type: "regex", pattern: "ab" } }, () => {}, () => false);
+    expect(log.filter((l) => l.name === "step").map((l) => l.args[1])).toEqual([1, 2, 0]);
+    expect(accepted).toEqual([1, 2]);
+    expect(disposed).toBe(1);
+    // unconstrained requests pass no processor
+    await b.generate({ messages: [], images: [], tools: [], maxTokens: 5 }, () => {}, () => false);
+    expect(log.filter((l) => l.name === "step").slice(3).map((l) => (l.args[0] as number[]).every((x) => x === 1))).toEqual([true, true, true]);
+  });
+
   it("TB2.6 a model class transformers.js does not have is an error", async () => {
     await expect(loadVisionChatBackend({ repo: "r/vision", revision: "abc", module: fakeTransformers().module, modelClass: "NoSuchModel", dtype: "q4" })).rejects.toThrow("transformers.js has no model class NoSuchModel");
   });
@@ -103,11 +123,13 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
   function fakeTokenizerModule() {
     const log: { name: string; args: unknown[] }[] = [];
     const vocab: Record<string, number> = { "<|im_end|>": 7, "<|endoftext|>": 8, "<eos>": 9 };
+    const get_vocab = () => new Map(Object.entries(vocab));
     const tokenizer = {
       apply_chat_template: (messages: unknown, o: unknown) => (log.push({ name: "template", args: [messages, o] }), "PROMPT"),
       encode: (text: string, o: unknown) => (log.push({ name: "encode", args: [text, o] }), [1, 2, 3]),
       decode: (ids: number[], o: unknown) => (log.push({ name: "decode", args: [ids, o] }), ids.join(",")),
       convert_tokens_to_ids: (tokens: string[]) => tokens.map((t) => vocab[t] ?? 0),
+      get_vocab,
     };
     const module = {
       env: {} as Record<string, unknown>,
@@ -147,6 +169,14 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
     expect(tok.decode([4, 5])).toBe("4,5");
     expect(log[3]).toEqual({ name: "decode", args: [[4, 5], { skip_special_tokens: false }] });
     expect(tok.endTokens).toEqual([7, 8]);
+  });
+
+  it("TB3.3 the chat tokenizer encodes plain text without special tokens and lists its vocabulary in id order", async () => {
+    const { module, log } = fakeTokenizerModule();
+    const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<eos>"] });
+    expect(tok.encodeText!("hi")).toEqual([1, 2, 3]);
+    expect(log.at(-1)).toEqual({ name: "encode", args: ["hi", { add_special_tokens: false }] });
+    expect(tok.vocabulary!().slice(7)).toEqual(["<|im_end|>", "<|endoftext|>", "<eos>"]);
   });
 
   it("TB3.2 end tokens are the ones named; without tools none are templated; images are refused", async () => {

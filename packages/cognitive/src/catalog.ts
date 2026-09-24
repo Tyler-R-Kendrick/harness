@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CONSTRAINT_TYPES } from "./constraint.ts";
 import { LOCALITIES, PLATFORMS, PORT_KINDS, TASK_CATEGORIES, TASK_PORTS } from "./models.ts";
 import type { BenchmarkResult, RUNTIMES, TaskCategory } from "./models.ts";
 import { BytesSchema, CommitShaSchema, DimensionsSchema, PositiveBytesSchema, Sha256Schema } from "./units.ts";
@@ -22,6 +23,8 @@ const Artifact = z.strictObject({
   files: z.array(z.strictObject({ path: id, bytes: PositiveBytesSchema, sha256: Sha256Schema })).min(1).readonly(),
 });
 
+/** How a tokenizer's tokens encode text (for token-level constraints): GPT-2 byte mapping, SentencePiece byte fallback, or plain text. */
+const vocab = z.enum(["byte_level", "byte_fallback", "raw"]);
 /** Chat-template options passed through to the model's template (e.g. turning thinking off). */
 const template = z.record(z.string(), z.unknown());
 const env = z.record(z.string(), z.string());
@@ -46,6 +49,7 @@ const RUN = {
     /** Processors that take (images, text) rather than (text, images). */
     imagesFirst: z.boolean().exactOptional(),
     template: template.exactOptional(),
+    vocab: vocab.exactOptional(),
   }),
   /** llama.cpp's llama-server on a GGUF file (and its multimodal projector). */
   "llama.cpp-server": z.strictObject({ model: id, projector: id.exactOptional(), args: z.array(z.string()).exactOptional() }),
@@ -60,6 +64,7 @@ const RUN = {
     decoder: z.strictObject({ layers: z.int().positive(), kvHeads: z.int().positive(), headSize: z.int().positive(), hidden: z.int().positive() }),
     endTokens: z.array(id).min(1),
     template: template.exactOptional(),
+    vocab: vocab.exactOptional(),
   }),
 } satisfies Record<(typeof RUNTIMES)[number], z.ZodType>;
 
@@ -83,6 +88,8 @@ const Base = z.strictObject({
   artifact: Artifact.exactOptional(),
   embedding: Embedding.exactOptional(),
   compression: Compression.exactOptional(),
+  /** Kinds of constraint the model's runtime enforces while decoding (a generator's). */
+  constraints: z.array(z.enum(CONSTRAINT_TYPES)).min(1).readonly().exactOptional(),
 });
 
 const Model = z
@@ -103,6 +110,15 @@ const Model = z
     // A category's settings come exactly with its port, so a host can read the port from them.
     if (m.ports.includes("embedder") !== (m.embedding !== undefined)) issue("an embedder, and only an embedder, says how it is prompted and which sizes it has", "embedding");
     if (m.ports.includes("compressor") !== (m.compression !== undefined)) issue("a compressor, and only a compressor, gives its window and subword style", "compression");
+    if (m.constraints && !m.ports.includes("generator")) issue("only a generator enforces constraints", "constraints");
+    if (m.constraints) {
+      // Token-level runtimes mask with XGrammar and must say how their tokens encode text; llama-server enforces JSON Schema itself; the rest cannot enforce.
+      if (m.runtime === "transformers.js" || m.runtime === "onnxruntime") {
+        if (!m.run.vocab) issue("a model that enforces constraints token by token names its vocabulary encoding", "run", "vocab");
+      } else if (m.runtime === "llama.cpp-server") {
+        if (m.constraints.some((c) => c !== "json-schema")) issue("llama.cpp-server enforces only JSON Schema constraints here", "constraints");
+      } else issue(`${m.runtime} models cannot enforce constraints`, "constraints");
+    }
     if (m.runtime === "transformers.js" && (m.ports.includes("generator") || m.ports.includes("document-parser")) !== (m.run.modelClass !== undefined)) {
       issue("a transformers.js generator or document parser, and only those, names its model class", "run", "modelClass");
     }

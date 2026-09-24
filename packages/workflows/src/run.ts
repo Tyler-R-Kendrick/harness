@@ -1,12 +1,15 @@
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
+import { ConstraintSchema } from "@harness/cognitive";
+import type { Constraint } from "@harness/cognitive";
 import { evaluate } from "./sandbox.ts";
 import type { EffectOp } from "./sandbox.ts";
 
 /** What a workflow can do outside its sandbox. The host decides what a tool call reaches. */
 export interface Effects {
   tool(name: string, args: Readonly<Record<string, unknown>>): Promise<unknown>;
-  ask(prompt: string): Promise<string>;
+  /** A question to a model; with a constraint (a template, JSON Schema...) the answer follows it where the model can enforce it. */
+  ask(prompt: string, constraint?: Constraint): Promise<string>;
 }
 
 const FORMAT = "harness.workflow-run/v1";
@@ -75,8 +78,15 @@ export async function runWorkflow(options: {
       }
       return entry.result;
     }
-    const r = request as { name: string; args: Record<string, unknown> } & { prompt: string };
-    const result = JSON.parse(JSON.stringify((op === "tool" ? await effects.tool(r.name, r.args) : await effects.ask(r.prompt)) ?? null)) as unknown;
+    const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: unknown };
+    const perform = async () => {
+      if (op === "tool") return effects.tool(r.name, r.args);
+      if (r.constraint === undefined) return effects.ask(r.prompt);
+      const constraint = ConstraintSchema.safeParse(r.constraint);
+      if (!constraint.success) throw new Error(`ctx.ask was given a constraint that is not one: ${JSON.stringify(r.constraint)}`);
+      return effects.ask(r.prompt, constraint.data);
+    };
+    const result = JSON.parse(JSON.stringify((await perform()) ?? null)) as unknown;
     journal = { ...journal, entries: [...journal.entries, { op, request, result }] };
     await options.journal.save(journal);
     performed++;

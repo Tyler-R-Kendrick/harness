@@ -1,7 +1,7 @@
 import type * as TransformersModule from "@huggingface/transformers";
 import { Mutex } from "async-mutex";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "./adapters.ts";
-import type { ChatMessage } from "@harness/cognitive";
+import type { ChatMessage, Constraint, TokenConstraint } from "@harness/cognitive";
 import type { TokenizerLike } from "./steerable.ts";
 
 /**
@@ -36,6 +36,19 @@ export function applyImageProcessorDefaults(imageProcessor: Record<string, unkno
   if (imageProcessor && imageProcessor["do_normalize"] === undefined && Array.isArray(imageProcessor["image_mean"]) && Array.isArray(imageProcessor["image_std"])) {
     imageProcessor["do_normalize"] = true;
   }
+}
+
+/**
+ * Builds constraints for a tokenizer's vocabulary (see @harness/constrained); the host
+ * brings it, with how the model's tokens encode text from its catalog entry.
+ */
+export type Constrainer = (vocabulary: { readonly tokens: readonly string[]; readonly stopTokens: readonly number[] }) => Promise<(constraint: Constraint) => Promise<TokenConstraint>>;
+
+/** A tokenizer's tokens in id order (ids no token has are empty). */
+export function vocabularyOf(tokenizer: { get_vocab(): Map<string, number> }): string[] {
+  const tokens: string[] = [];
+  for (const [token, id] of tokenizer.get_vocab()) tokens[id] = token;
+  return Array.from(tokens, (t) => t ?? "");
 }
 
 /** Serialize calls: one ONNX session must not run two generations at once. */
@@ -99,15 +112,37 @@ export async function loadVisionChatBackend(
     readonly templateOptions?: Readonly<Record<string, unknown>>;
     /** Some processors (Pixtral-style) take (images, text); most take (text, images). */
     readonly imagesFirst?: boolean;
+    /** Constrained decoding: a constrained request's logits are masked at every step. */
+    readonly constrainer?: Constrainer;
   },
 ): Promise<ChatBackend> {
   const t = await runtime(options);
   const from = { revision: options.revision };
   const processor = await t.AutoProcessor.from_pretrained(options.repo, from);
   applyImageProcessorDefaults((processor as unknown as { image_processor?: Record<string, unknown> }).image_processor);
-  const ModelClass = (t as unknown as Record<string, unknown>)[options.modelClass] as { from_pretrained(repo: string, o: object): Promise<{ generate(o: object): Promise<{ dims: number[] }> }> } | undefined;
+  const ModelClass = (t as unknown as Record<string, unknown>)[options.modelClass] as
+    | { from_pretrained(repo: string, o: object): Promise<{ generate(o: object): Promise<{ dims: number[] }>; generation_config?: { eos_token_id?: number | number[] } }> }
+    | undefined;
   if (!ModelClass) throw new Error(`transformers.js has no model class ${options.modelClass}`);
   const model = await ModelClass.from_pretrained(options.repo, { ...from, dtype: options.dtype, ...(options.device ? { device: options.device } : {}) });
+  const eos = model.generation_config?.eos_token_id ?? [];
+  const constrain = options.constrainer && (await options.constrainer({ tokens: vocabularyOf(processor.tokenizer as never), stopTokens: Array.isArray(eos) ? eos : [eos] }));
+  /** Masks each step's logits by the constraint, accepting the tokens generated since the last step. */
+  const processorFor = (constraint: TokenConstraint) => {
+    let seen: number | undefined;
+    const p = Object.assign(new t.LogitsProcessor(), {
+      _call(inputIds: bigint[][], logits: { data: Float32Array }) {
+        const ids = inputIds[0]!;
+        for (let i = seen ?? ids.length; i < ids.length; i++) constraint.accept(Number(ids[i]));
+        seen = ids.length;
+        constraint.mask(logits.data);
+        return logits;
+      },
+    });
+    const list = new t.LogitsProcessorList();
+    list.push(p as never);
+    return list;
+  };
   const queue = serial();
   return {
     generate: (request: ChatBackendRequest, onText, shouldStop) =>
@@ -130,8 +165,13 @@ export async function loadVisionChatBackend(
             if (shouldStop()) stopper.interrupt();
           },
         });
-        const output = await model.generate({ ...inputs, max_new_tokens: request.maxTokens, do_sample: false, streamer, stopping_criteria: stopper });
-        return { hitLimit: output.dims.at(-1)! - inputs.input_ids.dims.at(-1)! >= request.maxTokens };
+        const constraint = request.constraint && constrain ? await constrain(request.constraint) : undefined;
+        try {
+          const output = await model.generate({ ...inputs, max_new_tokens: request.maxTokens, do_sample: false, streamer, stopping_criteria: stopper, ...(constraint ? { logits_processor: processorFor(constraint) } : {}) });
+          return { hitLimit: output.dims.at(-1)! - inputs.input_ids.dims.at(-1)! >= request.maxTokens };
+        } finally {
+          constraint?.dispose();
+        }
       }),
   };
 }
@@ -178,5 +218,7 @@ export async function loadChatTokenizer(
       return tokenizer.encode(text, { add_special_tokens: false } as never);
     },
     decode: (ids) => tokenizer.decode([...ids], { skip_special_tokens: false }),
+    encodeText: (text) => tokenizer.encode(text, { add_special_tokens: false } as never),
+    vocabulary: () => vocabularyOf(tokenizer as never),
   };
 }

@@ -7,6 +7,7 @@
 import { base64 } from "@scure/base";
 import { z } from "zod";
 import type { ChatEvent, ToolCall } from "./chat-format.ts";
+import type { Constraint } from "./constraint.ts";
 import type { EmbedInput } from "./embedding.ts";
 import { ProbabilitySchema } from "./units.ts";
 import type { Dimensions, Probability } from "./units.ts";
@@ -140,6 +141,8 @@ export interface GenerateRequest {
   readonly messages: readonly ChatMessage[];
   readonly tools?: readonly ToolSpec[];
   readonly maxTokens?: number;
+  /** What the output must look like; enforced by generators that can (see the catalog), and a preference for the rest. */
+  readonly constraint?: Constraint;
 }
 
 export interface Generator {

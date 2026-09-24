@@ -37,6 +37,7 @@ describe("learning from sessions", () => {
     await learning.observe({ ...deploy, id: "t2" });
     expect(generator.requests[0]!.messages[0]).toEqual({ role: "system", content: "Distill lessons as JSON." });
     expect(generator.requests[0]!.maxTokens).toBe(512);
+    expect(generator.requests[0]!.constraint).toMatchObject({ type: "json-schema", schema: { type: "object", required: ["operations"] } });
     expect(JSON.parse(String(generator.requests[1]!.messages[1]!.content))).toMatchObject({ session: { task: deploy.task, outcome: deploy.outcome }, lessons: [{ id: "l1", title: "staging deploy migrations" }] });
     expect(seen).toHaveLength(2);
   });

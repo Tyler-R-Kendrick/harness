@@ -48,3 +48,5 @@ export { invokeCognitive, mirrorCapabilities } from "./service.ts";
 export type { CognitiveOperation, ExtensionOperation } from "./service.ts";
 export { bytes, BytesSchema, commitSha, CommitShaSchema, dimensions, DimensionsSchema, PositiveBytesSchema, probability, ProbabilitySchema, sha256, Sha256Schema, similarity, SimilaritySchema, sumBytes } from "./units.ts";
 export type { Bytes, CommitSha, Dimensions, Probability, Sha256, Similarity } from "./units.ts";
+export { CONSTRAINT_TYPES, ConstraintSchema, readTemplate } from "./constraint.ts";
+export type { Constraint, ConstraintType, TemplateConstraint, TokenConstraint } from "./constraint.ts";

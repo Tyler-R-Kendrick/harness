@@ -125,5 +125,16 @@ describe("durable workflows", () => {
     // and a run that exhausted its sandbox does not break the next one
     expect(await run("async function workflow() { return 1; }")).toMatchObject({ status: "completed", output: 1 });
   });
+
+  it("WF1.12 a question can carry a constraint, which is parsed and journaled with it", async () => {
+    const asked: unknown[] = [];
+    const fx: Effects = { tool: async () => null, ask: async (prompt, constraint) => (asked.push([prompt, constraint]), "Paris") };
+    const journal = new MemoryStorage();
+    const code = "async function workflow(i, ctx) { return ctx.ask('capital?', { type: 'regex', pattern: '[A-Z][a-z]+' }); }";
+    expect(await runWorkflow({ name: "w", code, input: {}, effects: fx, journal })).toMatchObject({ status: "completed", output: "Paris" });
+    expect(asked).toEqual([["capital?", { type: "regex", pattern: "[A-Z][a-z]+" }]]);
+    expect(await journal.load()).toMatchObject({ entries: [{ op: "ask", request: { prompt: "capital?", constraint: { type: "regex", pattern: "[A-Z][a-z]+" } } }] });
+    await expect(runWorkflow({ name: "w", code: "async function workflow(i, ctx) { return ctx.ask('x', { type: 'telepathy' }); }", input: {}, effects: fx, journal: new MemoryStorage() })).rejects.toThrow(/not one/);
+  });
 });
 

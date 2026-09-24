@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Ensemble, ToolSpec } from "@harness/cognitive";
+import { readTemplate } from "@harness/cognitive";
+import type { Ensemble, TemplateConstraint, ToolSpec } from "@harness/cognitive";
 import { TARGETS } from "@harness/learning";
 import type { MaterializeInput, Materialized, Materializer } from "@harness/learning";
 import { checkWorkflow, WorkflowSchema } from "@harness/workflows";
@@ -18,17 +19,45 @@ type Draft = z.output<typeof Draft>;
 /** Tool names the code calls with a literal name: `ctx.tool("name", ...)`. */
 const calledTools = (code: string) => [...code.matchAll(/ctx\s*\.\s*tool\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2]!);
 
-/** Check a draft: JSON of the right shape, code that compiles, and only tools that exist. */
+const HEADER = "async function workflow(input, ctx) {\n";
+const FOOTER = "\n}\n";
+
+/**
+ * The answer's template: the model writes only the name, the description, the input's
+ * JSON Schema and the workflow's body; the rest (labels, the code fence and the function
+ * header and footer) is fixed. Generators that enforce templates put the fixed text in
+ * the output themselves, never sampling it, and hold each hole to its constraint.
+ */
+export const TOOL_TEMPLATE: TemplateConstraint = {
+  type: "template",
+  parts: [
+    "name: ",
+    { hole: "name", constraint: { type: "regex", pattern: "[a-z0-9]+(-[a-z0-9]+)*" } },
+    "\ndescription: ",
+    { hole: "description", constraint: { type: "regex", pattern: "[^\\n]+" } },
+    "\nparameters: ",
+    { hole: "parameters", constraint: { type: "json-schema", schema: { type: "object" } } },
+    `\n\`\`\`js\n${HEADER}`,
+    { hole: "body" },
+    `${FOOTER}\`\`\`\n`,
+  ],
+};
+
+/** Check a draft: it follows the template, the code compiles, and it calls only tools that exist. */
 async function review(raw: string, tools: readonly ToolSpec[]): Promise<{ draft: Draft } | { problem: string }> {
-  const start = raw.indexOf("{");
-  if (start < 0) return { problem: "the answer held no JSON object" };
-  let json: unknown;
+  let holes: Record<string, string>;
   try {
-    json = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1));
+    holes = readTemplate(TOOL_TEMPLATE, raw.trim() + "\n");
   } catch (e) {
-    return { problem: `the answer was not valid JSON: ${(e as Error).message}` };
+    return { problem: `the answer does not follow the template: ${(e as Error).message}` };
   }
-  const parsed = Draft.safeParse(json);
+  let parameters: unknown;
+  try {
+    parameters = JSON.parse(holes["parameters"]!);
+  } catch (e) {
+    return { problem: `the parameters are not JSON: ${(e as Error).message}` };
+  }
+  const parsed = Draft.safeParse({ name: holes["name"], description: holes["description"], parameters, code: `${HEADER}${holes["body"]}${FOOTER}` });
   if (!parsed.success) return { problem: `the answer was not a tool\n${z.prettifyError(parsed.error)}` };
   const checked = await checkWorkflow(parsed.data.code);
   if (!checked.ok) return { problem: `the code does not work: ${checked.error}` };
@@ -48,7 +77,7 @@ export function toolBuilder(options: { readonly reasoner: Pick<Ensemble, "genera
   const { system, maxTokens, attempts } = options.settings.toolBuilder;
   const ask = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
     let text = "";
-    for await (const e of options.reasoner.generate({ messages: [...messages], maxTokens }, "coding")) if (e.type === "text") text += e.text;
+    for await (const e of options.reasoner.generate({ messages: [...messages], maxTokens, constraint: TOOL_TEMPLATE }, "coding")) if (e.type === "text") text += e.text;
     return text;
   };
   return {
@@ -72,7 +101,7 @@ export function toolBuilder(options: { readonly reasoner: Pick<Ensemble, "genera
           return { target: TARGETS.tool, name, description, files: workflowFiles(workflow), tool: { name, description, parameters } };
         }
         problems.push(reviewed.problem);
-        messages.push({ role: "assistant", content: raw }, { role: "user", content: `That draft failed its check: ${reviewed.problem}\nAnswer with a corrected JSON object.` });
+        messages.push({ role: "assistant", content: raw }, { role: "user", content: `That draft failed its check: ${reviewed.problem}\nAnswer again, in the same format, with it fixed.` });
       }
       throw new Error(`no usable tool after ${attempts} attempts:\n- ${problems.join("\n- ")}`);
     },

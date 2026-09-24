@@ -183,7 +183,8 @@
         "modelClass": "Qwen3_5ForConditionalGeneration",
         "template": {
           "enable_thinking": false
-        }
+        },
+        "vocab": "byte_level"
       },
       "platforms": [
         "native",
@@ -227,7 +228,13 @@
             "sha256": "98aebedf02fc5414fd1c7f06a6580b42e272600ace9ecd33bfbc479a0c541c64"
           }
         ]
-      }
+      },
+      "constraints": [
+        "json-schema",
+        "grammar",
+        "regex",
+        "template"
+      ]
     },
     {
       "id": "ornith-ai/Ornith-1.5-9B",
@@ -267,7 +274,10 @@
             "sha256": "70c112196e0b7023803c9762752e46d29e612a92c83f995bc3ba1ceb07e8fab6"
           }
         ]
-      }
+      },
+      "constraints": [
+        "json-schema"
+      ]
     },
     {
       "id": "lightonai/LightOnOCR-2-1B",
@@ -409,7 +419,8 @@
         ],
         "template": {
           "enable_thinking": false
-        }
+        },
+        "vocab": "byte_level"
       },
       "platforms": [
         "native"
@@ -427,7 +438,13 @@
             "sha256": "9fddc5a0a7f9c51132c376db8fe44774b17a8e42d721c4d289ade16af87da0bd"
           }
         ]
-      }
+      },
+      "constraints": [
+        "json-schema",
+        "grammar",
+        "regex",
+        "template"
+      ]
     }
   ],
   "preferences": {

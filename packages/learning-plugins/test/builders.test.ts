@@ -6,7 +6,7 @@ import type { Lesson } from "@harness/learning";
 import { MemoryLibrary, WorkflowHost } from "@harness/workflows";
 import type { ToolSpec } from "@harness/cognitive";
 import { MemoryStorage } from "@harness/testkit";
-import { compileProcedure, parsePluginSettings, pluginSettingsJsonSchema, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
+import { compileProcedure, parsePluginSettings, pluginSettingsJsonSchema, skillBuilder, TOOL_TEMPLATE, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
 import { reply, settings as learningSettings, setup } from "../../learning/test/helpers.ts";
 
 const settingsFile = JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")) as Record<string, unknown>;
@@ -92,39 +92,40 @@ describe("skill builder", () => {
 });
 
 describe("tool builder (code mode)", () => {
-  const draft = (code: string, name = "count-words") => JSON.stringify({ name, description: "Counts the words in a text.", parameters: { type: "object", properties: { text: { type: "string" } } }, code });
+  /** An answer in the tool template: the model writes the name, description, parameters and the workflow's body. */
+  const draft = (body: string, name = "count-words") =>
+    `name: ${name}\ndescription: Counts the words in a text.\nparameters: {"type": "object", "properties": {"text": {"type": "string"}}}\n\`\`\`js\nasync function workflow(input, ctx) {\n${body}\n}\n\`\`\`\n`;
 
   it("LP4.1 a model writes the tool as workflow code; it is checked, kept in the library, and runs durably as a tool", async () => {
-    const good = draft(`async function workflow(input, ctx) {
-      if (typeof input.text !== "string") throw new Error("text is required");
-      const saved = await ctx.tool("save_note", { words: input.text.split(/\\s+/).length });
-      return { words: input.text.split(/\\s+/).length, saved };
-    }`);
+    const good = draft(`  if (typeof input.text !== "string") throw new Error("text is required");
+  const saved = await ctx.tool("save_note", { words: input.text.split(/\\s+/).length });
+  return { words: input.text.split(/\\s+/).length, saved };`);
     const s = setup({ reflect: () => good });
     const library = new MemoryLibrary();
     const builder = toolBuilder({ reasoner: s.ensemble, library, settings });
     const made = (await builder.materialize({ purpose: "count the words in a text", lessons: [], tools: [{ name: "save_note", description: "saves a note", parameters: {} }] })) as { tool: ToolSpec; files: unknown[] };
     expect(made.tool).toEqual({ name: "count-words", description: "Counts the words in a text.", parameters: { type: "object", properties: { text: { type: "string" } } } });
     expect(s.generator.requests[0]!.messages[0]).toEqual({ role: "system", content: settings.toolBuilder.system });
+    expect(s.generator.requests[0]!.constraint).toEqual(TOOL_TEMPLATE);
     expect(JSON.parse(String(s.generator.requests[0]!.messages[1]!.content))).toMatchObject({ task: "count the words in a text", tools: [{ name: "save_note" }] });
     expect(await host(library, { save_note: "saved" }).run("count-words", { text: "one two three" }, "r1")).toMatchObject({ status: "completed", output: { words: 3, saved: "saved" } });
   });
 
-  it("LP4.2 drafts that do not compile, use tools that do not exist, or are not JSON are sent back with the reason; after the attempts it gives up", async () => {
-    const drafts = ["no json here", draft("async function workflow( {"), draft(`async function workflow(i, ctx) { return ctx.tool("delete_everything", {}); }`), draft("async function workflow() { return 1; }")];
+  it("LP4.2 drafts that do not compile, use tools that do not exist, or do not follow the template are sent back with the reason; after the attempts it gives up", async () => {
+    const drafts = ["no template here", draft("  return ("), draft(`  return ctx.tool("delete_everything", {});`), draft("  return 1;")];
     const s = setup({ reflect: () => drafts.shift()! });
     const builder = toolBuilder({ reasoner: s.ensemble, library: new MemoryLibrary(), settings: { ...settings, toolBuilder: { ...settings.toolBuilder, attempts: 4 } } });
     await builder.materialize({ purpose: "p", lessons: [], tools: [] });
     const feedback = s.generator.requests.slice(1).map((r) => String(r.messages.at(-1)!.content));
-    expect(feedback[0]).toMatch(/held no JSON object/);
+    expect(feedback[0]).toMatch(/does not follow the template: the output does not start with "name: "/);
     expect(feedback[1]).toMatch(/SyntaxError/);
     expect(feedback[2]).toMatch(/calls tools that are not available: delete_everything/);
-    const stubborn = setup({ reflect: () => "still no json" });
+    const stubborn = setup({ reflect: () => "still no template" });
     await expect(toolBuilder({ reasoner: stubborn.ensemble, library: new MemoryLibrary(), settings }).materialize({ purpose: "p", lessons: [], tools: [] })).rejects.toThrow(/no usable tool after 3 attempts/);
   });
 
   it("LP4.3 on the ladder, a built tool is learned and found again for the task", async () => {
-    const s = setup({ reflect: () => draft("async function workflow(input) { return input.text.length; }", "text-length") });
+    const s = setup({ reflect: () => draft("  return input.text.length;", "text-length") });
     const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings: learningSettings });
     const plugins = new Plugins();
     plugins.use(toolBuilder({ reasoner: s.ensemble, library: new MemoryLibrary(), settings }));
@@ -133,13 +134,13 @@ describe("tool builder (code mode)", () => {
     expect(learning.lessons()).toMatchObject([{ kind: "tool", tool: { name: "text-length" } }]);
   });
 
-  it("LP4.4 answers that are broken JSON or not shaped like a tool are sent back too", async () => {
-    const drafts = ['{"name": "x",', JSON.stringify({ name: "Bad Name", description: "d", parameters: {}, code: "async function workflow() {}" }), draft("async function workflow() { return 1; }")];
+  it("LP4.4 answers whose parameters are not JSON, or whose holes break their constraints, are sent back too", async () => {
+    const drafts = [draft("  return 1;").replace('{"type": "object", "properties": {"text": {"type": "string"}}}', "{oops"), draft("  return 1;", "Bad Name"), draft("  return 1;")];
     const s = setup({ reflect: () => drafts.shift()! });
     await toolBuilder({ reasoner: s.ensemble, library: new MemoryLibrary(), settings }).materialize({ purpose: "p", lessons: [], tools: [] });
     const feedback = s.generator.requests.slice(1).map((r) => String(r.messages.at(-1)!.content));
-    expect(feedback[0]).toMatch(/not valid JSON/);
-    expect(feedback[1]).toMatch(/not a tool[\s\S]*name/);
+    expect(feedback[0]).toMatch(/the parameters are not JSON/);
+    expect(feedback[1]).toMatch(/hole name does not match/);
   });
 });
 
@@ -231,11 +232,11 @@ describe("generated artifacts, exactly", () => {
 });
 
 describe("tool builder, in detail", () => {
-  const draft = (code: string) => JSON.stringify({ name: "t", description: "d", parameters: {}, code });
+  const draft = (body: string) => `name: t\ndescription: d\nparameters: {}\n\`\`\`js\nasync function workflow(input, ctx) {\n${body}\n}\n\`\`\`\n`;
   const lesson: Lesson = { id: "l1", kind: "procedure", title: "how", text: "do it", steps: ["a", "b"], helpful: 0, harmful: 0, sources: [], artifacts: [], memoryId: "m1" };
 
   it("LP4.5 the request carries the task, the tools and the lessons; tool names are found however the call is spaced", async () => {
-    const s = setup({ reflect: () => draft(`async function workflow(i, ctx) { return ctx . tool ( 'missing' , {}); }`) });
+    const s = setup({ reflect: () => draft(`  return ctx . tool ( 'missing' , {});`) });
     const err = await toolBuilder({ reasoner: s.ensemble, library: new MemoryLibrary(), settings: { ...settings, toolBuilder: { ...settings.toolBuilder, attempts: 2 } } })
       .materialize({ purpose: "p", lessons: [lesson], tools: [migrate] })
       .catch((e: Error) => e.message);
@@ -243,9 +244,25 @@ describe("tool builder, in detail", () => {
     expect(s.generator.requests).toHaveLength(2);
     expect(s.generator.requests[1]!.messages.slice(2)).toEqual([
       { role: "assistant", content: expect.stringContaining("missing") },
-      { role: "user", content: "That draft failed its check: the code calls tools that are not available: missing\nAnswer with a corrected JSON object." },
+      { role: "user", content: "That draft failed its check: the code calls tools that are not available: missing\nAnswer again, in the same format, with it fixed." },
     ]);
     expect(err).toBe("no usable tool after 2 attempts:\n- the code calls tools that are not available: missing\n- the code calls tools that are not available: missing");
+  });
+});
+
+describe("the tool template under real constrained decoding", () => {
+  it("LP4.6 XGrammar forces the template's fixed text and accepts a well-formed answer to the end", async () => {
+    const { ConstraintEngine } = await import("@harness/constrained");
+    const { loadXGrammar } = await import("../../constrained/test/xgrammar.ts");
+    const tokens = [...Array.from({ length: 95 }, (_, i) => String.fromCharCode(32 + i)), "\n", "<eos>"];
+    const engine = await ConstraintEngine.create(() => loadXGrammar(), { tokens, stopTokens: [tokens.length - 1] });
+    const m = await engine.matcher(TOOL_TEMPLATE);
+    expect(m.forced()).toBe("name: ");
+    const answer = 'name: count-words\ndescription: Counts words.\nparameters: {"type": "object"}\n```js\nasync function workflow(input, ctx) {\n  return 1;\n}\n```\n';
+    const rejected = [...answer].filter((ch) => !m.accept(tokens.indexOf(ch)));
+    expect(rejected).toEqual([]);
+    expect(m.accept(tokens.length - 1)).toBe(true);
+    expect(m.done).toBe(true);
   });
 });
 

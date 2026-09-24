@@ -25,6 +25,9 @@ const KIND = "lesson";
 const FORMAT = "harness.learning/v1";
 const Saved = z.strictObject({ format: z.literal(FORMAT), next: z.int().positive(), lessons: z.array(LessonSchema) });
 
+/** The reflection's answer format, enforced by generators that can (see the catalog's constraints). */
+const REFLECTION_SCHEMA = z.toJSONSchema(ReflectionSchema, { io: "input" }) as Record<string, unknown>;
+
 const indexText = (l: Pick<Lesson, "title" | "text" | "when">) => `${l.title}: ${l.text}${l.when ? ` (when ${l.when})` : ""}`;
 
 /**
@@ -160,7 +163,8 @@ export class Learning {
   async #generate(content: string): Promise<string> {
     const { system, maxTokens } = this.#settings.reflection;
     let text = "";
-    for await (const e of this.#reasoner.generate({ messages: [{ role: "system", content: system }, { role: "user", content }], maxTokens }, "reasoning")) {
+    const request = { messages: [{ role: "system" as const, content: system }, { role: "user" as const, content }], maxTokens, constraint: { type: "json-schema" as const, schema: REFLECTION_SCHEMA } };
+    for await (const e of this.#reasoner.generate(request, "reasoning")) {
       if (e.type === "text") text += e.text;
     }
     return text;

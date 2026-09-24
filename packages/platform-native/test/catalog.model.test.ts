@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
-import { cosine } from "@harness/cognitive";
+import { cosine, readTemplate } from "@harness/cognitive";
 import type { GenerationEvent, ImageInput, ModelDescriptor, PortKind, PortMap, TaskCategory, ToolSpec } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 import { compressorContract, documentParserContract, embedderContract, generatorContract, routerContract } from "@harness/testkit";
@@ -130,6 +130,21 @@ for (const m of models) {
         );
         expect(events.filter((e) => e.type === "tool-call")).toEqual([{ type: "tool-call", call: { name: "get_weather", arguments: { city: "Lagos" } } }]);
         expect(events.at(-1)).toEqual({ type: "finish", reason: "tool-calls" });
+      });
+
+      it.runIf(m.constraints?.includes("json-schema") === true)("RW4.4 under a JSON Schema constraint the answer is JSON that matches it", async () => {
+        const schema = { type: "object", properties: { city: { type: "string" }, population_millions: { type: "number" } }, required: ["city", "population_millions"], additionalProperties: false };
+        const text = textOf(await collect((await generator()).generate({ messages: [{ role: "user", content: "Name the largest city in Japan and its population in millions, as JSON." }], constraint: { type: "json-schema", schema }, maxTokens: 64 })));
+        const value = JSON.parse(text) as { city: string; population_millions: number };
+        expect(Object.keys(value).sort()).toEqual(["city", "population_millions"]);
+        expect(value.city).toMatch(/Tokyo/i);
+        expect(typeof value.population_millions).toBe("number");
+      });
+
+      it.runIf(m.constraints?.includes("template") === true)("RW4.5 under a template the answer is the template with the holes filled", async () => {
+        const template = { type: "template" as const, parts: ["Capital: ", { hole: "capital", constraint: { type: "regex" as const, pattern: "[A-Z][a-z]+" } }, "\nCountry: France\n"] };
+        const text = textOf(await collect((await generator()).generate({ messages: [{ role: "user", content: "What is the capital of France?" }], constraint: template, maxTokens: 32 })));
+        expect(readTemplate(template, text)).toEqual({ capital: "Paris" });
       });
 
       it.runIf(m.tasks.includes("vision-qa"))("RW4.3 sees an image", async () => {

@@ -43,6 +43,15 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => (byRuntime(c, "cactus-wasm")["colour"] = "blue")).toThrow(/colour/);
   });
 
+  it("CT1.11 constraint enforcement is declared where it can happen: token-level runtimes name their vocabulary encoding, llama-server does JSON Schema, others none", () => {
+    const tokenLevel = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "onnxruntime")!;
+    refused((c) => delete (tokenLevel(c)["run"] as Record<string, unknown>)["vocab"]).toThrow(/names its vocabulary encoding/);
+    refused((c) => (byRuntime(c, "llama.cpp-server")["constraints"] = ["json-schema", "regex"])).toThrow(/enforces only JSON Schema/);
+    refused((c) => (byRuntime(c, "ai-gateway")["constraints"] = ["json-schema"])).toThrow(/only a generator enforces constraints[\s\S]*ai-gateway models cannot enforce constraints/);
+    refused((c) => (tokenLevel(c)["constraints"] = ["telepathy"])).toThrow(/constraints/);
+    expect(MODEL_CATALOG.filter((m) => m.constraints).every((m) => m.ports.includes("generator"))).toBe(true);
+  });
+
   it("CT1.8 run settings belong to the runtime, name files of the artifact, and category settings come exactly with their port", () => {
     refused((c) => ((byRuntime(c, "cactus-wasm")["run"] as Record<string, unknown>)["weights"] = "missing.bin")).toThrow(/missing.bin is not a file of the artifact/);
     refused((c) => ((byRuntime(c, "cactus-wasm")["run"] as Record<string, unknown>)["prefix"] = "Bad-Prefix")).toThrow(/prefix/);

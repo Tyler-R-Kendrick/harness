@@ -43,6 +43,9 @@
       "path": "../workflows"
     },
     {
+      "path": "../constrained"
+    },
+    {
       "path": "../learning-plugins"
     }
   ]

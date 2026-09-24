@@ -20,6 +20,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
 | `packages/workflows` | durable workflows as code: QuickJS sandbox, journaled effects, library, extension | portable |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
+| `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
@@ -40,6 +41,10 @@ branded policies and packs, and template-literal ids (`MemoryId`, `LessonId`). C
 them with their constructor or schema; ESLint forbids casting to them. When a new value
 has an invariant (a range, a unit, a format), give it a refined type rather than
 checking it where it is used.
+
+When a model's answer has a known shape, send a constraint with the request (JSON Schema,
+grammar, regex, or a template of fixed text and holes) rather than asking in prose and
+parsing hopefully: generators that enforce it spend tokens only on the holes.
 
 Node runs TypeScript directly (type stripping), so source must be erasable syntax only:
 no enums, namespaces, parameter properties or decorators. Import siblings with `.ts`.

@@ -218,8 +218,10 @@ export class Ensemble {
     return this.#call(task, "document-parser", (port) => port.parse(request));
   }
 
+  /** A constrained request goes first to generators that enforce that kind of constraint. */
   async *generate(request: GenerateRequest, task: TaskCategory = "chat"): AsyncIterable<GenerationEvent> {
-    const { port } = await this.#use(task, "generator");
+    const kind = request.constraint?.type;
+    const { port } = await this.#use(task, "generator", kind ? (d) => d.constraints?.includes(kind) === true : undefined);
     yield* port.generate(request);
   }
 
@@ -251,8 +253,10 @@ export class Ensemble {
     }
   }
 
-  async #use<K extends PortKind>(task: TaskCategory, kind: K): Promise<{ id: string; port: PortMap[K] }> {
-    for (const candidate of this.candidates(task)) {
+  async #use<K extends PortKind>(task: TaskCategory, kind: K, prefer?: (d: ModelDescriptor) => boolean): Promise<{ id: string; port: PortMap[K] }> {
+    const ranked = this.candidates(task);
+    const ordered = prefer ? [...ranked.filter((c) => prefer(c.descriptor)), ...ranked.filter((c) => !prefer(c.descriptor))] : ranked;
+    for (const candidate of ordered) {
       if (!candidate.descriptor.ports.includes(kind)) continue;
       const m = this.#members.get(candidate.id)!;
       const ports = await this.#ensure(m);

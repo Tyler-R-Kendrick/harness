@@ -31,11 +31,14 @@ import { Learning, learningExtension, Plugins } from "@harness/learning";
 import type { Settings } from "@harness/learning";
 import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
 import { workflowsExtension } from "@harness/workflows";
+import { ConstraintEngine } from "@harness/constrained";
+import type { Vocabulary } from "@harness/constrained";
 import type { ToolExecutor } from "@harness/workflows";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
+import { loadXGrammar } from "./xgrammar.ts";
 import { ModelFiles } from "./model-files.ts";
 import { steerableModel } from "./steerable-model.ts";
 
@@ -116,6 +119,14 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
     ...(options.transformers === undefined ? {} : { module: options.transformers }),
   });
   const serves = (m: ModelDescriptor, port: keyof Ports) => m.ports.includes(port);
+  /** Constrained decoding for a model that enforces constraints token by token (XGrammar, over its vocabulary). */
+  const constrainer = (m: ModelDescriptor) =>
+    m.constraints && (m.runtime === "transformers.js" || m.runtime === "onnxruntime") && m.run.vocab
+      ? async (vocabulary: Omit<Vocabulary, "encoding">) => {
+          const engine = await ConstraintEngine.create(loadXGrammar, { ...vocabulary, encoding: m.run.vocab! });
+          return (constraint: Parameters<ConstraintEngine["matcher"]>[0]) => engine.matcher(constraint);
+        }
+      : undefined;
 
   const loaders: Loaders = {
     // Without a credential the model fails to load, and the next one for the task takes over.
@@ -146,6 +157,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
             modelClass: m.run.modelClass,
             ...(m.run.template ? { templateOptions: m.run.template } : {}),
             ...(m.run.imagesFirst ? { imagesFirst: true } : {}),
+            ...(constrainer(m) ? { constrainer: constrainer(m)! } : {}),
           })
         : undefined;
       return {
@@ -181,7 +193,11 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       // ONNX exports keep the tokenizer and chat template beside the model file.
       const folder = dirname(run.model);
       const tokenizer = await loadChatTokenizer({ ...pinned(m), endTokens: run.endTokens, ...(folder === "." ? {} : { subfolder: folder }), ...(run.template ? { templateOptions: run.template } : {}) });
-      return { generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: behaviorHook(new BehaviorEngine(options.behavior)) } : {}) }) };
+      const build = constrainer(m);
+      const constrain = build && tokenizer.vocabulary ? await build({ tokens: tokenizer.vocabulary(), stopTokens: tokenizer.endTokens }) : undefined;
+      return {
+        generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: behaviorHook(new BehaviorEngine(options.behavior)) } : {}), ...(constrain ? { constrain } : {}) }),
+      };
     },
   };
   const loaderFor = (m: ModelDescriptor) => loaders[m.runtime] as ((m: ModelDescriptor) => Promise<Ports>) | undefined;

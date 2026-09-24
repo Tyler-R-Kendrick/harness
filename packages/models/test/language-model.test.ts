@@ -57,6 +57,17 @@ describe("AI SDK language models as generators, over llama-server", () => {
     ]);
   });
 
+  it("LS1.5 a JSON Schema constraint is sent as the server's structured output", async () => {
+    const { f, requests } = server(() => [{ choices: [{ delta: { content: '{"n": 4}' } }] }, { choices: [{ delta: {}, finish_reason: "stop" }] }]);
+    const g = new LanguageModelGenerator(llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f }));
+    const events = await collect(g.generate({ messages: [{ role: "user", content: "a number" }], constraint: { type: "json-schema", schema: { type: "object", properties: { n: { type: "integer" } } } } }));
+    expect(requests[0]!.body["response_format"]).toMatchObject({ type: "json_schema", json_schema: { schema: { type: "object", properties: { n: { type: "integer" } } } } });
+    expect(events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("")).toBe('{"n": 4}');
+    // other kinds of constraint are not sent: the catalog says this runtime enforces only JSON Schema
+    await collect(g.generate({ messages: [{ role: "user", content: "x" }], constraint: { type: "regex", pattern: "a" } }));
+    expect(requests[1]!.body["response_format"]).toBeUndefined();
+  });
+
   it("LS1.2 tool calls streamed in pieces are assembled and emitted before the finish", async () => {
     const { f } = server(() => [
       delta({ tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "get_weather", arguments: "" } }] }),

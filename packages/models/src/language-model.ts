@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, jsonSchema, streamText, tool } from "ai";
+import { generateText, jsonSchema, Output, streamText, tool } from "ai";
 import type { LanguageModel, ModelMessage, ToolSet } from "ai";
 import { parseChatOutput } from "@harness/cognitive";
 import type { ChatMessage, DocumentParser, GenerateRequest, GenerationEvent, Generator, ParsedPage, ParseRequest, ToolSpec } from "@harness/cognitive";
@@ -58,6 +58,8 @@ export class LanguageModelGenerator implements Generator {
         maxRetries: 0,
         ...(request.maxTokens === undefined ? {} : { maxOutputTokens: request.maxTokens }),
         ...(request.tools?.length ? { tools: toolSet(request.tools) } : {}),
+        // A JSON Schema constraint becomes the provider's structured output (llama-server enforces it with a grammar).
+        ...(request.constraint?.type === "json-schema" ? { output: Output.object({ schema: jsonSchema(request.constraint.schema) }) } : {}),
       });
       for await (const part of result.fullStream) {
         if (part.type === "text-delta") yield { type: "text", text: part.text };
@@ -99,5 +101,5 @@ export class LanguageModelDocumentParser implements DocumentParser {
 
 /** llama.cpp's llama-server (OpenAI-compatible) as an AI SDK model. Start it with --jinja. */
 export function llamaServer(options: { readonly baseUrl: string; readonly fetch?: typeof fetch; readonly model?: string }): LanguageModel {
-  return createOpenAICompatible({ name: "llama-server", baseURL: `${options.baseUrl.replace(/\/$/, "")}/v1`, ...(options.fetch ? { fetch: options.fetch } : {}) }).chatModel(options.model ?? "default");
+  return createOpenAICompatible({ name: "llama-server", baseURL: `${options.baseUrl.replace(/\/$/, "")}/v1`, supportsStructuredOutputs: true, ...(options.fetch ? { fetch: options.fetch } : {}) }).chatModel(options.model ?? "default");
 }

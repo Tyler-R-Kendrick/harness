@@ -1,8 +1,8 @@
 import { z } from "zod";
-import type { CognitiveExtension, Ensemble } from "@harness/cognitive";
+import type { CognitiveExtension, Constraint, Ensemble } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { runWorkflow } from "./run.ts";
-import type { RunResult } from "./run.ts";
+import type { Effects, RunResult } from "./run.ts";
 
 /** A workflow as kept: named, described, its input's JSON Schema, and its code. */
 export const WorkflowSchema = z.strictObject({
@@ -55,9 +55,9 @@ export interface ToolExecutor {
  * provides; `ask` puts a question to a model.
  */
 export class WorkflowHost {
-  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: (prompt: string) => Promise<string>; readonly tools?: ToolExecutor };
+  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolExecutor };
 
-  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: (prompt: string) => Promise<string>; readonly tools?: ToolExecutor }) {
+  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolExecutor }) {
     this.#options = options;
   }
 
@@ -91,11 +91,11 @@ export class WorkflowHost {
   }
 }
 
-/** Put a question to the ensemble's chat model and collect its answer. */
-export function askEnsemble(ensemble: Pick<Ensemble, "generate">): (prompt: string) => Promise<string> {
-  return async (prompt) => {
+/** Put a question to the ensemble's chat model and collect its answer; a constraint goes with it. */
+export function askEnsemble(ensemble: Pick<Ensemble, "generate">): (prompt: string, constraint?: Constraint) => Promise<string> {
+  return async (prompt, constraint) => {
     let text = "";
-    for await (const e of ensemble.generate({ messages: [{ role: "user", content: prompt }] }, "chat")) if (e.type === "text") text += e.text;
+    for await (const e of ensemble.generate({ messages: [{ role: "user", content: prompt }], ...(constraint ? { constraint } : {}) }, "chat")) if (e.type === "text") text += e.text;
     return text;
   };
 }
