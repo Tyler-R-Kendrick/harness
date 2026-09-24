@@ -16,6 +16,7 @@
   "include": [
     "packages/*/test",
     "vitest.config.ts",
-    "vitest.mutation.config.ts"
+    "vitest.mutation.config.ts",
+    "vitest.models.config.ts"
   ]
 }

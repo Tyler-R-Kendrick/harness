@@ -23,6 +23,12 @@
     },
     {
       "path": "../workers"
+    },
+    {
+      "path": "../models"
+    },
+    {
+      "path": "../cognitive"
     }
   ]
 }

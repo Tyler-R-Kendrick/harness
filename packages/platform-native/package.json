@@ -12,11 +12,14 @@
     "@harness/core": "0.0.0",
     "@harness/protocol": "0.0.0",
     "@harness/workers": "0.0.0",
-    "@ai-sdk/gateway": "4.0.91"
+    "@ai-sdk/gateway": "4.0.91",
+    "@harness/models": "0.0.0",
+    "@harness/cognitive": "0.0.0"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.5.0",
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "sharp": "0.35.4"
   },
   "bin": {
     "harness": "./src/main.ts"

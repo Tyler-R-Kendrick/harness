@@ -8,5 +8,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "dependencies": {"@harness/core": "0.0.0", "@harness/protocol": "0.0.0"}
+  "dependencies": {
+    "@harness/core": "0.0.0",
+    "@harness/protocol": "0.0.0",
+    "@harness/cognitive": "0.0.0"
+  }
 }

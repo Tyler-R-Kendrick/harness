@@ -11,6 +11,9 @@
       "path": "packages/cognitive"
     },
     {
+      "path": "packages/models"
+    },
+    {
       "path": "packages/testkit"
     },
     {

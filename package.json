@@ -20,7 +20,8 @@
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
     "eval": "node packages/evals/src/cli.ts",
-    "check": "npm run typecheck && npm run lint && npm run test:coverage"
+    "check": "npm run typecheck && npm run lint && npm run test:coverage",
+    "test:models": "vitest run --config vitest.models.config.ts"
   },
   "devDependencies": {
     "@fast-check/vitest": "0.5.0",

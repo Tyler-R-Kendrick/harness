@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { JevJudge, JEV_MODEL_ID } from "@harness/evals";
-import { FakeEvaluationModel } from "./fake-model.ts";
+import { JevJudge, JEV_MODEL_ID } from "@harness/models";
+import { FakeEvaluationModel } from "./fake-evaluation-model.ts";
 
 describe("JevJudge", () => {
   it("EV1.1 defaults to Jev on the Vercel AI Gateway", () => {

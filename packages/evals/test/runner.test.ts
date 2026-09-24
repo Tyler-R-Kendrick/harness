@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BlockedError, JevJudge, resolveGatewayCredential, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
-import { FakeEvaluationModel } from "./fake-model.ts";
+import { FakeEvaluationModel } from "../../models/test/fake-evaluation-model.ts";
 
 const yesCase = (id: string, reply: string): EvalCase => ({
   id,

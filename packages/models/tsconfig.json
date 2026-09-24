@@ -3,9 +3,9 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": ".types",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "types": []
   },
   "include": ["src"],
-  "references": [{ "path": "../core" }, { "path": "../protocol" }, { "path": "../cognitive" }]
+  "references": [{ "path": "../cognitive" }]
 }

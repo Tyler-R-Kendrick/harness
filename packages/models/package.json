@@ -1,0 +1,22 @@
+{
+  "name": "@harness/models",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Model adapters for the cognitive core: Jev (hosted), Needle 3 (WASM), transformers.js models (EmbeddingGemma, LLMLingua-2, Qwen3.5, LightOnOCR-2) and llama.cpp-served models (Ornith, OvisOCR2).",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.91",
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@huggingface/transformers": "4.3.0",
+    "ai": "7.0.113"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0",
+    "sharp": "0.35.4"
+  }
+}

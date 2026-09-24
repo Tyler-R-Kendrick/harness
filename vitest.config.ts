@@ -4,13 +4,15 @@ import { defineConfig } from "vitest/config";
 // node_modules symlinks. Stryker runs tests in a sandbox copy; symlinks would point
 // back at the unmutated originals and every mutant would falsely "survive".
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
-const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers"];
+const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models"];
 
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
 //   *.property.test.ts     property/fuzz tests (fast-check); seeds are reported on failure
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
 //   *.integration.test.ts  real processes/transports (e.g. ACP SDK client over stdio)
+//   *.model.test.ts        real model weights (downloads); run by `npm run test:models`
+//                          (vitest.models.config.ts) and the CI "models" job, not here
 // Evals (LLM-as-judge) are not vitest tests; see packages/evals and `npm run eval`.
 export default defineConfig({
   resolve: {
@@ -18,6 +20,7 @@ export default defineConfig({
   },
   test: {
     include: ["packages/*/test/**/*.test.ts"],
+    exclude: ["**/*.model.test.ts", "**/node_modules/**"],
     environment: "node",
     testTimeout: 20_000,
     coverage: {
