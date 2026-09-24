@@ -1,41 +1,59 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { MODEL_CATALOG, parseBenchmarks, rankForTask, TASK_CATEGORIES, TASK_PORTS, TASK_PREFERENCES } from "@harness/cognitive";
-import { BENCHMARKS } from "../src/benchmark-table.ts";
+import { catalogJsonSchemas, parseCatalog, rankForTask, TASK_CATEGORIES, TASK_PORTS } from "@harness/cognitive";
 import type { Platform, TaskCategory } from "@harness/cognitive";
 
+const data = (file: string) => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8")) as Record<string, unknown> & { models: Record<string, unknown>[]; rows: unknown[][] };
+const catalogFile = data("catalog.json");
+const benchmarksFile = data("benchmarks.json");
+const { models: MODEL_CATALOG, preferences: TASK_PREFERENCES } = parseCatalog(catalogFile, benchmarksFile);
 const top = (task: TaskCategory, platform: Platform) => rankForTask(task, MODEL_CATALOG, { platform, prefer: TASK_PREFERENCES[task] ?? [] })[0]?.id;
 
-describe("model catalog", () => {
-  it("CT1.1 ids are unique and every task a model claims is served by a port it implements", () => {
-    const ids = MODEL_CATALOG.map((m) => m.id);
-    expect(new Set(ids).size).toBe(ids.length);
-    for (const m of MODEL_CATALOG) {
-      expect(m.tasks.length, m.id).toBeGreaterThan(0);
-      for (const task of m.tasks) expect(TASK_PORTS[task].some((p) => m.ports.includes(p)), `${m.id} ${task}`).toBe(true);
-    }
+/** The shipped catalog with one change; parsing it must fail and say why. */
+const refused = (edit: (catalog: typeof catalogFile, benchmarks: typeof benchmarksFile) => void) => {
+  const catalog = structuredClone(catalogFile);
+  const benchmarks = structuredClone(benchmarksFile);
+  edit(catalog, benchmarks);
+  return expect(() => parseCatalog(catalog, benchmarks));
+};
+const model = (catalog: typeof catalogFile, id: string) => catalog.models.find((m) => m["id"] === id)!;
+
+describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
+  it("CT1.1 the shipped data parses: every model's tasks are served by its ports, and benchmarks attach to their models", () => {
+    expect(MODEL_CATALOG).toHaveLength(catalogFile.models.length);
+    for (const m of MODEL_CATALOG) for (const t of m.tasks) expect(TASK_PORTS[t].some((p) => m.ports.includes(p)), `${m.id} ${t}`).toBe(true);
+    expect(MODEL_CATALOG.flatMap((m) => m.benchmarks)).toHaveLength(benchmarksFile.rows.length);
+    expect(MODEL_CATALOG.find((m) => m.id === "Qwen/Qwen3.5-0.8B")!.benchmarks).toContainEqual({ benchmark: "MMLU-Pro", task: "chat", metric: "accuracy", score: 29.7, higherIsBetter: true, setting: "non-thinking" });
+    expect(MODEL_CATALOG.find((m) => m.id === "typesafe-ai/jev")!.benchmarks).toContainEqual({ benchmark: "JevBench v1.0 (242 decisions)", task: "judgment", metric: "ECE", score: 0.027, higherIsBetter: false });
   });
 
-  it("CT1.2 local models pin a commit and hashed files; hosted models download nothing", () => {
-    for (const m of MODEL_CATALOG) {
-      if (m.locality === "hosted") {
-        expect(m.artifact, m.id).toBeUndefined();
-        expect(m.downloadBytes, m.id).toBe(0);
-        continue;
-      }
-      expect(m.artifact!.revision, m.id).toMatch(/^[0-9a-f]{40}$/);
-      expect(m.artifact!.files.length, m.id).toBeGreaterThan(0);
-      for (const f of m.artifact!.files) {
-        expect(f.bytes, `${m.id} ${f.path}`).toBeGreaterThan(0);
-        expect(f.sha256, `${m.id} ${f.path}`).toMatch(/^[0-9a-f]{64}$/);
-      }
-      expect(m.downloadBytes, m.id).toBe(m.artifact!.files.reduce((s, f) => s + f.bytes, 0));
-    }
+  it("CT1.2 a model entry that cannot be right is refused, naming where", () => {
+    refused((c) => (model(c, "typesafe-ai/jev")["tasks"] = ["judgment", "chat"])).toThrow(/no port of typesafe-ai\/jev serves chat/);
+    refused((c) => c.models.push(structuredClone(c.models[0]!))).toThrow(/model typesafe-ai\/jev is listed twice/);
+    refused((c) => (model(c, "typesafe-ai/jev")["downloadBytes"] = 5)).toThrow(/a hosted model downloads nothing/);
+    refused((c) => delete model(c, "Cactus-Compute/needle3")["artifact"]).toThrow(/a local model pins its weights/);
+    refused((c) => (model(c, "Cactus-Compute/needle3")["downloadBytes"] = 1)).toThrow(/downloadBytes is the sum/);
+    refused((c) => ((model(c, "Cactus-Compute/needle3")["artifact"] as { revision: string }).revision = "main")).toThrow(/a pinned commit, never a branch/);
+    refused((c) => ((model(c, "Cactus-Compute/needle3")["artifact"] as { files: { sha256: string }[] }).files[0]!.sha256 = "abc")).toThrow(/sha256/);
+    refused((c) => (model(c, "Cactus-Compute/needle3")["runtime"] = "tensorflow")).toThrow(/runtime/);
+    refused((c) => (model(c, "Cactus-Compute/needle3")["colour"] = "blue")).toThrow(/colour/);
   });
 
-  it("CT1.3 every row of the benchmark table names a catalog model and a task that model claims", () => {
-    const rows = parseBenchmarks(BENCHMARKS);
-    for (const r of rows) expect(MODEL_CATALOG.find((m) => m.id === r.model)?.tasks, `${r.model} ${r.benchmark}`).toContain(r.task);
-    expect(MODEL_CATALOG.flatMap((m) => m.benchmarks)).toHaveLength(rows.length);
+  it("CT1.3 preferences and benchmark rows must name catalog models that serve the task", () => {
+    refused((c) => ((c["preferences"] as Record<string, string[]>)["coding"] = ["typesafe-ai/jev"])).toThrow(/typesafe-ai\/jev does not serve coding/);
+    refused((_, b) => b.rows.push(["nobody/model", "chat", "X", "acc", 1, "higher"])).toThrow(/nobody\/model is not a catalog model serving chat/);
+    refused((_, b) => b.rows.push(["typesafe-ai/jev", "chat", "X", "acc", 1, "higher"])).toThrow(/typesafe-ai\/jev is not a catalog model serving chat/);
+    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", 1, "sideways"])).toThrow(/rows\[\d+\]\[5\]/);
+    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", 1, "higher", "s", "extra"])).toThrow(/at most 7 fields/);
+    refused((_, b) => b.rows.push(["typesafe-ai/jev", "judgment", "X", "acc", "high", "higher"])).toThrow(/rows\[\d+\]\[4\]/);
+  });
+
+  it("CT1.10 each data file names its JSON Schema, and the schemas are generated from the parser", async () => {
+    expect(catalogFile["$schema"]).toBe("./catalog.schema.json");
+    expect(benchmarksFile["$schema"]).toBe("./benchmarks.schema.json");
+    const schemas = catalogJsonSchemas();
+    await expect(`${JSON.stringify(schemas.catalog, null, 2)}\n`).toMatchFileSnapshot("../data/catalog.schema.json");
+    await expect(`${JSON.stringify(schemas.benchmarks, null, 2)}\n`).toMatchFileSnapshot("../data/benchmarks.schema.json");
   });
 
   it("CT1.4 natively every task but text embedding has a model (memory brings that); the browser also lacks coding and steered chat", () => {
@@ -82,12 +100,4 @@ describe("model catalog", () => {
     expect(TASK_PORTS["steered-chat"]).toEqual(["generator"]);
   });
 
-  it("CT1.8 preferences only name catalog models that serve the task", () => {
-    for (const [task, ids] of Object.entries(TASK_PREFERENCES))
-      for (const id of ids ?? []) expect(MODEL_CATALOG.find((m) => m.id === id)?.tasks, `${task} ${id}`).toContain(task);
-  });
-
-  it("CT1.10 the catalog is reviewed data: pinned weights, hashes, benchmarks and preferences change only with the reviewed snapshot", async () => {
-    await expect(JSON.stringify({ models: MODEL_CATALOG, preferences: TASK_PREFERENCES }, null, 1)).toMatchFileSnapshot("./catalog.snapshot.json");
-  });
 });

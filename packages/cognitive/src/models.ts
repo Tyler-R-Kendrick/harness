@@ -4,7 +4,8 @@
  * results that back choosing it for a task.
  */
 
-export type Platform = "native" | "browser";
+export const PLATFORMS = ["native", "browser"] as const;
+export type Platform = (typeof PLATFORMS)[number];
 
 /** Task categories the cognitive core routes work by. */
 export const TASK_CATEGORIES = [
@@ -28,7 +29,8 @@ export const TASK_CATEGORIES = [
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 
 /** Adapter interfaces (see ports.ts); a model may implement several. */
-export type PortKind = "judge" | "router" | "embedder" | "compressor" | "generator" | "document-parser";
+export const PORT_KINDS = ["judge", "router", "embedder", "compressor", "generator", "document-parser"] as const;
+export type PortKind = (typeof PORT_KINDS)[number];
 
 /** Which ports can serve each task. */
 export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
@@ -49,8 +51,10 @@ export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
   "steered-chat": ["generator"],
 };
 
-export type Locality = "local" | "hosted";
-export type Runtime = "ai-gateway" | "needle-wasm" | "transformers.js" | "llama.cpp-server" | "onnxruntime" | "clm-serve";
+export const LOCALITIES = ["local", "hosted"] as const;
+export type Locality = (typeof LOCALITIES)[number];
+export const RUNTIMES = ["ai-gateway", "needle-wasm", "transformers.js", "llama.cpp-server", "onnxruntime", "clm-serve"] as const;
+export type Runtime = (typeof RUNTIMES)[number];
 
 export interface BenchmarkResult {
   /** Benchmark name with version or split, e.g. "MTEB (Multilingual, v2)". */

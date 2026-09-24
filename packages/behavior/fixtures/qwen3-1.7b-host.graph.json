@@ -1,4 +1,5 @@
 {
+  "$schema": "../data/graph.schema.json",
   "version": 1,
   "id": "host",
   "model": { "id": "Qwen/Qwen3-1.7B", "layer": 14 },

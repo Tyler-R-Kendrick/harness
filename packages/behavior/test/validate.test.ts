@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { defineGraph, parseGraph } from "@harness/behavior";
+import { readFileSync } from "node:fs";
+import { defineGraph, graphJsonSchema, parseGraph } from "@harness/behavior";
 import { guide, guideSpec } from "./fixtures.ts";
 
 type Draft = Record<string, unknown> & { states: Record<string, unknown>; sensors: Record<string, unknown>; features: Record<string, unknown>; transitions: unknown[] };
@@ -129,4 +130,12 @@ describe("behavior graph parsing", () => {
       }),
     ).toThrow(/sensor loud/);
   });
+
+  it("BV2.2 graph files name a JSON Schema generated from the parser, so editors check them as they are written", async () => {
+    await expect(`${JSON.stringify(graphJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/graph.schema.json");
+    const file = JSON.parse(readFileSync(new URL("../fixtures/qwen3-1.7b-host.graph.json", import.meta.url), "utf8")) as { $schema: string };
+    expect(file.$schema).toBe("../data/graph.schema.json");
+    expect(parseGraph(file).id).toBe("host");
+  });
 });
+

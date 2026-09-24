@@ -65,10 +65,13 @@ npm run test:mutation   # Stryker; `break` threshold in stryker.config.mjs
 npm run test:models     # when touching packages/models or the catalog
 ```
 
-Benchmark results live in compact tables we own and edit by hand
-(`packages/cognitive/src/benchmark-table.ts`, and memory's own): one
-`model|task|benchmark|metric|score|setting` row each, `<n` for lower-is-better. They are
-compared only when benchmark, metric and setting match.
+Anything we tune by hand is data, never code: a JSON file with a `$schema` pointing at a
+JSON Schema generated from the zod schema that parses it (a test fails if they drift),
+loaded by the host at runtime. The model catalog, task preferences and benchmark results
+are `packages/cognitive/data/{catalog,benchmarks}.json` (and each extension's own
+`data/`); behavior graphs name `packages/behavior/data/graph.schema.json`. Benchmark rows
+are `[model, task, benchmark, metric, score, "higher"|"lower", setting?]` and are compared
+only when benchmark, metric and setting match.
 
 Never lower a coverage or mutation threshold, skip a test, or add a production mock to
 get green. Kill surviving mutants with tests, or document why a mutant is equivalent.

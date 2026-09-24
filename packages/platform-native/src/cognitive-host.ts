@@ -1,8 +1,8 @@
 import { dirname, join } from "node:path";
 import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
-import { Ensemble, MODEL_CATALOG, TASK_PREFERENCES } from "@harness/cognitive";
-import type { ModelDescriptor, Ports } from "@harness/cognitive";
+import { Ensemble } from "@harness/cognitive";
+import type { Catalog, ModelDescriptor, Ports } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
@@ -30,6 +30,7 @@ import type { ClmOptions, OrtLike } from "@harness/models";
 import { Memory, memoryExtension } from "@harness/memory";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadNeedleModule } from "./model-cache.ts";
+import { loadCatalog } from "./catalog-files.ts";
 import { ModelFiles } from "./model-files.ts";
 import { steerableModel } from "./steerable-model.ts";
 
@@ -43,8 +44,8 @@ export interface NativeEnsembleOptions {
   /** Register only these catalog ids. */
   readonly only?: readonly string[];
   readonly fetch?: typeof fetch;
-  /** Model catalog to register from; defaults to the cognitive core's catalog. */
-  readonly catalog?: readonly ModelDescriptor[];
+  /** Catalog to register from; defaults to the cognitive core's data files. */
+  readonly catalog?: Catalog;
   /** transformers.js module override (tests). */
   readonly transformers?: unknown;
   /** onnxruntime module override for the steerable kernel (tests). */
@@ -62,6 +63,8 @@ export interface NativeEnsembleOptions {
     /** Called with Memory.save() after every change. */
     readonly persist?: (saved: unknown) => void;
     readonly dimensions?: number;
+    /** Memory's models; defaults to memory's data files. */
+    readonly catalog?: Catalog;
   };
 }
 
@@ -76,7 +79,8 @@ const QWEN_DTYPE = { embed_tokens: "q4", vision_encoder: "q4", decoder_model_mer
  */
 export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; close(): Promise<void> } {
   const allowHosted = options.allowHosted !== false;
-  const ensemble = new Ensemble({ platform: "native", preferences: TASK_PREFERENCES, selection: { allowHosted } });
+  const catalog = options.catalog ?? loadCatalog();
+  const ensemble = new Ensemble({ platform: "native", preferences: catalog.preferences, selection: { allowHosted } });
   const fetchFn = options.fetch ?? fetch;
   const artifacts = new ArtifactStore({ fetch: fetchFn, cache: new FileByteCache(join(options.cacheDir, "artifacts")) });
   const files = new ModelFiles({ dir: join(options.cacheDir, "gguf"), fetch: fetchFn });
@@ -134,7 +138,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
     "ATH-MaaS/OvisOCR2": options.llamaServer ? async (m) => ({ "document-parser": new LanguageModelDocumentParser(llamaServer({ baseUrl: (await serve(m, true)).baseUrl })) }) : undefined,
   };
 
-  for (const m of options.catalog ?? MODEL_CATALOG) {
+  for (const m of catalog.models) {
     const load = loaders[m.id];
     if (!load || !m.platforms.includes("native") || (!allowHosted && m.locality === "hosted")) continue;
     if (options.only && !options.only.includes(m.id)) continue;
@@ -157,6 +161,6 @@ function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOp
     ...(options.saved === undefined ? {} : { saved: options.saved }),
     ...(persist ? { onChange: (m: Memory) => persist(m.save()) } : {}),
   });
-  ensemble.install(memoryExtension({ memory, load }));
+  ensemble.install(memoryExtension({ memory, models: (options.catalog ?? loadCatalog({ package: "@harness/memory" })).models, load }));
   return memory;
 }

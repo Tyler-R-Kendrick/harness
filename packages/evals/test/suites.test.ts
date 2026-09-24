@@ -55,7 +55,7 @@ describe("eval suites", () => {
     const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", platforms: ["native"], license: "MIT", downloadBytes: 1, benchmarks: [] });
     const ensemble = new Ensemble({ platform: "native" });
     ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: 32 }), load: async () => ({ embedder: new HashEmbedder(64) }) }));
+    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: 32 }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: new HashEmbedder(64) }) }));
     ensemble.register(d("lingua", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
     ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
     ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({

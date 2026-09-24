@@ -59,6 +59,8 @@ const Transition = z
 
 const Shape = z
   .strictObject({
+    /** The JSON Schema an editor checks the file against (data/graph.schema.json). */
+    $schema: z.string().exactOptional(),
     version: z.literal(1),
     id: name,
     /** The model and residual-stream layer the SAE features belong to. */
@@ -136,6 +138,9 @@ export type Sensor = z.output<typeof Sensor>;
 export type State = z.output<typeof State>;
 export type Trigger = z.output<typeof Trigger>;
 export type Transition = z.output<typeof Transition>;
+
+/** The JSON Schema for graph files, for editors (data/graph.schema.json). */
+export const graphJsonSchema = (): object => z.toJSONSchema(Shape, { io: "input" });
 
 /** Parse a graph from untrusted data (a JSON file, a pack); any problem refuses it whole. */
 export function parseGraph(input: unknown): BehaviorGraph {

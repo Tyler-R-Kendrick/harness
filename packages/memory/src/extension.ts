@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { CognitiveExtension, ModelDescriptor, Ports } from "@harness/cognitive";
-import { MEMORY_MODELS } from "./catalog.ts";
 import type { Memory } from "./memory.ts";
 
 const Remember = z.object({ items: z.array(z.object({ text: z.string(), sessionId: z.string().exactOptional(), kind: z.string().exactOptional() })) });
@@ -22,13 +21,14 @@ const parse = <T>(schema: z.ZodType<T>, op: string, input: unknown): T => {
  * Memory for the cognitive core. Installing it brings the embedding models (the core
  * has none of its own) and the `memory.remember` / `memory.recall` operations; the
  * daemon offers `memory` and `cognitive.text-embedding` while it can serve them.
+ * `models` come from memory's catalog (packages/memory/data, loaded by the host), and
  * `load` is the host's way to run a model on its platform.
  */
-export function memoryExtension(options: { readonly memory: Memory; readonly load: (model: ModelDescriptor) => Promise<Ports> }): CognitiveExtension {
-  const { memory, load } = options;
+export function memoryExtension(options: { readonly memory: Memory; readonly models: readonly ModelDescriptor[]; readonly load: (model: ModelDescriptor) => Promise<Ports> }): CognitiveExtension {
+  const { memory, models, load } = options;
   return {
     id: "memory",
-    models: MEMORY_MODELS.map((descriptor) => ({ descriptor, load: () => load(descriptor) })),
+    models: models.map((descriptor) => ({ descriptor, load: () => load(descriptor) })),
     operations: {
       remember: async (input) => ({ ids: await memory.remember(parse(Remember, "remember", input).items) }),
       recall: async (input) => {

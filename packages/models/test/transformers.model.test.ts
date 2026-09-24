@@ -2,8 +2,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { describe, expect, it } from "vitest";
-import { cosine, MODEL_CATALOG } from "@harness/cognitive";
-import { MEMORY_MODELS } from "@harness/memory";
+import { readFileSync } from "node:fs";
+import { cosine, parseCatalog } from "@harness/cognitive";
 import type { GenerationEvent, ImageInput, ModelDescriptor } from "@harness/cognitive";
 import {
   EmbeddingGemmaEmbedder,
@@ -16,9 +16,13 @@ import {
 } from "@harness/models";
 import { compressorContract, documentParserContract, embedderContract, generatorContract } from "@harness/testkit";
 
+const catalog = (pkg: string) => {
+  const data = (file: string): unknown => JSON.parse(readFileSync(new URL(`../../${pkg}/data/${file}`, import.meta.url), "utf8"));
+  return parseCatalog(data("catalog.json"), data("benchmarks.json")).models;
+};
 const cacheDir = join(process.env["HARNESS_MODEL_CACHE"] ?? join(homedir(), ".cache", "harness", "models"), "transformers");
 const pinned = (id: string) => {
-  const m = [...MODEL_CATALOG, ...MEMORY_MODELS].find((x) => x.id === id) as ModelDescriptor;
+  const m = [...catalog("cognitive"), ...catalog("memory")].find((x) => x.id === id) as ModelDescriptor;
   return { repo: m.artifact!.repo, revision: m.artifact!.revision, cacheDir };
 };
 const once = <T>(make: () => Promise<T>) => {

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
-import { Memory, MEMORY_MODELS, memoryExtension } from "@harness/memory";
+import { readFileSync } from "node:fs";
+import { parseCatalog } from "@harness/cognitive";
+import { Memory, memoryExtension } from "@harness/memory";
 import { HashEmbedder } from "@harness/testkit";
+
+const data = (file: string): unknown => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8"));
+const { models } = parseCatalog(data("catalog.json"), data("benchmarks.json"));
 
 function setup() {
   const ensemble = new Ensemble({ platform: "native" });
@@ -9,7 +14,7 @@ function setup() {
   mirrorCapabilities(ensemble, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
   const loaded: string[] = [];
   const memory = new Memory(ensemble, { dimensions: 32 });
-  const extension = memoryExtension({ memory, load: async (d) => (loaded.push(d.id), { embedder: new HashEmbedder(64) }) });
+  const extension = memoryExtension({ memory, models, load: async (d) => (loaded.push(d.id), { embedder: new HashEmbedder(64) }) });
   return { ensemble, offered, loaded, memory, extension };
 }
 
@@ -19,7 +24,7 @@ describe("memory as a cognitive-core extension", () => {
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     const uninstall = ensemble.install(extension);
     expect([...offered].sort()).toEqual(["cognitive.text-embedding", "memory"]);
-    expect(ensemble.candidates("text-embedding").map((c) => c.id)).toEqual(MEMORY_MODELS.map((m) => m.id));
+    expect(ensemble.candidates("text-embedding").map((c) => c.id)).toEqual(models.map((m) => m.id));
     await ensemble.embed([{ kind: "query", text: "x" }]);
     expect(loaded).toEqual(["google/embeddinggemma-300m"]);
     uninstall();

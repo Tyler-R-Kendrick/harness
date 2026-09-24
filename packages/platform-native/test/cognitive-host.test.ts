@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { invokeCognitive } from "@harness/cognitive";
-import { buildNativeEnsemble } from "@harness/platform-native";
+import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 
 describe("native cognitive host", () => {
   it("CH1.1 registers every catalog model that runs natively, without loading any; embedders come only with memory", async () => {
@@ -55,7 +55,6 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
-import { MODEL_CATALOG } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
@@ -71,7 +70,8 @@ async function tempDir(prefix: string) {
   return d;
 }
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
-const entry = (id: string) => MODEL_CATALOG.find((m) => m.id === id)!;
+const entry = (id: string) => loadCatalog().models.find((m) => m.id === id)!;
+const only = (m: ModelDescriptor) => ({ models: [m], preferences: {} });
 
 /** Replace a catalog entry's weights with small files served by a fake Hugging Face. */
 function withFakeFiles(m: ModelDescriptor, files: Record<string, Uint8Array>): ModelDescriptor {
@@ -131,7 +131,7 @@ describe("native cognitive host loaders", () => {
       };`);
     const files = { "wasm/needle.js": needleJs, "wasm/needle.wasm": new Uint8Array([0, 97, 115, 109]), "needle3.cact": new Uint8Array([1, 2, 3]) };
     const needle = withFakeFiles(entry("Cactus-Compute/needle3"), files);
-    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: [needle], fetch: fakeHub(files) });
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(needle), fetch: fakeHub(files) });
     expect((await ensemble.route({ input: "go", tools: [{ name: "t", description: "", parameters: {} }] })).calls).toEqual([{ name: "t", arguments: {} }]);
     await close();
   });
@@ -153,7 +153,7 @@ require("node:http").createServer((req, res) => {
     await chmod(binary, 0o755);
     const files = { "ovis.gguf": new Uint8Array([1, 2]), "mmproj.gguf": new Uint8Array([3]) };
     const ovis = withFakeFiles(entry("ATH-MaaS/OvisOCR2"), files);
-    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: [ovis], fetch: fakeHub(files), llamaServer: binary });
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(ovis), fetch: fakeHub(files), llamaServer: binary });
     const { pages } = await ensemble.parseDocument({ pages: [{ mediaType: "image/png", data: new Uint8Array([9]) }] });
     expect(pages[0]!.markdown).toBe("# Page");
     const args = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(argsFile, "utf8"))) as string[];
@@ -210,7 +210,7 @@ require("node:http").createServer((req, res) => {
     const files = { [KERNEL_FILE]: kernelOnnx() };
     const { module, log } = fakeTransformers();
     const ort = fakeOrt();
-    const { ensemble, close } = buildNativeEnsemble({ cacheDir, allowHosted: false, catalog: [withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)], fetch: fakeHub(files), transformers: module, onnxruntime: ort.runtime });
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir, allowHosted: false, catalog: only(withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)), fetch: fakeHub(files), transformers: module, onnxruntime: ort.runtime });
     let reply = "";
     for await (const e of ensemble.generate({ messages: [{ role: "user", content: "hi" }] }, "steered-chat")) if (e.type === "text") reply += e.text;
     expect(reply).toBe("a");
@@ -242,7 +242,7 @@ require("node:http").createServer((req, res) => {
     const { ensemble, close } = buildNativeEnsemble({
       cacheDir: await tempDir("cache-"),
       allowHosted: false,
-      catalog: [withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)],
+      catalog: only(withFakeFiles(entry("Qwen/Qwen3-1.7B"), files)),
       fetch: fakeHub(files),
       transformers: fakeTransformers().module,
       onnxruntime: ort.runtime,
