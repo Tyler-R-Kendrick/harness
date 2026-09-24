@@ -87,11 +87,14 @@ jobs:
       - name: Download llama.cpp
         env:
           GH_TOKEN: ${{ github.token }}
-        # The Linux build has shipped as .zip and as .tar.gz; take whichever the release has,
-        # and list the assets if neither matches so the pattern can be fixed from the log.
+        # "Latest" can be a nightly marker with no binaries, so take the newest release that
+        # has an Ubuntu x64 build. It has shipped as .zip and as .tar.gz; take either.
         run: |
-          gh release download --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama \
-            || { gh release view --repo ggml-org/llama.cpp --json assets --jq '.assets[].name'; exit 1; }
+          tag="$(gh api 'repos/ggml-org/llama.cpp/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not) | select(any(.assets[]; .name | test("bin-ubuntu-x64\\.(zip|tar\\.gz)$")))][0].tag_name')"
+          test -n "$tag" && test "$tag" != null || { echo "no recent llama.cpp release has an Ubuntu x64 build"; exit 1; }
+          echo "llama.cpp $tag"
+          gh release download "$tag" --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama
           for f in /tmp/llama/*; do
             case "$f" in
               *.zip) unzip -q "$f" -d /tmp/llama ;;
