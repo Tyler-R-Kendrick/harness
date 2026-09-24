@@ -1,0 +1,12 @@
+{
+  "name": "@harness/behavior",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Behavior state graphs over SAE features: sensors, states, transitions and steering vectors. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {}
+}

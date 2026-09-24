@@ -11,6 +11,9 @@
       "path": "packages/cognitive"
     },
     {
+      "path": "packages/behavior"
+    },
+    {
       "path": "packages/models"
     },
     {
