@@ -44,13 +44,14 @@ resource scopes, interruption, retries and dependency layers. Counting those pat
 
 - **The core is a synchronous, deterministic reducer.** `Daemon.receive()` returns outputs
   and never awaits; time, randomness and storage arrive through ports, and replay and trace
-  parity tests depend on that. Its 32 throws are `RpcError`s caught in one place and turned
-  into JSON-RPC errors: a typed error channel already, without a runtime. Running it on an
-  Effect runtime adds a scheduler to code that must not have one.
+  parity tests depend on that. Its request errors (23 `RpcError`s) are caught in one place
+  and turned into JSON-RPC errors: a typed error channel already, without a runtime; the
+  other throws are invariant violations (programmer errors). Running it on an Effect
+  runtime adds a scheduler to code that must not have one.
 - **Parsing is already "parse, don't validate".** zod schemas produce branded types (graphs),
-  port request types are schema outputs, and zod 4 codecs cover encode/decode if we need it. Effect Schema does
-  the same job at 10x the bundle cost, and the AI SDK and ACP SDK keep zod in the bundle
-  anyway.
+  port request types are schema outputs, and zod 4 codecs cover encode/decode if we need
+  it. Effect Schema does the same job at 10x the bundle cost, and the AI SDK and ACP SDK
+  keep zod in the bundle anyway.
 - **Where Effect would genuinely help is small.** Load cancellation in the ensemble
   (generation counters), llama-server process lifecycle, and the host's turn tracking. That
   is roughly 30 try blocks and 10 abort/cleanup sites. Converting them would put Effect in
