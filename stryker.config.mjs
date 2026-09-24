@@ -13,7 +13,7 @@ export default {
   reporters: ["clear-text", "progress", "html", "json"],
   htmlReporter: { fileName: "reports/mutation/index.html" },
   jsonReporter: { fileName: "reports/mutation/mutation.json" },
-  thresholds: { high: 95, low: 85, break: 85 },
+  thresholds: { high: 95, low: 90, break: 90 },
   concurrency: 4,
   timeoutMS: 10000,
 };

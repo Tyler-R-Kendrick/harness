@@ -26,6 +26,7 @@ export class DaemonDriver {
   }
 
   disconnect(connectionId: string): void {
+    this.#inboxes.delete(connectionId);
     this.#collect(this.daemon.disconnect(connectionId));
   }
 
@@ -82,7 +83,11 @@ export class DaemonDriver {
   #collect(outputs: Output[]): void {
     for (const o of outputs) {
       if (o.kind === "worker") this.#commands.push(o.command);
-      else this.#inboxes.get(o.connectionId)?.push(o.message as Envelope);
+      else if (o.kind === "send") {
+        const inbox = this.#inboxes.get(o.connectionId);
+        if (!inbox) throw new Error(`daemon sent to unknown or disconnected connection ${o.connectionId}`);
+        inbox.push(o.message as Envelope);
+      } else throw new Error(`malformed daemon output ${JSON.stringify(o)}`);
     }
   }
 }

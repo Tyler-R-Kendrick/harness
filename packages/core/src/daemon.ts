@@ -137,6 +137,7 @@ const WORKER_NODE = "worker";
 class RpcError extends Error {
   readonly code: number;
   constructor(code: number, message: string) {
+    if (message === "") throw new Error(`rpc error ${code} needs a message`);
     super(message);
     this.code = code;
   }
@@ -209,8 +210,7 @@ export class Daemon {
       const m = parsed.value;
       if (m.kind === "request") this.#handleRequest(conn, m.id, m.method, m.params);
       else if (m.kind === "notification") this.#handleNotification(conn, m.method, m.params);
-      else if (m.kind === "response") this.#handleClientResponse(conn, m.id, m.result);
-      else if (m.id !== null) this.#outbound.delete(String(m.id));
+      else this.#handleClientResponse(conn, m.id, m.kind === "response" ? m.result : undefined);
     });
   }
 
@@ -438,15 +438,12 @@ export class Daemon {
     const sub = session?.subscribers.get(conn.id);
     if (!session || !sub || !session.turn) return;
     if (!session.tree.hasGrant(sub.nodeId, "cancel") && !session.tree.hasGrant(sub.nodeId, "control")) return;
-    for (const [requestId, perm] of session.permissions) {
-      if (perm.turnId !== session.turn.turnId) continue;
-      const r = session.router.cancel(requestId, this.#now());
-      if (r.ok) this.#resolvePermission(session, requestId, r.value.outcome, "system");
-    }
+    this.#cancelPermissions(session, session.turn.turnId);
     this.#out.push({ kind: "worker", command: { type: "cancel", sessionId: session.id, turnId: session.turn.turnId } });
   }
 
-  #handleClientResponse(conn: Connection, id: JsonRpcId, result: unknown): void {
+  /** A client's answer (or error) to a request the daemon sent it. Errors withdraw that target. */
+  #handleClientResponse(conn: Connection, id: JsonRpcId | null, result: unknown): void {
     const pending = this.#outbound.get(String(id));
     if (!pending || pending.connectionId !== conn.id) return;
     this.#outbound.delete(String(id));
@@ -540,11 +537,7 @@ export class Daemon {
 
   #endTurn(session: Session, stopReason: StopReason): void {
     const turn = session.turn!;
-    for (const [requestId, perm] of session.permissions) {
-      if (perm.turnId !== turn.turnId) continue;
-      const r = session.router.cancel(requestId, this.#now());
-      if (r.ok) this.#resolvePermission(session, requestId, r.value.outcome, "system");
-    }
+    this.#cancelPermissions(session, turn.turnId);
     session.turn = undefined;
     this.#append(session, "event", { event: "turn.ended", data: { turnId: turn.turnId, stopReason } });
     this.#publish("turn.ended", session.id, { turnId: turn.turnId, stopReason });
@@ -570,6 +563,14 @@ export class Daemon {
     this.#append(session, "event", { event: "permission.requested", data: { requestId: event.requestId } });
     this.#publish("permission.requested", session.id, { requestId: event.requestId });
     for (const [connId, sub] of session.subscribers) if (opened.value.targets.includes(sub.nodeId)) this.#sendPermission(session, event.requestId, connId);
+  }
+
+  #cancelPermissions(session: Session, turnId: string): void {
+    for (const [requestId, perm] of session.permissions) {
+      if (perm.turnId !== turnId) continue;
+      session.router.cancel(requestId, this.#now());
+      this.#resolvePermission(session, requestId, { outcome: "cancelled" }, "system");
+    }
   }
 
   #sendPermission(session: Session, requestId: string, connectionId: string): void {
