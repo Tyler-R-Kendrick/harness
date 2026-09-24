@@ -4,7 +4,7 @@
 export default {
   testRunner: "vitest",
   plugins: ["@stryker-mutator/vitest-runner"],
-  vitest: { configFile: "vitest.config.ts" },
+  vitest: { configFile: "vitest.config.ts", related: false },
   mutate: [
     "packages/{core,protocol,cognitive}/src/**/*.ts",
     "!packages/*/src/index.ts",
