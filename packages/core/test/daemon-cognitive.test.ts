@@ -97,4 +97,43 @@ describe("Daemon: cognitive core over ACP", () => {
     const methods = (d.initialize("c", true).result as { _meta: { harness: { methods: string[] } } })._meta.harness.methods;
     expect(methods).toEqual(expect.arrayContaining(["_harness/cognitive/invoke", "_harness/cognitive/status"]));
   });
+
+  it("DM9.9 disconnecting drops only that connection's pending work, even if its id is reused", () => {
+    const { d, daemon } = setup();
+    daemon.offerPlatformCapability({ name: "cognitive.text-embedding", version: 1, trust: "trusted" });
+    d.connect("c2", ALICE);
+    d.initialize("c2", true);
+    d.inbox("c2");
+    d.send("c1", { jsonrpc: "2.0", id: 1, method: invoke, params: { op: "embed", input: {} } });
+    d.send("c2", { jsonrpc: "2.0", id: 2, method: invoke, params: { op: "embed", input: {} } });
+    const [w1, w2] = d.cognitive();
+    d.disconnect("c1");
+    d.connect("c1", ALICE);
+    d.initialize("c1", true);
+    d.inbox("c1");
+    d.cognitiveResult(w1!.requestId, { ok: true, value: "old" });
+    d.cognitiveResult(w2!.requestId, { ok: true, value: "two" });
+    expect(d.inbox("c1")).toEqual([]);
+    expect(d.inbox("c2")).toEqual([{ jsonrpc: "2.0", id: 2, result: "two" }]);
+  });
+
+  it("DM9.10 a request is answered once; a result for a gone client produces no output; an empty failure message gets a default", () => {
+    const { d, daemon } = setup();
+    daemon.offerPlatformCapability({ name: "cognitive.text-embedding", version: 1, trust: "trusted" });
+    d.send("c1", { jsonrpc: "2.0", id: 1, method: invoke, params: { op: "embed", input: {} } });
+    d.send("c1", { jsonrpc: "2.0", id: 2, method: invoke, params: { op: "embed", input: {} } });
+    const [w1, w2] = d.cognitive();
+    d.cognitiveResult(w1!.requestId, { ok: false, message: "" });
+    d.cognitiveResult(w1!.requestId, { ok: true, value: "again" });
+    expect(d.inbox("c1")).toEqual([{ jsonrpc: "2.0", id: 1, error: { code: -32603, message: "cognitive operation failed" } }]);
+    d.disconnect("c1");
+    expect(daemon.cognitiveResult(w2!.requestId, { ok: true, value: {} })).toEqual([]);
+  });
+
+  it("DM9.11 only the capability for the op's own task admits it; the op error lists the ops", () => {
+    const { d, daemon } = setup();
+    daemon.offerPlatformCapability({ name: "cognitive.text-embedding", version: 1, trust: "trusted" });
+    expect(d.request("c1", invoke, { op: "judge", input: {} }).error).toMatchObject({ code: -32005, message: "no model serves judgment on this platform" });
+    expect(d.request("c1", invoke, { op: "toString", input: {} }).error).toMatchObject({ code: -32602, message: expect.stringContaining("judge, route, decide-tools, embed, compress, parse") });
+  });
 });
