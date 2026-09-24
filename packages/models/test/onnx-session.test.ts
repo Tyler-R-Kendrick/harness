@@ -14,10 +14,10 @@ function fakeRuntime() {
     type: string;
     data: ArrayLike<number | bigint>;
     dims: number[];
-    constructor(type: string, data: ArrayLike<number | bigint>, dims: number[]) {
+    constructor(type: string, data: ArrayLike<number | bigint>, dims: readonly number[]) {
       this.type = type;
       this.data = data;
-      this.dims = dims;
+      this.dims = [...dims];
     }
   };
   const session = {
@@ -41,12 +41,15 @@ function fakeRuntime() {
 const config = { layers: 2, kvHeads: 1, headSize: 2, hidden: 3 };
 
 describe("onnxruntime steerable session", () => {
-  it("OR1.1 returns the last position's logits and tapped residual", async () => {
+  it("OR1.1 returns the last position's logits and the tapped residual at every input position", async () => {
     const { runtime } = fakeRuntime();
     const s = await OnnxSteerableSession.create({ model: new Uint8Array(1), layer: 5, config, runtime });
-    const { logits, residual } = await s.forward([7, 8], undefined);
+    const { logits, residuals } = await s.forward([7, 8], undefined);
     expect(Array.from(logits)).toEqual([4, 5, 6, 7]);
-    expect(Array.from(residual)).toEqual([30, 40, 50]);
+    expect(residuals.map((r) => Array.from(r))).toEqual([
+      [0, 10, 20],
+      [30, 40, 50],
+    ]);
     expect(s.dims).toBe(3);
     expect(s.layer).toBe(5);
   });

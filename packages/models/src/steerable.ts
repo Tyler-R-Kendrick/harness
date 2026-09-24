@@ -6,14 +6,16 @@ import type { BehaviorEngine } from "@harness/behavior";
  * The local kernel's decode loop. A steerable session is a model exported with two
  * extra connections at one layer: the residual stream as an output and a steering
  * vector added into it as an input. Each forward pass returns the next-token logits
- * and that layer's residual for the last position; the hook reads the residual and
- * chooses the steering for the next pass.
+ * and that layer's residual at every position it was fed; the hook reads each residual
+ * in order (the prompt is perceived token by token, like the reply) and chooses the
+ * steering for the next pass.
  */
 export interface SteerableSession {
   readonly dims: number;
   /** The layer whose residual stream is tapped. */
   readonly layer: number;
-  forward(ids: readonly number[], steer: Float32Array | undefined): Promise<{ logits: Float32Array; residual: Float32Array }>;
+  /** Next-token logits for the last position, and the tapped residual at each of `ids`. */
+  forward(ids: readonly number[], steer: Float32Array | undefined): Promise<{ logits: Float32Array; residuals: Float32Array[] }>;
   /** Forget the KV cache: the next forward starts a new sequence. */
   reset(): void;
 }
@@ -88,6 +90,8 @@ export interface SteeredGeneratorOptions {
 
 export class SteeredGenerator implements Generator {
   readonly #o: SteeredGeneratorOptions;
+  /** One session holds one KV cache, so generations take turns. */
+  #turn: Promise<void> = Promise.resolve();
 
   constructor(options: SteeredGeneratorOptions) {
     if (options.hook && options.hook.layer !== options.session.layer) {
@@ -97,6 +101,18 @@ export class SteeredGenerator implements Generator {
   }
 
   async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
+    const previous = this.#turn;
+    let release!: () => void;
+    this.#turn = new Promise((resolve) => (release = resolve));
+    await previous;
+    try {
+      yield* this.#run(request);
+    } finally {
+      release();
+    }
+  }
+
+  async *#run(request: GenerateRequest): AsyncIterable<GenerationEvent> {
     const { session, tokenizer, hook } = this.#o;
     const max = request.maxTokens ?? this.#o.maxTokens ?? 256;
     session.reset();
@@ -112,26 +128,33 @@ export class SteeredGenerator implements Generator {
         yield e;
       }
     };
+    // Position 0 is the attention sink in these models: its residual has a massive norm
+    // unrelated to content, so no sensor ever reads it.
+    let sink = true;
     for (;;) {
-      const { logits, residual } = await session.forward(input, steer);
-      const r = hook?.at(residual);
-      if (r?.state) yield { type: "state", ...r.state };
-      steer = r ? r.steering : steer;
+      const { logits, residuals } = await session.forward(input, steer);
+      for (const residual of hook ? residuals.slice(sink ? 1 : 0) : []) {
+        const r = hook!.at(residual);
+        if (r.state) yield { type: "state", ...r.state };
+        steer = r.steering;
+      }
+      sink = false;
       const next = sample(logits, this.#o.temperature ?? 0, this.#o.topP ?? 1, this.#o.random ?? Math.random);
       if (tokenizer.endTokens.includes(next)) break;
       generated.push(next);
       const text = tokenizer.decode(generated);
-      const delta = text.slice(emitted.length);
-      emitted = text;
-      if (delta) yield* emit(parser.push(delta));
-      if (generated.length >= max) {
-        yield* emit(parser.end());
-        yield { type: "finish", reason: calls > 0 ? "tool-calls" : "length" };
-        return;
+      // A byte-level token can end mid-character (decoded as U+FFFD); wait for the rest.
+      if (!text.endsWith("\uFFFD")) {
+        const delta = text.slice(emitted.length);
+        emitted = text;
+        if (delta) yield* emit(parser.push(delta));
       }
+      if (generated.length >= max) break;
       input = [next];
     }
+    const rest = tokenizer.decode(generated).slice(emitted.length);
+    if (rest) yield* emit(parser.push(rest));
     yield* emit(parser.end());
-    yield { type: "finish", reason: calls > 0 ? "tool-calls" : "stop" };
+    yield { type: "finish", reason: calls > 0 ? "tool-calls" : generated.length >= max ? "length" : "stop" };
   }
 }

@@ -15,7 +15,7 @@ const tokenizer: TokenizerLike = {
 
 /**
  * A fake steerable model over a 2-d residual: it emits a scripted token sequence,
- * reports the residual as [token count, steering[0]], and records the steering it got.
+ * reports each position's residual as [token id, steering[0]], and records the steering it got.
  */
 class FakeSession implements SteerableSession {
   readonly dims = 2;
@@ -29,9 +29,9 @@ class FakeSession implements SteerableSession {
   async forward(ids: readonly number[], steer: Float32Array | undefined) {
     this.calls.push({ ids: [...ids], steer: steer ? Array.from(steer) : undefined });
     const next = this.script[this.#produced++] ?? 0;
-    const logits = new Float32Array(VOCAB.length).fill(-10);
+    const logits = new Float32Array(8).fill(-10);
     logits[next] = 10;
-    return { logits, residual: Float32Array.from([this.#produced, steer?.[0] ?? 0]) };
+    return { logits, residuals: ids.map((id) => Float32Array.from([id, steer?.[0] ?? 0])) };
   }
   reset() {
     this.#produced = 0;
@@ -61,7 +61,7 @@ describe("steered generation (the local kernel's decode loop)", () => {
     expect(events.at(-1)).toEqual({ type: "finish", reason: "length" });
   });
 
-  it("SG1.3 the hook sees the tapped layer's residual after every forward pass and its steering goes into the next pass", async () => {
+  it("SG1.3 the hook sees the tapped layer's residual at every new position and its steering goes into the next pass", async () => {
     const seen: number[][] = [];
     const hook: SteeringHook = {
       layer: 5,
@@ -72,12 +72,13 @@ describe("steered generation (the local kernel's decode loop)", () => {
       },
     };
     const session = new FakeSession([1, 2, 0]);
-    await collect(new SteeredGenerator({ session, tokenizer, hook }).generate({ messages: [{ role: "user", content: "a" }] }));
+    await collect(new SteeredGenerator({ session, tokenizer, hook }).generate({ messages: [{ role: "user", content: "ab" }] }));
     expect(session.calls.map((c) => c.steer)).toEqual([[7, 0], [10, 0], [20, 0]]);
+    // the prompt's first position is never sensed; then b (prompt), a and b (generated)
     expect(seen).toEqual([
-      [1, 7],
-      [2, 10],
-      [3, 20],
+      [2, 7],
+      [1, 10],
+      [2, 20],
     ]);
   });
 
@@ -93,7 +94,7 @@ describe("steered generation (the local kernel's decode loop)", () => {
       initial: () => undefined,
       at: () => (++n === 2 ? { steering: undefined, state: { state: "guarded", from: "calm", cause: "sensor threat on" } } : { steering: undefined }),
     };
-    const events = await collect(new SteeredGenerator({ session: new FakeSession([1, 2, 0]), tokenizer, hook }).generate({ messages: [{ role: "user", content: "a" }] }));
+    const events = await collect(new SteeredGenerator({ session: new FakeSession([1, 2, 0]), tokenizer, hook }).generate({ messages: [{ role: "user", content: "ab" }] }));
     expect(events.map((e) => e.type)).toEqual(["text", "state", "text", "finish"]);
     expect(events[1]).toEqual({ type: "state", state: "guarded", from: "calm", cause: "sensor threat on" });
   });
@@ -106,6 +107,45 @@ describe("steered generation (the local kernel's decode loop)", () => {
     expect(calls).toBeLessThanOrEqual(2);
     session.script.splice(0, session.script.length, 2, 0);
     expect(text(await collect(g.generate({ messages: [{ role: "user", content: "a" }] })))).toBe("b");
+  });
+
+  it("SG1.8 the whole prompt is sensed, in order, skipping only the attention-sink first position; a prompt state change streams before any text", async () => {
+    const seen: number[] = [];
+    const hook: SteeringHook = {
+      layer: 5,
+      initial: () => undefined,
+      at: (residual) => {
+        seen.push(residual[0]!);
+        return residual[0] === 3 ? { steering: Float32Array.from([5, 0]), state: { state: "alert", from: "calm" } } : { steering: undefined };
+      },
+    };
+    const session = new FakeSession([1, 0]);
+    const events = await collect(new SteeredGenerator({ session, tokenizer, hook }).generate({ messages: [{ role: "user", content: "abcb" }] }));
+    expect(seen).toEqual([2, 3, 2, 1]);
+    expect(events.map((e) => e.type)).toEqual(["state", "text", "finish"]);
+    // steering is whatever the last sensed position chose: b after c cleared it
+    expect(session.calls[1]!.steer).toBeUndefined();
+  });
+
+  it("SG1.9 generations on one session take turns instead of interleaving the KV cache", async () => {
+    const session = new FakeSession([1, 0, 2, 0]);
+    const g = new SteeredGenerator({ session, tokenizer });
+    const [first, second] = await Promise.all([collect(g.generate({ messages: [{ role: "user", content: "c" }] })), collect(g.generate({ messages: [{ role: "user", content: "cc" }] }))]);
+    expect(text(first)).toBe("a");
+    expect(text(second)).toBe("a");
+    expect(session.calls.map((c) => c.ids)).toEqual([[3], [1], [3, 3], [1]]);
+  });
+
+  it("SG1.10 a character split across tokens streams whole: text is held while it ends mid-character, and flushed at the end", async () => {
+    // ids 5 and 6 are the two byte-halves of one emoji; 5 alone decodes to U+FFFD
+    const split: TokenizerLike = {
+      ...tokenizer,
+      decode: (ids) => ids.map((id, i) => (id === 5 ? (ids[i + 1] === 6 ? "😊" : "\uFFFD") : id === 6 ? "" : (VOCAB[id] ?? "?"))).join(""),
+    };
+    const whole = await collect(new SteeredGenerator({ session: new FakeSession([1, 5, 6, 0]), tokenizer: split }).generate({ messages: [{ role: "user", content: "a" }] }));
+    expect(whole.filter((e) => e.type === "text").map((e) => (e.type === "text" ? e.text : ""))).toEqual(["a", "😊"]);
+    const cut = await collect(new SteeredGenerator({ session: new FakeSession([1, 5, 0]), tokenizer: split }).generate({ messages: [{ role: "user", content: "a" }] }));
+    expect(text(cut)).toBe("a\uFFFD");
   });
 
   it("SG1.7 sampling with a temperature uses the injected random source", async () => {

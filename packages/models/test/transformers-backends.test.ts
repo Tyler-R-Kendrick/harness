@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyImageProcessorDefaults } from "@harness/models";
+import { applyImageProcessorDefaults, loadChatTokenizer } from "@harness/models";
 
 describe("transformers.js image processor defaults", () => {
   it("TB1.1 a config with mean/std but no do_normalize gets Python's default of normalizing", () => {
@@ -89,5 +89,67 @@ describe("transformers.js backends", () => {
     const [x, y] = await Promise.all([b.generate(req, () => {}, () => false), b.generate(req, () => {}, () => false)]);
     expect(x).toEqual({ hitLimit: true });
     expect(y).toEqual({ hitLimit: true });
+  });
+});
+
+describe("transformers.js chat tokenizer (for steered generation)", () => {
+  function fakeTokenizerModule() {
+    const log: { name: string; args: unknown[] }[] = [];
+    const vocab: Record<string, number> = { "<|im_end|>": 7, "<|endoftext|>": 8, "<eos>": 9 };
+    const tokenizer = {
+      apply_chat_template: (messages: unknown, o: unknown) => (log.push({ name: "template", args: [messages, o] }), "PROMPT"),
+      encode: (text: string, o: unknown) => (log.push({ name: "encode", args: [text, o] }), [1, 2, 3]),
+      decode: (ids: number[], o: unknown) => (log.push({ name: "decode", args: [ids, o] }), ids.join(",")),
+      convert_tokens_to_ids: (tokens: string[]) => tokens.map((t) => vocab[t] ?? 0),
+    };
+    const module = {
+      env: {} as Record<string, unknown>,
+      AutoTokenizer: { from_pretrained: async (repo: string, o: unknown) => (log.push({ name: "load", args: [repo, o] }), tokenizer) },
+    };
+    return { module, log };
+  }
+
+  it("TB3.1 loads the pinned tokenizer, templates messages and tools, and encodes without adding special tokens", async () => {
+    const { module, log } = fakeTokenizerModule();
+    const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", subfolder: "cpu", module, templateOptions: { enable_thinking: false } });
+    const tools = [{ name: "search", description: "find", parameters: { type: "object" } }];
+    const ids = tok.encodeChat(
+      [
+        { role: "system", content: "be brief" },
+        { role: "user", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] },
+        { role: "assistant", content: "", toolCalls: [{ name: "search", arguments: { q: "x" } }] },
+        { role: "tool", name: "search", content: "found" },
+      ],
+      tools,
+    );
+    expect(ids).toEqual([1, 2, 3]);
+    expect(log[0]).toEqual({ name: "load", args: ["org/m", { revision: "abc", subfolder: "cpu" }] });
+    expect(log[1]).toEqual({
+      name: "template",
+      args: [
+        [
+          { role: "system", content: "be brief" },
+          { role: "user", content: "ab" },
+          { role: "assistant", content: "", tool_calls: [{ type: "function", function: { name: "search", arguments: { q: "x" } } }] },
+          { role: "tool", name: "search", content: "found" },
+        ],
+        { tokenize: false, add_generation_prompt: true, tools: [{ type: "function", function: tools[0] }], enable_thinking: false },
+      ],
+    });
+    expect(log[2]).toEqual({ name: "encode", args: ["PROMPT", { add_special_tokens: false }] });
+    expect(tok.decode([4, 5])).toBe("4,5");
+    expect(log[3]).toEqual({ name: "decode", args: [[4, 5], { skip_special_tokens: false }] });
+    expect(tok.endTokens).toEqual([7, 8]);
+  });
+
+  it("TB3.2 end tokens can be named; without tools none are templated; images are refused", async () => {
+    const { module, log } = fakeTokenizerModule();
+    const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<eos>"] });
+    expect(tok.endTokens).toEqual([9]);
+    tok.encodeChat([{ role: "user", content: "hi" }]);
+    expect(log[0]).toEqual({ name: "load", args: ["org/m", { revision: "abc" }] });
+    expect(log[1]!.args[1]).toEqual({ tokenize: false, add_generation_prompt: true });
+    expect(() => tok.encodeChat([{ role: "user", content: [{ type: "image", image: { mediaType: "image/png", data: new Uint8Array() } }] }])).toThrow(/text only/);
+    await expect(loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<nope>"] })).rejects.toThrow(/<nope>/);
   });
 });

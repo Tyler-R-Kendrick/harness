@@ -16,6 +16,9 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
     {
       tokenize: (text: string) => text.split(" "),
       convert_tokens_to_ids: (tokens: string[]) => tokens.map((t) => t.length),
+      apply_chat_template: (messages: unknown, o: unknown) => (log.push({ name: "chat-template", args: [messages, o] }), "PROMPT"),
+      encode: () => [5, 6],
+      decode: (ids: number[]) => ids.map((i) => String.fromCharCode(96 + i)).join(""),
     },
   );
   const processor = Object.assign(

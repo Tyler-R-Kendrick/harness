@@ -1,5 +1,7 @@
 import type * as TransformersModule from "@huggingface/transformers";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "./adapters.ts";
+import type { ChatMessage } from "@harness/cognitive";
+import type { TokenizerLike } from "./steerable.ts";
 
 /**
  * transformers.js backends. The same ONNX files run in the browser (WebGPU or WASM)
@@ -128,5 +130,51 @@ export async function loadVisionChatBackend(
         const output = await model.generate({ ...inputs, max_new_tokens: request.maxTokens, do_sample: false, streamer, stopping_criteria: stopper });
         return { hitLimit: output.dims.at(-1)! - inputs.input_ids.dims.at(-1)! >= request.maxTokens };
       }),
+  };
+}
+
+/**
+ * A chat tokenizer for the steered decode loop: the model's own chat template renders
+ * the conversation, then the text is encoded as-is (the template already placed the
+ * special tokens). The kernel is text only; images go to the vision models.
+ */
+export async function loadChatTokenizer(
+  options: TransformersOptions & {
+    /** A folder inside the repo holding the tokenizer (ONNX exports keep one per variant). */
+    readonly subfolder?: string;
+    readonly templateOptions?: Readonly<Record<string, unknown>>;
+    /** Tokens that end a turn; default Qwen's <|im_end|> and <|endoftext|>. */
+    readonly endTokens?: readonly string[];
+  },
+): Promise<TokenizerLike> {
+  const t = await runtime(options);
+  const tokenizer = await t.AutoTokenizer.from_pretrained(options.repo, { revision: options.revision, ...(options.subfolder ? { subfolder: options.subfolder } : {}) } as never);
+  const endNames = options.endTokens ?? ["<|im_end|>", "<|endoftext|>"];
+  const endTokens = tokenizer.convert_tokens_to_ids([...endNames]) as number[];
+  endTokens.forEach((id, i) => {
+    if (!id) throw new Error(`the tokenizer has no token ${endNames[i]}`);
+  });
+  const toTemplate = (m: ChatMessage): Record<string, unknown> => {
+    if (m.role === "user" && typeof m.content !== "string") {
+      if (m.content.some((p) => p.type !== "text")) throw new Error("the steered kernel is text only; send images to a vision model");
+      return { role: "user", content: m.content.map((p) => (p.type === "text" ? p.text : "")).join("") };
+    }
+    if (m.role === "assistant" && m.toolCalls?.length) {
+      return { role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => ({ type: "function", function: { name: c.name, arguments: c.arguments } })) };
+    }
+    return { ...m };
+  };
+  return {
+    endTokens,
+    encodeChat: (messages, tools) => {
+      const text = tokenizer.apply_chat_template(messages.map(toTemplate) as never, {
+        tokenize: false,
+        add_generation_prompt: true,
+        ...(tools?.length ? { tools: tools.map((tool) => ({ type: "function", function: tool })) } : {}),
+        ...options.templateOptions,
+      } as never) as unknown as string;
+      return tokenizer.encode(text, { add_special_tokens: false } as never);
+    },
+    decode: (ids) => tokenizer.decode([...ids], { skip_special_tokens: false }),
   };
 }

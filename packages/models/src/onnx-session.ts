@@ -62,7 +62,7 @@ export class OnnxSteerableSession implements SteerableSession {
     this.#length = 0;
   }
 
-  async forward(ids: readonly number[], steer: Float32Array | undefined): Promise<{ logits: Float32Array; residual: Float32Array }> {
+  async forward(ids: readonly number[], steer: Float32Array | undefined): Promise<{ logits: Float32Array; residuals: Float32Array[] }> {
     const n = ids.length;
     const total = this.#length + n;
     const out = await this.#session.run({
@@ -75,10 +75,10 @@ export class OnnxSteerableSession implements SteerableSession {
     this.#length = total;
     const logits = out["logits"]!;
     const vocab = logits.dims.at(-1)!;
-    const resid = out[`resid.${this.layer}`]!;
+    const resid = out[`resid.${this.layer}`]!.data as Float32Array;
     return {
       logits: Float32Array.from((logits.data as Float32Array).subarray((n - 1) * vocab, n * vocab)),
-      residual: Float32Array.from((resid.data as Float32Array).subarray((n - 1) * this.dims, n * this.dims)),
+      residuals: ids.map((_, t) => Float32Array.from(resid.subarray(t * this.dims, (t + 1) * this.dims))),
     };
   }
 }

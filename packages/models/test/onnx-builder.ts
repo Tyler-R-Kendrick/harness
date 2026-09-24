@@ -11,7 +11,10 @@ export function encodeModel(m: {
   const cat = (xs: Uint8Array[]) => {
     const out = new Uint8Array(xs.reduce((s, x) => s + x.length, 0));
     let o = 0;
-    for (const x of xs) (out.set(x, o), (o += x.length));
+    for (const x of xs) {
+      out.set(x, o);
+      o += x.length;
+    }
     return out;
   };
   const fixed32 = (tag: number, f: number) => {
