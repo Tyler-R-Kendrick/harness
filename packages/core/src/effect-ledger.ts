@@ -118,7 +118,10 @@ export class EffectLedger {
       return err("conflicting_receipt", `${effectId} is ${effect.status}; receipt says ${outcome}`);
     }
     attempt.status = outcome;
-    if (effect.status !== "intended") effect.status = outcome;
+    // A success from any attempt means the effect happened. A failure only settles the
+    // effect if it comes from the latest attempt; a newer retry may still succeed.
+    const latest = effect.attempts.at(-1) === attempt;
+    if (effect.status !== "intended" && (outcome === "succeeded" || latest)) effect.status = outcome;
     return ok(copy(effect));
   }
 

@@ -15,7 +15,8 @@ Feature scope and status: `docs/features.md`. Update it in the same change as th
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
 | `packages/cognitive` | cognitive core: candidate strategies, statistical math, model ports | pure |
 | `packages/testkit` | deterministic ports and reusable contract suites | pure |
-| `packages/platform-native` | Node host: stdio ACP binding, file storage, process lifecycle | host |
+| `packages/workers` | session workers: echo (deterministic) and model (AI SDK / AI Gateway) | portable |
+| `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, CLI | host |
 | `packages/evals` | eval runner; Jev (`typesafe-ai/jev` via Vercel AI Gateway) as judge | host |
 
 "Pure" packages may not use host globals, Node builtins, `Date.now`, `new Date()` or

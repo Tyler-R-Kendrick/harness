@@ -5,8 +5,17 @@
     "noEmit": true,
     "emitDeclarationOnly": false,
     "declaration": false,
-    "lib": ["ES2022", "DOM"],
-    "types": ["node"]
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ]
   },
-  "include": ["packages/*/test", "vitest.config.ts", "eslint.config.js", "stryker.config.mjs"]
+  "include": [
+    "packages/*/test",
+    "vitest.config.ts",
+    "vitest.mutation.config.ts"
+  ]
 }

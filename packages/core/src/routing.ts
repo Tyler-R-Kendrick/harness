@@ -77,7 +77,7 @@ export class CallbackRouter {
 
   /** Resolve every request whose deadline has passed as cancelled. Requests without a deadline wait. */
   expire(now: number): Resolution[] {
-    const due = [...this.#pending.values()].filter((r) => r.deadline !== undefined && r.deadline <= now);
+    const due = [...this.#pending.values()].filter((r) => (r.deadline ?? Number.POSITIVE_INFINITY) <= now);
     return due.map((r) => this.#resolve(r, "system", { outcome: "cancelled" }, now));
   }
 

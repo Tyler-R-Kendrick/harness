@@ -47,7 +47,6 @@ export class CapabilityRegistry {
   #leases = new Map<string, CapabilityLease>();
   #events: CapabilityEvent[] = [];
   #epoch = 0;
-  #leaseSeq = 0;
 
   offer(offer: CapabilityOffer, at: number): Result<void, CapabilityError> {
     if (this.#offers.some((o) => o.providerId === offer.providerId && o.name === offer.name)) {
@@ -89,7 +88,8 @@ export class CapabilityRegistry {
   acquire(name: string, holder: string, criteria: Criteria): Result<CapabilityLease, CapabilityError> {
     const provider = this.resolve(name, criteria);
     if (!provider) return err("unavailable", `no provider offers ${name}@${criteria.version}`);
-    const lease: CapabilityLease = { leaseId: `lease-${++this.#leaseSeq}`, holder, providerId: provider.providerId, name, epoch: ++this.#epoch };
+    const epoch = ++this.#epoch;
+    const lease: CapabilityLease = { leaseId: `lease-${epoch}`, holder, providerId: provider.providerId, name, epoch };
     this.#leases.set(lease.leaseId, lease);
     return ok(lease);
   }
