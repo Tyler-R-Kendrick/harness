@@ -104,6 +104,18 @@ export class AgentWorker implements Worker {
         }
         messages.push(...(await result.response).messages);
         if (approvals.length === 0) break;
+        // An answer must follow its request in the conversation. Agents that keep their own
+        // conversation (harnesses) return no response messages, so add the requests they made.
+        const asked = new Set(messages.flatMap((m) => (m.role === "assistant" && typeof m.content !== "string" ? m.content.flatMap((p) => (p.type === "tool-approval-request" ? [p.approvalId] : [])) : [])));
+        const unasked = approvals.filter((a) => !asked.has(a.approvalId));
+        if (unasked.length > 0)
+          messages.push({
+            role: "assistant",
+            content: unasked.flatMap((a) => [
+              { type: "tool-call" as const, toolCallId: a.toolCallId, toolName: a.toolName, input: a.input },
+              { type: "tool-approval-request" as const, approvalId: a.approvalId, toolCallId: a.toolCallId },
+            ]),
+          });
         const responses: ToolApprovalResponse[] = [];
         for (const a of approvals) {
           const outcome = await new Promise<CallbackOutcome>((resolve) => {

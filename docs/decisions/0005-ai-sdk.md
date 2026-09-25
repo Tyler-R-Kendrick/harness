@@ -63,8 +63,11 @@ No: every model is an AI SDK model, and every agent is an AI SDK agent.
 - Workflow code runs in AI SDK code mode, which replaced our QuickJS sandbox; the journal
   that makes it durable stays ours (ADR 0002). Learned skills convert to AI SDK harness
   skills, and the workflow library's workflows are AI SDK tools for session agents.
-- Harness adapters and sandboxes (`@ai-sdk/harness`, `@ai-sdk/harness-acp`) are the next
-  layer to adopt, for sessions run by Claude Code, Codex or any ACP agent.
+- Sessions can run on an AI SDK `HarnessAgent` (Claude Code, Codex, any ACP agent through
+  `@ai-sdk/harness-acp`): `harnessSessions` gives each daemon session its own harness session
+  and the agent worker runs it like any other agent. The harness keeps the conversation and
+  returns no response messages, so the worker adds the approval requests it answers.
+  Hosts still need a sandbox provider with an exposed port for bridge-backed harnesses.
 
 ## Revisit when
 

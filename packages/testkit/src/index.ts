@@ -17,3 +17,5 @@ export {
   scriptedModel,
   stubDocumentParser,
 } from "./cognitive.ts";
+export { nullSandbox, scriptedHarness } from "./harness.ts";
+export type { HarnessLog, ScriptedTurn } from "./harness.ts";

@@ -45,7 +45,8 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 |---|---|---|
 | In-process agent runtime: an AI SDK `ToolLoopAgent` on any model (e.g. Vercel AI Gateway) through the agent worker | built | AW1.1–AW1.12; CLI `--worker model` |
 | Deterministic echo worker (tests/demos) | built | WK1.1–WK1.7 |
-| SDK harness, native CLI, ACP-agent and UHP workers | not started | |
+| SDK harness and ACP-agent workers: any AI SDK `HarnessAgent` (Claude Code, Codex, or any ACP agent through `@ai-sdk/harness-acp`) runs through the agent worker via `harnessSessions`: one harness session per daemon session, started on its first turn, given only each turn's new prompt; its calls of host tools run on the host, tool approvals go through the daemon's permission flow, cancel aborts the turn | partial | HS1.1–HS1.9, TH1.1–TH1.4; not wired into the native host yet (the ACP bridge needs a sandbox with an exposed port; no trusted local provider yet); harness sessions are not resumed across daemon restarts |
+| Native CLI and UHP workers | not started | |
 | Integration modes (integrated/cooperative/opaque) declared | not started | |
 | Kernels (interactive, deterministic graph, durable runtime) | not started | |
 | Account instances, install/update ownership, readiness | not started | |

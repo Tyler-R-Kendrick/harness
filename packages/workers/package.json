@@ -2,13 +2,14 @@
   "name": "@harness/workers",
   "version": "0.0.0",
   "private": true,
-  "description": "Portable session workers: a deterministic echo worker, and a worker that runs any AI SDK agent (a ToolLoopAgent over the ensemble or a hosted model).",
+  "description": "Portable session workers: a deterministic echo worker, and a worker that runs any AI SDK agent (a ToolLoopAgent over the ensemble or a hosted model, or a HarnessAgent such as Claude Code, Codex or an ACP agent).",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/harness": "1.0.124",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
     "@scure/base": "2.4.0",
