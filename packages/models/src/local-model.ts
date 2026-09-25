@@ -101,24 +101,35 @@ export function localLanguageModel(spec: {
     supportedUrls: {},
     doGenerate: async (options) => collectParts(await drain(options)),
     doStream: async (options) => {
-      const iterator = spec.run(options)[Symbol.asyncIterator]();
-      // The AI SDK stops reading an aborted call's stream without cancelling it: stop the decoder here.
-      options.abortSignal?.addEventListener("abort", () => void iterator.return?.().catch(() => undefined), { once: true });
+      // The decoder feeds the stream as it decodes rather than when the consumer reads:
+      // the AI SDK neither cancels a stream its consumer stopped reading nor an aborted
+      // call's, and a paused decoder would hold its model (a KV cache, a queue). It stops
+      // early only when the stream is cancelled or the call aborted.
+      let stopped = false;
+      let finished: Promise<void> = Promise.resolve();
+      const stop = () => {
+        stopped = true;
+        return finished;
+      };
+      options.abortSignal?.addEventListener("abort", () => void stop(), { once: true });
       return {
         stream: new ReadableStream<LanguageModelV4StreamPart>({
-          async pull(controller) {
-            try {
-              const next = await iterator.next();
-              if (next.done) controller.close();
-              else controller.enqueue(next.value);
-            } catch (error) {
-              controller.enqueue({ type: "error", error });
-              controller.close();
-            }
+          start(controller) {
+            finished = (async () => {
+              try {
+                for await (const part of spec.run(options)) {
+                  if (stopped) return;
+                  controller.enqueue(part);
+                }
+                controller.close();
+              } catch (error) {
+                if (stopped) return;
+                controller.enqueue({ type: "error", error });
+                controller.close();
+              }
+            })();
           },
-          async cancel() {
-            await iterator.return?.();
-          },
+          cancel: stop,
         }),
       };
     },

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { dimensions, invokeCognitive, rankForTask, TASK_CATEGORIES } from "@harness/cognitive";
+import { embed, generateText, streamText } from "ai";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 
@@ -39,7 +41,7 @@ describe("native cognitive host", () => {
     const offline = (async () => new Response("offline", { status: 503 })) as typeof fetch;
     const router = byRuntime("cactus-wasm");
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: "/nonexistent/cache", allowHosted: false, fetch: offline, only: [router.id] });
-    await expect(ensemble.route({ input: "x", tools: [{ name: "t", description: "", parameters: {} }] })).rejects.toMatchObject({ code: "no_member" });
+    await expect(route(ensemble.languageModel("tool-calling", "router"), { input: "x", tools: [{ name: "t", description: "", parameters: {} }] })).rejects.toMatchObject({ code: "no_member" });
     expect(ensemble.members()[0]).toMatchObject({ state: "failed", reason: expect.stringMatching(/503/) });
     await close();
   });
@@ -56,7 +58,7 @@ import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
 import { compilePack, defineGraph } from "@harness/behavior";
-import { ScriptedGenerator } from "@harness/testkit";
+import { scriptedModel } from "@harness/testkit";
 
 const tmp: string[] = [];
 afterEach(async () => {
@@ -69,13 +71,19 @@ async function tempDir(prefix: string) {
 }
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
 const only = (...models: ModelDescriptor[]) => ({ models, preferences: {} });
+/** A page image as a user message, the way a consumer asks a document parser to read it. */
+const pageMessage = (data: Uint8Array, mediaType = "image/png") => [{ role: "user" as const, content: [{ type: "file" as const, data, mediaType }] }];
+/** The system prompt of a call, if it has one. */
+const systemOf = (o: LanguageModelV4CallOptions) => (o.prompt[0]?.role === "system" ? o.prompt[0].content : "");
 
 /** Replace a catalog entry's weights with small files served by a fake Hugging Face, and its run settings to match. */
 function withFakeFiles<M extends ModelDescriptor>(m: M, files: Record<string, Uint8Array>, run: M["run"]): M {
   return { ...m, run, artifact: { ...m.artifact!, files: Object.entries(files).map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: sha(bytes) })) } };
 }
+/** A fake Hugging Face serving `files`; local model servers are reached for real. */
 function fakeHub(files: Record<string, Uint8Array>) {
-  return (async (url: string | URL | Request) => {
+  return (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).startsWith("http://127.0.0.1:")) return fetch(url, init);
     const path = Object.keys(files).find((p) => String(url).endsWith(`/${p}`));
     return path ? new Response(files[path] as Uint8Array<ArrayBuffer>) : new Response("missing", { status: 404 });
   }) as typeof fetch;
@@ -85,13 +93,15 @@ describe("native cognitive host loaders", () => {
   it("CH2.1 the transformers.js models load through their backends and serve their tasks", async () => {
     const { module } = fakeTransformers({ generated: ["Paris"] });
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, transformers: module, memory: {} });
-    expect((await ensemble.embed([{ kind: "query", text: "x" }]))[0]).toBeInstanceOf(Float32Array);
+    const embedded = await embed({ model: ensemble.embeddingModel(), value: "x", maxRetries: 0, ...embedding({ kind: "query" }) });
+    expect(embedded.embedding.length).toBeGreaterThan(0);
+    expect(embedded.embedding.every((x) => typeof x === "number")).toBe(true);
+    expect(embedded.response?.headers?.[MODEL_HEADER]).toBe(ensemble.candidates("text-embedding")[0]!.id);
     expect((await ensemble.compress({ text: "one two three four", rate: 1 })).text).toBe("one two three four");
-    let reply = "";
-    for await (const e of ensemble.generate({ messages: [{ role: "user", content: "capital?" }] })) if (e.type === "text") reply += e.text;
-    expect(reply).toBe("Paris");
-    const { pages } = await ensemble.parseDocument({ pages: [{ mediaType: "image/png", data: new Uint8Array([1]) }] }, "table-extraction");
-    expect(pages[0]!.markdown).toBe("Paris");
+    const chat = streamText({ model: ensemble.languageModel(), prompt: "capital?", maxRetries: 0 });
+    expect(await chat.text).toBe("Paris");
+    const table = await generateText({ model: ensemble.languageModel("table-extraction", "document-parser"), maxRetries: 0, messages: pageMessage(new Uint8Array([1])) });
+    expect(table.text).toBe("Paris");
     await close();
   });
 
@@ -132,7 +142,8 @@ describe("native cognitive host loaders", () => {
     const files = { "engine.js": loader, "engine.wasm": new Uint8Array([0, 97, 115, 109]), "weights.bin": new Uint8Array([1, 2, 3]) };
     const router = withFakeFiles(byRuntime("cactus-wasm"), files, { loader: "engine.js", wasm: "engine.wasm", weights: "weights.bin", prefix: "tiny", env: { HARNESS_TEST_ENGINE: "on" } });
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(router), fetch: fakeHub(files) });
-    expect((await ensemble.route({ input: "go", tools: [{ name: "t", description: "", parameters: {} }] })).calls).toEqual([{ name: "t", arguments: {} }]);
+    const routed = await route(ensemble.languageModel("tool-calling", "router"), { input: "go", tools: [{ name: "t", description: "", parameters: {} }] });
+    expect(routed).toMatchObject({ model: router.id, valid: [{ name: "t", arguments: {} }], problems: [], confidence: 0.99 });
     expect(process.env["HARNESS_TEST_ENGINE"]).toBe("on");
     delete process.env["HARNESS_TEST_ENGINE"];
     await close();
@@ -142,6 +153,7 @@ describe("native cognitive host loaders", () => {
     const dir = await tempDir("llama-");
     const binary = join(dir, "llama-server");
     const argsFile = join(dir, "args.json");
+    const bodyFile = join(dir, "body.json");
     await writeFile(
       binary,
       `#!${process.execPath}
@@ -149,17 +161,23 @@ require("node:fs").writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(pro
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
 require("node:http").createServer((req, res) => {
   if (req.url === "/health") { res.writeHead(200); res.end("{}"); return; }
-  res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ choices: [{ message: { content: "# Page" } }] }));
+  let body = ""; req.on("data", (c) => (body += c)); req.on("end", () => {
+    require("node:fs").writeFileSync(${JSON.stringify(bodyFile)}, body);
+    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ choices: [{ message: { content: "# Page" } }] }));
+  });
 }).listen(port, "127.0.0.1");`,
     );
     await chmod(binary, 0o755);
     const files = { "model.gguf": new Uint8Array([1, 2]), "mmproj.gguf": new Uint8Array([3]) };
     const parser = withFakeFiles(catalog.models.find((m) => m.runtime === "llama.cpp-server" && m.ports.includes("document-parser")) as ReturnType<typeof byRuntime<"llama.cpp-server">>, files, { model: "model.gguf", projector: "mmproj.gguf", args: ["--flag"] });
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(parser), fetch: fakeHub(files), llamaServer: binary });
-    const { pages } = await ensemble.parseDocument({ pages: [{ mediaType: "image/png", data: new Uint8Array([9]) }] });
-    expect(pages[0]!.markdown).toBe("# Page");
-    const args = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(argsFile, "utf8"))) as string[];
-    expect(args).toEqual(expect.arrayContaining(["--mmproj", "--flag"]));
+    const { text, response } = await generateText({ model: ensemble.languageModel("document-parsing", "document-parser"), maxRetries: 0, messages: pageMessage(new Uint8Array([9])) });
+    expect(text).toBe("# Page");
+    expect(response.headers?.[MODEL_HEADER]).toBe(parser.id);
+    const read = async (file: string) => JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(file, "utf8"))) as unknown;
+    expect(await read(argsFile)).toEqual(expect.arrayContaining(["--mmproj", "--flag"]));
+    // a page sent without words is read with the default instruction
+    expect(JSON.stringify(await read(bodyFile))).toContain("Convert this page to Markdown.");
     await close();
   });
 
@@ -222,9 +240,8 @@ require("node:http").createServer((req, res) => {
     const ort = fakeOrt();
     const m = kernel(files);
     const { ensemble, close } = buildNativeEnsemble({ cacheDir, allowHosted: false, catalog: only(m), fetch: fakeHub(files), transformers: module, onnxruntime: ort.runtime });
-    let reply = "";
-    for await (const e of ensemble.generate({ messages: [{ role: "user", content: "hi" }] }, "steered-chat")) if (e.type === "text") reply += e.text;
-    expect(reply).toBe("a");
+    const steered = streamText({ model: ensemble.languageModel("steered-chat"), prompt: "hi", maxRetries: 0 });
+    expect(await steered.text).toBe("a");
     expect(ort.created).toHaveLength(1);
     expect(ort.created[0]!.startsWith(join(cacheDir, "steerable"))).toBe(true);
     // the tokenizer comes from the export's own folder, with the run's template options
@@ -240,10 +257,9 @@ require("node:http").createServer((req, res) => {
     const ort = fakeOrt();
     const m = { ...kernel(files), constraints: ["regex"], run: { ...KERNEL, vocab: "raw" } } as ReturnType<typeof kernel>;
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(m), fetch: fakeHub(files), transformers: fakeTransformers().module, onnxruntime: ort.runtime });
-    let reply = "";
     // the model would say "a" (token 1); the constraint allows only "b"
-    for await (const e of ensemble.generate({ messages: [{ role: "user", content: "hi" }], constraint: { type: "regex", pattern: "b" } }, "steered-chat")) if (e.type === "text") reply += e.text;
-    expect(reply).toBe("b");
+    const constrained = streamText({ model: ensemble.languageModel("steered-chat"), prompt: "hi", maxRetries: 0, ...constrain({ type: "regex", pattern: "b" }) });
+    expect(await constrained.text).toBe("b");
     await close();
   });
 
@@ -271,7 +287,7 @@ require("node:http").createServer((req, res) => {
       onnxruntime: ort.runtime,
       behavior,
     });
-    for await (const _ of ensemble.generate({ messages: [{ role: "user", content: "hi" }] }, "steered-chat"));
+    await streamText({ model: ensemble.languageModel("steered-chat"), prompt: "hi", maxRetries: 0 }).consumeStream();
     expect(ort.steers[0]).toEqual([3, 0]);
     await close();
   });
@@ -303,7 +319,7 @@ require("node:http").createServer((req, res) => {
     expect(first.ensemble.extensions()).toEqual(["memory", "learning"]);
     first.ensemble.register(
       { ...byRuntime("transformers.js"), id: "local/reasoner", tasks: ["reasoning"], ports: ["generator"] } as never,
-      async () => ({ generator: new ScriptedGenerator(() => reflection) }),
+      async () => ({ generator: scriptedModel(() => reflection) }),
     );
     expect(await invokeCognitive(first.ensemble, "learning.observe", { id: "t1", task: "deploy", steps: [], outcome: { status: "success" } })).toMatchObject({ changes: [{ op: "added", id: "l1" }] });
     expect(saves).toHaveLength(1);
@@ -317,7 +333,7 @@ require("node:http").createServer((req, res) => {
     const dir = await tempDir("workflows-");
     const reflection = JSON.stringify({ operations: [{ op: "add", kind: "procedure", title: "greet", text: "greet the user", steps: ["say hello"] }] });
     const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128) }, learning: {}, workflows: { dir } });
-    host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/thinker", tasks: ["reasoning", "chat"], ports: ["generator"] } as never, async () => ({ generator: new ScriptedGenerator((r) => (String(r.messages[0]!.content).startsWith("You distil") ? reflection : "Hello!")) }));
+    host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/thinker", tasks: ["reasoning", "chat"], ports: ["generator"] } as never, async () => ({ generator: scriptedModel((o) => (systemOf(o).startsWith("You distil") ? reflection : "Hello!")) }));
     expect(host.ensemble.extensions()).toEqual(["memory", "workflows", "learning"]);
     expect(((await invokeCognitive(host.ensemble, "learning.status", {})) as { plugins: { id: string }[] }).plugins.map((p) => p.id)).toEqual(["workflow-builder", "skill-builder", "tool-builder", "recording-teacher"]);
     await invokeCognitive(host.ensemble, "learning.observe", { id: "t1", task: "greet", steps: [], outcome: { status: "success" } });

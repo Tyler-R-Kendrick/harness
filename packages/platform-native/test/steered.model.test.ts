@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
-import type { GenerationEvent, Generator } from "@harness/cognitive";
+import { streamText } from "ai";
+import type { TextStreamPart, ToolSet } from "ai";
+import { stateOf } from "@harness/cognitive";
+import type { LanguageModelV4 } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 import { generatorContract } from "@harness/testkit";
 import { modelCacheDir } from "./models-env.ts";
@@ -21,7 +24,7 @@ const once = <T>(make: () => Promise<T>) => {
   let p: Promise<T> | undefined;
   return () => (p ??= make());
 };
-async function kernel(behavior?: BehaviorPack): Promise<Generator> {
+async function kernel(behavior?: BehaviorPack): Promise<LanguageModelV4> {
   const host = buildNativeEnsemble({ cacheDir: modelCacheDir, allowHosted: false, catalog: { models: [kernelModel], preferences: {} }, ...(behavior ? { behavior } : {}) });
   hosts.push(host);
   return (await host.ensemble.resolve("steered-chat", "generator")).port;
@@ -41,17 +44,24 @@ const steered = once(async () => kernel((await behavior()).pack));
 const plain = once(() => kernel());
 
 async function reply(content: string, isSteered: boolean) {
-  const g = await (isSteered ? steered() : plain());
-  const events: GenerationEvent[] = [];
-  for await (const e of g.generate({ messages: [{ role: "user", content }], maxTokens: 40 })) events.push(e);
+  const model = await (isSteered ? steered() : plain());
+  const parts: TextStreamPart<ToolSet>[] = [];
+  for await (const part of streamText({ model, prompt: content, maxOutputTokens: 40, maxRetries: 0 }).fullStream) parts.push(part);
+  const changes = parts.flatMap((p) => {
+    const change = stateOf(p as { type: string });
+    return change ? [change] : [];
+  });
   return {
-    events,
-    text: events.map((e) => (e.type === "text" ? e.text : "")).join(""),
-    states: events.flatMap((e) => (e.type === "state" ? [`${e.from}->${e.state}`] : [])),
+    /** What the model said, in order: its state changes and its text. */
+    said: parts.filter((p) => p.type === "text-delta" || stateOf(p as { type: string }) !== undefined),
+    text: parts.map((p) => (p.type === "text-delta" ? p.text : "")).join(""),
+    states: changes.map((c) => `${c.from}->${c.state}`),
   };
 }
 
-generatorContract(`${kernelModel.id} steerable kernel, unsteered, real weights`, plain);
+// The contract gets a kernel of its own: one kernel serves one call at a time, so a
+// contract failure that leaves a call running must not hold up the behavior tests.
+generatorContract(`${kernelModel.id} steerable kernel, unsteered, real weights`, once(() => kernel()));
 
 describe("the steerable kernel with a behavior graph, real weights", () => {
   it("KS1.1 the host graph parses, for this model and the layer its tap carries", async () => {
@@ -62,7 +72,7 @@ describe("the steerable kernel with a behavior graph, real weights", () => {
   it("KS1.2 an insult turns the anger sensor on while reading the prompt: the host is soothing before it says a word", async () => {
     const r = await reply("You useless idiot, I am furious with you!", true);
     expect(r.states).toEqual(["neutral->soothing"]);
-    expect(r.events[0]).toMatchObject({ type: "state", state: "soothing", cause: "sensor userAngry on" });
+    expect(stateOf(r.said[0] as { type: string })).toMatchObject({ state: "soothing", cause: "sensor userAngry on" });
     expect(r.text.length).toBeGreaterThan(0);
     expect(r.text).not.toContain("�");
   });

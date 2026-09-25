@@ -8,7 +8,7 @@ import type { Worker } from "@harness/workers";
 import { bytes, Ensemble } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { FileStorage, NodeHost } from "@harness/platform-native";
-import { HashEmbedder } from "@harness/testkit";
+import { hashEmbeddingModel } from "@harness/testkit";
 
 function wire(host: NodeHost) {
   const input = new PassThrough();
@@ -63,7 +63,7 @@ describe("NodeHost", () => {
   it("NH2.1 with an ensemble, cognitive capabilities are offered and invokes are answered by the model that served them", async () => {
     const embedder: ModelDescriptor = { id: "embedder-a", name: "Embedder A", publisher: "t", tasks: ["text-embedding"], ports: ["embedder"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] };
     const ensemble = new Ensemble({ platform: "native" });
-    ensemble.register(embedder, async () => ({ embedder: new HashEmbedder(4) }));
+    ensemble.register(embedder, async () => ({ embedder: hashEmbeddingModel(4) }));
     const host = await NodeHost.start({ worker: { run: async () => {}, cancel: () => {}, permission: () => {} }, identity: { principal: "me", kind: "human" }, cognitive: ensemble });
     expect(host.daemon.capabilities().map((c) => c.name)).toContain("cognitive.text-embedding");
     const c = wire(host);

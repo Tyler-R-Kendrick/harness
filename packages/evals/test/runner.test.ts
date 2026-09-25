@@ -3,8 +3,7 @@ import { bytes, Ensemble, probability } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { BlockedError, chooseJudge, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
-import { EvaluationJudge } from "@harness/models";
-import { FakeEvaluationModel } from "../../models/test/fake-evaluation-model.ts";
+import { scriptedJudge } from "@harness/testkit";
 
 const yesCase = (id: string, reply: string): EvalCase => ({
   id,
@@ -14,9 +13,13 @@ const yesCase = (id: string, reply: string): EvalCase => ({
   expect: { correct: { type: "boolean", expect: true } },
 });
 
-const judgeFrom = (p: (state: unknown) => number) => ({
-  judge: new EvaluationJudge(new FakeEvaluationModel((o) => ({ correct: { type: "boolean", probability: p(o.state) } }))),
-});
+/** A judge the runner reports as the fake judge, on an evaluation model that answers from `answer`. */
+const judgeOn = (answer: Parameters<typeof scriptedJudge>[0]) => ({ judge: { identity: { provider: "fake", modelId: "fake-judge" }, model: scriptedJudge(answer) } });
+const judgeFrom = (p: (state: unknown) => number) => judgeOn((_id, _q, state) => ({ type: "boolean", probability: p(state) }));
+const failing = (error: () => Error) =>
+  judgeOn(() => {
+    throw error();
+  });
 
 describe("runEvals", () => {
   it("EV3.1 without a judge every case is blocked, with the reason, and the report names no judge", async () => {
@@ -59,20 +62,14 @@ describe("runEvals", () => {
   });
 
   it("EV3.5 a judge authentication failure is blocked; other judge failures are inconclusive", async () => {
-    const authFail = { judge: new EvaluationJudge(new FakeEvaluationModel(() => { throw Object.assign(new Error("unauthorized"), { statusCode: 401 }); })) };
-    const flaky = { judge: new EvaluationJudge(new FakeEvaluationModel(() => { throw new Error("socket hang up"); })) };
+    const authFail = failing(() => Object.assign(new Error("unauthorized"), { statusCode: 401 }));
+    const flaky = failing(() => new Error("socket hang up"));
     expect((await runEvals([yesCase("a", "4")], authFail)).results[0]).toMatchObject({ verdict: "blocked" });
     expect((await runEvals([yesCase("a", "4")], flaky)).results[0]).toMatchObject({ verdict: "inconclusive", reason: expect.stringMatching(/socket hang up/) });
   });
 
   it("EV3.6 wrapped access errors (e.g. inside a retry error) are still recognised", async () => {
-    const wrapped = {
-      judge: new EvaluationJudge(
-        new FakeEvaluationModel(() => {
-          throw Object.assign(new Error("retries exhausted"), { errors: [Object.assign(new Error("forbidden"), { name: "GatewayForbiddenError" })] });
-        }),
-      ),
-    };
+    const wrapped = failing(() => Object.assign(new Error("retries exhausted"), { errors: [Object.assign(new Error("forbidden"), { name: "GatewayForbiddenError" })] }));
     expect((await runEvals([yesCase("a", "4")], wrapped)).results[0]).toMatchObject({ verdict: "blocked" });
   });
 
@@ -92,7 +89,7 @@ describe("chooseJudge", () => {
     ensemble.register(judgeModel("hosted-judge", "hosted"), async () => {
       throw new Error("no credential");
     });
-    ensemble.register(judgeModel("local-judge", "local"), async () => ({ judge: judgeFrom(() => 0.9).judge }));
+    ensemble.register(judgeModel("local-judge", "local"), async () => ({ judge: judgeFrom(() => 0.9).judge.model }));
     const choice = await chooseJudge(ensemble);
     expect(choice.judge?.identity).toEqual({ provider: "ai-gateway", modelId: "local-judge" });
     expect((await runEvals([yesCase("a", "4")], choice)).results[0]).toMatchObject({ verdict: "passed" });
@@ -105,7 +102,7 @@ describe("chooseJudge", () => {
 
   it("EV3.9 errors other than having no judge are not hidden", async () => {
     const ensemble = new Ensemble({ platform: "native" });
-    ensemble.register(judgeModel("j", "local"), async () => ({ judge: judgeFrom(() => 1).judge }));
+    ensemble.register(judgeModel("j", "local"), async () => ({ judge: judgeFrom(() => 1).judge.model }));
     const broken = Object.assign(ensemble, { resolve: async () => Promise.reject(new TypeError("bug")) });
     await expect(chooseJudge(broken)).rejects.toThrow("bug");
   });

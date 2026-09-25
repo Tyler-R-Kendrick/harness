@@ -218,6 +218,17 @@ describe("local language models", () => {
     expect(log.filter((l) => l.startsWith("token")).length).toBeLessThan(50);
   });
 
+  it("LM2.7 a consumer that stops reading without cancelling does not leave the decoder paused: it decodes to the end and stops", async () => {
+    const { model, log } = decoder(counting);
+    const { stream } = await model.doStream({ prompt: [] });
+    const reader = stream.getReader();
+    await reader.read();
+    reader.releaseLock();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(log.filter((l) => l.startsWith("token"))).toHaveLength(50);
+    expect(log.at(-1)).toBe("stopped");
+  });
+
   it("LM2.6 a decoder's failure is an error part in the stream, and rejects a generate call", async () => {
     const { model } = decoder(async function* () {
       yield { type: "stream-start", warnings: [] };

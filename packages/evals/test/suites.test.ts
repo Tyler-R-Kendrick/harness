@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { Memory, memoryExtension } from "@harness/memory";
 import { calibrationSuite, cognitiveSuite, harnessSuite } from "@harness/evals";
 import { bytes, dimensions, Ensemble } from "@harness/cognitive";
-import type { GenerationEvent, ModelDescriptor, TaskCategory } from "@harness/cognitive";
-import { HashEmbedder, HeuristicCompressor, KeywordRouter, StubDocumentParser } from "@harness/testkit";
+import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
+import { hashEmbeddingModel, HeuristicCompressor, keywordRouterModel, scriptedModel, stubDocumentParser } from "@harness/testkit";
 
 /** Every `name` a question refers to in backticks must exist in the judged state. */
 function referencedKeys(instructions: unknown): string[] {
@@ -54,18 +54,11 @@ describe("eval suites", () => {
   it("EV8.1 cognitive cases run real ensemble work and expose every field their questions reference", async () => {
     const d = (id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor => ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] });
     const ensemble = new Ensemble({ platform: "native" });
-    ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-    ensemble.install(memoryExtension({ memory: new Memory(ensemble, { dimensions: dimensions(32) }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: new HashEmbedder(64) }) }));
+    ensemble.register(d("router", ["tool-calling"], ["router"]), async () => ({ router: keywordRouterModel() }));
+    ensemble.install(memoryExtension({ memory: new Memory(ensemble.embeddingModel(), { dimensions: dimensions(32) }), models: [d("embedder", ["text-embedding"], ["embedder"])], load: async () => ({ embedder: hashEmbeddingModel(64) }) }));
     ensemble.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
-    ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
-    ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({
-      generator: {
-        async *generate(): AsyncIterable<GenerationEvent> {
-          yield { type: "text", text: "A circle and a square." };
-          yield { type: "finish", reason: "stop" };
-        },
-      },
-    }));
+    ensemble.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": stubDocumentParser() }));
+    ensemble.register(d("vlm", ["vision-qa"], ["generator"]), async () => ({ generator: scriptedModel(() => "A circle and a square.") }));
     const suite = cognitiveSuite(async () => ensemble);
     expect(new Set(suite.map((c) => c.id)).size).toBe(suite.length);
     expect(suite.map((c) => c.id)).toEqual(["cognitive.tool-decision", "cognitive.compression-keeps-facts", "cognitive.document-ocr", "cognitive.vision-answer", "cognitive.memory-recall"]);
