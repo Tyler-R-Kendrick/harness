@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { embed } from "ai";
 import type { EmbeddingModelV4CallOptions, LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
-import { bytes, dimensions, Ensemble, HARNESS, invokeCognitive, mirrorCapabilities, probability, usage } from "@harness/cognitive";
+import { bytes, dimensions, Ensemble, HARNESS, invokeCognitive, JudgeAnswerSchema, mirrorCapabilities, probability, usage } from "@harness/cognitive";
 import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
 import { hashEmbeddingModel, HeuristicCompressor, keywordRouterModel, scriptedJudge, stubDocumentParser } from "@harness/testkit";
 
@@ -134,6 +134,49 @@ describe("cognitive service input handling", () => {
       [{ role: "user", content: [{ type: "file", data: { type: "data", data: Uint8Array.from([1]) }, mediaType: "image/png" }, { type: "text", text: "tables only" }] }],
       [{ role: "user", content: [{ type: "file", data: { type: "data", data: Uint8Array.from([1]) }, mediaType: "image/png" }] }],
     ]);
+  });
+
+  it("CS2.5 consecutive inputs of one kind go in one embedding call, in order; the result names the member", async () => {
+    const { e, seen } = recording();
+    const r = (await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }, { kind: "query", text: "b" }, { kind: "document", text: "c" }, { kind: "document", text: "d" }, { kind: "query", text: "e" }] })) as { model: string; vectors: number[][] };
+    expect(seen.embed.map((o) => o.values)).toEqual([["a", "b"], ["c", "d"], ["e"]]);
+    expect(r.vectors).toHaveLength(5);
+    expect(r.model).toBe("embedder-a");
+    // same kind, different task or title: separate calls
+    await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "x", task: "t1" }, { kind: "query", text: "y", task: "t2" }, { kind: "document", text: "z", title: "A" }, { kind: "document", text: "w", title: "A" }] });
+    expect(seen.embed.slice(3).map((o) => o.values)).toEqual([["x"], ["y"], ["z", "w"]]);
+  });
+
+  it("CS2.6 a routing reports invalid calls apart from valid ones; parse, judge and route name their member", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const answer = (content: never[]) => ({ content, finishReason: { unified: "tool-calls" as const, raw: undefined }, usage: usage(), warnings: [], providerMetadata: { [HARNESS]: { confidence: 0.4 } } });
+    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({
+      router: new MockLanguageModelV4({ doGenerate: async () => answer([{ type: "tool-call", toolCallId: "1", toolName: "set_timer", input: "{}" }, { type: "tool-call", toolCallId: "2", toolName: "nope", input: "{}" }] as never[]) }),
+    }));
+    const r = (await invokeCognitive(e, "route", { input: "go", tools })) as { model: string; calls: unknown[]; invalid: string[]; confidence: number };
+    expect(r).toMatchObject({ model: "router-a", calls: [{ name: "set_timer", arguments: {} }], confidence: 0.4 });
+    expect(r.invalid).toEqual([expect.stringMatching(/^nope: /)]);
+    const clean = new Ensemble({ platform: "native" });
+    clean.register(d("router-b", ["tool-calling"], ["router"]), async () => ({ router: new MockLanguageModelV4({ doGenerate: async () => answer([]) }) }));
+    expect(await invokeCognitive(clean, "route", { input: "go", tools })).not.toHaveProperty("invalid");
+    await expect(invokeCognitive(e, "status", { extra: true })).resolves.toBeDefined();
+    await expect(invokeCognitive(e, "status", "nope")).rejects.toThrow(/invalid status input/);
+  });
+
+  it("CS2.7 judge questions and answers are parsed: each type's criteria have their shape, and probabilities are in [0, 1]", async () => {
+    const e = ensemble();
+    for (const [questions, where] of [
+      [{ q: { type: "boolean", instructions: "?", criteria: { true: 1 } } }, /questions\.q\.criteria\.true/],
+      [{ q: { type: "choice", instructions: "?", criteria: ["a"] } }, /questions\.q\.criteria/],
+      [{ q: { type: "score", instructions: "?", criteria: { a: "x" } } }, /questions\.q\.criteria/],
+      [{ q: { type: "choice", instructions: 3, criteria: {} } }, /questions\.q\.instructions/],
+    ] as const)
+      await expect(invokeCognitive(e, "judge", { state: "s", questions })).rejects.toThrow(where);
+    expect(await invokeCognitive(e, "judge", { questions: { q: { type: "boolean", instructions: "?" } } })).toMatchObject({ model: "judge-a" });
+    expect(JudgeAnswerSchema.safeParse({ type: "choice", choice: "a", probabilities: { a: 1.5 } }).success).toBe(false);
+    expect(JudgeAnswerSchema.safeParse({ type: "score", score: 1, probabilities: { "1": -0.1 } }).success).toBe(false);
+    expect(JudgeAnswerSchema.safeParse({ type: "score", score: 1, probabilities: { "1": 1 } }).success).toBe(true);
+    expect(JudgeAnswerSchema.safeParse({ type: "boolean", probability: 2 }).success).toBe(false);
   });
 
   it("CS2.4 a policy is handed to the cascade; members without a reason report none", async () => {

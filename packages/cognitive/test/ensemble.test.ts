@@ -166,6 +166,41 @@ describe("Ensemble", () => {
     expect(() => provider.imageModel("chat")).toThrow(/No such imageModel/);
   });
 
+  it("EN1.14 its models name the ensemble as provider and their task (and port kind) as id", async () => {
+    const e = new Ensemble({ platform: "native" });
+    expect([e.languageModel().provider, e.languageModel().modelId, e.languageModel("coding", "generator").modelId]).toEqual(["harness.ensemble", "chat", "coding"]);
+    expect(e.languageModel("document-parsing", "document-parser").modelId).toBe("document-parsing/document-parser");
+    expect(e.languageModel().supportedUrls).toEqual({});
+    const embedding = e.embeddingModel();
+    expect([embedding.provider, embedding.modelId, embedding.maxEmbeddingsPerCall, embedding.supportsParallelCalls]).toEqual(["harness.ensemble", "text-embedding", undefined, false]);
+    const judgment = e.evaluationModel();
+    expect([judgment.provider, judgment.modelId, judgment.supportedQuestionTypes]).toEqual(["harness.ensemble", "judgment", ["boolean", "choice", "score"]]);
+    const provider = e.provider();
+    expect(provider.specificationVersion).toBe("v4");
+    expect(provider.languageModel("chat/generator").modelId).toBe("chat");
+    expect(provider.languageModel("document-parsing/document-parser").modelId).toBe("document-parsing/document-parser");
+    expect(provider.embeddingModel("text-embedding").modelId).toBe("text-embedding");
+    expect(() => provider.evaluationModel("nope")).toThrow(/No such languageModel: nope/);
+    expect(() => provider.languageModel("/router")).toThrow(/No such languageModel/);
+  });
+
+  it("EN1.15 resolve loads and names the member that would serve a task now; a registered id is required to act on a member", async () => {
+    const e = new Ensemble({ platform: "native" });
+    e.register(descriptor("judge-a", ["judgment"], ["judge"]), async () => ({ judge }));
+    const { id, port } = await e.resolve("judgment", "judge");
+    expect([id, port]).toEqual(["judge-a", judge]);
+    expect(e.state("judge-a")).toBe("ready");
+    expect(e.state("missing")).toBeUndefined();
+    expect(() => e.revoke("missing", "x")).toThrow("no model missing is registered");
+    expect(() => e.restore("missing")).toThrow("no model missing is registered");
+    expect(() => e.reset("missing")).toThrow("no model missing is registered");
+    // restoring a member that is not revoked, or resetting one that has not failed, changes nothing
+    e.restore("judge-a");
+    e.reset("judge-a");
+    expect(e.state("judge-a")).toBe("ready");
+    expect(new CognitiveError("no_member", "m").name).toBe("CognitiveError");
+  });
+
   it("EN1.11 per-task preferences break ties that benchmarks cannot", () => {
     const e = new Ensemble({ platform: "native", preferences: { chat: ["b"] } });
     e.register(descriptor("a", ["chat"], ["generator"]), async () => ({}));
