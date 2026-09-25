@@ -9,8 +9,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
     "@harness/core": "0.0.0",
     "@harness/protocol": "0.0.0",
-    "@harness/cognitive": "0.0.0"
+    "@harness/cognitive": "0.0.0",
+    "ai": "7.0.114"
   }
 }

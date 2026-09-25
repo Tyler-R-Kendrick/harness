@@ -2,7 +2,7 @@
   "name": "@harness/cognitive",
   "version": "0.0.0",
   "private": true,
-  "description": "Cognitive core: model ports, candidate strategies and statistical math. Pure.",
+  "description": "Cognitive core: the model ensemble as an AI SDK provider, task taxonomy, selection and statistical math. Pure.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -10,7 +10,9 @@
     "./data/*": "./data/*"
   },
   "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
     "@scure/base": "2.4.0",
-    "zod": "4.6.5"
+    "zod": "4.6.5",
+    "ai": "7.0.114"
   }
 }

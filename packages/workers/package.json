@@ -2,7 +2,7 @@
   "name": "@harness/workers",
   "version": "0.0.0",
   "private": true,
-  "description": "Portable session workers: a deterministic echo worker and an in-process model worker (AI SDK, e.g. via Vercel AI Gateway).",
+  "description": "Portable session workers: a deterministic echo worker, and a worker that runs any AI SDK agent (a ToolLoopAgent over the ensemble or a hosted model).",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -12,6 +12,7 @@
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
     "@scure/base": "2.4.0",
-    "ai": "7.0.113"
+    "ai": "7.0.114",
+    "zod": "4.6.5"
   }
 }

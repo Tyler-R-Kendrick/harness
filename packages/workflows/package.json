@@ -9,11 +9,12 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
-    "quickjs-emscripten-core": "0.32.0",
-    "zod": "4.6.5",
+    "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
-    "@harness/cognitive": "0.0.0"
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
+    "ai": "7.0.114",
+    "quickjs-emscripten-core": "0.32.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0"

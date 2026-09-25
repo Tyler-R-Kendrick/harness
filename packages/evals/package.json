@@ -10,8 +10,8 @@
   },
   "dependencies": {
     "@harness/cognitive": "0.0.0",
-    "ai": "7.0.113",
-    "@ai-sdk/gateway": "4.0.91",
+    "ai": "7.0.114",
+    "@ai-sdk/gateway": "4.0.92",
     "@harness/core": "0.0.0",
     "@harness/workers": "0.0.0",
     "@ai-sdk/provider": "4.0.18",

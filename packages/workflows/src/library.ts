@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { CognitiveExtension, Constraint, Ensemble } from "@harness/cognitive";
+import { generateText, jsonSchema, Output } from "ai";
+import type { LanguageModel } from "ai";
+import { constrain } from "@harness/cognitive";
+import type { CognitiveExtension, Constraint } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { runWorkflow } from "./run.ts";
 import type { Effects, RunResult } from "./run.ts";
@@ -91,12 +94,15 @@ export class WorkflowHost {
   }
 }
 
-/** Put a question to the ensemble's chat model and collect its answer; a constraint goes with it. */
-export function askEnsemble(ensemble: Pick<Ensemble, "generate">): (prompt: string, constraint?: Constraint) => Promise<string> {
+/**
+ * Put a question to an AI SDK model (usually the ensemble's chat model) and take its
+ * answer's text. A JSON Schema constraint is asked for as structured output; any other
+ * constraint goes as our provider options, for models that enforce it.
+ */
+export function askModel(model: LanguageModel): (prompt: string, constraint?: Constraint) => Promise<string> {
   return async (prompt, constraint) => {
-    let text = "";
-    for await (const e of ensemble.generate({ messages: [{ role: "user", content: prompt }], ...(constraint ? { constraint } : {}) }, "chat")) if (e.type === "text") text += e.text;
-    return text;
+    const settings = constraint?.type === "json-schema" ? { output: Output.object({ schema: jsonSchema(constraint.schema) }) } : constraint ? constrain(constraint) : {};
+    return (await generateText({ model, prompt, maxRetries: 0, ...settings })).text;
   };
 }
 
@@ -106,10 +112,10 @@ const GetInput = z.strictObject({ name: z.string().min(1) });
 /**
  * Workflows for the cognitive core, as an extension: `workflows.list`, `workflows.get`
  * and `workflows.run` (durable: running the same run id again resumes it, or returns
- * its result) through `_harness/cognitive/invoke`. Questions go to the ensemble.
+ * its result) through `_harness/cognitive/invoke`. Questions go to `model`.
  */
-export function workflowsExtension(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ensemble: Pick<Ensemble, "generate">; readonly tools?: ToolExecutor }): CognitiveExtension {
-  const host = new WorkflowHost({ library: options.library, journal: options.journal, ask: askEnsemble(options.ensemble), ...(options.tools ? { tools: options.tools } : {}) });
+export function workflowsExtension(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly model: LanguageModel; readonly tools?: ToolExecutor }): CognitiveExtension {
+  const host = new WorkflowHost({ library: options.library, journal: options.journal, ask: askModel(options.model), ...(options.tools ? { tools: options.tools } : {}) });
   return {
     id: "workflows",
     models: [],

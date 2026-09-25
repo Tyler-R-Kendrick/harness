@@ -1,11 +1,23 @@
+import { generateText, NoObjectGeneratedError, NoOutputGeneratedError, Output } from "ai";
+import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel } from "ai";
 import { z } from "zod";
 import type { Ensemble } from "@harness/cognitive";
 import type { Memory } from "@harness/memory";
 import { LessonSchema, parse, ReflectionSchema, TrajectorySchema } from "./schemas.ts";
-import type { Delta, Lesson, LessonId, LessonKind, Settings, TrajectoryInput } from "./schemas.ts";
+import type { Delta, Lesson, LessonId, LessonKind, Reflection, Settings, TrajectoryInput } from "./schemas.ts";
 
-/** The models learning thinks with: a generator to reflect, a judge to assess, a router to pick tools. */
-export type Reasoner = Pick<Ensemble, "generate" | "judge" | "route">;
+/** The AI SDK models learning thinks with: one to reflect, a judge to assess, a router to pick tools. */
+export interface Reasoner {
+  readonly reasoning: LanguageModel;
+  readonly judge: EvaluationModel;
+  /** Answers with tool calls and a calibrated confidence (provider metadata `harness.confidence`). */
+  readonly router: LanguageModel;
+}
+
+/** The ensemble's models for learning: its best reasoning model, judge and router. */
+export function ensembleReasoner(ensemble: Pick<Ensemble, "languageModel" | "evaluationModel">): Reasoner {
+  return { reasoning: ensemble.languageModel("reasoning"), judge: ensemble.evaluationModel(), router: ensemble.languageModel("tool-calling", "router") };
+}
 
 export type Change = { readonly op: "added" | "merged" | "refined" | "helpful" | "harmful" | "retired"; readonly id: LessonId };
 
@@ -24,9 +36,6 @@ export interface LearningOptions {
 const KIND = "lesson";
 const FORMAT = "harness.learning/v1";
 const Saved = z.strictObject({ format: z.literal(FORMAT), next: z.int().positive(), lessons: z.array(LessonSchema) });
-
-/** The reflection's answer format, enforced by generators that can (see the catalog's constraints). */
-const REFLECTION_SCHEMA = z.toJSONSchema(ReflectionSchema, { io: "input" }) as Record<string, unknown>;
 
 const indexText = (l: Pick<Lesson, "title" | "text" | "when">) => `${l.title}: ${l.text}${l.when ? ` (when ${l.when})` : ""}`;
 
@@ -91,21 +100,12 @@ export class Learning {
   async observe(input: TrajectoryInput): Promise<{ changes: Change[]; rejected: string[] }> {
     const session = parse(TrajectorySchema, "trajectory", input);
     const shown = (await this.recall(session.task, { limit: this.#settings.reflection.related })).lessons;
-    const raw = await this.#generate(JSON.stringify({ session, lessons: shown.map(({ id, kind, title, text, when, helpful, harmful }) => ({ id, kind, title, text, when, helpful, harmful })) }));
-    const start = raw.indexOf("{");
-    if (start < 0) return { changes: [], rejected: ["the reflection held no JSON object"] };
-    let json: unknown;
-    try {
-      json = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1));
-    } catch (e) {
-      return { changes: [], rejected: [`the reflection was not valid JSON: ${(e as Error).message}`] };
-    }
-    const reflection = ReflectionSchema.safeParse(json);
-    if (!reflection.success) return { changes: [], rejected: [`the reflection was not valid\n${z.prettifyError(reflection.error)}`] };
+    const reflection = await this.#reflect(JSON.stringify({ session, lessons: shown.map(({ id, kind, title, text, when, helpful, harmful }) => ({ id, kind, title, text, when, helpful, harmful })) }));
+    if (typeof reflection === "string") return { changes: [], rejected: [reflection] };
     const allowed = new Set(shown.map((l) => l.id));
     const changes: Change[] = [];
     const rejected: string[] = [];
-    for (const delta of reflection.data.operations) {
+    for (const delta of reflection.operations) {
       if (delta.op !== "add" && !(allowed.has(delta.id) && this.#lessons.has(delta.id))) {
         rejected.push(`${delta.op} ${delta.id}: no such lesson was shown`);
         continue;
@@ -160,14 +160,20 @@ export class Learning {
     return changes;
   }
 
-  async #generate(content: string): Promise<string> {
+  /**
+   * The reflection, as structured output: the AI SDK asks for (and models that can
+   * enforce) the reflection's JSON Schema, and parses the answer with its zod schema.
+   * An answer that is not a reflection is why nothing changed.
+   */
+  async #reflect(content: string): Promise<Reflection | string> {
     const { system, maxTokens } = this.#settings.reflection;
-    let text = "";
-    const request = { messages: [{ role: "system" as const, content: system }, { role: "user" as const, content }], maxTokens, constraint: { type: "json-schema" as const, schema: REFLECTION_SCHEMA } };
-    for await (const e of this.#reasoner.generate(request, "reasoning")) {
-      if (e.type === "text") text += e.text;
+    try {
+      const { output } = await generateText({ model: this.#reasoner.reasoning, instructions: system, prompt: content, maxOutputTokens: maxTokens, maxRetries: 0, output: Output.object({ schema: ReflectionSchema }) });
+      return output;
+    } catch (e) {
+      if (NoObjectGeneratedError.isInstance(e) || NoOutputGeneratedError.isInstance(e)) return `the reflection was not valid: ${e.message}${e.cause instanceof Error ? `\n${e.cause.message}` : ""}`;
+      throw e;
     }
-    return text;
   }
 
   async #duplicates(text: string): Promise<Lesson[]> {

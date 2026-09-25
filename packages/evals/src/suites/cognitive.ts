@@ -1,5 +1,6 @@
+import { generateText } from "ai";
 import sharp from "sharp";
-import { decideToolCalls, invokeCognitive } from "@harness/cognitive";
+import { decideToolCalls, invokeCognitive, parseChatOutput } from "@harness/cognitive";
 import type { Ensemble, ImageInput } from "@harness/cognitive";
 import type { EvalCase } from "../runner.ts";
 
@@ -73,8 +74,9 @@ export function cognitiveSuite(ensemble: () => Promise<Ensemble>): readonly Eval
       subject: async () => {
         const e = await ensemble();
         const { id, port } = await e.resolve("document-parsing", "document-parser");
-        const { pages } = await port.parse({ pages: [await png(invoiceSvg())] });
-        return { truth: INVOICE, markdown: pages[0]?.markdown ?? "", model: id };
+        const page = await png(invoiceSvg());
+        const { text } = await generateText({ model: port, maxRetries: 0, messages: [{ role: "user", content: [{ type: "file", data: page.data, mediaType: page.mediaType }] }] });
+        return { truth: INVOICE, markdown: parseChatOutput(text).text, model: id };
       },
       questions: {
         faithful: {
@@ -93,10 +95,12 @@ export function cognitiveSuite(ensemble: () => Promise<Ensemble>): readonly Eval
           `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="100%" height="100%" fill="white"/><circle cx="110" cy="150" r="80" fill="#e00000"/><rect x="240" y="80" width="120" height="140" fill="#0000e0"/></svg>`,
         );
         const { id, port } = await e.resolve("vision-qa", "generator");
-        let answer = "";
-        for await (const ev of port.generate({ messages: [{ role: "user", content: [{ type: "image", image: scene }, { type: "text", text: "Describe the shapes and their colors in one sentence." }] }], maxTokens: 64 })) {
-          if (ev.type === "text") answer += ev.text;
-        }
+        const { text: answer } = await generateText({
+          model: port,
+          maxOutputTokens: 64,
+          maxRetries: 0,
+          messages: [{ role: "user", content: [{ type: "file", data: scene.data, mediaType: scene.mediaType }, { type: "text", text: "Describe the shapes and their colors in one sentence." }] }],
+        });
         return { scene: "a red circle on the left and a blue square on the right, on white", answer, model: id };
       },
       questions: {

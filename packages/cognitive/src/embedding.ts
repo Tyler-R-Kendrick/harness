@@ -36,13 +36,3 @@ export function truncateEmbedding(v: Float32Array, dimensions: number): Float32A
   for (let i = 0; i < head.length; i++) head[i] = head[i]! / m;
   return head;
 }
-
-export function cosine(a: Float32Array, b: Float32Array): number {
-  if (a.length !== b.length) throw new Error(`vector length mismatch: ${a.length} vs ${b.length}`);
-  const ma = magnitude(a);
-  const mb = magnitude(b);
-  if (ma === 0 || mb === 0) throw new Error("cosine is undefined for a zero vector");
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) dot += a[i]! * b[i]!;
-  return dot / (ma * mb);
-}

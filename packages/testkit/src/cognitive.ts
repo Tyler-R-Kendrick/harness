@@ -1,28 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { ChatStreamParser, compressWords, dimensions, probability } from "@harness/cognitive";
-import type {
-  Dimensions,
-  Compression,
-  CompressRequest,
-  Compressor,
-  DocumentParser,
-  Embedder,
-  EmbedInput,
-  GenerateRequest,
-  GenerationEvent,
-  Generator,
-  Judge,
-  JudgeAnswer,
-  JudgeQuestion,
-  JudgeRequest,
-  ParseRequest,
-  RouteRequest,
-  Routing,
-  ToolRouter,
-  ToolSpec,
-} from "@harness/cognitive";
+import type { EmbeddingModelV4, Experimental_EvaluationModelV4CallOptions as EvaluationModelV4CallOptions, LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4Prompt, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { embedMany, experimental_evaluate, generateText, streamText } from "ai";
+import { convertArrayToReadableStream, Experimental_EvaluationMockModelV4, MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
+import { ChatStreamParser, collectParts, compressWords, embedding, embedInputs, HARNESS, StreamParts, toolSet, usage } from "@harness/cognitive";
+import type { Compression, CompressRequest, Compressor, EvaluationModelV4, ImageInput, JudgeAnswer, JudgeQuestion, ToolSpec } from "@harness/cognitive";
 
-// ---- deterministic fakes ------------------------------------------------------------
+// ---- deterministic fakes, as AI SDK models --------------------------------------------
 
 const words = (text: string) => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
@@ -32,88 +15,100 @@ function hash(s: string): number {
   return h >>> 0;
 }
 
-/** Feature-hashing embedder: texts sharing words get similar vectors. */
-export class HashEmbedder implements Embedder {
-  readonly dimensions: Dimensions;
-  constructor(size = 64) {
-    this.dimensions = dimensions(size);
-  }
-  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}): Promise<Float32Array[]> {
-    const size = options.dimensions ?? this.dimensions;
-    return inputs.map((input) => {
-      const v = new Float32Array(size);
-      for (const w of words(input.text)) {
-        const h = hash(w);
-        v[h % size]! += h & 1 ? 1 : -1;
-      }
-      let norm = Math.hypot(...v);
-      if (norm === 0) {
-        v[0] = 1;
-        norm = 1;
-      }
-      return v.map((x) => x / norm);
-    });
-  }
+/** The text of a prompt's last user message. */
+export function promptText(prompt: LanguageModelV4Prompt): string {
+  const last = [...prompt].reverse().find((m) => m.role === "user");
+  return last?.role === "user" ? last.content.map((p) => (p.type === "text" ? p.text : "")).join("") : "";
 }
 
-/** Picks the tool whose name and description share the most words with the input. */
-export class KeywordRouter implements ToolRouter {
-  readonly requests: RouteRequest[] = [];
-  async route(request: RouteRequest): Promise<Routing> {
-    this.requests.push(request);
-    const said = new Set(words(request.input));
-    const scored = request.tools.map((t) => ({ t, score: words(`${t.name.replace(/_/g, " ")} ${t.description}`).filter((w) => said.has(w)).length }));
-    const best = scored.sort((a, b) => b.score - a.score)[0];
-    if (!best || best.score === 0) return { calls: [], confidence: probability(0.9), reasoning: "no tool shares a word with the request" };
-    return { calls: [{ name: best.t.name, arguments: {} }], confidence: probability(Math.min(0.99, 0.5 + 0.2 * best.score)), reasoning: `matched ${best.score} word(s)` };
-  }
+/** A feature-hashing embedding model: texts sharing words get similar unit vectors. Reads the size wanted from our embedding options. */
+export function hashEmbeddingModel(size = 64): EmbeddingModelV4 {
+  return new MockEmbeddingModelV4({
+    modelId: `hash-${size}`,
+    maxEmbeddingsPerCall: null,
+    doEmbed: async ({ values, providerOptions }) => {
+      const wanted = embedInputs(values, providerOptions).dimensions ?? size;
+      const embeddings = values.map((text) => {
+        const v = new Array<number>(wanted).fill(0);
+        for (const w of words(text)) {
+          const h = hash(w);
+          v[h % wanted]! += h & 1 ? 1 : -1;
+        }
+        let norm = Math.hypot(...v);
+        if (norm === 0) {
+          v[0] = 1;
+          norm = 1;
+        }
+        return v.map((x) => x / norm);
+      });
+      return { embeddings, warnings: [] };
+    },
+  });
 }
 
-/** Streams a scripted raw ChatML reply through the real parser, a few characters at a time. */
-export class ScriptedGenerator implements Generator {
-  readonly requests: GenerateRequest[] = [];
-  readonly #reply: (request: GenerateRequest) => string;
-  readonly #chunk: number;
-  constructor(reply: (request: GenerateRequest) => string, chunk = 3) {
-    this.#reply = reply;
-    this.#chunk = chunk;
-  }
-  async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
-    this.requests.push(request);
-    const raw = this.#reply(request);
-    const parser = new ChatStreamParser();
-    let calls = 0;
-    for (let i = 0; i < raw.length; i += this.#chunk) {
-      for (const e of parser.push(raw.slice(i, i + this.#chunk))) {
-        if (e.type === "tool-call") calls++;
-        yield e;
-      }
-    }
-    for (const e of parser.end()) yield e;
-    yield { type: "finish", reason: calls > 0 ? "tool-calls" : "stop" };
-  }
+/** A tool router model: calls the offered tool sharing the most words with the request, with a confidence in provider metadata. */
+export function keywordRouterModel(): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    modelId: "keyword-router",
+    doGenerate: async (options) => {
+      const said = new Set(words(promptText(options.prompt)));
+      const tools = (options.tools ?? []).flatMap((t) => (t.type === "function" ? [t] : []));
+      const best = tools.map((t) => ({ t, score: words(`${t.name.replace(/_/g, " ")} ${t.description ?? ""}`).filter((w) => said.has(w)).length })).sort((a, b) => b.score - a.score)[0];
+      const confidence = !best || best.score === 0 ? 0.9 : Math.min(0.99, 0.5 + 0.2 * best.score);
+      const reasoning = !best || best.score === 0 ? "no tool shares a word with the request" : `matched ${best.score} word(s)`;
+      return {
+        content: [{ type: "reasoning", text: reasoning }, ...(best && best.score > 0 ? [{ type: "tool-call" as const, toolCallId: "call_0", toolName: best.t.name, input: "{}" }] : [])],
+        finishReason: { unified: best && best.score > 0 ? "tool-calls" : "stop", raw: undefined },
+        usage: usage(),
+        providerMetadata: { [HARNESS]: { confidence } },
+        warnings: [],
+      };
+    },
+  });
+}
+
+/** Parts for a raw ChatML reply, parsed by the real parser a few characters at a time. */
+function replyParts(raw: string, chunk: number): LanguageModelV4StreamPart[] {
+  const parser = new ChatStreamParser();
+  const parts = new StreamParts();
+  const out: LanguageModelV4StreamPart[] = [{ type: "stream-start", warnings: [] }];
+  for (let i = 0; i < raw.length; i += chunk) for (const e of parser.push(raw.slice(i, i + chunk))) out.push(...parts.push(e));
+  for (const e of parser.end()) out.push(...parts.push(e));
+  return [...out, ...parts.end()];
+}
+
+/** A generator model that streams a scripted raw ChatML reply (think, tool_call and all) through the real parser. */
+export function scriptedModel(reply: (options: LanguageModelV4CallOptions) => string, chunk = 3): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    modelId: "scripted",
+    doStream: async (options) => ({ stream: convertArrayToReadableStream(replyParts(reply(options), chunk)) }),
+    doGenerate: async (options) => collectParts(replyParts(reply(options), chunk)),
+  });
 }
 
 function defaultAnswer(q: JudgeQuestion): JudgeAnswer {
-  if (q.type === "boolean") return { type: "boolean", probability: probability(0.5) };
+  if (q.type === "boolean") return { type: "boolean", probability: 0.5 } as JudgeAnswer;
   if (q.type === "choice") {
     const options = Object.keys(q.criteria);
-    return { type: "choice", choice: options[0]!, probabilities: Object.fromEntries(options.map((o) => [o, probability(1 / options.length)])) };
+    return { type: "choice", choice: options[0]!, probabilities: Object.fromEntries(options.map((o) => [o, 1 / options.length])) } as JudgeAnswer;
   }
   return { type: "score", score: (q.criteria.length - 1) / 2 };
 }
 
-/** Answers every question with `answer`, or a neutral default. */
-export class ScriptedJudge implements Judge {
-  readonly requests: JudgeRequest[] = [];
-  readonly #answer: (id: string, q: JudgeQuestion, request: JudgeRequest) => JudgeAnswer | undefined;
-  constructor(answer: (id: string, q: JudgeQuestion, request: JudgeRequest) => JudgeAnswer | undefined = () => undefined) {
-    this.#answer = answer;
-  }
-  async evaluate(request: JudgeRequest): Promise<Record<string, JudgeAnswer>> {
-    this.requests.push(request);
-    return Object.fromEntries(Object.entries(request.questions).map(([id, q]) => [id, this.#answer(id, q, request) ?? defaultAnswer(q)]));
-  }
+/** A judge answering every question with `answer`, or a neutral default. Records the calls it gets. */
+export function scriptedJudge(answer: (id: string, q: JudgeQuestion, state: unknown) => { type: string } | undefined = () => undefined): Experimental_EvaluationMockModelV4 & { readonly requests: EvaluationModelV4CallOptions[] } {
+  const requests: EvaluationModelV4CallOptions[] = [];
+  const model = new Experimental_EvaluationMockModelV4({
+    modelId: "scripted-judge",
+    doEvaluate: async (options) => {
+      requests.push(options);
+      return {
+        answers: Object.fromEntries(Object.entries(options.questions).map(([id, q]) => [id, (answer(id, q as JudgeQuestion, options.state) ?? defaultAnswer(q as JudgeQuestion)) as never])),
+        warnings: [],
+      };
+    },
+  });
+  return Object.assign(model, { requests });
 }
 
 const STOPWORDS = new Set(["a", "an", "the", "of", "to", "and", "or", "is", "are", "was", "in", "on", "at", "for", "that", "this", "it", "be", "with", "as", "by"]);
@@ -128,31 +123,31 @@ export class HeuristicCompressor implements Compressor {
   }
 }
 
-/** Describes each page instead of reading it. */
-export class StubDocumentParser implements DocumentParser {
-  async parse(request: ParseRequest): Promise<{ pages: { markdown: string; raw: string }[] }> {
-    return { pages: request.pages.map((p, i) => ({ markdown: `# Page ${i + 1}\n\n${p.mediaType}, ${p.data.length} bytes`, raw: `page ${i + 1}` })) };
-  }
+/** A document parser model that describes each page image instead of reading it. */
+export function stubDocumentParser(): MockLanguageModelV4 {
+  return new MockLanguageModelV4({
+    modelId: "stub-parser",
+    doGenerate: async ({ prompt }) => {
+      const files = prompt.flatMap((m) => (m.role === "user" ? m.content.filter((p) => p.type === "file") : []));
+      const text = files.map((f) => `# Page\n\n${f.mediaType}`).join("\n\n") || "(no page)";
+      return { content: [{ type: "text", text }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] };
+    },
+  });
 }
 
-// ---- contract suites ------------------------------------------------------------------
+// ---- contract suites, driving models through the AI SDK -------------------------------
 
 const TOOLS: ToolSpec[] = [
   { name: "get_weather", description: "Get the current weather for a city.", parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } },
   { name: "set_timer", description: "Start a countdown timer for some minutes.", parameters: { type: "object", properties: { minutes: { type: "integer" } }, required: ["minutes"] } },
 ];
 
-async function collect(stream: AsyncIterable<GenerationEvent>): Promise<GenerationEvent[]> {
-  const out: GenerationEvent[] = [];
-  for await (const e of stream) out.push(e);
-  return out;
-}
-
-export function judgeContract(label: string, make: () => Judge | Promise<Judge>): void {
+export function judgeContract(label: string, make: () => EvaluationModelV4 | Promise<EvaluationModelV4>): void {
   describe(`Judge contract: ${label}`, () => {
     it("JC1 answers exactly the questions asked, each with its question's type and a value in range", async () => {
-      const judge = await make();
-      const answers = await judge.evaluate({
+      const { answers } = await experimental_evaluate({
+        model: await make(),
+        maxRetries: 0,
         state: { request: "What is 17 + 25?", reply: "42" },
         questions: {
           correct: { type: "boolean", instructions: "Is `reply` the correct answer to `request`?" },
@@ -161,82 +156,73 @@ export function judgeContract(label: string, make: () => Judge | Promise<Judge>)
         },
       });
       expect(Object.keys(answers).sort()).toEqual(["correct", "quality", "topic"]);
-      const correct = answers["correct"]!;
-      const topic = answers["topic"]!;
-      const quality = answers["quality"]!;
-      expect(correct.type === "boolean" && correct.probability >= 0 && correct.probability <= 1).toBe(true);
-      expect(topic.type === "choice" && ["math", "history", "cooking"].includes(topic.choice)).toBe(true);
-      if (topic.type === "choice" && topic.probabilities) {
-        expect(Object.keys(topic.probabilities).sort()).toEqual(["cooking", "history", "math"]);
-        expect(Object.values(topic.probabilities).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 2);
+      expect(answers.correct.probability).toBeGreaterThanOrEqual(0);
+      expect(answers.correct.probability).toBeLessThanOrEqual(1);
+      expect(["math", "history", "cooking"]).toContain(answers.topic.choice);
+      if (answers.topic.probabilities) {
+        expect(Object.keys(answers.topic.probabilities).sort()).toEqual(["cooking", "history", "math"]);
+        expect(Object.values(answers.topic.probabilities).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 2);
       }
-      expect(quality.type === "score" && quality.score >= 0 && quality.score <= 2).toBe(true);
+      expect(answers.quality.score >= 0 && answers.quality.score <= 2).toBe(true);
     });
   });
 }
 
-export function routerContract(label: string, make: () => ToolRouter | Promise<ToolRouter>): void {
-  describe(`ToolRouter contract: ${label}`, () => {
+/** A router is a language model that answers with tool calls and a calibrated confidence (provider metadata `harness.confidence`). */
+export function routerContract(label: string, make: () => LanguageModelV4 | Promise<LanguageModelV4>): void {
+  const route = async (model: LanguageModelV4, prompt: string, tools: readonly ToolSpec[]) => generateText({ model, prompt, tools: toolSet(tools), maxRetries: 0 });
+  describe(`Router contract: ${label}`, () => {
     it("RC1 calls only offered tools, with object arguments and a confidence in [0, 1]", async () => {
-      const router = await make();
-      const r = await router.route({ input: "What's the weather like in Lagos right now?", tools: TOOLS });
-      for (const c of r.calls) {
-        expect(TOOLS.map((t) => t.name)).toContain(c.name);
-        expect(typeof c.arguments === "object" && c.arguments !== null && !Array.isArray(c.arguments)).toBe(true);
+      const r = await route(await make(), "What's the weather like in Lagos right now?", TOOLS);
+      for (const c of r.toolCalls) {
+        expect(TOOLS.map((t) => t.name)).toContain(c.toolName);
+        expect(typeof c.input === "object" && c.input !== null && !Array.isArray(c.input)).toBe(true);
       }
-      expect(r.confidence).toBeGreaterThanOrEqual(0);
-      expect(r.confidence).toBeLessThanOrEqual(1);
-      expect(typeof r.reasoning).toBe("string");
+      const confidence = r.providerMetadata?.[HARNESS]?.["confidence"];
+      expect(typeof confidence === "number" && confidence >= 0 && confidence <= 1).toBe(true);
     });
 
     it("RC2 with no tools offered there is nothing to call", async () => {
-      const router = await make();
-      expect((await router.route({ input: "What's the weather in Lagos?", tools: [] })).calls).toEqual([]);
+      expect((await route(await make(), "What's the weather in Lagos?", [])).toolCalls).toEqual([]);
     });
 
     it("RC3 independent requests do not leak into each other", async () => {
-      const fresh = await make();
-      const alone = await fresh.route({ input: "Start a timer for 5 minutes.", tools: TOOLS });
-      const router = await make();
-      await router.route({ input: "What's the weather in Paris?", tools: TOOLS });
-      const after = await router.route({ input: "Start a timer for 5 minutes.", tools: TOOLS });
-      expect(after.calls).toEqual(alone.calls);
+      const calls = (r: Awaited<ReturnType<typeof route>>) => r.toolCalls.map((c) => [c.toolName, c.input]);
+      const alone = await route(await make(), "Start a timer for 5 minutes.", TOOLS);
+      const model = await make();
+      await route(model, "What's the weather in Paris?", TOOLS);
+      expect(calls(await route(model, "Start a timer for 5 minutes.", TOOLS))).toEqual(calls(alone));
     });
   });
 }
 
-export function embedderContract(label: string, make: () => Embedder | Promise<Embedder>, options: { sizes?: readonly number[] } = {}): void {
+export function embedderContract(label: string, make: () => EmbeddingModelV4 | Promise<EmbeddingModelV4>, options: { readonly size: number; readonly sizes?: readonly number[] }): void {
+  const embed = async (model: EmbeddingModelV4, kind: "query" | "document", values: string[], dimensions?: number) =>
+    (await embedMany({ model, values, maxRetries: 0, ...embedding({ kind, ...(dimensions === undefined ? {} : { dimensions: dimensions as never }) }) })).embeddings;
   describe(`Embedder contract: ${label}`, () => {
     it("EC1 returns one unit vector of the model's size per input, deterministically", async () => {
-      const embedder = await make();
-      const inputs: EmbedInput[] = [
-        { kind: "query", text: "which planet is red?" },
-        { kind: "document", text: "Mars is the red planet." },
-      ];
-      const [a, b] = await embedder.embed(inputs);
+      const model = await make();
+      const [a] = await embed(model, "query", ["which planet is red?"]);
+      const [b] = await embed(model, "document", ["Mars is the red planet."]);
       for (const v of [a!, b!]) {
-        expect(v.length).toBe(embedder.dimensions);
+        expect(v.length).toBe(options.size);
         expect(Math.hypot(...v)).toBeCloseTo(1, 3);
       }
-      const [again] = await embedder.embed(inputs.slice(0, 1));
+      const [again] = await embed(model, "query", ["which planet is red?"]);
       for (let i = 0; i < a!.length; i++) expect(again![i]).toBeCloseTo(a![i]!, 4);
     });
 
     it("EC2 a query is closer to a relevant document than to an unrelated one", async () => {
-      const embedder = await make();
-      const [q, rel, other] = await embedder.embed([
-        { kind: "query", text: "Which planet is known as the red planet?" },
-        { kind: "document", text: "Mars is often called the red planet." },
-        { kind: "document", text: "Bananas are a yellow fruit rich in potassium." },
-      ]);
-      const dot = (x: Float32Array, y: Float32Array) => x.reduce((s, v, i) => s + v * y[i]!, 0);
+      const model = await make();
+      const [q] = await embed(model, "query", ["Which planet is known as the red planet?"]);
+      const [rel, other] = await embed(model, "document", ["Mars is often called the red planet.", "Bananas are a yellow fruit rich in potassium."]);
+      const dot = (x: number[], y: number[]) => x.reduce((s, v, i) => s + v * y[i]!, 0);
       expect(dot(q!, rel!)).toBeGreaterThan(dot(q!, other!));
     });
 
     for (const size of options.sizes ?? []) {
       it(`EC3 truncates to ${size} dimensions as unit vectors`, async () => {
-        const embedder = await make();
-        const [v] = await embedder.embed([{ kind: "document", text: "hello world" }], { dimensions: dimensions(size) });
+        const [v] = await embed(await make(), "document", ["hello world"], size);
         expect(v!.length).toBe(size);
         expect(Math.hypot(...v!)).toBeCloseTo(1, 3);
       });
@@ -277,43 +263,36 @@ export function compressorContract(label: string, make: () => Compressor | Promi
   });
 }
 
-export function generatorContract(label: string, make: () => Generator | Promise<Generator>): void {
+export function generatorContract(label: string, make: () => LanguageModelV4 | Promise<LanguageModelV4>): void {
   describe(`Generator contract: ${label}`, () => {
-    it("GC1 a simple prompt yields text and ends with exactly one finish event", async () => {
-      const g = await make();
-      const events = await collect(g.generate({ messages: [{ role: "user", content: "What is the capital of France? Answer in one word." }], maxTokens: 32 }));
-      expect(events.filter((e) => e.type === "finish")).toHaveLength(1);
-      expect(events.at(-1)!.type).toBe("finish");
-      expect(events.filter((e) => e.type === "text").map((e) => (e.type === "text" ? e.text : "")).join("").trim()).not.toBe("");
+    it("GC1 a simple prompt streams text and finishes", async () => {
+      const result = streamText({ model: await make(), prompt: "What is the capital of France? Answer in one word.", maxOutputTokens: 32, maxRetries: 0 });
+      expect((await result.text).trim()).not.toBe("");
+      expect(["stop", "length"]).toContain(await result.finishReason);
     });
 
     it("GC2 tool calls only name offered tools", async () => {
-      const g = await make();
-      const events = await collect(g.generate({ messages: [{ role: "user", content: "What's the weather in Lagos?" }], tools: TOOLS, maxTokens: 96 }));
-      for (const e of events) if (e.type === "tool-call") expect(TOOLS.map((t) => t.name)).toContain(e.call.name);
-      expect(events.at(-1)!.type).toBe("finish");
+      const result = streamText({ model: await make(), prompt: "What's the weather in Lagos?", tools: toolSet(TOOLS), maxOutputTokens: 96, maxRetries: 0 });
+      for (const c of await result.toolCalls) expect(TOOLS.map((t) => t.name)).toContain(c.toolName);
+      expect(await result.finishReason).toBeDefined();
     });
 
-    it("GC3 stopping early is clean and the generator keeps working", async () => {
-      const g = await make();
-      for await (const _ of g.generate({ messages: [{ role: "user", content: "Count from one to fifty." }], maxTokens: 64 })) break;
-      const events = await collect(g.generate({ messages: [{ role: "user", content: "Say OK." }], maxTokens: 8 }));
-      expect(events.at(-1)!.type).toBe("finish");
+    it("GC3 stopping early is clean and the model keeps working", async () => {
+      const model = await make();
+      const first = streamText({ model, prompt: "Count from one to fifty.", maxOutputTokens: 64, maxRetries: 0 });
+      for await (const _ of first.textStream) break;
+      const second = streamText({ model, prompt: "Say OK.", maxOutputTokens: 8, maxRetries: 0 });
+      expect(await second.finishReason).toBeDefined();
     });
   });
 }
 
-export function documentParserContract(label: string, make: () => DocumentParser | Promise<DocumentParser>, page: () => Promise<ParseRequest["pages"][number]>): void {
-  describe(`DocumentParser contract: ${label}`, () => {
-    it("DC1 returns one page of Markdown per input page", async () => {
-      const parser = await make();
+export function documentParserContract(label: string, make: () => LanguageModelV4 | Promise<LanguageModelV4>, page: () => Promise<ImageInput>): void {
+  describe(`Document parser contract: ${label}`, () => {
+    it("DC1 reads a page image into non-empty text", async () => {
       const p = await page();
-      const result = await parser.parse({ pages: [p, p] });
-      expect(result.pages).toHaveLength(2);
-      for (const r of result.pages) {
-        expect(typeof r.markdown).toBe("string");
-        expect(r.markdown.trim()).not.toBe("");
-      }
+      const { text } = await generateText({ model: await make(), maxRetries: 0, messages: [{ role: "user", content: [{ type: "file", data: p.data, mediaType: p.mediaType }] }] });
+      expect(text.trim()).not.toBe("");
     });
   });
 }

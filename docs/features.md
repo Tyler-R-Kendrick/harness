@@ -43,14 +43,14 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| In-process agent runtime (AI SDK model, Vercel AI Gateway) | built | WK2.1–WK2.6; CLI `--worker model` |
+| In-process agent runtime: an AI SDK `ToolLoopAgent` on any model (e.g. Vercel AI Gateway) through the agent worker | built | AW1.1–AW1.12; CLI `--worker model` |
 | Deterministic echo worker (tests/demos) | built | WK1.1–WK1.7 |
 | SDK harness, native CLI, ACP-agent and UHP workers | not started | |
 | Integration modes (integrated/cooperative/opaque) declared | not started | |
 | Kernels (interactive, deterministic graph, durable runtime) | not started | |
 | Account instances, install/update ownership, readiness | not started | |
 | Per-dispatch model/effort | not started | |
-| Queue vs steer vs interrupt vs cancel | partial | Cancel built (DM2.8, WK1.5, WK2.5); one prompt at a time (DM2.5); no queue/steer |
+| Queue vs steer vs interrupt vs cancel | partial | Cancel built (DM2.8, WK1.5, AW1.5, AW1.11); one prompt at a time (DM2.5); no queue/steer |
 | Replay-safe prompt submission | not started | |
 | Questions with native option ids; stale answers rejected | built | Via ACP permission requests (MX3.2, MX3.15, MX3.22) |
 | Durable addressed messaging between workers | not started | |
@@ -97,22 +97,22 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Ports: judge, tool router, embedder, compressor, generator (text + vision), document parser | built | `cognitive/ports.ts`; contract suites JC, RC, EC, CC, GC, DC run against fakes and real adapters |
+| Models are AI SDK models (Vercel AI SDK 7): generators, tool routers and document parsers are `LanguageModelV4`s, embedders `EmbeddingModelV4`s, judges `EvaluationModelV4`s; any provider's model is a member as is, and our local models implement the same specs (compression, which the AI SDK has no model kind for, is our one port). Our settings travel as provider options (`harness.*`): constraints, embedding kinds and sizes, and a steered model's behavior states as custom stream parts | built | `cognitive/ports.ts`, `options.ts`, `stream-parts.ts`; OP1.1–OP1.4, SP1.1–SP1.6; contract suites JC, RC, EC, CC, GC, DC drive models through `generateText`, `streamText`, `embedMany` and `experimental_evaluate`, against `ai/test` mocks and real adapters |
 | Task taxonomy mapped to ports (15 categories, including `steered-chat`) | built | `TASK_CATEGORIES`, `TASK_PORTS`; CT1.1, CT1.9 |
 | Refined types (parse, don't validate, in the type system): probabilities, similarities, bytes, embedding dimensions, sha256 and commit hashes are branded units made only by parsing (`units.ts`); cascade thresholds are a branded policy with verify <= act; memory and lesson ids are template-literal types (`m${number}`, `l${number}`), so one cannot stand in for the other; judge answers and router confidences are parsed where they enter an adapter; casting to a refined type is a lint error everywhere, tests included | built | UN1.1–UN1.3, UN2.1 (the lint rule), CA1.9, EV1.3, ADR 0003 |
 | Model catalog, preferences and benchmarks as data: JSON files (`packages/cognitive/data`, one set per extension) with generated JSON Schemas, loaded by the host at runtime and parsed (pinned commits, sha256 weights, ports serving tasks, benchmark rows naming models) | built | CT1.1–CT1.3, CT1.10, CH1.1; 9 models (below) |
 | Model-agnostic code: adapters per category (judge, router, embedder, compressor, generator, document parser) and runtime (`ai-gateway`, `typesafe-api`, `cactus-wasm`, `transformers.js`, `llama.cpp-server`, `onnxruntime`); each entry's `run` settings and category settings (embedding prompts and sizes, compression window and subword style) are catalog data, parsed per runtime; category settings come exactly with their port | built | CT1.8, CH1.1–CH3.2, EA1.x, LA1.x, ND1.8, TB2.x; tests pick models by runtime or port, never by id |
 | Benchmark-driven selection with head-to-head records, curated tie-breaks, explanations | built | SE1.1–SE1.8, SE2.1–SE2.2 (property), CT1.7, CH1.3 |
-| Ensemble: lazy load, failover to next-ranked member, runtime revoke/restore, state events | built | EN1.1–EN1.11 |
-| Tool-call cascade: router → judge on middling confidence → generator, traced | built | CA1.1–CA1.9, CA2.1–CA2.6; live: the router decides and is accepted (cognitive.tool-decision subject) |
+| Ensemble as an AI SDK provider: `languageModel(task)`, `embeddingModel()`, `evaluationModel()` and `provider()` (for `createProviderRegistry`); each call goes to the best member, loaded lazily, and fails over to the next-ranked; the member that served is named in the `x-harness-model` response header; runtime revoke/restore and state events | built | EN1.1–EN1.13 |
+| Tool-call cascade: router → judge on middling confidence → generator, traced; calls through `generateText`, validated by the AI SDK against each tool's JSON Schema (zod); an unusable judge answer counts as p=0 | built | CA1.1–CA1.9, CA2.1–CA2.6; live: the router decides and is accepted (cognitive.tool-decision subject) |
 | Token-classification compression: word scoring (WordPiece or SentencePiece subwords), rate threshold, windowing (pure) | built | LL1.1–LL2.1, LA1.1–LA1.3 |
-| Embedding prompts from the model's templates, and Matryoshka truncation to its sizes | built | EG1.1–EG2.4, EA1.1–EA1.2 |
+| Embedding prompts from the model's templates, and Matryoshka truncation to its sizes | built | EG1.1–EG2.2, EA1.1–EA1.2 |
 | ChatML / qwen3_xml streaming parser | built | QF1–QF2, QF3.1 (any chunking = whole parse) |
-| Failover on calls: a member whose service is unavailable (HTTP status other than 400/422, or retryable) is taken out and the next member answers | built | EN3.1–EN3.3 |
+| Failover on calls: a member whose service is unavailable (HTTP status other than 400/422, or retryable) is taken out and the next member answers; streams and embeddings fail over when a member cannot start the call | built | EN3.1–EN3.4 |
 | Capabilities mirrored from the ensemble (`cognitive.<task>`, plus each installed extension's id) | built | CM1.1, EN2.4, NH2.1, DM9.7 |
 | Extensions: models and `<extension>.<op>` operations installed and removed at runtime; the daemon admits an extension's operations only while its capability is offered | built | EN2.1–EN2.4, CS3.1, DM9.12 |
 | ACP `_harness/cognitive/invoke` and `/status` | built | DM9.1–DM9.11, CS1.1–CS1.6, CS2.1–CS2.5, NH2.1–NH2.2 |
-| Ensemble worker (sessions on the best generator; images → vision) | built | EW1.1–EW1.5; CLI `--worker ensemble` |
+| Agent worker: any AI SDK `Agent` as a session worker (a `ToolLoopAgent` from `sessionAgent` over the ensemble, or over a gateway model); it keeps each session's conversation, streams text, reasoning and tool calls as ACP updates, and turns with images go to the vision model | built | AW1.1–AW1.6, AW1.9, AW1.12; CLI `--worker ensemble`, `--worker model` |
 | Candidate-strategy math (coverage, attempts, voting, precision, mixtures, Wilson) | built | AM1–AM5 |
 | Local kernel: steerable ONNX (residual tap + steering input spliced into the graph, tap and decoder shape from the catalog), KV-cached decode loop, steering hook per token | built | OS1.1–OS1.4, OR1.x, SG1.1–SG1.10, SK1.1–SK1.3, CH2.5; real Qwen3-1.7B: zero steering is bit-identical, residual moves by exactly the vector (KS1.4, `check_steerable.py`) |
 | Behavior state graphs over SAE features: sensors with hysteresis and hold, nested states with summed steering, priority/specificity transitions, host events, snapshots, replay | built | `packages/behavior`; BV1–BV2, BE1–BE3, BP1–BP2, property tests |
@@ -122,9 +122,9 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Remote models as retrieval for the steered local kernel | not started | Steering is local only: hosted APIs expose no residual stream |
 | Steerable kernel in the browser (onnxruntime-web) | not started | Native only; the int4 export's contrib ops are unverified on web |
 | Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Cactus WASM); no browser platform layer yet |
-| Tool use through the daemon's permission flow from the ensemble worker | not started | |
+| Tool use through the daemon's permission flow: a tool that needs approval (AI SDK `toolApproval`) becomes a permission request routed to the session's approvers, and their answer continues the turn | built | AW1.10–AW1.11 |
 | Execution configurations, performance registry learned from our own runs, value of information | not started | Selection uses published benchmarks only |
-| Constrained decoding (the capability slot): a request can carry a constraint (JSON Schema, grammar, regex, or a template of fixed text and holes that reads back into its holes); the catalog says which generators enforce which kinds, and the ensemble sends a constrained request to those first | built | CN1.1–CN1.3, CT1.11 |
+| Constrained decoding (the capability slot): a call can carry a constraint (a JSON Schema through the AI SDK's structured output, or a grammar, regex, or template of fixed text and holes that reads back into its holes, as `harness` provider options); the catalog says which generators enforce which kinds, and the ensemble sends a constrained call to those first | built | CN1.1–CN1.2, EN1.12, OP1.1–OP1.2, CT1.11 |
 | Constraint engine on XGrammar(-2) (`@harness/constrained`, WebAssembly, portable): token masks per step, templates as XGrammar-2 structural tags, jump-forward text, compiled once per constraint; a grammar XGrammar cannot parse is an error and the engine recovers on a fresh instance | built | CD1.1–CD1.7 |
 | Enforced where decoding happens: the steerable kernel's own loop masks every step and feeds forced text in one pass (jump-forward, never sampled); transformers.js generators mask through a logits processor; llama.cpp-server gets JSON Schema as structured output | built | SG2.1–SG2.3, TB2.7, TB3.3, LS1.5, CH2.7; real weights RW4.4–RW4.5 |
 | Templates for answers: learning's reflection asks for its JSON Schema; the tool builder answers in a template whose code scaffold is fixed (the model writes the name, description, parameters and body); workflows ask with `ctx.ask(prompt, constraint)` | built | LN1.2, LP4.1–LP4.6, WF1.12 |
@@ -154,12 +154,12 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Memory as a cognitive-core extension (`@harness/memory`): brings the embedding model; the core has none of its own; the index size is the largest size its embedding models share | built | MX1.1, MX2.1–MX2.2, CH1.1, CH3.1–CH3.2 |
 | Vector memory: remember text (as documents), recall by meaning (as queries), per-session and per-kind filters, forgetting (ids never reused), JSON save/restore; Orama index, pure JS on every platform | built | ME1.1–ME1.6; real weights MM1.1 |
 | ACP `memory.remember` / `memory.recall` through `_harness/cognitive/invoke` | built | MX1.2–MX1.3, DM9.12 |
-| Session memory: each turn gets related memories from other sessions and is remembered afterwards | built | EW1.7; CLI `--worker ensemble --memory <file>` |
+| Session memory: each turn gets related memories from other sessions (in the agent's instructions) and is remembered afterwards | built | AW1.7; CLI `--worker ensemble --memory <file>` |
 | Extension dependencies: an extension installs only after the ones it requires, serves only while they serve, and cannot be uninstalled before its dependents | built | EN2.5–EN2.6, LX1.1 |
 | Learning as an extension on memory (`@harness/learning`): no models of its own; thinks with the ensemble's generator, judge and router | built | LX1.1–LX1.2, CH3.3; CLI `--memory <file> --learning <file>` (NS1.4) |
 | Lessons from sessions: a reflection distils insights, strategies, procedures and pitfalls from successes and failures (ExpeL, ReasoningBank) and edits the lesson set incrementally, add/refine/helpful/harmful (ACE deltas); edits to lessons it was not shown and malformed output are rejected with reasons | built | LN1.1–LN1.5 |
 | Curation: a new lesson that says what an old one says merges into it; lessons that mislead more than they help are retired; consolidation merges near-duplicates learned apart; feedback from outside a reflection | built | LN1.3–LN1.4, LN1.6, LN1.8 |
-| Lessons inform later sessions: recalled by meaning (through memory) as a playbook, put before the model on each ensemble-worker turn | built | LN1.1, EW1.8 |
+| Lessons inform later sessions: recalled by meaning (through memory) as a playbook, put in the agent's instructions on each turn | built | LN1.1, AW1.8 |
 | Capability ladder: native (judge: can it do this without tools?) → a tool it has (offered, found by client discovery, or built and learned earlier; router with confidence) → build one (judge: does it know how? and a tool-building plugin) → ask to be taught (listing what teachers can observe); every rung's decision kept as evidence, and a missing judge or router is "unknown", not a guess | built | LD1.1–LD1.6 |
 | Learning plugins: materializers turn lessons into agent skills, workflows, tools (code mode) or any client-defined target, and lessons remember what was made; teachers translate a recording (screen, audio, events, transcript, whatever the client can observe) into a demonstration that is learned from | built | PL1.1–PL1.3, LD1.6; shipped plugins below |
 | Workflow builder: learned procedures compile deterministically to workflow code (a step the router fits calls that tool; other steps ask the model with the purpose, guidance, input and results so far), kept in the workflow library | built | LP2.1–LP2.4 (`@harness/learning-plugins`) |

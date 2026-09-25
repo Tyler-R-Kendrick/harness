@@ -1,21 +1,20 @@
 /**
- * Ports the cognitive core drives. Each model adapter implements one or more of
- * them; the ensemble picks an adapter per task. Types are structural so adapters
- * for AI SDK models, WASM engines and ONNX runtimes can implement them without the
- * core depending on any of those libraries.
+ * What the cognitive core's models are. Every model is an AI SDK model: generators,
+ * tool routers and document parsers are `LanguageModelV4`s, embedding models are
+ * `EmbeddingModelV4`s and judges are `EvaluationModelV4`s, so any AI SDK provider's
+ * model is a member as is, and our local models implement the same specs. Prompt
+ * compression, which the AI SDK has no model kind for, is the one port of our own.
+ *
+ * Requests that arrive as JSON (see service.ts) are parsed by the schemas here.
  */
+import type { EmbeddingModelV4, Experimental_EvaluationModelV4 as EvaluationModelV4, LanguageModelV4 } from "@ai-sdk/provider";
 import { base64 } from "@scure/base";
 import { z } from "zod";
-import type { ChatEvent, ToolCall } from "./chat-format.ts";
-import type { Constraint } from "./constraint.ts";
-import type { EmbedInput } from "./embedding.ts";
 import { ProbabilitySchema } from "./units.ts";
-import type { Dimensions, Probability } from "./units.ts";
 
-// Requests that can arrive as JSON (see service.ts) are defined as schemas; their
-// types are the schemas' outputs, so a parsed request is a port request as is.
+export type { EmbeddingModelV4, EvaluationModelV4, LanguageModelV4 };
 
-// ---- judgment (typed questions) ------------------------------------------------
+// ---- judgment (typed questions, the AI SDK's evaluation questions) ---------------------
 
 export const JudgeQuestionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("boolean"), instructions: z.string(), criteria: z.object({ true: z.string().nullable().exactOptional(), false: z.string().nullable().exactOptional() }).exactOptional() }),
@@ -24,7 +23,7 @@ export const JudgeQuestionSchema = z.discriminatedUnion("type", [
 ]);
 export type JudgeQuestion = z.output<typeof JudgeQuestionSchema>;
 
-/** A judge's answers, parsed where they enter (an adapter's model output), so probabilities are Probabilities. */
+/** A judge's answers, parsed where they enter, so probabilities are Probabilities. */
 export const JudgeAnswerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("boolean"), probability: ProbabilitySchema }).readonly(),
   z.object({ type: z.literal("choice"), choice: z.string(), probabilities: z.record(z.string(), ProbabilitySchema).readonly().exactOptional() }).readonly(),
@@ -32,18 +31,7 @@ export const JudgeAnswerSchema = z.discriminatedUnion("type", [
 ]);
 export type JudgeAnswer = z.output<typeof JudgeAnswerSchema>;
 
-export type JudgeState = string | Readonly<Record<string, unknown>> | readonly unknown[];
-
-export interface JudgeRequest {
-  readonly state: JudgeState;
-  readonly questions: Readonly<Record<string, JudgeQuestion>>;
-}
-
-export interface Judge {
-  evaluate(request: JudgeRequest): Promise<Record<string, JudgeAnswer>>;
-}
-
-// ---- tool routing and extraction --------------------------------------------------
+// ---- tools as JSON (e.g. offered by an ACP client) -------------------------------------
 
 export const ToolSpecSchema = z.object({
   name: z.string().min(1),
@@ -52,30 +40,6 @@ export const ToolSpecSchema = z.object({
   parameters: z.record(z.string(), z.unknown()).default({}),
 });
 export type ToolSpec = z.output<typeof ToolSpecSchema>;
-
-export interface RouteRequest {
-  readonly input: string;
-  readonly tools: readonly ToolSpec[];
-}
-
-export interface Routing {
-  readonly calls: readonly ToolCall[];
-  /** Calibrated probability that `calls` is right. */
-  readonly confidence: Probability;
-  readonly reasoning: string;
-}
-
-export interface ToolRouter {
-  route(request: RouteRequest): Promise<Routing>;
-}
-
-// ---- embeddings ------------------------------------------------------------------
-
-export interface Embedder {
-  readonly dimensions: Dimensions;
-  /** One unit-length vector per input. */
-  embed(inputs: readonly EmbedInput[], options?: { readonly dimensions?: Dimensions }): Promise<Float32Array[]>;
-}
 
 // ---- prompt compression ------------------------------------------------------------
 
@@ -98,7 +62,7 @@ export interface Compressor {
   compress(request: CompressRequest): Promise<Compression>;
 }
 
-// ---- generation (text and vision) --------------------------------------------------
+// ---- images as JSON ---------------------------------------------------------------
 
 /** An image as JSON carries its bytes as base64. */
 export const ImageInputSchema = z.object({
@@ -117,66 +81,17 @@ export interface ImageInput {
   readonly data: Uint8Array;
 }
 
-export type ContentPart = { readonly type: "text"; readonly text: string } | { readonly type: "image"; readonly image: ImageInput };
-
-export type ChatMessage =
-  | { readonly role: "system"; readonly content: string }
-  | { readonly role: "user"; readonly content: string | readonly ContentPart[] }
-  | { readonly role: "assistant"; readonly content: string; readonly toolCalls?: readonly ToolCall[] }
-  | { readonly role: "tool"; readonly name: string; readonly content: string };
-
-export type FinishReason = "stop" | "length" | "tool-calls" | "error";
-
-/** A steered model's behavior state changed (see @harness/behavior). */
-export interface StateEvent {
-  readonly type: "state";
-  readonly state: string;
-  readonly from?: string;
-  readonly cause?: string;
-}
-
-export type GenerationEvent = ChatEvent | StateEvent | { readonly type: "finish"; readonly reason: FinishReason };
-
-export interface GenerateRequest {
-  readonly messages: readonly ChatMessage[];
-  readonly tools?: readonly ToolSpec[];
-  readonly maxTokens?: number;
-  /** What the output must look like; enforced by generators that can (see the catalog), and a preference for the rest. */
-  readonly constraint?: Constraint;
-}
-
-export interface Generator {
-  /** Streams events and ends with exactly one finish event. Stop early by breaking out of the loop. */
-  generate(request: GenerateRequest): AsyncIterable<GenerationEvent>;
-}
-
-// ---- documents ---------------------------------------------------------------------
-
-export interface ParsedPage {
-  readonly markdown: string;
-  /** The model's native output (e.g. DocTags), kept for lossless downstream use. */
-  readonly raw: string;
-}
-
 export const ParseRequestSchema = z.object({ pages: z.array(ImageInputSchema), instruction: z.string().exactOptional() });
-export interface ParseRequest {
-  readonly pages: readonly ImageInput[];
-  readonly instruction?: string;
-}
 
-export interface DocumentParser {
-  parse(request: ParseRequest): Promise<{ readonly pages: readonly ParsedPage[] }>;
-}
-
-// ---- the set of ports one adapter provides -------------------------------------------
+// ---- the set of models one adapter provides ------------------------------------------
 
 export interface PortMap {
-  readonly judge: Judge;
-  readonly router: ToolRouter;
-  readonly embedder: Embedder;
+  readonly judge: EvaluationModelV4;
+  readonly router: LanguageModelV4;
+  readonly embedder: EmbeddingModelV4;
   readonly compressor: Compressor;
-  readonly generator: Generator;
-  readonly "document-parser": DocumentParser;
+  readonly generator: LanguageModelV4;
+  readonly "document-parser": LanguageModelV4;
 }
 
 export type Ports = Partial<PortMap>;

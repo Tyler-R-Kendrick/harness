@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { LanguageModelDocumentParser, LanguageModelGenerator, llamaServer } from "@harness/models";
-import type { GenerationEvent } from "@harness/cognitive";
+import { generateText, jsonSchema, Output, streamText, wrapLanguageModel } from "ai";
+import type { TextStreamPart, ToolSet } from "ai";
+import { llamaServer, pageInstruction } from "@harness/models";
+import { constrain, toolSet } from "@harness/cognitive";
 import { generatorContract } from "@harness/testkit";
-
-async function collect(stream: AsyncIterable<GenerationEvent>): Promise<GenerationEvent[]> {
-  const out: GenerationEvent[] = [];
-  for await (const e of stream) out.push(e);
-  return out;
-}
 
 type Chunk = Record<string, unknown>;
 const delta = (d: Record<string, unknown>, finish: string | null = null): Chunk => ({ id: "chatcmpl-1", choices: [{ index: 0, delta: d, finish_reason: finish }] });
@@ -36,12 +32,33 @@ function server(chunks: (body: Record<string, unknown>) => Chunk[] | Record<stri
   return { f: f as typeof fetch, requests };
 }
 
-describe("AI SDK language models as generators, over llama-server", () => {
+/** The parts of a stream a consumer reads, without the lifecycle parts. */
+async function parts(stream: AsyncIterable<TextStreamPart<ToolSet>>): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for await (const p of stream) {
+    if (p.type === "text-delta" || p.type === "reasoning-delta") out.push({ type: p.type, text: p.text });
+    else if (p.type === "tool-call") out.push({ type: p.type, toolName: p.toolName, input: p.input });
+    else if (p.type === "finish") out.push({ type: p.type, finishReason: p.finishReason });
+  }
+  return out;
+}
+
+const weather = { name: "get_weather", description: "Weather for a city.", parameters: { type: "object", properties: { city: { type: "string" } }, required: ["city"] } };
+const timer = { name: "set_timer", description: "Start a timer.", parameters: { type: "object", properties: { minutes: { type: "integer" } }, required: ["minutes"] } };
+
+describe("llama-server as an AI SDK language model", () => {
   it("LS1.1 posts an OpenAI chat request with tools and streams text, reasoning and the finish reason", async () => {
     const { f, requests } = server(() => [delta({ reasoning_content: "think" }), delta({ content: "Hel" }), delta({ content: "lo" }), delta({}, "stop")]);
-    const g = new LanguageModelGenerator(llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f, model: "local-model" }));
-    const events = await collect(g.generate({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "t", description: "d", parameters: { type: "object" } }], maxTokens: 50 }));
+    const result = streamText({ model: llamaServer({ baseUrl: "http://127.0.0.1:8080/", fetch: f, model: "local-model" }), prompt: "hi", tools: toolSet([{ name: "t", description: "d", parameters: { type: "object" } }]), maxOutputTokens: 50, maxRetries: 0 });
+    expect(await parts(result.fullStream)).toEqual([
+      { type: "reasoning-delta", text: "think" },
+      { type: "text-delta", text: "Hel" },
+      { type: "text-delta", text: "lo" },
+      { type: "finish", finishReason: "stop" },
+    ]);
     expect(requests[0]!.url).toBe("http://127.0.0.1:8080/v1/chat/completions");
+    // the model id is the server's default unless one is named
+    expect(llamaServer({ baseUrl: "http://127.0.0.1:8080" }).modelId).toBe("default");
     expect(requests[0]!.body).toMatchObject({
       model: "local-model",
       stream: true,
@@ -49,23 +66,18 @@ describe("AI SDK language models as generators, over llama-server", () => {
       messages: [{ role: "user", content: "hi" }],
       tools: [{ type: "function", function: { name: "t", description: "d", parameters: { type: "object" } } }],
     });
-    expect(events).toEqual([
-      { type: "reasoning", text: "think" },
-      { type: "text", text: "Hel" },
-      { type: "text", text: "lo" },
-      { type: "finish", reason: "stop" },
-    ]);
   });
 
   it("LS1.5 a JSON Schema constraint is sent as the server's structured output", async () => {
-    const { f, requests } = server(() => [{ choices: [{ delta: { content: '{"n": 4}' } }] }, { choices: [{ delta: {}, finish_reason: "stop" }] }]);
-    const g = new LanguageModelGenerator(llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f }));
-    const events = await collect(g.generate({ messages: [{ role: "user", content: "a number" }], constraint: { type: "json-schema", schema: { type: "object", properties: { n: { type: "integer" } } } } }));
+    const { f, requests } = server(() => [delta({ content: '{"n": 4}' }), delta({}, "stop")]);
+    const model = llamaServer({ baseUrl: "http://127.0.0.1:8080", fetch: f });
+    const result = streamText({ model, prompt: "a number", output: Output.object({ schema: jsonSchema<{ n: number }>({ type: "object", properties: { n: { type: "integer" } } }) }), maxRetries: 0 });
+    expect(await result.output).toEqual({ n: 4 });
     expect(requests[0]!.body["response_format"]).toMatchObject({ type: "json_schema", json_schema: { schema: { type: "object", properties: { n: { type: "integer" } } } } });
-    expect(events.filter((e) => e.type === "text").map((e) => (e as { text: string }).text).join("")).toBe('{"n": 4}');
-    // other kinds of constraint are not sent: the catalog says this runtime enforces only JSON Schema
-    await collect(g.generate({ messages: [{ role: "user", content: "x" }], constraint: { type: "regex", pattern: "a" } }));
+    // our other kinds of constraint travel as harness provider options, which this provider does not send
+    await streamText({ model, prompt: "x", ...constrain({ type: "regex", pattern: "a" }), maxRetries: 0 }).consumeStream();
     expect(requests[1]!.body["response_format"]).toBeUndefined();
+    expect(JSON.stringify(requests[1]!.body)).not.toContain("regex");
   });
 
   it("LS1.2 tool calls streamed in pieces are assembled and emitted before the finish", async () => {
@@ -76,58 +88,61 @@ describe("AI SDK language models as generators, over llama-server", () => {
       delta({ tool_calls: [{ index: 1, id: "c2", type: "function", function: { name: "set_timer", arguments: '{"minutes":5}' } }] }),
       delta({}, "tool_calls"),
     ]);
-    const events = await collect(new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f })).generate({ messages: [{ role: "user", content: "both" }] }));
-    expect(events).toEqual([
-      { type: "tool-call", call: { name: "get_weather", arguments: { city: "Lagos" } } },
-      { type: "tool-call", call: { name: "set_timer", arguments: { minutes: 5 } } },
-      { type: "finish", reason: "tool-calls" },
+    const result = streamText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "both", tools: toolSet([weather, timer]), maxRetries: 0 });
+    expect(await parts(result.fullStream)).toEqual([
+      { type: "tool-call", toolName: "get_weather", input: { city: "Lagos" } },
+      { type: "tool-call", toolName: "set_timer", input: { minutes: 5 } },
+      { type: "finish", finishReason: "tool-calls" },
     ]);
   });
 
   it("LS1.4 images become data URLs and assistant tool calls and tool results use the OpenAI shape", async () => {
     const { f, requests } = server(() => [delta({ content: "ok" }), delta({}, "length")]);
-    const events = await collect(
-      new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f })).generate({
-        messages: [
-          { role: "user", content: [{ type: "text", text: "see" }, { type: "image", image: { mediaType: "image/png", data: new Uint8Array([104, 105]) } }] },
-          { role: "assistant", content: "", toolCalls: [{ name: "t", arguments: { a: 1 } }] },
-          { role: "tool", name: "t", content: "done" },
-        ],
-      }),
-    );
-    expect(requests[0]!.body["messages"]).toEqual([
+    const result = streamText({
+      model: llamaServer({ baseUrl: "http://x", fetch: f }),
+      maxRetries: 0,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "see" }, { type: "image", image: new Uint8Array([104, 105]), mediaType: "image/png" }] },
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: "call_0", toolName: "t", input: { a: 1 } }] },
+        { role: "tool", content: [{ type: "tool-result", toolCallId: "call_0", toolName: "t", output: { type: "text", value: "done" } }] },
+      ],
+    });
+    expect(await result.finishReason).toBe("length");
+    expect(requests[0]!.body["messages"]).toMatchObject([
       { role: "user", content: [{ type: "text", text: "see" }, { type: "image_url", image_url: { url: "data:image/png;base64,aGk=" } }] },
-      { role: "assistant", content: null, tool_calls: [{ id: "call_0", type: "function", function: { name: "t", arguments: '{"a":1}' } }] },
+      { role: "assistant", tool_calls: [{ id: "call_0", type: "function", function: { name: "t", arguments: '{"a":1}' } }] },
       { role: "tool", tool_call_id: "call_0", content: "done" },
     ]);
-    expect(events.at(-1)).toEqual({ type: "finish", reason: "length" });
   });
 
-  it("LS1.5 an HTTP error carries the server's message", async () => {
+  it("LS1.3 an HTTP error carries the server's message", async () => {
     const { f } = server(() => [], 503);
-    await expect(collect(new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f })).generate({ messages: [{ role: "user", content: "x" }] }))).rejects.toThrow(/Loading model/);
+    await expect(generateText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "x", maxRetries: 0 })).rejects.toThrow(/Loading model/);
   });
 
-  it("LS1.6 breaking out of the stream aborts the request", async () => {
+  it("LS1.6 aborting the call aborts the request", async () => {
     const { f, requests } = server(() => [delta({ content: "a" }), delta({ content: "b" }), delta({}, "stop")]);
-    for await (const _ of new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f })).generate({ messages: [{ role: "user", content: "x" }] })) break;
+    const abort = new AbortController();
+    const result = streamText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "x", abortSignal: abort.signal, maxRetries: 0 });
+    for await (const _ of result.textStream) break;
+    abort.abort();
     expect(requests[0]!.signal?.aborted).toBe(true);
   });
 });
 
-generatorContract("llama-server generator over a fake server", () => {
+generatorContract("llama-server over a fake server", () => {
   const { f } = server((body) =>
     body["tools"] ? [delta({ tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "get_weather", arguments: '{"city":"Lagos"}' } }] }), delta({}, "tool_calls")] : [delta({ content: "Paris" }), delta({}, "stop")],
   );
-  return new LanguageModelGenerator(llamaServer({ baseUrl: "http://x", fetch: f }));
+  return llamaServer({ baseUrl: "http://x", fetch: f });
 });
 
-describe("AI SDK language models as document parsers, over llama-server", () => {
-  it("LD1.1 sends each page image with the instruction and returns the Markdown", async () => {
+describe("llama-server as a document parser", () => {
+  it("LD1.1 sends a page image with the catalog's instruction and returns the Markdown", async () => {
     const { f, requests } = server(() => ({ id: "chatcmpl-1", choices: [{ index: 0, message: { role: "assistant", content: "| a | b |\n|---|---|" }, finish_reason: "stop" }] }));
-    const parser = new LanguageModelDocumentParser(llamaServer({ baseUrl: "http://x", fetch: f }), { instruction: "Convert the page to Markdown." });
-    const result = await parser.parse({ pages: [{ mediaType: "image/jpeg", data: new Uint8Array([1]) }] });
-    expect(result.pages).toEqual([{ markdown: "| a | b |\n|---|---|", raw: "| a | b |\n|---|---|" }]);
+    const model = wrapLanguageModel({ model: llamaServer({ baseUrl: "http://x", fetch: f }), middleware: pageInstruction("Convert the page to Markdown.") });
+    const { text } = await generateText({ model, maxRetries: 0, messages: [{ role: "user", content: [{ type: "file", data: new Uint8Array([1]), mediaType: "image/jpeg" }] }] });
+    expect(text).toBe("| a | b |\n|---|---|");
     expect(requests[0]!.body).toMatchObject({
       messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/jpeg;base64,AQ==" } }, { type: "text", text: "Convert the page to Markdown." }] }],
     });

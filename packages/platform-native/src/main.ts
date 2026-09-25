@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
-import { EchoWorker, EnsembleWorker, ModelWorker } from "@harness/workers";
+import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
@@ -72,17 +72,22 @@ const cognitive =
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
-const system = values.system === undefined ? {} : { system: values.system };
+const instructions = values.system === undefined ? {} : { instructions: values.system };
+// The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
+// on the ensemble (the steered kernel with a behavior pack), with memory and learning.
 const worker: Worker =
   values.worker === "model"
-    ? new ModelWorker({ model: gateway(values.model), ...system })
+    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }) })
     : values.worker === "ensemble"
-      ? new EnsembleWorker({
-          ensemble: cognitive!.ensemble,
-          ...system,
-          ...(behavior ? { task: "steered-chat" as const } : {}),
-          ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
-          ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
+      ? new AgentWorker({
+          agent: sessionAgent({
+            model: cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat"),
+            vision: cognitive!.ensemble.languageModel("vision-qa"),
+            ...instructions,
+            ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
+            ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
+          }),
+          ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
         })
       : new EchoWorker();
 

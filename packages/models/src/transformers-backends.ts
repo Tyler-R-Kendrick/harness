@@ -1,7 +1,8 @@
 import type * as TransformersModule from "@huggingface/transformers";
 import { Mutex } from "async-mutex";
 import type { ChatBackend, ChatBackendRequest, EmbeddingBackend, TokenClassifierBackend } from "./adapters.ts";
-import type { ChatMessage, Constraint, TokenConstraint } from "@harness/cognitive";
+import type { Constraint, TokenConstraint } from "@harness/cognitive";
+import type { TemplateMessage } from "./local-model.ts";
 import type { TokenizerLike } from "./steerable.ts";
 
 /**
@@ -196,15 +197,10 @@ export async function loadChatTokenizer(
   endTokens.forEach((id, i) => {
     if (!id) throw new Error(`the tokenizer has no token ${options.endTokens[i]}`);
   });
-  const toTemplate = (m: ChatMessage): Record<string, unknown> => {
-    if (m.role === "user" && typeof m.content !== "string") {
-      if (m.content.some((p) => p.type !== "text")) throw new Error("the steered kernel is text only; send images to a vision model");
-      return { role: "user", content: m.content.map((p) => (p.type === "text" ? p.text : "")).join("") };
-    }
-    if (m.role === "assistant" && m.toolCalls?.length) {
-      return { role: "assistant", content: m.content, tool_calls: m.toolCalls.map((c) => ({ type: "function", function: { name: c.name, arguments: c.arguments } })) };
-    }
-    return { ...m };
+  // The kernel is text only: each message's text parts, joined.
+  const toTemplate = (m: TemplateMessage): Record<string, unknown> => {
+    if (m.content.some((p) => p.type !== "text")) throw new Error("the steered kernel is text only; send images to a vision model");
+    return { ...m, content: m.content.map((p) => (p.type === "text" ? p.text : "")).join("") };
   };
   return {
     endTokens,

@@ -1,18 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { dimensions } from "@harness/cognitive";
-import { Memory } from "@harness/memory";
+import type { EmbeddingModelV4 } from "@ai-sdk/provider";
+import { dimensions, embedInputs } from "@harness/cognitive";
 import type { Dimensions, EmbedInput } from "@harness/cognitive";
-import { HashEmbedder } from "@harness/testkit";
+import { Memory } from "@harness/memory";
+import { hashEmbeddingModel } from "@harness/testkit";
 
 /** Word-hash vectors: texts that share words are near each other. Records what it was asked. */
-function embedder() {
-  const inner = new HashEmbedder(64);
+function embedder(): EmbeddingModelV4 & { calls: { inputs: EmbedInput[]; dimensions: Dimensions | undefined }[] } {
+  const inner = hashEmbeddingModel(64);
   const calls: { inputs: EmbedInput[]; dimensions: Dimensions | undefined }[] = [];
   return {
+    ...inner,
     calls,
-    embed: (inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}) => {
-      calls.push({ inputs: [...inputs], dimensions: options.dimensions });
-      return inner.embed(inputs, options);
+    doEmbed: (options) => {
+      const { inputs, dimensions } = embedInputs(options.values, options.providerOptions);
+      calls.push({ inputs, dimensions });
+      return inner.doEmbed(options);
     },
   };
 }

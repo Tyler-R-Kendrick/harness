@@ -144,10 +144,10 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
     const tools = [{ name: "search", description: "find", parameters: { type: "object" } }];
     const ids = tok.encodeChat(
       [
-        { role: "system", content: "be brief" },
+        { role: "system", content: [{ type: "text", text: "be brief" }] },
         { role: "user", content: [{ type: "text", text: "a" }, { type: "text", text: "b" }] },
-        { role: "assistant", content: "", toolCalls: [{ name: "search", arguments: { q: "x" } }] },
-        { role: "tool", name: "search", content: "found" },
+        { role: "assistant", content: [], tool_calls: [{ type: "function", function: { name: "search", arguments: { q: "x" } } }] },
+        { role: "tool", name: "search", content: [{ type: "text", text: "found" }] },
       ],
       tools,
     );
@@ -183,10 +183,10 @@ describe("transformers.js chat tokenizer (for steered generation)", () => {
     const { module, log } = fakeTokenizerModule();
     const tok = await loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<eos>"] });
     expect(tok.endTokens).toEqual([9]);
-    tok.encodeChat([{ role: "user", content: "hi" }]);
+    tok.encodeChat([{ role: "user", content: [{ type: "text", text: "hi" }] }], []);
     expect(log[0]).toEqual({ name: "load", args: ["org/m", { revision: "abc" }] });
     expect(log[1]!.args[1]).toEqual({ tokenize: false, add_generation_prompt: true });
-    expect(() => tok.encodeChat([{ role: "user", content: [{ type: "image", image: { mediaType: "image/png", data: new Uint8Array() } }] }])).toThrow(/text only/);
+    expect(() => tok.encodeChat([{ role: "user", content: [{ type: "text", text: "see" }, { type: "image" }] }])).toThrow(/text only/);
     await expect(loadChatTokenizer({ repo: "org/m", revision: "abc", module, endTokens: ["<nope>"] })).rejects.toThrow(/<nope>/);
   });
 });

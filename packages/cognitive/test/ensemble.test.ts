@@ -1,20 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { bytes, CognitiveError, dimensions, Ensemble, mirrorCapabilities, probability } from "@harness/cognitive";
-import type { BenchmarkResult, Embedder, GenerationEvent, Generator, Judge, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
+import { createProviderRegistry, embed, experimental_evaluate, generateText, jsonSchema, Output, streamText } from "ai";
+import { convertArrayToReadableStream, Experimental_EvaluationMockModelV4, MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
+import { bytes, CognitiveError, constrain, Ensemble, MODEL_HEADER, mirrorCapabilities, usage } from "@harness/cognitive";
+import type { BenchmarkResult, EmbeddingModelV4, EvaluationModelV4, LanguageModelV4, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
 
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
   return { id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native", "browser"], license: "MIT", downloadBytes: bytes(1), benchmarks: [], ...extra } as ModelDescriptor;
 }
 const win = (benchmark: string, score: number, task: TaskCategory = "text-embedding"): BenchmarkResult => ({ benchmark, task, metric: "m", score, higherIsBetter: true });
 
-const embedder = (tag: number): Embedder => ({ dimensions: dimensions(1), embed: async (inputs) => inputs.map(() => new Float32Array([tag])) });
-const judge: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: probability(0.9) } }) };
-const generator = (text: string): Generator => ({
-  async *generate(): AsyncIterable<GenerationEvent> {
-    yield { type: "text", text };
-    yield { type: "finish", reason: "stop" };
-  },
-});
+const embedder = (tag: number): EmbeddingModelV4 => new MockEmbeddingModelV4({ doEmbed: async ({ values }) => ({ embeddings: values.map(() => [tag]), warnings: [] }) });
+const judge: EvaluationModelV4 = new Experimental_EvaluationMockModelV4({ doEvaluate: async () => ({ answers: { ok: { type: "boolean", probability: 0.9 } }, warnings: [] }) });
+const generator = (text: string): LanguageModelV4 =>
+  new MockLanguageModelV4({
+    doStream: async () => ({
+      stream: convertArrayToReadableStream([
+        { type: "text-start", id: "0" },
+        { type: "text-delta", id: "0", delta: text },
+        { type: "text-end", id: "0" },
+        { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usage() },
+      ]),
+    }),
+    doGenerate: async () => ({ content: [{ type: "text", text }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] }),
+  });
+const vector = async (e: Ensemble, value = "x") => (await embed({ model: e.embeddingModel(), value, maxRetries: 0 })).embedding;
+const ask = (e: Ensemble, questions: Record<string, { type: "boolean"; instructions: string }> = { ok: { type: "boolean", instructions: "?" } }) => experimental_evaluate({ model: e.evaluationModel(), state: "s", questions, maxRetries: 0 });
 
 function deferred<T>() {
   let resolve!: (v: T) => void;
@@ -38,9 +48,9 @@ describe("Ensemble", () => {
     let loads = 0;
     e.register(descriptor("emb", ["text-embedding"], ["embedder"]), async () => (loads++, { embedder: embedder(7) }));
     expect(e.state("emb")).toBe("offline");
-    const [a, b] = await Promise.all([e.embed([{ kind: "query", text: "x" }]), e.embed([{ kind: "query", text: "y" }])]);
-    expect(Array.from(a[0]!)).toEqual([7]);
-    expect(Array.from(b[0]!)).toEqual([7]);
+    const [a, b] = await Promise.all([vector(e, "x"), vector(e, "y")]);
+    expect(a).toEqual([7]);
+    expect(b).toEqual([7]);
     expect(loads).toBe(1);
     expect(states).toEqual(["emb:loading", "emb:ready"]);
   });
@@ -51,8 +61,7 @@ describe("Ensemble", () => {
     e.register(descriptor("strong", ["text-embedding"], ["embedder"], { benchmarks: [win("MTEB", 60)] }), async () => {
       throw new Error("weights missing");
     });
-    const [v] = await e.embed([{ kind: "document", text: "d" }]);
-    expect(Array.from(v!)).toEqual([1]);
+    expect(await vector(e, "d")).toEqual([1]);
     expect(e.state("strong")).toBe("failed");
     expect(e.members().find((m) => m.id === "strong")!.reason).toMatch(/weights missing/);
     e.reset("strong");
@@ -65,13 +74,13 @@ describe("Ensemble", () => {
     e.onChange((ev) => events.push(`${ev.id}:${ev.state}${ev.reason ? `(${ev.reason})` : ""}`));
     e.register(descriptor("a", ["text-embedding"], ["embedder"], { benchmarks: [win("MTEB", 60)] }), async () => ({ embedder: embedder(1) }));
     e.register(descriptor("b", ["text-embedding"], ["embedder"], { benchmarks: [win("MTEB", 50)] }), async () => ({ embedder: embedder(2) }));
-    expect(Array.from((await e.embed([{ kind: "query", text: "q" }]))[0]!)).toEqual([1]);
+    expect(await vector(e)).toEqual([1]);
     e.revoke("a", "webgpu lost");
     expect(e.state("a")).toBe("revoked");
-    expect(Array.from((await e.embed([{ kind: "query", text: "q" }]))[0]!)).toEqual([2]);
+    expect(await vector(e)).toEqual([2]);
     e.restore("a");
     expect(e.state("a")).toBe("offline");
-    expect(Array.from((await e.embed([{ kind: "query", text: "q" }]))[0]!)).toEqual([1]);
+    expect(await vector(e)).toEqual([1]);
     expect(events).toContain("a:revoked(webgpu lost)");
   });
 
@@ -79,7 +88,7 @@ describe("Ensemble", () => {
     const e = new Ensemble({ platform: "native" });
     const gate = deferred<Ports>();
     e.register(descriptor("slow", ["text-embedding"], ["embedder"]), () => gate.promise);
-    const pending = e.embed([{ kind: "query", text: "q" }]);
+    const pending = vector(e);
     await Promise.resolve();
     e.revoke("slow", "platform withdrew it");
     gate.resolve({ embedder: embedder(1) });
@@ -89,7 +98,7 @@ describe("Ensemble", () => {
 
   it("EN1.6 no member for a task is a no_member error naming the task and platform", async () => {
     const e = new Ensemble({ platform: "browser" });
-    const error = await e.judge({ state: "s", questions: {} }).catch((x: unknown) => x);
+    const error = await ask(e).catch((x: unknown) => x);
     expect(error).toBeInstanceOf(CognitiveError);
     expect(error).toMatchObject({ code: "no_member", message: expect.stringMatching(/judgment.*browser/) });
   });
@@ -97,37 +106,64 @@ describe("Ensemble", () => {
   it("EN1.7 a member whose adapter lacks the port it declared is marked failed", async () => {
     const e = new Ensemble({ platform: "native" });
     e.register(descriptor("liar", ["judgment"], ["judge"]), async () => ({}));
-    await expect(e.judge({ state: "s", questions: {} })).rejects.toMatchObject({ code: "no_member" });
+    await expect(ask(e)).rejects.toMatchObject({ code: "no_member" });
     expect(e.members()[0]).toMatchObject({ state: "failed", reason: expect.stringMatching(/judge/) });
   });
 
-  it("EN1.8 generate streams the chosen member's events for the requested task", async () => {
+  it("EN1.8 the ensemble is an AI SDK language model per task: calls stream the chosen member's output", async () => {
     const e = new Ensemble({ platform: "native" });
     e.register(descriptor("chatty", ["chat"], ["generator"]), async () => ({ generator: generator("hi") }));
     e.register(descriptor("seer", ["vision-qa"], ["generator"]), async () => ({ generator: generator("a cat") }));
-    const collect = async (it: AsyncIterable<GenerationEvent>) => {
-      const out: GenerationEvent[] = [];
-      for await (const ev of it) out.push(ev);
-      return out;
-    };
-    expect(await collect(e.generate({ messages: [{ role: "user", content: "hello" }] }))).toEqual([{ type: "text", text: "hi" }, { type: "finish", reason: "stop" }]);
-    expect((await collect(e.generate({ messages: [{ role: "user", content: "what is this?" }] }, "vision-qa")))[0]).toEqual({ type: "text", text: "a cat" });
-    await expect(collect(e.generate({ messages: [] }, "judgment"))).rejects.toThrow(/generator/);
+    const chat = streamText({ model: e.languageModel(), prompt: "hello", maxRetries: 0 });
+    expect(await chat.text).toBe("hi");
+    expect((await chat.response).headers?.[MODEL_HEADER]).toBe("chatty");
+    expect((await generateText({ model: e.languageModel("vision-qa"), prompt: "what is this?", maxRetries: 0 })).text).toBe("a cat");
+    await expect(generateText({ model: e.languageModel("judgment"), prompt: "?", maxRetries: 0 })).rejects.toThrow(/generator/);
+    expect(e.languageModel("tool-calling", "router").modelId).toBe("tool-calling/router");
   });
 
-  it("EN1.9 judge, route and compress delegate to members serving those tasks", async () => {
+  it("EN1.9 judge and compress delegate to members serving those tasks, naming the member", async () => {
     const e = new Ensemble({ platform: "native" });
     e.register(descriptor("judge-a", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge }));
-    e.register(descriptor("router-a", ["tool-calling"], ["router"]), async () => ({
-      router: { route: async (r) => ({ calls: [{ name: r.tools[0]!.name, arguments: {} }], confidence: probability(1), reasoning: "" }) },
-    }));
     e.register(descriptor("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
       compressor: { compress: async (r) => ({ text: r.text.slice(0, 2), originalTokens: 4, compressedTokens: 2 }) },
     }));
-    expect(await e.judge({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).toEqual({ ok: { type: "boolean", probability: probability(0.9) } });
-    expect((await e.route({ input: "go", tools: [{ name: "t", description: "", parameters: {} }] })).calls).toEqual([{ name: "t", arguments: {} }]);
-    expect((await e.compress({ text: "abcd", rate: 0.5 })).text).toBe("ab");
+    const verdict = await ask(e, { ok: { type: "boolean", instructions: "?" } });
+    expect(verdict.answers).toEqual({ ok: { type: "boolean", probability: 0.9 } });
+    expect(verdict.response.headers?.[MODEL_HEADER]).toBe("judge-a");
+    expect(await e.compress({ text: "abcd", rate: 0.5 })).toEqual({ text: "ab", originalTokens: 4, compressedTokens: 2, model: "compressor-a" });
     expect(e.candidates("judgment").map((c) => c.id)).toEqual(["judge-a"]);
+    expect(e.serves("judgment", "judge")).toBe(true);
+    expect(e.serves("judgment", "generator")).toBe(false);
+  });
+
+  it("EN1.12 a constrained call goes first to members whose catalog entry says they enforce that kind", async () => {
+    const e = new Ensemble({ platform: "native", preferences: { chat: ["loose", "strict"] } });
+    e.register(descriptor("loose", ["chat"], ["generator"]), async () => ({ generator: generator("free text") }));
+    e.register(descriptor("strict", ["chat"], ["generator"], { constraints: ["json-schema", "template"] }), async () => ({ generator: generator('{"a":1}') }));
+    expect((await generateText({ model: e.languageModel(), prompt: "p", maxRetries: 0 })).text).toBe("free text");
+    const json = await generateText({ model: e.languageModel(), prompt: "p", maxRetries: 0, output: Output.object({ schema: jsonSchema<{ a: number }>({ type: "object" }) }) });
+    expect(json.output).toEqual({ a: 1 });
+    const templated = await generateText({ model: e.languageModel(), prompt: "p", maxRetries: 0, ...constrain({ type: "template", parts: ["x", { hole: "y" }] }) });
+    expect(templated.response.headers?.[MODEL_HEADER]).toBe("strict");
+    const grammar = await generateText({ model: e.languageModel(), prompt: "p", maxRetries: 0, ...constrain({ type: "grammar", ebnf: 'root ::= "a"' }) });
+    expect(grammar.response.headers?.[MODEL_HEADER]).toBe("loose");
+  });
+
+  it("EN1.13 as an AI SDK provider, model ids are tasks, optionally with the port kind", async () => {
+    const e = new Ensemble({ platform: "native" });
+    e.register(descriptor("chatty", ["chat"], ["generator"]), async () => ({ generator: generator("hi") }));
+    e.register(descriptor("emb", ["text-embedding"], ["embedder"]), async () => ({ embedder: embedder(3) }));
+    e.register(descriptor("judge-a", ["judgment"], ["judge"]), async () => ({ judge }));
+    const registry = createProviderRegistry({ harness: e.provider() });
+    expect((await generateText({ model: registry.languageModel("harness:chat"), prompt: "p", maxRetries: 0 })).text).toBe("hi");
+    expect((await embed({ model: registry.embeddingModel("harness:text-embedding"), value: "v", maxRetries: 0 })).embedding).toEqual([3]);
+    const provider = e.provider();
+    expect(provider.languageModel("tool-calling/router").modelId).toBe("tool-calling/router");
+    expect(provider.evaluationModel("judgment").modelId).toBe("judgment");
+    for (const bad of ["dancing", "chat/judge", "chat/router/x"]) expect(() => provider.languageModel(bad)).toThrow(/No such languageModel/);
+    expect(() => provider.embeddingModel("nope")).toThrow(/No such embeddingModel/);
+    expect(() => provider.imageModel("chat")).toThrow(/No such imageModel/);
   });
 
   it("EN1.11 per-task preferences break ties that benchmarks cannot", () => {
@@ -159,12 +195,12 @@ describe("extensions", () => {
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     const uninstall = e.install(memory);
     expect(offered.has("cognitive.text-embedding")).toBe(true);
-    expect(Array.from((await e.embed([{ kind: "query", text: "x" }]))[0]!)).toEqual([7]);
+    expect(await vector(e)).toEqual([7]);
     uninstall();
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     expect(e.members()).toEqual([]);
     expect(events).toEqual(["embedder-a:offline", "memory:installed", "embedder-a:loading", "embedder-a:ready", "embedder-a:removed", "memory:uninstalled"]);
-    await expect(e.embed([{ kind: "query", text: "x" }])).rejects.toMatchObject({ code: "no_member" });
+    await expect(vector(e)).rejects.toMatchObject({ code: "no_member" });
     uninstall();
     expect(events).toHaveLength(6);
     expect(e.install(memory)).toBeTypeOf("function");
@@ -238,20 +274,21 @@ describe("extensions", () => {
 });
 
 describe("failover on calls", () => {
-  const failing = (error: unknown): Judge => ({ evaluate: async () => Promise.reject(error) });
-  const answering: Judge = { evaluate: async () => ({ ok: { type: "boolean", probability: probability(0.9) } }) };
-  const request = { state: "s", questions: { ok: { type: "boolean" as const, instructions: "?" } } };
-  const setup = (first: Judge) => {
+  const failing = (error: unknown): EvaluationModelV4 => new Experimental_EvaluationMockModelV4({ doEvaluate: async () => Promise.reject(error) });
+  const setup = (first: EvaluationModelV4) => {
     const e = new Ensemble({ platform: "native", preferences: { judgment: ["judge-a", "judge-b"] } });
     e.register(descriptor("judge-a", ["judgment"], ["judge"], { locality: "hosted" }), async () => ({ judge: first }));
-    e.register(descriptor("judge-b", ["judgment"], ["judge"]), async () => ({ judge: answering }));
+    e.register(descriptor("judge-b", ["judgment"], ["judge"]), async () => ({ judge }));
     return e;
   };
+  const questions = { ok: { type: "boolean" as const, instructions: "?" } };
 
   it("EN3.1 a member whose service is unavailable (out of budget, unauthorized, down) is taken out and the next one answers", async () => {
     for (const error of [Object.assign(new Error("Payment Required"), { statusCode: 402 }), Object.assign(new Error("fetch failed"), { isRetryable: true }), Object.assign(new Error("Bad Gateway"), { statusCode: 502 })]) {
       const e = setup(failing(error));
-      expect(await e.judge(request)).toEqual({ ok: { type: "boolean", probability: probability(0.9) } });
+      const verdict = await ask(e, questions);
+      expect(verdict.answers).toEqual({ ok: { type: "boolean", probability: 0.9 } });
+      expect(verdict.response.headers?.[MODEL_HEADER]).toBe("judge-b");
       expect(e.members().find((m) => m.id === "judge-a")).toMatchObject({ state: "failed", reason: error.message });
     }
   });
@@ -259,7 +296,7 @@ describe("failover on calls", () => {
   it("EN3.2 a request the service rejects, or a plain error, is the caller's to see: no failover", async () => {
     for (const error of [Object.assign(new Error("invalid questions"), { statusCode: 422 }), Object.assign(new Error("bad request"), { statusCode: 400 }), new Error("bug")]) {
       const e = setup(failing(error));
-      await expect(e.judge(request)).rejects.toBe(error);
+      await expect(ask(e, questions)).rejects.toBe(error);
       expect(e.state("judge-a")).toBe("ready");
     }
   });
@@ -268,8 +305,21 @@ describe("failover on calls", () => {
     const e = new Ensemble({ platform: "native" });
     const down = Object.assign(new Error("Service Unavailable"), { statusCode: 503 });
     e.register(descriptor("judge-a", ["judgment"], ["judge"]), async () => ({ judge: failing(down) }));
-    await expect(e.judge(request)).rejects.toBe(down);
-    await expect(e.judge(request)).rejects.toMatchObject({ code: "no_member" });
+    await expect(ask(e, questions)).rejects.toBe(down);
+    await expect(ask(e, questions)).rejects.toMatchObject({ code: "no_member" });
+  });
+
+  it("EN3.4 streams and embeddings fail over the same way when a member cannot start the call", async () => {
+    const e = new Ensemble({ platform: "native", preferences: { chat: ["down", "up"], "text-embedding": ["down-emb", "up-emb"] } });
+    const outage = Object.assign(new Error("Service Unavailable"), { statusCode: 503 });
+    e.register(descriptor("down", ["chat"], ["generator"]), async () => ({ generator: new MockLanguageModelV4({ doStream: async () => Promise.reject(outage) }) }));
+    e.register(descriptor("up", ["chat"], ["generator"]), async () => ({ generator: generator("still here") }));
+    e.register(descriptor("down-emb", ["text-embedding"], ["embedder"]), async () => ({ embedder: new MockEmbeddingModelV4({ doEmbed: async () => Promise.reject(outage) }) }));
+    e.register(descriptor("up-emb", ["text-embedding"], ["embedder"]), async () => ({ embedder: embedder(5) }));
+    const chat = streamText({ model: e.languageModel(), prompt: "p", maxRetries: 0 });
+    expect(await chat.text).toBe("still here");
+    expect(e.state("down")).toBe("failed");
+    expect(await vector(e)).toEqual([5]);
+    expect(e.state("down-emb")).toBe("failed");
   });
 });
-

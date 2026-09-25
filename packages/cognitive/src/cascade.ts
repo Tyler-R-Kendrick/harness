@@ -1,8 +1,13 @@
+import { experimental_evaluate, generateText, jsonSchema, tool } from "ai";
+import type { LanguageModel, ToolSet, TypedToolCall } from "ai";
+import { InvalidResponseDataError } from "@ai-sdk/provider";
+import type { JSONValue } from "@ai-sdk/provider";
+import { z } from "zod";
 import type { ToolCall } from "./chat-format.ts";
 import { CognitiveError } from "./ensemble.ts";
 import type { Ensemble } from "./ensemble.ts";
-import type { Routing, ToolSpec } from "./ports.ts";
-import { z } from "zod";
+import { HARNESS, MODEL_HEADER } from "./options.ts";
+import type { ToolSpec } from "./ports.ts";
 import { probability, ProbabilitySchema } from "./units.ts";
 import type { Probability } from "./units.ts";
 
@@ -46,12 +51,33 @@ export interface ToolDecision {
 
 const TOOL_SYSTEM = "Call the tools that fulfil the user's request. Call nothing if no tool applies.";
 
-function invalidCall(call: ToolCall, tools: readonly ToolSpec[]): string | undefined {
-  const tool = tools.find((t) => t.name === call.name);
-  if (!tool) return `unknown tool ${call.name}`;
-  const required = Array.isArray(tool.parameters["required"]) ? (tool.parameters["required"] as unknown[]) : [];
-  const missing = required.filter((k) => typeof k === "string" && !(k in call.arguments));
-  return missing.length > 0 ? `${call.name} is missing ${missing.join(", ")}` : undefined;
+/**
+ * Tools as JSON, as an AI SDK tool set with no `execute`: calls come back to the
+ * caller. The model sees each tool's JSON Schema as given; zod validates the calls
+ * against it, so a call the schema rejects is an invalid call.
+ */
+export function toolSet(tools: readonly ToolSpec[]): ToolSet {
+  return Object.fromEntries(
+    tools.map((t) => {
+      const schema = z.fromJSONSchema(t.parameters as z.core.JSONSchema.JSONSchema);
+      const validate = (value: unknown) => {
+        const result = schema.safeParse(value);
+        return result.success ? { success: true as const, value: result.data } : { success: false as const, error: new Error(z.prettifyError(result.error)) };
+      };
+      return [t.name, tool({ description: t.description, inputSchema: jsonSchema(t.parameters, { validate }) })];
+    }),
+  );
+}
+
+/** Calls the AI SDK could match to a tool and validate against its schema, and why the others were not. */
+function sortCalls(calls: readonly TypedToolCall<ToolSet>[]): { valid: ToolCall[]; problems: string[] } {
+  const valid: ToolCall[] = [];
+  const problems: string[] = [];
+  for (const c of calls) {
+    if (c.invalid) problems.push(`${c.toolName}: ${c.error instanceof Error ? c.error.message : String(c.error)}`);
+    else valid.push({ name: c.toolName, arguments: (c.input ?? {}) as Record<string, unknown> });
+  }
+  return { valid, problems };
 }
 
 async function available<T>(get: () => Promise<T>): Promise<T | undefined> {
@@ -61,6 +87,25 @@ async function available<T>(get: () => Promise<T>): Promise<T | undefined> {
     if (e instanceof CognitiveError) return undefined;
     throw e;
   }
+}
+
+const member = (headers: Readonly<Record<string, string | undefined>> | undefined) => headers?.[MODEL_HEADER];
+
+/**
+ * A tool router's routing (any AI SDK language model that routes, such as the
+ * ensemble's router): the calls it makes, sorted into valid ones and why the others
+ * are not, its calibrated confidence (provider metadata `harness.confidence`; 0 when
+ * it gives none) and its reasoning.
+ */
+export async function route(model: LanguageModel, request: { readonly input: string; readonly tools: readonly ToolSpec[] }) {
+  const result = await generateText({ model, prompt: request.input, tools: toolSet(request.tools), maxRetries: 0 });
+  const confidence = ProbabilitySchema.safeParse(result.providerMetadata?.[HARNESS]?.["confidence"]);
+  return {
+    model: member(result.response.headers),
+    ...sortCalls(result.toolCalls),
+    confidence: confidence.success ? confidence.data : probability(0),
+    reasoning: result.reasoningText ?? "",
+  };
 }
 
 /**
@@ -75,58 +120,57 @@ export async function decideToolCalls(
   policy: CascadePolicy = DEFAULT_CASCADE,
 ): Promise<ToolDecision> {
   const trace: CascadeStep[] = [];
-  let routing: Routing | undefined;
-  let valid = false;
+  let routing: Awaited<ReturnType<typeof route>> | undefined;
 
-  const router = await available(() => ensemble.resolve("tool-calling", "router"));
-  if (!router) trace.push({ step: "route", outcome: "no router available" });
+  if (ensemble.serves("tool-calling", "router")) routing = await available(() => route(ensemble.languageModel("tool-calling", "router"), request));
+  if (!routing) trace.push({ step: "route", outcome: "no router available" });
   else {
-    routing = await router.port.route(request);
-    const problems = routing.calls.map((c) => invalidCall(c, request.tools)).filter((p) => p !== undefined);
-    valid = problems.length === 0;
-    trace.push({ step: "route", member: router.id, outcome: valid ? `confidence ${routing.confidence}` : `invalid: ${problems.join("; ")}` });
+    const valid = routing.problems.length === 0;
+    trace.push({ step: "route", ...(routing.model === undefined ? {} : { member: routing.model }), outcome: valid ? `confidence ${routing.confidence}` : `invalid: ${routing.problems.join("; ")}` });
     if (valid && routing.confidence >= policy.act) {
-      return { calls: routing.calls, decidedBy: "router", confidence: routing.confidence, trace };
+      return { calls: routing.valid, decidedBy: "router", confidence: routing.confidence, trace };
     }
     if (valid && routing.confidence >= policy.verify) {
-      const judge = await available(() => ensemble.resolve("judgment", "judge"));
-      if (!judge) trace.push({ step: "verify", outcome: "no judge available" });
+      const verdict = ensemble.serves("judgment", "judge")
+        ? await available(() =>
+            experimental_evaluate({
+              model: ensemble.evaluationModel(),
+              maxRetries: 0,
+              state: { request: request.input, tools: request.tools.map((t) => ({ name: t.name, description: t.description })), calls: routing!.valid as unknown as JSONValue[] },
+              questions: {
+                correct: {
+                  type: "boolean",
+                  instructions: "Do `calls` do exactly what `request` asks, using only `tools`, with every argument taken from the request? An empty `calls` means no tool applies.",
+                },
+              },
+            }).catch((e: unknown) => {
+              // A judge whose answer is not a boolean one gives no support: the routing is not verified.
+              if (InvalidResponseDataError.isInstance(e)) return { unusable: e.message };
+              throw e;
+            }),
+          )
+        : undefined;
+      if (!verdict) trace.push({ step: "verify", outcome: "no judge available" });
+      else if ("unusable" in verdict) trace.push({ step: "verify", outcome: `p=0: ${verdict.unusable}` });
       else {
-        const answers = await judge.port.evaluate({
-          state: { request: request.input, tools: request.tools.map((t) => ({ name: t.name, description: t.description })), calls: routing.calls },
-          questions: {
-            correct: {
-              type: "boolean",
-              instructions: "Do `calls` do exactly what `request` asks, using only `tools`, with every argument taken from the request? An empty `calls` means no tool applies.",
-            },
-          },
-        });
-        const answer = answers["correct"];
-        const p = answer?.type === "boolean" ? answer.probability : probability(0);
-        trace.push({ step: "verify", member: judge.id, outcome: `p=${p}` });
-        if (p >= policy.accept) return { calls: routing.calls, decidedBy: "router+judge", confidence: p, trace };
+        const p = ProbabilitySchema.parse(verdict.answers.correct.probability);
+        const judge = member(verdict.response.headers);
+        trace.push({ step: "verify", ...(judge === undefined ? {} : { member: judge }), outcome: `p=${p}` });
+        if (p >= policy.accept) return { calls: routing.valid, decidedBy: "router+judge", confidence: p, trace };
       }
     }
   }
 
-  const generator = await available(() => ensemble.resolve("tool-calling", "generator"));
-  if (!generator) {
+  const escalated = ensemble.serves("tool-calling", "generator")
+    ? await available(() => generateText({ model: ensemble.languageModel("tool-calling"), instructions: TOOL_SYSTEM, prompt: request.input, tools: toolSet(request.tools), maxRetries: 0 }))
+    : undefined;
+  if (!escalated) {
     trace.push({ step: "escalate", outcome: "no generator available" });
     if (!routing) throw new CognitiveError("no_member", `no router or generator available for tool-calling on ${ensemble.platform}`);
-    const calls = routing.calls.filter((c) => invalidCall(c, request.tools) === undefined);
-    return { calls, decidedBy: "router", confidence: routing.confidence, unverified: true, trace };
+    return { calls: routing.valid, decidedBy: "router", confidence: routing.confidence, unverified: true, trace };
   }
-  const calls: ToolCall[] = [];
-  for await (const event of generator.port.generate({
-    messages: [
-      { role: "system", content: TOOL_SYSTEM },
-      { role: "user", content: request.input },
-    ],
-    tools: request.tools,
-  })) {
-    if (event.type === "tool-call") calls.push(event.call);
-  }
-  const kept = calls.filter((c) => invalidCall(c, request.tools) === undefined);
-  trace.push({ step: "escalate", member: generator.id, outcome: `${kept.length} call(s)${kept.length < calls.length ? `, ${calls.length - kept.length} invalid dropped` : ""}` });
-  return { calls: kept, decidedBy: "generator", trace };
+  const { valid, problems } = sortCalls(escalated.toolCalls);
+  const generator = member(escalated.response.headers);
+  trace.push({ step: "escalate", ...(generator === undefined ? {} : { member: generator }), outcome: `${valid.length} call(s)${problems.length ? `, ${problems.length} invalid dropped` : ""}` });
+  return { calls: valid, decidedBy: "generator", trace };
 }

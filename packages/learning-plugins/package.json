@@ -13,8 +13,9 @@
     "@harness/cognitive": "0.0.0",
     "@harness/learning": "0.0.0",
     "@harness/workflows": "0.0.0",
-    "zod": "4.6.5",
-    "@scure/base": "2.4.0"
+    "@scure/base": "2.4.0",
+    "ai": "7.0.114",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@harness/memory": "0.0.0",

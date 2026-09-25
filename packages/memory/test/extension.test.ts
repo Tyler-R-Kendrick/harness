@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { embed } from "ai";
 import { dimensions, Ensemble, invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import { readFileSync } from "node:fs";
 import { parseCatalog } from "@harness/cognitive";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
 import type { ModelDescriptor } from "@harness/cognitive";
-import { HashEmbedder } from "@harness/testkit";
+import { hashEmbeddingModel } from "@harness/testkit";
 
 const data = (file: string): unknown => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8"));
 const { models } = parseCatalog(data("catalog.json"), data("benchmarks.json"));
@@ -14,8 +15,8 @@ function setup() {
   const offered = new Set<string>();
   mirrorCapabilities(ensemble, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
   const loaded: string[] = [];
-  const memory = new Memory(ensemble, { dimensions: dimensions(32) });
-  const extension = memoryExtension({ memory, models, load: async (d) => (loaded.push(d.id), { embedder: new HashEmbedder(64) }) });
+  const memory = new Memory(ensemble.embeddingModel(), { dimensions: dimensions(32) });
+  const extension = memoryExtension({ memory, models, load: async (d) => (loaded.push(d.id), { embedder: hashEmbeddingModel(64) }) });
   return { ensemble, offered, loaded, memory, extension };
 }
 
@@ -26,7 +27,7 @@ describe("memory as a cognitive-core extension", () => {
     const uninstall = ensemble.install(extension);
     expect([...offered].sort()).toEqual(["cognitive.text-embedding", "memory"]);
     expect(ensemble.candidates("text-embedding").map((c) => c.id)).toEqual(models.map((m) => m.id));
-    await ensemble.embed([{ kind: "query", text: "x" }]);
+    await embed({ model: ensemble.embeddingModel(), value: "x", maxRetries: 0 });
     expect(loaded).toEqual([models[0]!.id]);
     uninstall();
     expect(offered.size).toBe(0);

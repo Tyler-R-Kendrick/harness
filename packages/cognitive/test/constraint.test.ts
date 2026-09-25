@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { bytes, ConstraintSchema, Ensemble, readTemplate } from "@harness/cognitive";
-import type { Constraint, ConstraintType, GenerateRequest, ModelDescriptor } from "@harness/cognitive";
-import { ScriptedGenerator } from "@harness/testkit";
+import { ConstraintSchema, readTemplate } from "@harness/cognitive";
+import type { Constraint } from "@harness/cognitive";
 
 const card: Constraint = {
   type: "template",
@@ -28,19 +27,4 @@ describe("constraints on generation", () => {
     expect(() => readTemplate(card, "Name: Ada\nAge: 36\nextra")).toThrow("the output goes on after the template");
   });
 
-  it("CN1.3 a constrained request goes first to generators that enforce that kind of constraint, then to the rest", async () => {
-    const e = new Ensemble({ platform: "native" });
-    const served: string[] = [];
-    const generator = (id: string) => new ScriptedGenerator(() => (served.push(id), "{}"));
-    const d = (id: string, constraints?: ConstraintType[]) => ({ id, name: id, publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [], ...(constraints ? { constraints } : {}) }) as ModelDescriptor;
-    e.register(d("free"), async () => ({ generator: generator("free") }));
-    e.register(d("json", ["json-schema"]), async () => ({ generator: generator("json") }));
-    const run = async (request: GenerateRequest) => {
-      for await (const _ of e.generate(request));
-    };
-    await run({ messages: [{ role: "user", content: "hi" }] });
-    await run({ messages: [{ role: "user", content: "hi" }], constraint: { type: "json-schema", schema: {} } });
-    await run({ messages: [{ role: "user", content: "hi" }], constraint: card });
-    expect(served).toEqual(["free", "json", "free"]);
-  });
 });

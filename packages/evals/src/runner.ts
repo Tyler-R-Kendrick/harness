@@ -1,4 +1,5 @@
-import { CognitiveError, wilsonInterval } from "@harness/cognitive";
+import { experimental_evaluate } from "ai";
+import { CognitiveError, JudgeAnswerSchema, wilsonInterval } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
 import type { Answer, Judge, Question, State } from "./judge.ts";
 import { caseVerdict, questionVerdict } from "./verdict.ts";
@@ -60,7 +61,7 @@ export async function chooseJudge(ensemble: Ensemble): Promise<JudgeChoice> {
   try {
     const { id, port } = await ensemble.resolve("judgment", "judge");
     const { runtime } = ensemble.members().find((m) => m.id === id)!.descriptor;
-    return { judge: { identity: { provider: runtime, modelId: id }, evaluate: (request) => port.evaluate(request) } };
+    return { judge: { identity: { provider: runtime, modelId: id }, model: port } };
   } catch (e) {
     if (!(e instanceof CognitiveError)) throw e;
     const reasons = ensemble.members().flatMap((m) => (m.descriptor.tasks.includes("judgment") && m.reason ? [`${m.id}: ${m.reason}`] : []));
@@ -112,7 +113,9 @@ async function runCase(c: EvalCase, choice: JudgeChoice): Promise<EvalResult> {
   }
   let answers: Record<string, Answer>;
   try {
-    answers = await judge.evaluate({ state, questions: c.questions });
+    // The state goes as JSON: what a judge is shown is what serializes.
+    const result = await experimental_evaluate({ model: judge.model, state: JSON.parse(JSON.stringify(state)) as string, questions: c.questions, maxRetries: 1 });
+    answers = Object.fromEntries(Object.entries(result.answers).map(([k, a]) => [k, JudgeAnswerSchema.parse(a)]));
   } catch (e) {
     return done({ verdict: isAccessError(e) ? "blocked" : "inconclusive", reason: `judge failed: ${message(e)}`, state });
   }

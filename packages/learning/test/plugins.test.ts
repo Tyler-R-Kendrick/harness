@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { promptText } from "@harness/testkit";
 import { Learning, Plugins, TARGETS } from "@harness/learning";
 import type { Materializer, Teacher } from "@harness/learning";
 import { reply, settings, setup } from "./helpers.ts";
@@ -16,7 +17,7 @@ const skills = (): Materializer & { inputs: unknown[] } => {
 
 async function withLesson() {
   const s = setup({ reflect: () => reply([{ op: "add", kind: "procedure", title: "staging deploy", text: "migrate, then deploy", steps: ["run migrations", "deploy"] }]) });
-  const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
+  const learning = new Learning({ reasoner: s.reasoner, memory: s.memory, settings });
   await learning.observe({ id: "t1", task: "deploy to staging", steps: [], outcome: { status: "success" } });
   return { ...s, learning };
 }
@@ -62,7 +63,7 @@ describe("learning plugins", () => {
     const result = await plugins.teach(learning, recording);
     expect(recorded).toEqual([recording]);
     expect(result.trajectory).toMatchObject({ id: "demo-1", source: "demonstration", outcome: { status: "success" } });
-    expect(JSON.parse(String(generator.requests.at(-1)!.messages[1]!.content)).session).toMatchObject({ id: "demo-1", source: "demonstration" });
+    expect(JSON.parse(promptText(generator.doGenerateCalls.at(-1)!.prompt)).session).toMatchObject({ id: "demo-1", source: "demonstration" });
     await expect(plugins.teach(learning, { ...recording, parts: [{ modality: "audio", mediaType: "audio/ogg", data: "" }] })).rejects.toThrow("no teacher observes audio");
   });
 

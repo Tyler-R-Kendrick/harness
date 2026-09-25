@@ -1,4 +1,5 @@
-import type { Ensemble } from "@harness/cognitive";
+import type { LanguageModel } from "ai";
+import { route } from "@harness/cognitive";
 import { TARGETS } from "@harness/learning";
 import type { MaterializeInput, Materialized, Materializer } from "@harness/learning";
 import { checkWorkflow, parseWorkflow } from "@harness/workflows";
@@ -6,7 +7,8 @@ import type { Workflow, WorkflowLibrary } from "@harness/workflows";
 import type { PluginSettings } from "./settings.ts";
 
 export interface BuilderOptions {
-  readonly reasoner: Pick<Ensemble, "route">;
+  /** Fits steps to tools, with a calibrated confidence (provider metadata `harness.confidence`). */
+  readonly router: LanguageModel;
   readonly settings: PluginSettings;
 }
 
@@ -50,8 +52,8 @@ export async function compileProcedure(options: BuilderOptions, input: Materiali
     let call: { name: string; arguments: Readonly<Record<string, unknown>> } | undefined;
     if (input.tools.length) {
       try {
-        const routing = await options.reasoner.route({ input: step, tools: input.tools });
-        if (routing.confidence >= options.settings.workflow.toolConfidence) call = routing.calls[0];
+        const routing = await route(options.router, { input: step, tools: input.tools });
+        if (routing.confidence >= options.settings.workflow.toolConfidence) call = routing.valid[0];
       } catch {
         // No router: the step asks the model instead.
       }

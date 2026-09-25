@@ -9,14 +9,15 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "4.0.91",
+    "@ai-sdk/gateway": "4.0.92",
     "@ai-sdk/openai-compatible": "3.0.55",
     "@ai-sdk/provider": "4.0.18",
     "@ai-sdk/typesafe-ai": "3.0.6",
     "@harness/behavior": "0.0.0",
     "@harness/cognitive": "0.0.0",
     "@huggingface/transformers": "4.3.0",
-    "ai": "7.0.113",
+    "@scure/base": "2.4.0",
+    "ai": "7.0.114",
     "async-mutex": "0.5.0",
     "onnxruntime-node": "1.30.0",
     "onnxruntime-web": "1.30.0",

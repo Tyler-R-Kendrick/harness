@@ -10,8 +10,10 @@
     "./data/*": "./data/*"
   },
   "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
     "@harness/cognitive": "0.0.0",
     "@harness/memory": "0.0.0",
+    "ai": "7.0.114",
     "zod": "4.6.5"
   },
   "devDependencies": {

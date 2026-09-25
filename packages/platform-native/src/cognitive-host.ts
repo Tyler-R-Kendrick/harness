@@ -1,33 +1,31 @@
 import { dirname, join } from "node:path";
 import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
+import { wrapLanguageModel } from "ai";
 import { Ensemble } from "@harness/cognitive";
 import type { Catalog, Dimensions, ModelDescriptor, Ports, Runtime } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
   CactusWasmEngine,
-  EvaluationJudge,
   gatewayEvaluationModel,
-  LanguageModelDocumentParser,
-  LanguageModelGenerator,
   llamaServer,
   loadChatTokenizer,
   loadFeatureExtractionBackend,
   loadTokenClassificationBackend,
   loadVisionChatBackend,
   OnnxSteerableSession,
-  PromptedEmbedder,
+  pageInstruction,
+  promptedEmbeddingModel,
   serviceAvailable,
-  SteeredGenerator,
+  steeredModel,
   TokenClassifierCompressor,
   typesafeApiEvaluationModel,
-  VisionChatDocumentParser,
-  VisionChatGenerator,
+  visionChatModel,
 } from "@harness/models";
 import type { CactusModule, OrtLike } from "@harness/models";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
-import { Learning, learningExtension, Plugins } from "@harness/learning";
+import { ensembleReasoner, Learning, learningExtension, Plugins } from "@harness/learning";
 import type { Settings } from "@harness/learning";
 import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
 import { workflowsExtension } from "@harness/workflows";
@@ -132,7 +130,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
     // Without a credential the model fails to load, and the next one for the task takes over.
     "ai-gateway": async (m) => {
       if (!env["AI_GATEWAY_API_KEY"] && !env["VERCEL_OIDC_TOKEN"]) throw new Error("no AI Gateway credential (AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN)");
-      return { judge: new EvaluationJudge(gatewayEvaluationModel(m.run.model)) };
+      return { judge: gatewayEvaluationModel(m.run.model) };
     },
     "typesafe-api": async (m) => {
       const baseUrl = ((m.run.baseUrlEnv && env[m.run.baseUrlEnv]) || m.run.baseUrl).replace(/\/$/, "");
@@ -140,14 +138,14 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
         throw new Error(`${m.name} is not answering at ${baseUrl}; start its server${m.run.baseUrlEnv ? ` or set ${m.run.baseUrlEnv}` : ""}`);
       }
       const apiKey = m.run.apiKeyEnv ? env[m.run.apiKeyEnv] : undefined;
-      return { judge: new EvaluationJudge(typesafeApiEvaluationModel({ baseUrl, model: m.run.model, fetch: fetchFn, ...(apiKey ? { apiKey } : {}) })) };
+      return { judge: typesafeApiEvaluationModel({ baseUrl, model: m.run.model, fetch: fetchFn, ...(apiKey ? { apiKey } : {}) }) };
     },
     "cactus-wasm": async (m) => {
       // The engine reads the real process environment.
       for (const [k, v] of Object.entries(m.run.env ?? {})) process.env[k] ??= v;
       const [loader, wasm, weights] = await Promise.all([m.run.loader, m.run.wasm, m.run.weights].map((p) => artifacts.file(m.artifact!, p)));
       const engine = await CactusWasmEngine.create(await loadEmscriptenModule<CactusModule>(loader!, wasm!, m.run.loader), weights!, m.run.prefix);
-      return { router: engine };
+      return { router: engine.router(m.id) };
     },
     "transformers.js": async (m) => {
       const at = { ...pinned(m), dtype: m.run.dtype };
@@ -160,11 +158,12 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
             ...(constrainer(m) ? { constrainer: constrainer(m)! } : {}),
           })
         : undefined;
+      const model = chat && visionChatModel(chat, { modelId: m.id });
       return {
-        ...(m.embedding ? { embedder: new PromptedEmbedder(await loadFeatureExtractionBackend(at), m.embedding) } : {}),
+        ...(m.embedding ? { embedder: promptedEmbeddingModel(await loadFeatureExtractionBackend(at), m.embedding, { modelId: m.id }) } : {}),
         ...(m.compression ? { compressor: new TokenClassifierCompressor(await loadTokenClassificationBackend({ ...at, keepLabel: m.compression.keepLabel }), m.compression) } : {}),
-        ...(chat && serves(m, "generator") ? { generator: new VisionChatGenerator(chat) } : {}),
-        ...(chat && serves(m, "document-parser") ? { "document-parser": new VisionChatDocumentParser(chat) } : {}),
+        ...(model && serves(m, "generator") ? { generator: model } : {}),
+        ...(model && serves(m, "document-parser") ? { "document-parser": model } : {}),
       };
     },
     ...(options.llamaServer
@@ -178,10 +177,11 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
               ...(m.run.args ? { args: m.run.args } : {}),
             });
             servers.push(server);
-            const model = llamaServer({ baseUrl: server.baseUrl });
+            const model = llamaServer({ baseUrl: server.baseUrl, fetch: fetchFn });
             return {
-              ...(serves(m, "generator") ? { generator: new LanguageModelGenerator(model) } : {}),
-              ...(serves(m, "document-parser") ? { "document-parser": new LanguageModelDocumentParser(model) } : {}),
+              ...(serves(m, "generator") ? { generator: model } : {}),
+              // A page sent without words is read with the default instruction.
+              ...(serves(m, "document-parser") ? { "document-parser": wrapLanguageModel({ model, middleware: pageInstruction("Convert this page to Markdown.") }) } : {}),
             };
           },
         }
@@ -196,7 +196,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       const build = constrainer(m);
       const constrain = build && tokenizer.vocabulary ? await build({ tokens: tokenizer.vocabulary(), stopTokens: tokenizer.endTokens }) : undefined;
       return {
-        generator: new SteeredGenerator({ session, tokenizer, ...(options.behavior ? { hook: () => behaviorHook(new BehaviorEngine(options.behavior!)) } : {}), ...(constrain ? { constrain } : {}) }),
+        generator: steeredModel({ modelId: m.id, session, tokenizer, ...(options.behavior ? { hook: () => behaviorHook(new BehaviorEngine(options.behavior!)) } : {}), ...(constrain ? { constrain } : {}) }),
       };
     },
   };
@@ -218,7 +218,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
   const workflows = options.workflows && new WorkflowFiles(options.workflows.dir);
   if (workflows) {
     const tools = options.workflows!.tools;
-    ensemble.install(workflowsExtension({ library: workflows, journal: (run) => workflows.journal(run), ensemble, ...(tools ? { tools } : {}) }));
+    ensemble.install(workflowsExtension({ library: workflows, journal: (run) => workflows.journal(run), model: ensemble.languageModel(), ...(tools ? { tools } : {}) }));
   }
   const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {
@@ -235,7 +235,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
 function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOptions["memory"]>, load: (m: ModelDescriptor) => Promise<Ports>): Memory {
   const { persist } = options;
   const { models } = options.catalog ?? loadCatalog({ package: "@harness/memory" });
-  const memory = new Memory(ensemble, {
+  const memory = new Memory(ensemble.embeddingModel(), {
     dimensions: options.dimensions ?? sharedEmbeddingSize(models),
     ...(options.saved === undefined ? {} : { saved: options.saved }),
     ...(persist ? { onChange: (m: Memory) => persist(m.save()) } : {}),
@@ -248,23 +248,25 @@ function installMemory(ensemble: Ensemble, options: NonNullable<NativeEnsembleOp
 function defaultPlugins(ensemble: Ensemble, library: WorkflowFiles): Plugins {
   const settings = loadPluginSettings();
   const plugins = new Plugins();
-  plugins.use(workflowBuilder({ reasoner: ensemble, library, settings }));
-  plugins.use(skillBuilder({ reasoner: ensemble, library, settings }));
-  plugins.use(toolBuilder({ reasoner: ensemble, library, settings }));
-  plugins.use(recordingTeacher({ reasoner: ensemble, settings }));
+  const router = ensemble.languageModel("tool-calling", "router");
+  plugins.use(workflowBuilder({ router, library, settings }));
+  plugins.use(skillBuilder({ router, library, settings }));
+  plugins.use(toolBuilder({ coder: ensemble.languageModel("coding"), library, settings }));
+  plugins.use(recordingTeacher({ vision: ensemble.languageModel("vision-qa"), settings }));
   return plugins;
 }
 
 function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullable<NativeEnsembleOptions["learning"]>, workflows: WorkflowFiles | undefined): Learning {
   const { persist } = options;
+  const reasoner = ensembleReasoner(ensemble);
   const learning = new Learning({
-    reasoner: ensemble,
+    reasoner,
     memory,
     settings: options.settings ?? loadLearningSettings(),
     ...(options.saved === undefined ? {} : { saved: options.saved }),
     ...(persist ? { onChange: (l: Learning) => persist(l.save()) } : {}),
   });
   const plugins = options.plugins ?? (workflows ? defaultPlugins(ensemble, workflows) : new Plugins());
-  ensemble.install(learningExtension({ learning, reasoner: ensemble, plugins }));
+  ensemble.install(learningExtension({ learning, reasoner, plugins }));
   return learning;
 }

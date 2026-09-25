@@ -8,10 +8,10 @@ function installed() {
   const s = setup({ reflect: () => reply([{ op: "add", kind: "procedure", title: "staging deploy", text: "migrate, then deploy" }]), judge: () => ({ type: "boolean", probability: probability(0.95) }) });
   const offered = new Set<string>();
   mirrorCapabilities(s.ensemble, { offer: (n) => offered.add(n), withdraw: (n) => offered.delete(n) });
-  const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
+  const learning = new Learning({ reasoner: s.reasoner, memory: s.memory, settings });
   const plugins = new Plugins();
   plugins.use({ kind: "materializer", id: "workflows", target: TARGETS.workflow, materialize: async () => ({ target: "workflow", name: "deploy", description: "", files: [] }) });
-  const extension = learningExtension({ learning, reasoner: s.ensemble, plugins });
+  const extension = learningExtension({ learning, reasoner: s.reasoner, plugins });
   return { ...s, offered, learning, extension };
 }
 

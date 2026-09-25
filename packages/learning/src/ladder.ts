@@ -1,3 +1,6 @@
+import { InvalidResponseDataError } from "@ai-sdk/provider";
+import { experimental_evaluate } from "ai";
+import { route } from "@harness/cognitive";
 import type { ToolCall, ToolSpec } from "@harness/cognitive";
 import type { Learning, Reasoner } from "./learning.ts";
 import type { Plugins } from "./plugins.ts";
@@ -50,16 +53,24 @@ export async function planTask(ctx: LadderContext, input: { readonly task: strin
   const evidence: Evidence[] = [];
   const plan = (rung: Rung, extra: Partial<Plan> = {}): Plan => ({ rung, lessons, playbook, evidence, ...extra });
   const assess = async (rung: "native" | "build-tool", question: { readonly question: string; readonly threshold: number }): Promise<boolean> => {
+    const id = rung === "native" ? "native" : "build";
+    let p: number;
+    let note = "";
     try {
-      const answer = (await ctx.reasoner.judge({ state: { task, lessons: playbook }, questions: { [rung === "native" ? "native" : "build"]: { type: "boolean", instructions: question.question } } }))[rung === "native" ? "native" : "build"];
-      const p = answer?.type === "boolean" ? answer.probability : 0;
-      const yes = p >= question.threshold;
-      evidence.push({ rung, decision: yes ? "yes" : "no", detail: `p=${p} ${yes ? "≥" : "<"} ${question.threshold}` });
-      return yes;
+      const { answers } = await experimental_evaluate({ model: ctx.reasoner.judge, maxRetries: 0, state: { task, lessons: playbook }, questions: { [id]: { type: "boolean" as const, instructions: question.question } } });
+      p = answers[id]!.probability;
     } catch (e) {
-      evidence.push({ rung, decision: "unknown", detail: message(e) });
-      return false;
+      // A judge whose answer is not a boolean one gives no support: it counts as no.
+      if (!InvalidResponseDataError.isInstance(e)) {
+        evidence.push({ rung, decision: "unknown", detail: message(e) });
+        return false;
+      }
+      p = 0;
+      note = ` (${e.message})`;
     }
+    const yes = p >= question.threshold;
+    evidence.push({ rung, decision: yes ? "yes" : "no", detail: `p=${p} ${yes ? "≥" : "<"} ${question.threshold}${note}` });
+    return yes;
   };
 
   if (await assess("native", ladder.native)) return plan("native");
@@ -70,10 +81,11 @@ export async function planTask(ctx: LadderContext, input: { readonly task: strin
   if (tools.length === 0) evidence.push({ rung: "tool", decision: "no", detail: "no tools are available" });
   else {
     try {
-      const routing = await ctx.reasoner.route({ input: task, tools });
-      const yes = routing.calls.length > 0 && routing.confidence >= ladder.tool.confidence;
-      evidence.push({ rung: "tool", decision: yes ? "yes" : "no", detail: routing.calls.length ? `confidence ${routing.confidence} ${yes ? "≥" : "<"} ${ladder.tool.confidence}` : `no tool fits: ${routing.reasoning}` });
-      if (yes) return plan("tool", { calls: routing.calls });
+      const routing = await route(ctx.reasoner.router, { input: task, tools });
+      const yes = routing.valid.length > 0 && routing.confidence >= ladder.tool.confidence;
+      const why = routing.problems.length ? `invalid calls: ${routing.problems.join("; ")}` : `no tool fits: ${routing.reasoning}`;
+      evidence.push({ rung: "tool", decision: yes ? "yes" : "no", detail: routing.valid.length ? `confidence ${routing.confidence} ${yes ? "≥" : "<"} ${ladder.tool.confidence}` : why });
+      if (yes) return plan("tool", { calls: routing.valid });
     } catch (e) {
       evidence.push({ rung: "tool", decision: "unknown", detail: message(e) });
     }

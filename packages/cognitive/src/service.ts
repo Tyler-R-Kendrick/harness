@@ -1,10 +1,15 @@
+import { embedMany, experimental_evaluate, generateText } from "ai";
 import { z } from "zod";
-import { CascadePolicySchema, decideToolCalls } from "./cascade.ts";
+import { CascadePolicySchema, decideToolCalls, route } from "./cascade.ts";
+import { parseChatOutput } from "./chat-format.ts";
 import { EmbedInputSchema } from "./embedding.ts";
+import type { EmbedInput } from "./embedding.ts";
 import type { Ensemble } from "./ensemble.ts";
 import { TASK_CATEGORIES } from "./models.ts";
+import { embedding, MODEL_HEADER } from "./options.ts";
+import { CompressRequestSchema, JudgeAnswerSchema, JudgeQuestionSchema, ParseRequestSchema, ToolSpecSchema } from "./ports.ts";
 import { DimensionsSchema } from "./units.ts";
-import { CompressRequestSchema, JudgeQuestionSchema, ParseRequestSchema, ToolSpecSchema } from "./ports.ts";
+import type { Dimensions } from "./units.ts";
 
 /**
  * The cognitive core's operations as JSON in, JSON out: what the daemon's
@@ -18,7 +23,7 @@ export type ExtensionOperation = `${string}.${string}`;
 const ToolRequest = z.object({ input: z.string(), tools: z.array(ToolSpecSchema) });
 
 const INPUTS = {
-  judge: z.object({ state: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())]).default(""), questions: z.record(z.string(), JudgeQuestionSchema) }),
+  judge: z.object({ state: z.union([z.string(), z.record(z.string(), z.json()), z.array(z.json())]).default(""), questions: z.record(z.string(), JudgeQuestionSchema) }),
   route: ToolRequest,
   "decide-tools": ToolRequest.extend({ policy: CascadePolicySchema.optional() }),
   embed: z.object({ inputs: z.array(EmbedInputSchema), dimensions: DimensionsSchema.optional() }),
@@ -33,17 +38,49 @@ function parse<Op extends keyof typeof INPUTS>(op: Op, input: unknown): z.output
   return result.data as z.output<(typeof INPUTS)[Op]>;
 }
 
+/** Consecutive inputs that share their settings (kind, task, title), so each group is one embedding call. */
+function groups(inputs: readonly EmbedInput[]): EmbedInput[][] {
+  const key = (i: EmbedInput) => JSON.stringify([i.kind, i.kind === "query" ? i.task : i.title]);
+  const out: EmbedInput[][] = [];
+  for (const input of inputs) {
+    const last = out.at(-1);
+    if (last && key(last[0]!) === key(input)) last.push(input);
+    else out.push([input]);
+  }
+  return out;
+}
+
+async function embedAll(ensemble: Ensemble, inputs: readonly EmbedInput[], dimensions: Dimensions | undefined) {
+  let model: string | undefined;
+  const vectors: number[][] = [];
+  for (const group of groups(inputs)) {
+    const first = group[0]!;
+    const result = await embedMany({
+      model: ensemble.embeddingModel(),
+      values: group.map((i) => i.text),
+      maxRetries: 0,
+      ...embedding({
+        kind: first.kind,
+        ...(first.kind === "query" ? (first.task === undefined ? {} : { task: first.task }) : first.title === undefined ? {} : { title: first.title }),
+        ...(dimensions === undefined ? {} : { dimensions }),
+      }),
+    });
+    model ??= result.responses?.find((r) => r?.headers?.[MODEL_HEADER])?.headers?.[MODEL_HEADER];
+    vectors.push(...result.embeddings);
+  }
+  return { model, vectors };
+}
+
 export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation, input: unknown): Promise<unknown> {
   switch (op) {
     case "judge": {
       const request = parse(op, input);
-      const { id, port } = await ensemble.resolve("judgment", "judge");
-      return { model: id, answers: await port.evaluate(request) };
+      const result = await experimental_evaluate({ model: ensemble.evaluationModel(), state: request.state, questions: request.questions, maxRetries: 0 });
+      return { model: result.response.headers?.[MODEL_HEADER], answers: Object.fromEntries(Object.entries(result.answers).map(([k, a]) => [k, JudgeAnswerSchema.parse(a)])) };
     }
     case "route": {
-      const request = parse(op, input);
-      const { id, port } = await ensemble.resolve("tool-calling", "router");
-      return { model: id, ...(await port.route(request)) };
+      const { model, valid, problems, confidence, reasoning } = await route(ensemble.languageModel("tool-calling", "router"), parse(op, input));
+      return { model, calls: valid, ...(problems.length ? { invalid: problems } : {}), confidence, reasoning };
     }
     case "decide-tools": {
       const { policy, ...request } = parse(op, input);
@@ -51,19 +88,24 @@ export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation
     }
     case "embed": {
       const { inputs, dimensions } = parse(op, input);
-      const { id, port } = await ensemble.resolve("text-embedding", "embedder");
-      const vectors = await port.embed(inputs, dimensions === undefined ? {} : { dimensions });
-      return { model: id, vectors: vectors.map((v) => Array.from(v)) };
+      return embedAll(ensemble, inputs, dimensions);
     }
-    case "compress": {
-      const request = parse(op, input);
-      const { id, port } = await ensemble.resolve("prompt-compression", "compressor");
-      return { model: id, ...(await port.compress(request)) };
-    }
+    case "compress":
+      return ensemble.compress(parse(op, input));
     case "parse": {
-      const request = parse(op, input);
-      const { id, port } = await ensemble.resolve("document-parsing", "document-parser");
-      return { model: id, ...(await port.parse(request)) };
+      const { pages, instruction } = parse(op, input);
+      let model: string | undefined;
+      const parsed = [];
+      for (const page of pages) {
+        const { text, response } = await generateText({
+          model: ensemble.languageModel("document-parsing", "document-parser"),
+          maxRetries: 0,
+          messages: [{ role: "user", content: [{ type: "file", data: page.data, mediaType: page.mediaType }, ...(instruction === undefined ? [] : [{ type: "text" as const, text: instruction }])] }],
+        });
+        model ??= response.headers?.[MODEL_HEADER];
+        parsed.push({ markdown: parseChatOutput(text).text, raw: text });
+      }
+      return { model, pages: parsed };
     }
     case "status":
       parse(op, input);

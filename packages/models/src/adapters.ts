@@ -1,24 +1,8 @@
-import { ChatStreamParser, chunkTokens, compressWords, embeddingPrompt, parseChatOutput, truncateEmbedding, wordsFromTokens } from "@harness/cognitive";
-import type {
-  ChatMessage,
-  Compression,
-  CompressionConfig,
-  CompressRequest,
-  Compressor,
-  Constraint,
-  Dimensions,
-  DocumentParser,
-  Embedder,
-  EmbeddingConfig,
-  EmbedInput,
-  GenerateRequest,
-  GenerationEvent,
-  Generator,
-  ImageInput,
-  ParsedPage,
-  ParseRequest,
-  ToolSpec,
-} from "@harness/cognitive";
+import type { EmbeddingModelV4, LanguageModelV4, LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { ChatStreamParser, chunkTokens, compressWords, constraintOf, embeddingPrompt, embedInputs, StreamParts, truncateEmbedding, wordsFromTokens } from "@harness/cognitive";
+import type { Compression, CompressionConfig, CompressRequest, Compressor, Constraint, EmbeddingConfig, ImageInput } from "@harness/cognitive";
+import { localLanguageModel, templateOf } from "./local-model.ts";
+import type { TemplateMessage, TemplateTool } from "./local-model.ts";
 
 // ---- embedding models ----------------------------------------------------------------
 
@@ -28,30 +12,28 @@ export interface EmbeddingBackend {
 }
 
 /**
- * An embedding model that is prompted per input kind (query or document) and truncates
- * to the sizes it was trained for, both from its catalog entry.
+ * An embedding model, as an AI SDK embedding model, that is prompted per input kind
+ * (query or document, from our embedding options) and truncates to the sizes it was
+ * trained for, both from its catalog entry.
  */
-export class PromptedEmbedder implements Embedder {
-  readonly dimensions: Dimensions;
-  readonly #backend: EmbeddingBackend;
-  readonly #config: EmbeddingConfig;
-  readonly #batchSize: number;
-
-  constructor(backend: EmbeddingBackend, config: EmbeddingConfig, options: { batchSize?: number } = {}) {
-    this.#backend = backend;
-    this.#config = config;
-    this.dimensions = config.dimensions[0]!;
-    this.#batchSize = options.batchSize ?? 16;
-  }
-
-  async embed(inputs: readonly EmbedInput[], options: { readonly dimensions?: Dimensions } = {}): Promise<Float32Array[]> {
-    const size = options.dimensions ?? this.dimensions;
-    if (!this.#config.dimensions.includes(size)) throw new Error(`the model embeds in ${this.#config.dimensions.join(", ")} dimensions, not ${size}`);
-    const prompts = inputs.map((input) => embeddingPrompt(this.#config, input));
-    const out: Float32Array[] = [];
-    for (let i = 0; i < prompts.length; i += this.#batchSize) out.push(...(await this.#backend.embed(prompts.slice(i, i + this.#batchSize))));
-    return size === this.dimensions ? out : out.map((v) => truncateEmbedding(v, size));
-  }
+export function promptedEmbeddingModel(backend: EmbeddingBackend, config: EmbeddingConfig, options: { readonly modelId: string; readonly batchSize?: number }): EmbeddingModelV4 {
+  const native = config.dimensions[0]!;
+  const batch = options.batchSize ?? 16;
+  return {
+    specificationVersion: "v4",
+    provider: "harness.local",
+    modelId: options.modelId,
+    maxEmbeddingsPerCall: undefined,
+    supportsParallelCalls: false,
+    doEmbed: async ({ values, providerOptions }) => {
+      const { inputs, dimensions: size = native } = embedInputs(values, providerOptions);
+      if (!config.dimensions.includes(size)) throw new Error(`the model embeds in ${config.dimensions.join(", ")} dimensions, not ${size}`);
+      const prompts = inputs.map((input) => embeddingPrompt(config, input));
+      const out: Float32Array[] = [];
+      for (let i = 0; i < prompts.length; i += batch) out.push(...(await backend.embed(prompts.slice(i, i + batch))));
+      return { embeddings: out.map((v) => Array.from(size === native ? v : truncateEmbedding(v, size))), warnings: [] };
+    },
+  };
 }
 
 // ---- token-classification compressors ------------------------------------------------
@@ -100,20 +82,11 @@ export class TokenClassifierCompressor implements Compressor {
 
 // ---- vision chat models on transformers.js ---------------------------------------------
 
-export type TemplatePart = { readonly type: "text"; readonly text: string } | { readonly type: "image" };
-
-export interface TemplateMessage {
-  readonly role: "system" | "user" | "assistant" | "tool";
-  readonly content: readonly TemplatePart[];
-  readonly name?: string;
-  readonly tool_calls?: readonly { readonly type: "function"; readonly function: { readonly name: string; readonly arguments: Readonly<Record<string, unknown>> } }[];
-}
-
 /** One generation: messages in the chat template's shape, images in order of their placeholders. */
 export interface ChatBackendRequest {
   readonly messages: readonly TemplateMessage[];
   readonly images: readonly ImageInput[];
-  readonly tools: readonly ToolSpec[];
+  readonly tools: readonly TemplateTool[];
   readonly maxTokens: number;
   readonly constraint?: Constraint;
 }
@@ -121,38 +94,6 @@ export interface ChatBackendRequest {
 export interface ChatBackend {
   /** Streams decoded text (special tokens included) to onText; stops early when shouldStop() turns true. */
   generate(request: ChatBackendRequest, onText: (delta: string) => void, shouldStop: () => boolean): Promise<{ hitLimit: boolean }>;
-}
-
-function toTemplate(messages: readonly ChatMessage[]): { messages: TemplateMessage[]; images: ImageInput[] } {
-  const images: ImageInput[] = [];
-  const text = (t: string): TemplatePart[] => [{ type: "text", text: t }];
-  const out = messages.map((m): TemplateMessage => {
-    switch (m.role) {
-      case "system":
-        return { role: "system", content: text(m.content) };
-      case "user":
-        return {
-          role: "user",
-          content:
-            typeof m.content === "string"
-              ? text(m.content)
-              : m.content.map((p): TemplatePart => {
-                  if (p.type === "text") return p;
-                  images.push(p.image);
-                  return { type: "image" };
-                }),
-        };
-      case "assistant":
-        return {
-          role: "assistant",
-          content: text(m.content),
-          ...(m.toolCalls?.length ? { tool_calls: m.toolCalls.map((c) => ({ type: "function" as const, function: { name: c.name, arguments: c.arguments } })) } : {}),
-        };
-      case "tool":
-        return { role: "tool", name: m.name, content: text(m.content) };
-    }
-  });
-  return { messages: out, images };
 }
 
 /** Bridge a callback-style backend into an async iterator, stopping the backend if the consumer leaves. */
@@ -186,59 +127,32 @@ async function* stream(backend: ChatBackend, request: ChatBackendRequest): Async
   }
 }
 
-/** A chat model with vision, in the browser and natively, as a cognitive Generator. */
-export class VisionChatGenerator implements Generator {
-  readonly #backend: ChatBackend;
-  readonly #maxTokens: number;
-
-  constructor(backend: ChatBackend, options: { maxTokens?: number } = {}) {
-    this.#backend = backend;
-    this.#maxTokens = options.maxTokens ?? 512;
-  }
-
-  async *generate(request: GenerateRequest): AsyncIterable<GenerationEvent> {
-    const { messages, images } = toTemplate(request.messages);
-    const text = stream(this.#backend, { messages, images, tools: request.tools ?? [], maxTokens: request.maxTokens ?? this.#maxTokens, ...(request.constraint ? { constraint: request.constraint } : {}) });
-    const parser = new ChatStreamParser();
-    let calls = 0;
-    let result: IteratorResult<string, { hitLimit: boolean }>;
-    try {
-      while (!(result = await text.next()).done) {
-        for (const e of parser.push(result.value)) {
-          if (e.type === "tool-call") calls++;
-          yield e;
-        }
+/**
+ * A chat model with vision (in the browser and natively) as an AI SDK language model:
+ * the chat template renders the prompt, the decoded text is parsed into reasoning,
+ * text and tool calls, and a constrained call (ours or a JSON response format) is
+ * decoded under its constraint. Document parsers are these too.
+ */
+export function visionChatModel(backend: ChatBackend, options: { readonly modelId: string; readonly maxTokens?: number }): LanguageModelV4 {
+  return localLanguageModel({
+    provider: "harness.local",
+    modelId: options.modelId,
+    async *run(call) {
+      const { messages, images, tools } = templateOf(call);
+      const constraint = constraintOf(call);
+      const text = stream(backend, { messages, images, tools, maxTokens: call.maxOutputTokens ?? options.maxTokens ?? 512, ...(constraint ? { constraint } : {}) });
+      const parser = new ChatStreamParser();
+      const parts = new StreamParts();
+      yield { type: "stream-start", warnings: [] } satisfies LanguageModelV4StreamPart;
+      let result: IteratorResult<string, { hitLimit: boolean }>;
+      try {
+        while (!(result = await text.next()).done) for (const e of parser.push(result.value)) yield* parts.push(e);
+      } finally {
+        // Closing the inner stream tells the backend to stop when the consumer leaves early.
+        await text.return({ hitLimit: false });
       }
-    } finally {
-      // Closing the inner stream tells the backend to stop when the consumer leaves early.
-      await text.return({ hitLimit: false });
-    }
-    for (const e of parser.end()) {
-      if (e.type === "tool-call") calls++;
-      yield e;
-    }
-    yield { type: "finish", reason: calls > 0 ? "tool-calls" : result.value.hitLimit ? "length" : "stop" };
-  }
-}
-
-/** A page-to-Markdown vision model as a cognitive DocumentParser: one page per generation. */
-export class VisionChatDocumentParser implements DocumentParser {
-  readonly #backend: ChatBackend;
-  readonly #maxTokens: number;
-
-  constructor(backend: ChatBackend, options: { maxTokens?: number } = {}) {
-    this.#backend = backend;
-    this.#maxTokens = options.maxTokens ?? 4096;
-  }
-
-  async parse(request: ParseRequest): Promise<{ readonly pages: readonly ParsedPage[] }> {
-    const pages: ParsedPage[] = [];
-    for (const page of request.pages) {
-      const content: TemplatePart[] = [{ type: "image" }, ...(request.instruction ? [{ type: "text" as const, text: request.instruction }] : [])];
-      let raw = "";
-      await this.#backend.generate({ messages: [{ role: "user", content }], images: [page], tools: [], maxTokens: this.#maxTokens }, (d) => (raw += d), () => false);
-      pages.push({ markdown: parseChatOutput(raw).text, raw });
-    }
-    return { pages };
-  }
+      for (const e of parser.end()) yield* parts.push(e);
+      yield* parts.end({ length: result.value.hitLimit });
+    },
+  });
 }

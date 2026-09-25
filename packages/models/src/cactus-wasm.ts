@@ -1,5 +1,7 @@
-import { dimensions, ProbabilitySchema } from "@harness/cognitive";
-import type { Dimensions, Embedder, EmbedInput, RouteRequest, Routing, ToolRouter } from "@harness/cognitive";
+import type { EmbeddingModelV4, LanguageModelV4 } from "@ai-sdk/provider";
+import { dimensions, HARNESS, ProbabilitySchema, StreamParts } from "@harness/cognitive";
+import type { Dimensions, Probability, ToolCall } from "@harness/cognitive";
+import { localLanguageModel, templateOf } from "./local-model.ts";
 
 /** The parts of a Cactus Emscripten module the engine uses; the C API is reached by name through ccall. */
 export interface CactusModule {
@@ -29,7 +31,7 @@ interface CactusReply {
  * conversation, so every request resets it: requests are independent. Calls into the
  * module are synchronous, so requests cannot interleave.
  */
-export class CactusWasmEngine implements ToolRouter, Embedder {
+export class CactusWasmEngine {
   readonly #m: CactusModule;
   readonly #api: (name: string) => string;
   readonly #out: number;
@@ -54,38 +56,76 @@ export class CactusWasmEngine implements ToolRouter, Embedder {
     return new CactusWasmEngine(module, prefix);
   }
 
-  async route(request: RouteRequest): Promise<Routing> {
-    if (request.tools.length === 0) return { calls: [], confidence: ProbabilitySchema.parse(1), reasoning: "no tools offered" };
-    const tools = JSON.stringify(request.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })));
-    if (tools !== this.#tools) {
-      const status = this.#m.ccall(this.#api("init"), "number", ["string", "string", "string"], ["", tools, ""]);
+  /** The last user message's text routed over `tools`: calls, calibrated confidence and reasoning. */
+  #route(input: string, tools: readonly { name: string; description: string; parameters: unknown }[]): { calls: ToolCall[]; confidence: Probability; reasoning: string } {
+    if (tools.length === 0) return { calls: [], confidence: ProbabilitySchema.parse(1), reasoning: "no tools offered" };
+    const json = JSON.stringify(tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })));
+    if (json !== this.#tools) {
+      const status = this.#m.ccall(this.#api("init"), "number", ["string", "string", "string"], ["", json, ""]);
       if (status < 0) throw new Error(`${this.#api("init")} failed with status ${status} (tool schemas may not fit the context)`);
-      this.#tools = tools;
+      this.#tools = json;
     }
     this.#m.ccall(this.#api("reset"), null, [], []);
-    const status = this.#m.ccall(this.#api("complete"), "number", ["string", "number", "number", "number"], [request.input, MAX_NEW_TOKENS, this.#out, OUT_CAPACITY]);
+    const status = this.#m.ccall(this.#api("complete"), "number", ["string", "number", "number", "number"], [input, MAX_NEW_TOKENS, this.#out, OUT_CAPACITY]);
     if (status < 0) throw new Error(`${this.#api("complete")} failed with status ${status}`);
     return parseReply(this.#m.UTF8ToString(this.#out));
   }
 
-  async embed(inputs: readonly EmbedInput[]): Promise<Float32Array[]> {
+  #embed(texts: readonly string[]): number[][] {
     const ptr = this.#m._malloc(this.dimensions * 4);
     try {
-      return inputs.map((input) => {
-        const n = this.#m.ccall(this.#api("embed"), "number", ["string", "number", "number"], [input.text, ptr, this.dimensions]);
+      return texts.map((text) => {
+        const n = this.#m.ccall(this.#api("embed"), "number", ["string", "number", "number"], [text, ptr, this.dimensions]);
         if (n !== this.dimensions) throw new Error(`${this.#api("embed")} returned ${n}, expected ${this.dimensions}`);
         // Copy out before viewing as floats: the heap may grow (new buffer) on the next call.
         const v = new Float32Array(this.#m.HEAPU8.slice(ptr, ptr + this.dimensions * 4).buffer);
         const norm = Math.hypot(...v);
-        return norm === 0 ? v : v.map((x) => x / norm);
+        return Array.from(norm === 0 ? v : v.map((x) => x / norm));
       });
     } finally {
       this.#m._free(ptr);
     }
   }
+
+  /**
+   * The engine as an AI SDK language model that routes: the last user message over the
+   * call's tools, answered with tool calls, its reasoning, and the calibrated confidence
+   * as provider metadata (`harness.confidence`).
+   */
+  router(modelId: string): LanguageModelV4 {
+    const route = (options: Parameters<LanguageModelV4["doGenerate"]>[0]) => {
+      const { messages, tools } = templateOf(options);
+      const last = [...messages].reverse().find((m) => m.role === "user");
+      return this.#route(last ? last.content.map((p) => (p.type === "text" ? p.text : "")).join("") : "", tools);
+    };
+    return localLanguageModel({
+      provider: "harness.local",
+      modelId,
+      async *run(options) {
+        const r = route(options);
+        const parts = new StreamParts();
+        yield { type: "stream-start", warnings: [] };
+        yield* parts.push({ type: "reasoning", text: r.reasoning });
+        for (const call of r.calls) yield* parts.push({ type: "tool-call", call });
+        yield* parts.end({ providerMetadata: { [HARNESS]: { confidence: r.confidence } } });
+      },
+    });
+  }
+
+  /** The engine as an AI SDK embedding model (it embeds text as given; its size is fixed). */
+  embedder(modelId: string): EmbeddingModelV4 {
+    return {
+      specificationVersion: "v4",
+      provider: "harness.local",
+      modelId,
+      maxEmbeddingsPerCall: undefined,
+      supportsParallelCalls: false,
+      doEmbed: async ({ values }) => ({ embeddings: this.#embed(values), warnings: [] }),
+    };
+  }
 }
 
-function parseReply(text: string): Routing {
+function parseReply(text: string): { calls: ToolCall[]; confidence: Probability; reasoning: string } {
   const reply = JSON.parse(text) as CactusReply;
   if (reply.success !== true) throw new Error(`the model could not route: ${typeof reply.error === "string" ? reply.error : text}`);
   const confidence = ProbabilitySchema.safeParse(reply.confidence);

@@ -14,15 +14,15 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 |---|---|---|
 | `packages/protocol` | ACP framing, JSON-RPC envelopes, `_harness` profile | pure |
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
-| `packages/cognitive` | cognitive core: model ports, task taxonomy, catalog + benchmarks, selection, ensemble, cascade | pure |
+| `packages/cognitive` | cognitive core: the ensemble as an AI SDK provider, task taxonomy, catalog + benchmarks, selection, cascade | pure |
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
 | `packages/workflows` | durable workflows as code: QuickJS sandbox, journaled effects, library, extension | portable |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
-| `packages/testkit` | deterministic ports and reusable contract suites | pure |
-| `packages/workers` | session workers: echo (deterministic), model (AI SDK / AI Gateway), ensemble (cognitive core) | portable |
+| `packages/testkit` | deterministic ports, AI SDK model fakes (on `ai/test`) and reusable contract suites | pure |
+| `packages/workers` | session workers: echo (deterministic), and any AI SDK agent (`AgentWorker`, `sessionAgent`) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
 | `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, CLI | host |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
@@ -41,6 +41,14 @@ branded policies and packs, and template-literal ids (`MemoryId`, `LessonId`). C
 them with their constructor or schema; ESLint forbids casting to them. When a new value
 has an invariant (a range, a unit, a format), give it a refined type rather than
 checking it where it is used.
+
+Use the Vercel AI SDK (and other trusted libraries) rather than our own versions of what
+they provide. Every model is an AI SDK model (`LanguageModelV4`, `EmbeddingModelV4`,
+`EvaluationModelV4`); call models through `generateText`, `streamText`, `embedMany` and
+`experimental_evaluate`; agents are AI SDK `Agent`s; test with `ai/test` mocks. Our own
+settings on a call are provider options under `harness` (`packages/cognitive/src/options.ts`).
+Write our own code only for what no library does (the ACP daemon core, SAE steering, token
+masks), and say why in an ADR.
 
 When a model's answer has a known shape, send a constraint with the request (JSON Schema,
 grammar, regex, or a template of fixed text and holes) rather than asking in prose and

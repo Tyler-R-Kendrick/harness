@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cosine, embeddingPrompt, truncateEmbedding } from "@harness/cognitive";
+import { embeddingPrompt, truncateEmbedding } from "@harness/cognitive";
 
 const norm = (v: Float32Array) => Math.hypot(...v);
 
@@ -43,14 +43,4 @@ describe("embedding vectors", () => {
     expect(() => truncateEmbedding(new Float32Array([0, 0, 1]), 2)).toThrow(/zero/);
   });
 
-  it("EG2.3 cosine similarity of identical, opposite and orthogonal vectors", () => {
-    expect(cosine(new Float32Array([1, 2]), new Float32Array([2, 4]))).toBeCloseTo(1, 9);
-    expect(cosine(new Float32Array([1, 0]), new Float32Array([-3, 0]))).toBeCloseTo(-1, 9);
-    expect(cosine(new Float32Array([1, 0]), new Float32Array([0, 5]))).toBeCloseTo(0, 9);
-  });
-
-  it("EG2.4 cosine rejects mismatched lengths and zero vectors", () => {
-    expect(() => cosine(new Float32Array([1]), new Float32Array([1, 0]))).toThrow(/length/);
-    expect(() => cosine(new Float32Array([0, 0]), new Float32Array([1, 0]))).toThrow(/zero/);
-  });
 });

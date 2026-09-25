@@ -12,6 +12,7 @@
   "dependencies": {
     "@harness/cognitive": "0.0.0",
     "@orama/orama": "3.1.18",
+    "ai": "7.0.114",
     "zod": "4.6.5"
   },
   "devDependencies": {

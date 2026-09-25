@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { promptText } from "@harness/testkit";
 import { Learning } from "@harness/learning";
 import type { TrajectoryInput } from "@harness/learning";
 import { reply, settings, setup } from "./helpers.ts";
@@ -18,8 +19,8 @@ const add = (title: string, text: string, kind = "strategy") => ({ op: "add", ki
 
 describe("learning from sessions", () => {
   it("LN1.1 a reflection's new lessons are kept and found again by meaning for a related task", async () => {
-    const { ensemble, memory } = setup({ reflect: () => reply([add("staging deploy migrations", "run pending migrations before a staging deploy", "procedure")]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => reply([add("staging deploy migrations", "run pending migrations before a staging deploy", "procedure")]) });
+    const learning = new Learning({ reasoner, memory, settings });
     const result = await learning.observe(deploy);
     expect(result).toEqual({ changes: [{ op: "added", id: "l1" }], rejected: [] });
     expect(learning.lessons()).toMatchObject([{ id: "l1", kind: "procedure", title: "staging deploy migrations", helpful: 0, harmful: 0, sources: ["t1"], artifacts: [] }]);
@@ -31,20 +32,21 @@ describe("learning from sessions", () => {
 
   it("LN1.2 the reflection is given the instructions, the session, and the related lessons with their ids", async () => {
     const seen: string[] = [];
-    const { ensemble, memory, generator } = setup({ reflect: (r) => (seen.push(r.messages.map((m) => String(m.content)).join("\n")), reply([add("staging deploy migrations", "run pending migrations first")])) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory, generator } = setup({ reflect: (r) => (seen.push(r.prompt.map((m) => (typeof m.content === "string" ? m.content : m.content.map((p) => (p.type === "text" ? p.text : "")).join(""))).join("\n")), reply([add("staging deploy migrations", "run pending migrations first")])) });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     await learning.observe({ ...deploy, id: "t2" });
-    expect(generator.requests[0]!.messages[0]).toEqual({ role: "system", content: "Distill lessons as JSON." });
-    expect(generator.requests[0]!.maxTokens).toBe(512);
-    expect(generator.requests[0]!.constraint).toMatchObject({ type: "json-schema", schema: { type: "object", required: ["operations"] } });
-    expect(JSON.parse(String(generator.requests[1]!.messages[1]!.content))).toMatchObject({ session: { task: deploy.task, outcome: deploy.outcome }, lessons: [{ id: "l1", title: "staging deploy migrations" }] });
+    const calls = generator.doGenerateCalls;
+    expect(calls[0]!.prompt[0]).toEqual({ role: "system", content: "Distill lessons as JSON." });
+    expect(calls[0]!.maxOutputTokens).toBe(512);
+    expect(calls[0]!.responseFormat).toMatchObject({ type: "json", schema: { type: "object", required: ["operations"] } });
+    expect(JSON.parse(promptText(calls[1]!.prompt))).toMatchObject({ session: { task: deploy.task, outcome: deploy.outcome }, lessons: [{ id: "l1", title: "staging deploy migrations" }] });
     expect(seen).toHaveLength(2);
   });
 
   it("LN1.3 a new lesson that says what an old one says is merged into it, as a confirmation", async () => {
-    const { ensemble, memory } = setup({ reflect: () => reply([add("staging deploy migrations", "run pending migrations before a staging deploy")]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => reply([add("staging deploy migrations", "run pending migrations before a staging deploy")]) });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     expect(await learning.observe({ ...deploy, id: "t2" })).toEqual({ changes: [{ op: "merged", id: "l1" }], rejected: [] });
     expect(learning.lessons()).toMatchObject([{ id: "l1", helpful: 1, sources: ["t1", "t2"] }]);
@@ -60,8 +62,8 @@ describe("learning from sessions", () => {
       reply([{ op: "harmful", id: "l1" }]),
       reply([{ op: "harmful", id: "l1" }]),
     ];
-    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => script.shift()! });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     expect((await learning.observe({ ...deploy, id: "t2" })).changes).toEqual([{ op: "refined", id: "l1" }]);
     expect(learning.lessons()[0]).toMatchObject({ text: "never deploy on fridays", when: "release planning", sources: ["t1", "t2"] });
@@ -77,10 +79,12 @@ describe("learning from sessions", () => {
 
   it("LN1.5 edits to lessons the reflection was not shown are rejected; output that is not a reflection changes nothing and says why", async () => {
     const script = [reply([{ op: "helpful", id: "l9" }, add("a", "b")]), "I think you should deploy carefully.", `{"operations": [{"op": "delete", "id": "l1"}]}`];
-    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => script.shift()! });
+    const learning = new Learning({ reasoner, memory, settings });
     expect(await learning.observe(deploy)).toEqual({ changes: [{ op: "added", id: "l1" }], rejected: ["helpful l9: no such lesson was shown"] });
-    expect(await learning.observe({ ...deploy, id: "t2" })).toEqual({ changes: [], rejected: ["the reflection held no JSON object"] });
+    const prose = await learning.observe({ ...deploy, id: "t2" });
+    expect(prose.changes).toEqual([]);
+    expect(prose.rejected).toEqual([expect.stringMatching(/^the reflection was not valid: No object generated: could not parse the response\.\nJSON parsing failed[\s\S]*not valid JSON/)]);
     const bad = await learning.observe({ ...deploy, id: "t3" });
     expect(bad.changes).toEqual([]);
     expect(bad.rejected[0]).toMatch(/^the reflection was not valid/);
@@ -88,8 +92,8 @@ describe("learning from sessions", () => {
   });
 
   it("LN1.6 feedback from outside a reflection counts too, and an unknown lesson is an error", async () => {
-    const { ensemble, memory } = setup({ reflect: () => reply([add("deploys", "check migrations")]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => reply([add("deploys", "check migrations")]) });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     expect(await learning.feedback("l1", true)).toEqual([{ op: "helpful", id: "l1" }]);
     expect(await learning.feedback("l1", false)).toEqual([{ op: "harmful", id: "l1" }]);
@@ -99,20 +103,20 @@ describe("learning from sessions", () => {
 
   it("LN1.7 lessons save to JSON and restore, with ids continuing; saved state of another kind is refused", async () => {
     const changes: number[] = [];
-    const { ensemble, memory } = setup({ reflect: () => reply([add("deploys", "check migrations first")]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings, onChange: (l) => changes.push(l.lessons().length) });
+    const { reasoner, memory } = setup({ reflect: () => reply([add("deploys", "check migrations first")]) });
+    const learning = new Learning({ reasoner, memory, settings, onChange: (l) => changes.push(l.lessons().length) });
     await learning.observe(deploy);
     const saved = JSON.parse(JSON.stringify(learning.save()));
-    const restored = new Learning({ reasoner: ensemble, memory, settings, saved });
+    const restored = new Learning({ reasoner, memory, settings, saved });
     expect(restored.lessons()).toEqual(learning.lessons());
     expect(changes).toEqual([1]);
-    expect(() => new Learning({ reasoner: ensemble, memory, settings, saved: { format: "other" } })).toThrow(/invalid saved learning/);
+    expect(() => new Learning({ reasoner, memory, settings, saved: { format: "other" } })).toThrow(/invalid saved learning/);
   });
 
   it("LN1.8 consolidation rebuilds the lessons: near-duplicates learned apart merge into the oldest", async () => {
     const script = [reply([add("deploys", "run migrations before deploying"), add("bananas", "bananas are yellow", "insight")])];
-    const { ensemble, memory } = setup({ reflect: () => script.shift() ?? reply([]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => script.shift() ?? reply([]) });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     // A copy added as it came (e.g. imported), without the merge check a reflection gets.
     expect(await learning.addLesson({ kind: "strategy", title: "deploys", text: "run migrations before deploying", source: "t9" })).toMatchObject({ id: "l3" });
@@ -127,11 +131,11 @@ describe("learning from sessions", () => {
 
   it("LN1.9 a reflection whose JSON is broken says so; recall can keep to kinds, and says nothing when nothing relates", async () => {
     const script = ['{"operations": [', reply([add("deploys", "check migrations first", "procedure"), add("bananas", "bananas are yellow fruit", "insight")])];
-    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => script.shift()! });
+    const learning = new Learning({ reasoner, memory, settings });
     const broken = await learning.observe(deploy);
     expect(broken.changes).toEqual([]);
-    expect(broken.rejected[0]).toMatch(/^the reflection was not valid JSON: /);
+    expect(broken.rejected[0]).toMatch(/^the reflection was not valid: No object generated: could not parse the response\.\n.*JSON/);
     await learning.observe({ ...deploy, id: "t2" });
     expect((await learning.recall("deploys check migrations first", { kinds: ["insight"] })).lessons).toEqual([]);
     expect((await learning.recall("deploys check migrations first", { kinds: ["procedure"] })).lessons.map((l) => l.id)).toEqual(["l1"]);
@@ -140,10 +144,10 @@ describe("learning from sessions", () => {
 
   it("LN1.10 within one reflection, a lesson retired by one edit cannot be edited by the next; the recall limit comes from the settings", async () => {
     const script = [reply([add("deploys", "deploy on fridays")]), reply([{ op: "harmful", id: "l1" }, { op: "harmful", id: "l1" }, { op: "helpful", id: "l1" }])];
-    const { ensemble, memory } = setup({ reflect: () => script.shift()! });
+    const { reasoner, memory } = setup({ reflect: () => script.shift()! });
     const recalls: unknown[] = [];
     const spy = { recall: (q: string, o: object) => (recalls.push(o), memory.recall(q, o)), remember: memory.remember.bind(memory), forget: memory.forget.bind(memory) } as unknown as typeof memory;
-    const learning = new Learning({ reasoner: ensemble, memory: spy, settings });
+    const learning = new Learning({ reasoner, memory: spy, settings });
     await learning.observe(deploy);
     expect(await learning.observe({ ...deploy, id: "t2" })).toEqual({ changes: [{ op: "harmful", id: "l1" }, { op: "harmful", id: "l1" }, { op: "retired", id: "l1" }], rejected: ["helpful l1: no such lesson was shown"] });
     await learning.recall("anything");
@@ -153,8 +157,8 @@ describe("learning from sessions", () => {
 
   it("LN1.11 consolidation sums what merged lessons earned, keeps the oldest whichever is found first, and reports the change once", async () => {
     const changes: number[] = [];
-    const { ensemble, memory } = setup();
-    const learning = new Learning({ reasoner: ensemble, memory, settings, onChange: () => changes.push(1) });
+    const { reasoner, memory } = setup();
+    const learning = new Learning({ reasoner, memory, settings, onChange: () => changes.push(1) });
     await learning.addLesson({ kind: "strategy", title: "deploys", text: "run migrations before deploying", source: "a" });
     await learning.addLesson({ kind: "strategy", title: "deploys", text: "run migrations before deploying", source: "b" });
     await learning.feedback("l2", true);
@@ -168,8 +172,8 @@ describe("learning from sessions", () => {
   });
 
   it("LN1.12 feedback adds no source, and a session already among a lesson's sources is not added twice", async () => {
-    const { ensemble, memory } = setup({ reflect: () => reply([add("deploys", "check migrations"), { op: "helpful", id: "l1" }]) });
-    const learning = new Learning({ reasoner: ensemble, memory, settings });
+    const { reasoner, memory } = setup({ reflect: () => reply([add("deploys", "check migrations"), { op: "helpful", id: "l1" }]) });
+    const learning = new Learning({ reasoner, memory, settings });
     await learning.observe(deploy);
     await learning.feedback("l1", true);
     await learning.observe(deploy);

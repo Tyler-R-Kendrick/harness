@@ -9,7 +9,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "4.0.91",
+    "@ai-sdk/gateway": "4.0.92",
     "@harness/behavior": "0.0.0",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",

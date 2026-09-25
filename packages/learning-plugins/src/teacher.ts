@@ -1,6 +1,7 @@
 import { base64 } from "@scure/base";
 import { z } from "zod";
-import type { Ensemble } from "@harness/cognitive";
+import { generateText } from "ai";
+import type { LanguageModel } from "ai";
 import type { Recording, Teacher, TrajectoryInput } from "@harness/learning";
 import type { PluginSettings } from "./settings.ts";
 import { kebab } from "./workflow-builder.ts";
@@ -53,14 +54,15 @@ function eventSteps(text: string): Step[] {
  * The parts, in order, become the steps of a demonstration of the recorded task. Text
  * parts (transcripts, events) carry their text; frames carry base64 image bytes.
  */
-export function recordingTeacher(options: { readonly reasoner: Pick<Ensemble, "generate">; readonly settings: PluginSettings }): Teacher {
+export function recordingTeacher(options: { readonly vision: LanguageModel; readonly settings: PluginSettings }): Teacher {
   const { screen, maxTokens } = options.settings.teacher;
   const describe = async (part: Recording["parts"][number]) => {
-    let text = "";
-    const image = { mediaType: part.mediaType, data: base64.decode(part.data) };
-    for await (const e of options.reasoner.generate({ messages: [{ role: "user", content: [{ type: "image", image }, { type: "text", text: screen }] }], maxTokens }, "vision-qa")) {
-      if (e.type === "text") text += e.text;
-    }
+    const { text } = await generateText({
+      model: options.vision,
+      maxOutputTokens: maxTokens,
+      maxRetries: 0,
+      messages: [{ role: "user", content: [{ type: "file", data: base64.decode(part.data), mediaType: part.mediaType }, { type: "text", text: screen }] }],
+    });
     return text.trim();
   };
   return {

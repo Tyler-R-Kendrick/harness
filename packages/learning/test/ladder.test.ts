@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { probability } from "@harness/cognitive";
+import { MockLanguageModelV4 } from "ai/test";
+import { HARNESS, probability, usage } from "@harness/cognitive";
 import { Learning, planTask, Plugins, TARGETS } from "@harness/learning";
 import type { Materializer, Teacher } from "@harness/learning";
 import type { JudgeQuestion, ToolSpec } from "@harness/cognitive";
@@ -23,8 +24,8 @@ const teacher: Teacher = { kind: "teacher", id: "screen-recorder", modalities: [
 
 function context(options: Parameters<typeof setup>[0] = {}, plugins: Plugins = new Plugins(), discover?: (task: string) => Promise<readonly ToolSpec[]>) {
   const s = setup(options);
-  const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
-  return { ...s, learning, ctx: { learning, reasoner: s.ensemble, plugins, ...(discover ? { discover } : {}) } };
+  const learning = new Learning({ reasoner: s.reasoner, memory: s.memory, settings });
+  return { ...s, learning, ctx: { learning, reasoner: s.reasoner, plugins, ...(discover ? { discover } : {}) } };
 }
 
 describe("the capability ladder", () => {
@@ -33,7 +34,7 @@ describe("the capability ladder", () => {
     const plan = await planTask(ctx, { task: "summarize this paragraph", tools: [weather] });
     expect(plan).toMatchObject({ rung: "native", evidence: [{ rung: "native", decision: "yes", detail: "p=0.9 ≥ 0.7" }] });
     expect(judge.requests[0]!.questions).toEqual({ native: { type: "boolean", instructions: settings.ladder.native.question } });
-    expect(router.requests).toEqual([]);
+    expect(router.doGenerateCalls).toEqual([]);
   });
 
   it("LD1.2 otherwise an available tool is used: offered, or found by discovery", async () => {
@@ -104,7 +105,7 @@ describe("the capability ladder", () => {
     const atThreshold = await planTask(context({ judge: judging(0.7, 0) }).ctx, { task: "summarize" });
     expect(atThreshold.evidence).toEqual([{ rung: "native", decision: "yes", detail: "p=0.7 ≥ 0.7" }]);
     const odd = await planTask(context({ judge: () => ({ type: "score", score: 1 }) }).ctx, { task: "summarize" });
-    expect(odd.evidence[0]).toEqual({ rung: "native", decision: "no", detail: "p=0 < 0.7" });
+    expect(odd.evidence[0]).toEqual({ rung: "native", decision: "no", detail: 'p=0 < 0.7 (Question "native" returned an answer with the wrong type.)' });
     expect(odd.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "no tools are available" });
     const unsure = await planTask(context({ judge: judging(0.1, 0) }).ctx, { task: "what is the weather in lagos city", tools: [weather] });
     expect(unsure.evidence[1]).toEqual({ rung: "tool", decision: "yes", detail: "confidence 0.99 ≥ 0.6" });
@@ -114,9 +115,15 @@ describe("the capability ladder", () => {
 
   it("LD1.8 a router pick below the confidence bar is not used; tools with one name are offered once", async () => {
     const s = setup({ judge: judging(0.1, 0) });
-    const learning = new Learning({ reasoner: s.ensemble, memory: s.memory, settings });
+    const learning = new Learning({ reasoner: s.reasoner, memory: s.memory, settings });
     const seen: number[] = [];
-    const reasoner = { ...s.ensemble, judge: s.ensemble.judge.bind(s.ensemble), generate: s.ensemble.generate.bind(s.ensemble), route: async (r: { tools: readonly ToolSpec[] }) => (seen.push(r.tools.length), { calls: [{ name: "get_weather", arguments: {} }], confidence: probability(0.59), reasoning: "" }) };
+    const router = new MockLanguageModelV4({
+      doGenerate: async (o) => (
+        seen.push(o.tools?.length ?? 0),
+        { content: [{ type: "tool-call", toolCallId: "c", toolName: "get_weather", input: "{}" }], finishReason: { unified: "tool-calls", raw: undefined }, usage: usage(), providerMetadata: { [HARNESS]: { confidence: 0.59 } }, warnings: [] }
+      ),
+    });
+    const reasoner = { ...s.reasoner, router };
     const plan = await planTask({ learning, reasoner, plugins: new Plugins(), discover: async () => [weather] }, { task: "weather", tools: [weather] });
     expect(seen).toEqual([1]);
     expect(plan.evidence[1]).toEqual({ rung: "tool", decision: "no", detail: "confidence 0.59 < 0.6" });

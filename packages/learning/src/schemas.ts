@@ -89,6 +89,7 @@ export const DeltaSchema = z.discriminatedUnion("op", [
 ]);
 export type Delta = z.output<typeof DeltaSchema>;
 export const ReflectionSchema = z.strictObject({ operations: z.array(DeltaSchema) });
+export type Reflection = z.output<typeof ReflectionSchema>;
 
 // ---- teaching ----------------------------------------------------------------------
 

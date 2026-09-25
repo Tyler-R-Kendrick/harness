@@ -3,7 +3,7 @@ import type { CactusModule } from "@harness/models";
 export interface CactusReply {
   success?: boolean;
   error?: string | null;
-  function_calls?: { name: string; arguments: Record<string, unknown> }[];
+  function_calls?: { name: string; arguments?: Record<string, unknown> }[];
   reasoning?: string;
   confidence?: number;
 }

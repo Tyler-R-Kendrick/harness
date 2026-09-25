@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { bytes, Ensemble, invokeCognitive } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
-import { askEnsemble, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
-import { MemoryStorage, ScriptedGenerator } from "@harness/testkit";
+import { askModel, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
+import { MemoryStorage, promptText, scriptedModel } from "@harness/testkit";
 
 const greet = parseWorkflow({
   name: "greet",
@@ -67,10 +67,10 @@ describe("workflow library and host", () => {
 
   it("WH1.5 as a cognitive-core extension, workflows are listed and run through the invoke operation; the ensemble answers questions", async () => {
     const ensemble = new Ensemble({ platform: "native" });
-    const generator = new ScriptedGenerator(() => "Stretch.");
+    const generator = scriptedModel(() => "Stretch.");
     ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
     const journals = new Map<string, MemoryStorage>();
-    const extension = workflowsExtension({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), ensemble, tools: { call: async () => ({ id: 1 }) } });
+    const extension = workflowsExtension({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), model: ensemble.languageModel(), tools: { call: async () => ({ id: 1 }) } });
     ensemble.install(extension);
     expect(ensemble.extensions()).toEqual(["workflows"]);
     expect(await invokeCognitive(ensemble, "workflows.list", {})).toEqual({ workflows: [{ name: "greet", description: "Greets someone by name.", inputs: greet.inputs }, { name: "welcome", description: "Greets, then asks for a tip.", inputs: welcome.inputs }] });
@@ -87,19 +87,21 @@ describe("workflow library and host", () => {
     await expect(h.run("caller", {}, "r1")).rejects.toThrow("workflow broken failed: Error: inner");
     expect(h.library).toBeInstanceOf(MemoryLibrary);
     const echo = parseWorkflow({ name: "echo", description: "", inputs: {}, code: "async function workflow(input) { return input; }" });
-    const ensemble = { generate: async function* () {} } as never;
-    const ext = workflowsExtension({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), ensemble });
+    const ext = workflowsExtension({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), model: scriptedModel(() => "") });
     expect(await ext.operations!["run"]!({ name: "echo", run: "r" })).toMatchObject({ output: {} });
     await expect(ext.operations!["get"]!(undefined)).rejects.toThrow(/invalid workflows.get input/);
   });
 
-  it("WH1.7 the ensemble answers a workflow's question as a chat turn, and the library lists by name", async () => {
-    const asked: unknown[] = [];
-    const ensemble = { generate: async function* (request: unknown, task: unknown) { asked.push([request, task]); yield { type: "reasoning", text: "hmm" }; yield { type: "text", text: "Yes" }; yield { type: "text", text: "." }; } };
-    expect(await askEnsemble(ensemble as never)("Ready?")).toBe("Yes.");
-    expect(asked).toEqual([[{ messages: [{ role: "user", content: "Ready?" }] }, "chat"]]);
-    await askEnsemble(ensemble as never)("Ready?", { type: "regex", pattern: "Yes\\." });
-    expect(asked[1]).toEqual([{ messages: [{ role: "user", content: "Ready?" }], constraint: { type: "regex", pattern: "Yes\\." } }, "chat"]);
+  it("WH1.7 a model answers a workflow's question with its text (reasoning left out), constraints go with it, and the library lists by name", async () => {
+    const model = scriptedModel((o) => (o.responseFormat?.type === "json" ? '{"ok":true}' : "<think>hmm</think>Yes."));
+    expect(await askModel(model)("Ready?")).toBe("Yes.");
+    expect(promptText(model.doGenerateCalls[0]!.prompt)).toBe("Ready?");
+    expect(model.doGenerateCalls[0]!.providerOptions).toBeUndefined();
+    await askModel(model)("Ready?", { type: "regex", pattern: "Yes\\." });
+    expect(model.doGenerateCalls[1]!.providerOptions).toEqual({ harness: { constraint: { type: "regex", pattern: "Yes\\." } } });
+    // a JSON Schema is asked for as structured output, and the answer's text comes back
+    expect(await askModel(model)("Ok?", { type: "json-schema", schema: { type: "object" } })).toBe('{"ok":true}');
+    expect(model.doGenerateCalls[2]!.responseFormat).toEqual({ type: "json", schema: { type: "object" } });
     const library = new MemoryLibrary([welcome, greet]);
     expect((await library.list()).map((w) => w.name)).toEqual(["greet", "welcome"]);
     await library.put({ ...greet, name: "a-first" });

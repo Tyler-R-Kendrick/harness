@@ -31,6 +31,14 @@ kernel). Which models exist, how each runtime runs them (`run`), and a category'
 settings (an embedder's prompts and sizes, a compressor's window) are catalog data in
 `packages/cognitive/data/catalog.json`, so a model is swapped by editing JSON.
 
+Every model is a [Vercel AI SDK](https://ai-sdk.dev) model (`LanguageModelV4`,
+`EmbeddingModelV4`, `EvaluationModelV4`), and the ensemble is an AI SDK provider: code
+calls `generateText`, `streamText`, `embedMany` or `experimental_evaluate` on
+`ensemble.languageModel("chat")`, `ensemble.embeddingModel()` or
+`ensemble.evaluationModel()`, and each call goes to the best member that can serve it,
+failing over to the next. Any AI SDK provider's model can be a member, and our local
+models implement the same specs. Sessions run AI SDK agents (see ADR 0005).
+
 The shipped catalog currently lists:
 
 | Model | Category | Runtime |
@@ -60,8 +68,8 @@ node packages/platform-native/src/main.ts --stdio --cognitive [--llama-server /p
 The core carries no embedding model. Memory brings its own (listed in
 `packages/memory/data/catalog.json`; EmbeddingGemma 300M today) when it is installed, and the daemon then offers `memory` and `cognitive.text-embedding` in its
 capability registry. Clients call `memory.remember` and `memory.recall` through
-`_harness/cognitive/invoke`; the ensemble worker recalls related memories from other
-sessions into each turn and remembers the turn afterwards. The index is Orama (pure JS),
+`_harness/cognitive/invoke`; the ensemble worker's agent is given related memories from
+other sessions on each turn, and the turn is remembered afterwards. The index is Orama (pure JS),
 saved to a file:
 
 ```sh
@@ -115,8 +123,8 @@ to `cheerful` (joy steering); a neutral question leaves it unsteered. Steering i
 only: hosted models expose no residual stream.
 
 Clients and plugins call `_harness/cognitive/invoke` with an `op` of `judge`, `route`,
-`decide-tools`, `embed`, `compress` or `parse`; `--worker ensemble` runs sessions on the
-best generator.
+`decide-tools`, `embed`, `compress` or `parse`; `--worker ensemble` runs each session as
+an AI SDK agent on the ensemble.
 
 ## Quick start
 
@@ -145,9 +153,12 @@ Workers:
 
 - `--worker echo` (default): deterministic; add `!permission` to a prompt to exercise
   permission routing.
-- `--worker model --model <gateway model id>`: streams a model through the
-  [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). Requires
+- `--worker model --model <gateway model id>`: runs each session as an AI SDK agent on
+  a model through the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway). Requires
   `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN`.
+- `--worker ensemble`: runs each session as an AI SDK agent on the ensemble (the steered
+  kernel when a behavior pack is given), with memory and learning when installed. Tools
+  that need approval go through the daemon's permission routing.
 
 ## Evals
 
@@ -182,9 +193,9 @@ reported as `blocked`, never as a pass.
 |---|---|
 | `packages/protocol` | ACP framing, JSON-RPC validation, `_harness` profile (pure) |
 | `packages/core` | Sans-I/O daemon: sessions, subagents, routing, lease, flow control, effect ledger, capabilities, hook bus, task graph (pure) |
-| `packages/cognitive` | Candidate-strategy and statistics math (pure) |
-| `packages/testkit` | Deterministic ports, daemon driver, storage contract suite |
-| `packages/workers` | Echo worker and model worker (portable) |
+| `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
+| `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |
+| `packages/workers` | Echo worker, and a worker that runs any AI SDK agent (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |

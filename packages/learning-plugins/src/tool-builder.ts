@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { readTemplate } from "@harness/cognitive";
-import type { Ensemble, TemplateConstraint, ToolSpec } from "@harness/cognitive";
+import { generateText } from "ai";
+import type { LanguageModel } from "ai";
+import { constrain } from "@harness/cognitive";
+import type { TemplateConstraint, ToolSpec } from "@harness/cognitive";
 import { TARGETS } from "@harness/learning";
 import type { MaterializeInput, Materialized, Materializer } from "@harness/learning";
 import { checkWorkflow, WorkflowSchema } from "@harness/workflows";
@@ -73,23 +76,17 @@ async function review(raw: string, tools: readonly ToolSpec[]): Promise<{ draft:
  * exist) and a failed check goes back to the model. The tool is kept in the library, so
  * calling it runs a durable workflow; learning then offers it on later tasks.
  */
-export function toolBuilder(options: { readonly reasoner: Pick<Ensemble, "generate">; readonly library: WorkflowLibrary; readonly settings: PluginSettings }): Materializer {
+export function toolBuilder(options: { readonly coder: LanguageModel; readonly library: WorkflowLibrary; readonly settings: PluginSettings }): Materializer {
   const { system, maxTokens, attempts } = options.settings.toolBuilder;
-  const ask = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
-    let text = "";
-    for await (const e of options.reasoner.generate({ messages: [...messages], maxTokens, constraint: TOOL_TEMPLATE }, "coding")) if (e.type === "text") text += e.text;
-    return text;
-  };
+  const ask = async (messages: { role: "user" | "assistant"; content: string }[]) =>
+    (await generateText({ model: options.coder, instructions: system, messages: [...messages], maxOutputTokens: maxTokens, maxRetries: 0, ...constrain(TOOL_TEMPLATE) })).text;
   return {
     kind: "materializer",
     id: "tool-builder",
     target: TARGETS.tool,
     materialize: async (input: MaterializeInput): Promise<Materialized> => {
       const request = JSON.stringify({ task: input.purpose, tools: input.tools, lessons: input.lessons.map((l) => ({ title: l.title, text: l.text, steps: l.steps })) });
-      const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
-        { role: "system", content: system },
-        { role: "user", content: request },
-      ];
+      const messages: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: request }];
       const problems: string[] = [];
       for (let attempt = 0; attempt < attempts; attempt++) {
         const raw = await ask(messages);

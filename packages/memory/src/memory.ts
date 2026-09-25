@@ -1,17 +1,20 @@
 import { count, create, insertMultiple, load, removeMultiple, save, search } from "@orama/orama";
 import type { RawData } from "@orama/orama";
+import { embed, embedMany } from "ai";
+import type { EmbeddingModel } from "ai";
 import { z } from "zod";
-import { DimensionsSchema } from "@harness/cognitive";
-import type { Dimensions, Embedder } from "@harness/cognitive";
+import { DimensionsSchema, embedding } from "@harness/cognitive";
+import type { Dimensions } from "@harness/cognitive";
 
 /** Memory item ids: "m" and a number that is never reused. */
 export const MemoryIdSchema = z.templateLiteral(["m", z.int().positive()]);
 export type MemoryId = z.output<typeof MemoryIdSchema>;
 
 /**
- * Memory the cognitive core can keep and search by meaning: text is embedded as a
- * document when remembered and as a query when recalled, and held in an Orama vector
- * index (pure JS, so the same on every platform). Items may belong to a session.
+ * Memory the cognitive core can keep and search by meaning: text is embedded (by any
+ * AI SDK embedding model, usually the ensemble's) as a document when remembered and as
+ * a query when recalled, and held in an Orama vector index (pure JS, so the same on
+ * every platform). Items may belong to a session.
  */
 export interface MemoryOptions {
   /** Embedding size of the index; every embedder that serves memory must produce it (see sharedEmbeddingSize). */
@@ -49,15 +52,15 @@ const index = (dimensions: number) =>
   create({ schema: { text: "string", sessionId: "enum", kind: "enum", embedding: `vector[${dimensions}]` as "vector[1]" } as const });
 
 export class Memory {
-  readonly #embedder: Pick<Embedder, "embed">;
+  readonly #model: EmbeddingModel;
   readonly #dimensions: Dimensions;
   readonly #index: ReturnType<typeof index>;
   readonly #onChange: ((memory: Memory) => void) | undefined;
   /** The next id's number: ids are never reused, even after forgetting. */
   #next = 1;
 
-  constructor(embedder: Pick<Embedder, "embed">, options: MemoryOptions) {
-    this.#embedder = embedder;
+  constructor(model: EmbeddingModel, options: MemoryOptions) {
+    this.#model = model;
     this.#dimensions = options.dimensions;
     this.#index = index(this.#dimensions);
     this.#onChange = options.onChange;
@@ -75,11 +78,8 @@ export class Memory {
   }
 
   async remember(items: readonly { readonly text: string; readonly sessionId?: string; readonly kind?: string }[]): Promise<MemoryId[]> {
-    const vectors = await this.#embedder.embed(
-      items.map((item) => ({ kind: "document", text: item.text })),
-      { dimensions: this.#dimensions },
-    );
-    const docs = items.map((item, i) => ({ ...item, id: `m${this.#next + i}` as const, embedding: Array.from(vectors[i]!) }));
+    const { embeddings } = await embedMany({ model: this.#model, values: items.map((item) => item.text), maxRetries: 0, ...embedding({ kind: "document", dimensions: this.#dimensions }) });
+    const docs = items.map((item, i) => ({ ...item, id: `m${this.#next + i}` as const, embedding: embeddings[i]! }));
     this.#next += items.length;
     await insertMultiple(this.#index, docs);
     this.#onChange?.(this);
@@ -93,12 +93,12 @@ export class Memory {
   }
 
   async recall(query: string, options: RecallOptions = {}): Promise<Recollection[]> {
-    const [vector] = await this.#embedder.embed([{ kind: "query", text: query }], { dimensions: this.#dimensions });
+    const { embedding: vector } = await embed({ model: this.#model, value: query, maxRetries: 0, ...embedding({ kind: "query", dimensions: this.#dimensions }) });
     const session = options.sessionId !== undefined ? { sessionId: { eq: options.sessionId } } : options.excludeSession !== undefined ? { sessionId: { nin: [options.excludeSession] } } : {};
     const where = { ...session, ...(options.kinds ? { kind: { in: [...options.kinds] } } : {}) };
     const found = await search(this.#index, {
       mode: "vector",
-      vector: { value: Array.from(vector!), property: "embedding" },
+      vector: { value: vector, property: "embedding" },
       similarity: options.minScore ?? 0.4,
       limit: options.limit ?? 5,
       includeVectors: false,

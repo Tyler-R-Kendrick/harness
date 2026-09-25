@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { bytes, dimensions, Ensemble, invokeCognitive, mirrorCapabilities, probability } from "@harness/cognitive";
+import { embed } from "ai";
+import type { EmbeddingModelV4CallOptions, LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
+import { bytes, dimensions, Ensemble, HARNESS, invokeCognitive, mirrorCapabilities, probability, usage } from "@harness/cognitive";
 import type { ModelDescriptor, TaskCategory } from "@harness/cognitive";
-import { HashEmbedder, HeuristicCompressor, KeywordRouter, ScriptedJudge, StubDocumentParser } from "@harness/testkit";
+import { hashEmbeddingModel, HeuristicCompressor, keywordRouterModel, scriptedJudge, stubDocumentParser } from "@harness/testkit";
 
 function d(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"]): ModelDescriptor {
   return { id, name: `Model ${id}`, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] };
@@ -9,11 +12,11 @@ function d(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["p
 
 function ensemble() {
   const e = new Ensemble({ platform: "native" });
-  e.register(d("judge-a", ["judgment"], ["judge"]), async () => ({ judge: new ScriptedJudge(() => ({ type: "boolean", probability: probability(0.8) })) }));
-  e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: new KeywordRouter() }));
-  e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: new HashEmbedder(8) }));
+  e.register(d("judge-a", ["judgment"], ["judge"]), async () => ({ judge: scriptedJudge(() => ({ type: "boolean", probability: 0.8 })) }));
+  e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: keywordRouterModel() }));
+  e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: hashEmbeddingModel(8) }));
   e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: new HeuristicCompressor() }));
-  e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new StubDocumentParser() }));
+  e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": stubDocumentParser() }));
   return e;
 }
 
@@ -39,7 +42,7 @@ describe("cognitive service (ACP operations on the ensemble)", () => {
     expect(await invokeCognitive(e, "compress", { text: "the meeting is on Thursday at noon", rate: 0.5 })).toMatchObject({ model: "compressor-a", originalTokens: 7 });
     const parsed = (await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQID" }] })) as { model: string; pages: { markdown: string }[] };
     expect(parsed.model).toBe("ocr");
-    expect(parsed.pages[0]!.markdown).toContain("3 bytes");
+    expect(parsed.pages[0]!.markdown).toBe("# Page\n\nimage/png");
   });
 
   it("CS1.4 malformed input is rejected with a message saying what is wrong", async () => {
@@ -64,12 +67,13 @@ describe("cognitive service (ACP operations on the ensemble)", () => {
 
 describe("cognitive service input handling", () => {
   function recording() {
-    const seen: Record<string, unknown[]> = { route: [], embed: [], compress: [], parse: [] };
+    const seen = { route: [] as LanguageModelV4CallOptions[], embed: [] as EmbeddingModelV4CallOptions[], compress: [] as unknown[], parse: [] as LanguageModelV4CallOptions[] };
     const e = new Ensemble({ platform: "native" });
-    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: { route: async (r) => (seen["route"]!.push(r), { calls: [], confidence: probability(1), reasoning: "" }) } }));
-    e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: { dimensions: dimensions(2), embed: async (i, o) => (seen["embed"]!.push([i, o]), i.map(() => Float32Array.from([1, 0]))) } }));
-    e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: { compress: async (r) => (seen["compress"]!.push(r), { text: r.text, originalTokens: 1, compressedTokens: 1 }) } }));
-    e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": { parse: async (r) => (seen["parse"]!.push(r), { pages: [] }) } }));
+    const answer = { content: [], finishReason: { unified: "stop" as const, raw: undefined }, usage: usage(), warnings: [], providerMetadata: { [HARNESS]: { confidence: 1 } } };
+    e.register(d("router-a", ["tool-calling"], ["router"]), async () => ({ router: new MockLanguageModelV4({ doGenerate: async (o) => (seen.route.push(o), answer) }) }));
+    e.register(d("embedder-a", ["text-embedding"], ["embedder"]), async () => ({ embedder: new MockEmbeddingModelV4({ doEmbed: async (o) => (seen.embed.push(o), { embeddings: o.values.map(() => [1, 0]), warnings: [] }) }) }));
+    e.register(d("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({ compressor: { compress: async (r) => (seen.compress.push(r), { text: r.text, originalTokens: 1, compressedTokens: 1 }) } }));
+    e.register(d("ocr", ["document-parsing"], ["document-parser"]), async () => ({ "document-parser": new MockLanguageModelV4({ doGenerate: async (o) => (seen.parse.push(o), { ...answer, content: [{ type: "text", text: "page" }] }) }) }));
     return { e, seen };
   }
 
@@ -102,36 +106,33 @@ describe("cognitive service input handling", () => {
     for (const [op, input, message] of cases) await expect(invokeCognitive(e, op, input), `${op} ${JSON.stringify(input)}`).rejects.toThrow(message);
   });
 
-  it("CS2.2 tools default their description and parameters when absent", async () => {
+  it("CS2.2 tools default their description and parameters when absent, and reach the model as function tools", async () => {
     const { e, seen } = recording();
     await invokeCognitive(e, "route", { input: "go", tools: [{ name: "t", description: "d", parameters: { type: "object" } }, { name: "u" }] });
-    expect(seen["route"]).toEqual([
-      {
-        input: "go",
-        tools: [
-          { name: "t", description: "d", parameters: { type: "object" } },
-          { name: "u", description: "", parameters: {} },
-        ],
-      },
+    expect(seen.route[0]!.tools).toEqual([
+      { type: "function", name: "t", description: "d", inputSchema: { type: "object" } },
+      { type: "function", name: "u", description: "", inputSchema: {} },
     ]);
   });
 
-  it("CS2.3 optional fields reach the port only when the client sent them", async () => {
+  it("CS2.3 optional fields reach the model only when the client sent them; mixed inputs go in groups of one kind", async () => {
     const { e, seen } = recording();
     await invokeCognitive(e, "embed", { inputs: [{ kind: "document", text: "a" }], dimensions: dimensions(2) });
-    await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }] });
-    expect(seen["embed"]).toEqual([
-      [[{ kind: "document", text: "a" }], { dimensions: dimensions(2) }],
-      [[{ kind: "query", text: "a" }], {}],
+    await invokeCognitive(e, "embed", { inputs: [{ kind: "query", text: "a" }, { kind: "query", text: "b", task: "search" }, { kind: "document", text: "c", title: "T" }] });
+    expect(seen.embed.map((o) => [o.values, o.providerOptions])).toEqual([
+      [["a"], { [HARNESS]: { kind: "document", dimensions: 2 } }],
+      [["a"], { [HARNESS]: { kind: "query" } }],
+      [["b"], { [HARNESS]: { kind: "query", task: "search" } }],
+      [["c"], { [HARNESS]: { kind: "document", title: "T" } }],
     ]);
     await invokeCognitive(e, "compress", { text: "a b", rate: 0.5, forceTokens: ["b"] });
     await invokeCognitive(e, "compress", { text: "a b", rate: 0.5 });
-    expect(seen["compress"]).toStrictEqual([{ text: "a b", rate: 0.5, forceTokens: ["b"] }, { text: "a b", rate: 0.5 }]);
+    expect(seen.compress).toStrictEqual([{ text: "a b", rate: 0.5, forceTokens: ["b"] }, { text: "a b", rate: 0.5 }]);
     await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQ==" }], instruction: "tables only" });
     await invokeCognitive(e, "parse", { pages: [{ mediaType: "image/png", data: "AQ==" }] });
-    expect(seen["parse"]).toStrictEqual([
-      { pages: [{ mediaType: "image/png", data: Uint8Array.from([1]) }], instruction: "tables only" },
-      { pages: [{ mediaType: "image/png", data: Uint8Array.from([1]) }] },
+    expect(seen.parse.map((o) => o.prompt)).toEqual([
+      [{ role: "user", content: [{ type: "file", data: { type: "data", data: Uint8Array.from([1]) }, mediaType: "image/png" }, { type: "text", text: "tables only" }] }],
+      [{ role: "user", content: [{ type: "file", data: { type: "data", data: Uint8Array.from([1]) }, mediaType: "image/png" }] }],
     ]);
   });
 
@@ -148,7 +149,7 @@ describe("extension operations", () => {
   it("CS3.1 a namespaced operation runs on the installed extension; one no extension serves is refused", async () => {
     const e = ensemble();
     await expect(invokeCognitive(e, "memory.recall", { query: "x" })).rejects.toThrow("no installed extension serves memory.recall");
-    e.install({ id: "memory", models: [{ descriptor: d("memory-embedder", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: new HashEmbedder(8) }) }], operations: { recall: async (input) => ({ got: input }) } });
+    e.install({ id: "memory", models: [{ descriptor: d("memory-embedder", ["text-embedding"], ["embedder"]), load: async () => ({ embedder: hashEmbeddingModel(8) }) }], operations: { recall: async (input) => ({ got: input }) } });
     expect(await invokeCognitive(e, "memory.recall", { query: "x" })).toEqual({ got: { query: "x" } });
     expect(((await invokeCognitive(e, "status", {})) as { extensions: string[] }).extensions).toEqual(["memory"]);
   });
@@ -159,7 +160,7 @@ describe("capability mirror", () => {
     const e = new Ensemble({ platform: "native" });
     const offered = new Set<string>();
     const log: string[] = [];
-    e.register(d("a", ["text-embedding", "classification"], ["embedder", "router"]), async () => ({ embedder: new HashEmbedder(8) }));
+    e.register(d("a", ["text-embedding", "classification"], ["embedder", "router"]), async () => ({ embedder: hashEmbeddingModel(8) }));
     e.register(d("b", ["text-embedding"], ["embedder"]), async () => {
       throw new Error("weights missing");
     });
@@ -170,7 +171,7 @@ describe("capability mirror", () => {
     expect([...offered].sort()).toEqual(["cognitive.classification", "cognitive.text-embedding"]);
     e.revoke("a", "platform withdrew WebGPU");
     expect([...offered].sort()).toEqual(["cognitive.text-embedding"]);
-    await e.embed([{ kind: "query", text: "x" }]).catch(() => undefined);
+    await embed({ model: e.embeddingModel(), value: "x", maxRetries: 0 }).catch(() => undefined);
     expect(offered.has("cognitive.text-embedding")).toBe(false);
     e.restore("a");
     expect([...offered].sort()).toEqual(["cognitive.classification", "cognitive.text-embedding"]);
