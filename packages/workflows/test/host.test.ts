@@ -1,25 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { bytes, Ensemble, invokeCognitive } from "@harness/cognitive";
+import { generateText, isStepCount, tool } from "ai";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
+import { z } from "zod";
+import { bytes, Ensemble, invokeCognitive, usage } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
-import { askModel, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension } from "@harness/workflows";
+import { askModel, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension, workflowTools } from "@harness/workflows";
 import { MemoryStorage, promptText, scriptedModel } from "@harness/testkit";
 
 const greet = parseWorkflow({
   name: "greet",
   description: "Greets someone by name.",
   inputs: { type: "object", properties: { who: { type: "string" } }, required: ["who"] },
-  code: `async function workflow(input, ctx) { return "Hello, " + input.who + "!"; }`,
+  code: `return "Hello, " + input.who + "!";`,
 });
 const welcome = parseWorkflow({
   name: "welcome",
   description: "Greets, then asks for a tip.",
   inputs: { type: "object" },
-  code: `async function workflow(input, ctx) {
-    const hello = await ctx.tool("greet", { who: input.who });
-    const tip = await ctx.ask("One tip for " + input.who);
-    const ticket = await ctx.tool("open_ticket", { title: hello });
-    return { hello, tip, ticket };
-  }`,
+  code: `const hello = await tools.greet({ who: input.who });
+const tip = await tools.ask({ prompt: "One tip for " + input.who });
+const ticket = await tools.open_ticket({ title: hello });
+return { hello, tip, ticket };`,
 });
 
 function host(options: { tools?: boolean } = {}) {
@@ -30,7 +32,7 @@ function host(options: { tools?: boolean } = {}) {
     library,
     journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!),
     ask: async (prompt) => `tip: ${prompt}`,
-    ...(options.tools === false ? {} : { tools: { call: async (name, args) => (called.push(`${name}:${JSON.stringify(args)}`), { id: 7 }) } }),
+    ...(options.tools === false ? {} : { tools: { open_ticket: tool({ description: "Opens a ticket.", inputSchema: z.object({ title: z.string() }), execute: async (args) => (called.push(`open_ticket:${JSON.stringify(args)}`), { id: 7 }) }) } }),
   });
   return { h, journals, library, called };
 }
@@ -43,14 +45,15 @@ describe("workflow library and host", () => {
     expect(called).toEqual(['open_ticket:{"title":"Hello, Ada!"}']);
   });
 
-  it("WH1.2 an unknown workflow, or a tool nobody provides, is an error; a failing tool leaves the run resumable", async () => {
+  it("WH1.2 an unknown workflow is an error; a tool nobody provides is not there for the code, so the run fails saying so", async () => {
     const { h } = host({ tools: false });
     await expect(h.run("nope", {}, "r1")).rejects.toThrow("no workflow nope");
-    await expect(h.run("welcome", { who: "Ada" }, "r2")).rejects.toThrow("no tool open_ticket is available to workflows");
+    expect(await h.run("welcome", { who: "Ada" }, "r2")).toMatchObject({ status: "failed", error: expect.stringMatching(/Unknown tool: open_ticket/) });
   });
 
-  it("WH1.3 definitions are parsed: names are kebab-case, code must be present, inputs a JSON Schema object", () => {
+  it("WH1.3 definitions are parsed: names are kebab-case (and not ask), code must be present, inputs a JSON Schema object", () => {
     expect(() => parseWorkflow({ ...greet, name: "Not Kebab" })).toThrow(/name/);
+    expect(() => parseWorkflow({ ...greet, name: "ask" })).toThrow("a workflow cannot be named ask: tools.ask is the model");
     expect(() => parseWorkflow({ ...greet, code: "" })).toThrow(/code/);
     expect(() => parseWorkflow({ ...greet, inputs: "x" })).toThrow(/inputs/);
   });
@@ -70,7 +73,8 @@ describe("workflow library and host", () => {
     const generator = scriptedModel(() => "Stretch.");
     ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
     const journals = new Map<string, MemoryStorage>();
-    const extension = workflowsExtension({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), model: ensemble.languageModel(), tools: { call: async () => ({ id: 1 }) } });
+    const host = new WorkflowHost({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), ask: askModel(ensemble.languageModel()), tools: { open_ticket: tool({ inputSchema: z.object({}).loose(), execute: async () => ({ id: 1 }) }) } });
+    const extension = workflowsExtension({ host });
     ensemble.install(extension);
     expect(ensemble.extensions()).toEqual(["workflows"]);
     expect(await invokeCognitive(ensemble, "workflows.list", {})).toEqual({ workflows: [{ name: "greet", description: "Greets someone by name.", inputs: greet.inputs }, { name: "welcome", description: "Greets, then asks for a tip.", inputs: welcome.inputs }] });
@@ -81,13 +85,13 @@ describe("workflow library and host", () => {
   });
 
   it("WH1.6 a nested workflow that fails fails its caller's step; a run without input gets {}", async () => {
-    const broken = parseWorkflow({ name: "broken", description: "", inputs: {}, code: "async function workflow() { throw new Error('inner'); }" });
-    const caller = parseWorkflow({ name: "caller", description: "", inputs: {}, code: "async function workflow(input, ctx) { return [input, await ctx.tool('broken', {})]; }" });
+    const broken = parseWorkflow({ name: "broken", description: "", inputs: {}, code: "throw new Error('inner');" });
+    const caller = parseWorkflow({ name: "caller", description: "", inputs: {}, code: "return [input, await tools.broken({})];" });
     const h = new WorkflowHost({ library: new MemoryLibrary([broken, caller]), journal: () => new MemoryStorage(), ask: async () => "" });
-    await expect(h.run("caller", {}, "r1")).rejects.toThrow("workflow broken failed: Error: inner");
+    await expect(h.run("caller", {}, "r1")).rejects.toThrow(/workflow broken failed: .*inner/);
     expect(h.library).toBeInstanceOf(MemoryLibrary);
-    const echo = parseWorkflow({ name: "echo", description: "", inputs: {}, code: "async function workflow(input) { return input; }" });
-    const ext = workflowsExtension({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), model: scriptedModel(() => "") });
+    const echo = parseWorkflow({ name: "echo", description: "", inputs: {}, code: "return input;" });
+    const ext = workflowsExtension({ host: new WorkflowHost({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), ask: askModel(scriptedModel(() => "")) }) });
     expect(await ext.operations!["run"]!({ name: "echo", run: "r" })).toMatchObject({ output: {} });
     await expect(ext.operations!["get"]!(undefined)).rejects.toThrow(/invalid workflows.get input/);
   });
@@ -107,5 +111,30 @@ describe("workflow library and host", () => {
     await library.put({ ...greet, name: "a-first" });
     expect((await library.list()).map((w) => w.name)).toEqual(["a-first", "greet", "welcome"]);
   });
-});
 
+  it("WH1.8 the library's workflows are AI SDK tools for agents: a call runs its workflow durably under the call's id, and a failed run is a failed call", async () => {
+    const { h, journals } = host();
+    const tools = await workflowTools(h);
+    expect(Object.keys(tools)).toEqual(["greet", "welcome"]);
+    expect(tools["greet"]!.description).toBe("Greets someone by name.");
+    const model = new MockLanguageModelV4({
+      doStream: async ({ prompt }) => ({
+        stream: convertArrayToReadableStream<LanguageModelV4StreamPart>(
+          prompt.some((m) => m.role === "tool")
+            ? [{ type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: "done" }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usage() }]
+            : [{ type: "tool-call", toolCallId: "call-1", toolName: "greet", input: '{"who":"Ada"}' }, { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: usage() }],
+        ),
+      }),
+      doGenerate: async ({ prompt }) =>
+        prompt.some((m) => m.role === "tool")
+          ? { content: [{ type: "text", text: "done" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] }
+          : { content: [{ type: "tool-call", toolCallId: "call-1", toolName: "greet", input: '{"who":"Ada"}' }], finishReason: { unified: "tool-calls", raw: undefined }, usage: usage(), warnings: [] },
+    });
+    const result = await generateText({ model, prompt: "greet Ada", tools, stopWhen: isStepCount(2), maxRetries: 0 });
+    expect(result.steps[0]!.toolResults.map((r) => r.output)).toEqual(["Hello, Ada!"]);
+    expect([...journals.keys()]).toEqual(["tool/call-1"]);
+    const broken = parseWorkflow({ name: "broken", description: "Fails.", inputs: {}, code: "throw new Error('inner');" });
+    const failing = await workflowTools(new WorkflowHost({ library: new MemoryLibrary([broken]), journal: () => new MemoryStorage(), ask: async () => "" }));
+    await expect(failing["broken"]!.execute!({}, { toolCallId: "x", messages: [], context: undefined })).rejects.toThrow(/workflow broken failed: .*inner/);
+  });
+});

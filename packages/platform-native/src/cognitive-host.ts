@@ -28,10 +28,10 @@ import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
 import { ensembleReasoner, Learning, learningExtension, Plugins } from "@harness/learning";
 import type { Settings } from "@harness/learning";
 import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
-import { workflowsExtension } from "@harness/workflows";
+import { askModel, WorkflowHost, workflowsExtension } from "@harness/workflows";
 import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
-import type { ToolExecutor } from "@harness/workflows";
+import type { ToolSet } from "ai";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
@@ -87,7 +87,7 @@ export interface NativeEnsembleOptions {
   readonly workflows?: {
     readonly dir: string;
     /** Tools beyond the library's own workflows. */
-    readonly tools?: ToolExecutor;
+    readonly tools?: ToolSet;
   };
 }
 
@@ -100,7 +100,7 @@ type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
  * use. Nothing here knows a model: the catalog entry says which runtime runs it, how
  * (its `run` settings) and which ports it serves.
  */
-export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; workflows?: WorkflowFiles; close(): Promise<void> } {
+export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; workflows?: WorkflowFiles; workflowHost?: WorkflowHost; close(): Promise<void> } {
   if (options.learning && !options.memory) throw new Error("learning requires memory: install memory too");
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
@@ -216,16 +216,17 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       return load(m);
     });
   const workflows = options.workflows && new WorkflowFiles(options.workflows.dir);
-  if (workflows) {
-    const tools = options.workflows!.tools;
-    ensemble.install(workflowsExtension({ library: workflows, journal: (run) => workflows.journal(run), model: ensemble.languageModel(), ...(tools ? { tools } : {}) }));
-  }
+  const workflowHost =
+    workflows &&
+    new WorkflowHost({ library: workflows, journal: (run) => workflows.journal(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
+  if (workflowHost) ensemble.install(workflowsExtension({ host: workflowHost }));
   const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {
     ensemble,
     ...(memory ? { memory } : {}),
     ...(learning ? { learning } : {}),
     ...(workflows ? { workflows } : {}),
+    ...(workflowHost ? { workflowHost } : {}),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
     },

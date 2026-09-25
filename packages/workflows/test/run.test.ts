@@ -5,12 +5,11 @@ import { MemoryStorage } from "@harness/testkit";
 
 const deploy = `
 // Deploy: migrate, deploy, then ask for release notes.
-async function workflow(input, ctx) {
-  const migrated = await ctx.tool("migrate", { env: input.env });
-  const deployed = await ctx.tool("deploy", { env: input.env, after: migrated.version });
-  const notes = await ctx.ask("Release notes for version " + deployed.version);
-  return { version: deployed.version, notes };
-}`;
+const migrated = await tools.migrate({ env: input.env });
+const deployed = await tools.deploy({ env: input.env, after: migrated.version });
+const notes = await tools.ask({ prompt: "Release notes for version " + deployed.version });
+return { version: deployed.version, notes };`;
+const TOOLS = { migrate: {}, deploy: {}, a: {}, b: {}, log: {} };
 
 /** Effects that record what was performed, and can fail on a chosen call. */
 function effects(failOn?: string) {
@@ -29,11 +28,12 @@ function effects(failOn?: string) {
   };
   return { fx, performed };
 }
+const run = (code: string, fx: Effects = effects().fx, journal = new MemoryStorage(), extra: { timeoutMs?: number } = {}) => runWorkflow({ name: "w", code, input: {}, effects: fx, journal, tools: TOOLS, ...extra });
 
-describe("durable workflows", () => {
-  it("WF1.1 a workflow runs its code in the sandbox, calling tools and the model through its effects", async () => {
+describe("durable workflows (AI SDK code mode)", () => {
+  it("WF1.1 a workflow runs its code in code mode, calling tools and the model through its effects", async () => {
     const { fx, performed } = effects();
-    const result = await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal: new MemoryStorage() });
+    const result = await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal: new MemoryStorage(), tools: TOOLS });
     expect(result).toEqual({ status: "completed", output: { version: 42, notes: "Fixed the login bug." }, replayed: 0, performed: 3 });
     expect(performed).toEqual(['migrate:{"env":"staging"}', 'deploy:{"env":"staging","after":41}', "ask:Release notes for version 42"]);
   });
@@ -41,100 +41,114 @@ describe("durable workflows", () => {
   it("WF1.2 a run that stops on a failing effect resumes by replay: finished steps are not performed again", async () => {
     const journal = new MemoryStorage();
     const { fx, performed } = effects("deploy");
-    await expect(runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal })).rejects.toThrow("deploy is down");
-    expect(await journal.load()).toMatchObject({ status: "running", entries: [{ op: "tool", request: { name: "migrate", args: { env: "staging" } }, result: { version: 41 } }] });
-    const resumed = await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal });
-    expect(resumed).toMatchObject({ status: "completed", replayed: 1, performed: 2 });
+    const go = () => runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal, tools: TOOLS });
+    await expect(go()).rejects.toThrow("deploy is down");
+    expect(await journal.load()).toMatchObject({ status: "running", entries: [{ seq: 0, op: "tool", request: { name: "migrate", args: { env: "staging" } }, result: { version: 41 } }] });
+    expect(await go()).toMatchObject({ status: "completed", replayed: 1, performed: 2 });
     expect(performed.filter((p) => p.startsWith("migrate"))).toHaveLength(1);
   });
 
   it("WF1.3 a finished run returns its recorded output without running again", async () => {
     const journal = new MemoryStorage();
-    const first = effects();
-    await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: first.fx, journal });
+    await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: effects().fx, journal, tools: TOOLS });
     const again = effects();
-    expect(await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: again.fx, journal })).toEqual({ status: "completed", output: { version: 42, notes: "Fixed the login bug." }, replayed: 3, performed: 0 });
+    expect(await runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: again.fx, journal, tools: TOOLS })).toEqual({ status: "completed", output: { version: 42, notes: "Fixed the login bug." }, replayed: 3, performed: 0 });
     expect(again.performed).toEqual([]);
   });
 
   it("WF1.4 a journal is bound to its code and input, and replay that diverges from it is refused", async () => {
     const journal = new MemoryStorage();
     const { fx } = effects("deploy");
-    await expect(runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal })).rejects.toThrow();
-    await expect(runWorkflow({ name: "deploy", code: `${deploy}\n`, input: { env: "staging" }, effects: fx, journal })).rejects.toThrow("this run was started with other code or input");
-    await expect(runWorkflow({ name: "deploy", code: deploy, input: { env: "prod" }, effects: fx, journal })).rejects.toThrow("this run was started with other code or input");
+    const go = (code: string, input: unknown) => runWorkflow({ name: "deploy", code, input, effects: fx, journal, tools: TOOLS });
+    await expect(go(deploy, { env: "staging" })).rejects.toThrow();
+    await expect(go(`${deploy}\n`, { env: "staging" })).rejects.toThrow("this run was started with other code or input");
+    await expect(go(deploy, { env: "prod" })).rejects.toThrow("this run was started with other code or input");
     // A journal whose steps do not match what the code does now (e.g. edited by hand).
-    await journal.save({ ...((await journal.load()) as object), entries: [{ op: "tool", request: { name: "rollback", args: {} }, result: null }] });
-    await expect(runWorkflow({ name: "deploy", code: deploy, input: { env: "staging" }, effects: fx, journal })).rejects.toThrow('step 1 diverged: the journal has tool {"args":{},"name":"rollback"}, the code asked for tool {"args":{"env":"staging"},"name":"migrate"}');
+    await journal.save({ ...((await journal.load()) as object), entries: [{ seq: 0, op: "tool", request: { name: "rollback", args: {} }, result: null }] });
+    await expect(go(deploy, { env: "staging" })).rejects.toThrow('step 1 diverged: the journal has tool {"args":{},"name":"rollback"}, the code asked for tool {"args":{"env":"staging"},"name":"migrate"}');
     await journal.save({ format: "other" });
-    await expect(runWorkflow({ name: "deploy", code: deploy, input: {}, effects: fx, journal })).rejects.toThrow(/invalid workflow journal/);
+    await expect(go(deploy, {})).rejects.toThrow(/invalid workflow journal/);
   });
 
-  it("WF1.5 workflow code is deterministic: no clock, no randomness, no host; an error in it fails the run and is recorded", async () => {
-    const run = (code: string) => runWorkflow({ name: "w", code, input: {}, effects: effects().fx, journal: new MemoryStorage() });
-    expect(await run("async function workflow() { return Math.random(); }")).toMatchObject({ status: "failed", error: expect.stringMatching(/Math.random is not available in a workflow/) });
-    expect(await run("async function workflow() { return Date.now(); }")).toMatchObject({ status: "failed", error: expect.stringMatching(/Date is not available in a workflow/) });
-    expect(await run("async function workflow() { return new Date(); }")).toMatchObject({ status: "failed", error: expect.stringMatching(/Date is not available/) });
-    expect(await run("async function workflow() { return typeof fetch + typeof process + typeof require + typeof setTimeout; }")).toMatchObject({ status: "completed", output: "undefinedundefinedundefinedundefined" });
+  it("WF1.5 the code is isolated from the host; code that is not deterministic cannot resume with different effects; an error fails the run and is recorded", async () => {
+    expect(await run("return typeof fetch + typeof process + typeof require + typeof setTimeout;")).toMatchObject({ status: "completed", output: "undefinedundefinedundefinedundefined" });
     const journal = new MemoryStorage();
-    expect(await runWorkflow({ name: "w", code: "async function workflow(input) { throw new Error('bad input ' + input.x); }", input: { x: 1 }, effects: effects().fx, journal })).toEqual({ status: "failed", error: "Error: bad input 1", replayed: 0, performed: 0 });
-    expect(await journal.load()).toMatchObject({ status: "failed", error: "Error: bad input 1" });
+    const flaky = effects("b");
+    const code = "await tools.log({ r: Math.random() }); return tools.b({});";
+    await expect(run(code, flaky.fx, journal)).rejects.toThrow("b is down");
+    await expect(run(code, flaky.fx, journal)).rejects.toThrow(/step 1 diverged: the journal has tool \{"args":\{"r":[0-9.e-]+\},"name":"log"\}/);
+    expect(flaky.performed.filter((p) => p.startsWith("log"))).toHaveLength(1);
+    const failing = new MemoryStorage();
+    expect(await runWorkflow({ name: "w", code: "throw new Error('bad input ' + input.x);", input: { x: 1 }, effects: effects().fx, journal: failing })).toEqual({ status: "failed", error: expect.stringContaining("bad input 1"), replayed: 0, performed: 0 });
+    expect(await failing.load()).toMatchObject({ status: "failed", error: expect.stringContaining("bad input 1") });
   });
 
-  it("WF1.6 a workflow that loops forever is stopped by its budget", async () => {
-    const result = await runWorkflow({ name: "w", code: "function workflow() { for (;;) {} }", input: {}, effects: effects().fx, journal: new MemoryStorage(), budget: 1000 });
-    expect(result).toMatchObject({ status: "failed", error: expect.stringMatching(/interrupted/) });
+  it("WF1.6 a workflow that loops forever is stopped by its time limit", async () => {
+    expect(await run("for (;;) {}", effects().fx, new MemoryStorage(), { timeoutMs: 300 })).toMatchObject({ status: "failed", error: expect.stringMatching(/timed out/) });
   });
 
-  it("WF1.7 workflow code is checked before it is kept: it must compile and define workflow(input, ctx)", async () => {
-    expect(await checkWorkflow(deploy)).toEqual({ ok: true });
-    expect(await checkWorkflow("async function workflow( {")).toMatchObject({ ok: false, error: expect.stringMatching(/SyntaxError/) });
-    expect(await checkWorkflow("const x = 1;")).toEqual({ ok: false, error: "the code does not define function workflow(input, ctx)" });
-    expect(await checkWorkflow("throw new Error('top')")).toMatchObject({ ok: false, error: expect.stringMatching(/top/) });
+  it("WF1.7 workflow code is checked before it is kept: it must parse (JavaScript or TypeScript); nothing runs", () => {
+    expect(checkWorkflow(deploy)).toEqual({ ok: true });
+    expect(checkWorkflow("const n: number = await tools.count({}); return n;")).toEqual({ ok: true });
+    expect(checkWorkflow("return (")).toMatchObject({ ok: false, error: expect.stringMatching(/^SyntaxError: /) });
+    expect(checkWorkflow("throw new Error('top')")).toEqual({ ok: true });
   });
 
-  it("WF1.8 a workflow awaiting something that never settles fails instead of hanging; parallel effects run in call order", async () => {
-    const hang = await runWorkflow({ name: "w", code: "async function workflow() { await new Promise(() => {}); }", input: {}, effects: effects().fx, journal: new MemoryStorage() });
-    expect(hang).toMatchObject({ status: "failed", error: "the workflow is waiting on nothing: it can never finish" });
-    const { fx, performed } = effects();
-    const parallel = await runWorkflow({ name: "w", code: "async function workflow(i, ctx) { return Promise.all([ctx.tool('a', {}), ctx.tool('b', {}), ctx.ask('c')]); }", input: {}, effects: fx, journal: new MemoryStorage() });
-    expect(parallel).toMatchObject({ status: "completed", performed: 3 });
-    expect(performed).toEqual(["a:{}", "b:{}", "ask:c"]);
+  it("WF1.8 parallel calls are numbered in the order the code makes them, and replay", async () => {
+    const journal = new MemoryStorage();
+    let slow = true;
+    const fx: Effects = {
+      // a finishes after b, the first time
+      tool: async (name) => (name === "a" && slow ? new Promise((r) => setTimeout(() => r("A"), 30)) : name.toUpperCase()),
+      ask: async () => "C",
+    };
+    const code = "return Promise.all([tools.a({}), tools.b({}), tools.ask({ prompt: 'c' })]);";
+    expect(await run(code, fx, journal)).toMatchObject({ status: "completed", output: ["A", "B", "C"], performed: 3 });
+    expect(((await journal.load()) as { entries: { seq: number; request: unknown }[] }).entries.map((e) => e.seq)).toEqual([1, 2, 0]);
+    slow = false;
+    const replay = new MemoryStorage();
+    await replay.save({ ...((await journal.load()) as object), status: "running" });
+    expect(await run(code, fx, replay)).toMatchObject({ status: "completed", output: ["A", "B", "C"], replayed: 3, performed: 0 });
   });
 
-  it("WF1.9 once an effect fails, the calls already made after it are not performed, and the code cannot catch the failure", async () => {
+  it("WF1.9 once an effect fails the run stops: the code cannot catch the failure, and later calls are not performed", async () => {
     const { fx, performed } = effects("a");
-    const code = "async function workflow(i, ctx) { const p = [ctx.tool('a', {}), ctx.tool('b', {})]; try { await p[0]; } catch (e) { return 'caught'; } return p[1]; }";
-    await expect(runWorkflow({ name: "w", code, input: {}, effects: fx, journal: new MemoryStorage() })).rejects.toThrow("a is down");
+    const code = "try { await tools.a({}); } catch (e) { await tools.b({}); return 'caught'; } return 'done';";
+    await expect(run(code, fx)).rejects.toThrow("a is down");
     expect(performed).toEqual([]);
   });
 
-  it("WF1.10 whatever the code throws is reported; code that does not even start fails the run; no result is null", async () => {
-    const run = (code: string) => runWorkflow({ name: "w", code, input: {}, effects: effects().fx, journal: new MemoryStorage() });
-    expect(await run("async function workflow() { throw 'plain'; }")).toMatchObject({ status: "failed", error: "plain" });
-    expect(await run("async function workflow() { throw { message: 'no name' }; }")).toMatchObject({ status: "failed", error: "Error: no name" });
-    expect(await run("async function workflow() { throw null; }")).toMatchObject({ status: "failed", error: "null" });
-    expect(await run("async function workflow( {")).toMatchObject({ status: "failed", error: expect.stringMatching(/^SyntaxError: /) });
-    expect(await run("async function workflow() {}")).toMatchObject({ status: "completed", output: null });
+  it("WF1.10 whatever the code throws is reported; code that does not parse fails the run; no result is null", async () => {
+    expect(await run("throw 'plain';")).toMatchObject({ status: "failed", error: expect.stringContaining("plain") });
+    expect(await run("throw { message: 'no name' };")).toMatchObject({ status: "failed", error: expect.stringContaining("no name") });
+    expect(await run("return (")).toMatchObject({ status: "failed", error: expect.stringMatching(/unexpected token/i) });
+    expect(await run("")).toMatchObject({ status: "completed", output: null });
   });
 
-  it("WF1.11 a workflow cannot take more than its memory or stack", async () => {
-    const run = (code: string) => runWorkflow({ name: "w", code, input: {}, effects: effects().fx, journal: new MemoryStorage() });
-    expect(await run("async function workflow() { return new Array(2e7).fill(1.5).length; }")).toMatchObject({ status: "failed", error: expect.stringMatching(/out of memory/i) });
-    expect(await run("function f(n) { return n === 0 ? 0 : 1 + f(n - 1); } async function workflow() { return f(1e6); }")).toMatchObject({ status: "failed", error: expect.stringMatching(/stack/i) });
-    // and a run that exhausted its sandbox does not break the next one
-    expect(await run("async function workflow() { return 1; }")).toMatchObject({ status: "completed", output: 1 });
+  it("WF1.11 a workflow cannot take more than its memory or stack, and the next run is unaffected", async () => {
+    expect(await run("return new Array(2e7).fill(1.5).length;")).toMatchObject({ status: "failed", error: expect.stringMatching(/memory/i) });
+    expect(await run("function f(n) { return n === 0 ? 0 : 1 + f(n - 1); } return f(1e6);")).toMatchObject({ status: "failed", error: expect.stringMatching(/stack/i) });
+    expect(await run("return 1;")).toMatchObject({ status: "completed", output: 1 });
   });
 
-  it("WF1.12 a question can carry a constraint, which is parsed and journaled with it", async () => {
+  it("WF1.12 a question can carry a constraint, which is parsed and journaled with it; one that is not a constraint fails the run", async () => {
     const asked: unknown[] = [];
     const fx: Effects = { tool: async () => null, ask: async (prompt, constraint) => (asked.push([prompt, constraint]), "Paris") };
     const journal = new MemoryStorage();
-    const code = "async function workflow(i, ctx) { return ctx.ask('capital?', { type: 'regex', pattern: '[A-Z][a-z]+' }); }";
-    expect(await runWorkflow({ name: "w", code, input: {}, effects: fx, journal })).toMatchObject({ status: "completed", output: "Paris" });
+    expect(await run("return tools.ask({ prompt: 'capital?', constraint: { type: 'regex', pattern: '[A-Z][a-z]+' } });", fx, journal)).toMatchObject({ status: "completed", output: "Paris" });
     expect(asked).toEqual([["capital?", { type: "regex", pattern: "[A-Z][a-z]+" }]]);
     expect(await journal.load()).toMatchObject({ entries: [{ op: "ask", request: { prompt: "capital?", constraint: { type: "regex", pattern: "[A-Z][a-z]+" } } }] });
-    await expect(runWorkflow({ name: "w", code: "async function workflow(i, ctx) { return ctx.ask('x', { type: 'telepathy' }); }", input: {}, effects: fx, journal: new MemoryStorage() })).rejects.toThrow(/not one/);
+    expect(await run("return tools.ask({ prompt: 'x', constraint: { type: 'telepathy' } });", fx)).toMatchObject({ status: "failed", error: expect.stringMatching(/not one/) });
+  });
+
+  it("WF1.13 tools are only those offered (with their descriptions and input schemas); none may be named ask", async () => {
+    const seen: unknown[] = [];
+    const fx: Effects = { tool: async (name, args) => (seen.push([name, args]), "ok"), ask: async () => "" };
+    expect(await runWorkflow({ name: "w", code: "return tools.nope({});", input: {}, effects: fx, journal: new MemoryStorage() })).toMatchObject({ status: "failed", error: expect.stringMatching(/Unknown tool: nope/) });
+    const typed = { add: { description: "Adds.", inputSchema: { type: "object", properties: { n: { type: "number" } }, required: ["n"] } } };
+    expect(await runWorkflow({ name: "w", code: "return tools.add({ n: 'x' });", input: {}, effects: fx, journal: new MemoryStorage(), tools: typed })).toMatchObject({ status: "failed" });
+    expect(await runWorkflow({ name: "w", code: "return tools.add({ n: 1 });", input: {}, effects: fx, journal: new MemoryStorage(), tools: typed })).toMatchObject({ status: "completed", output: "ok" });
+    expect(seen).toEqual([["add", { n: 1 }]]);
+    await expect(runWorkflow({ name: "w", code: "", input: {}, effects: fx, journal: new MemoryStorage(), tools: { ask: {} } })).rejects.toThrow("a tool cannot be named ask: tools.ask is the model");
   });
 });
-

@@ -57,8 +57,11 @@ No: every model is an AI SDK model, and every agent is an AI SDK agent.
   as no), structured output against its schema.
 - The AI SDK does not cancel a model's stream when its consumer stops reading, so a caller
   stops a call by aborting it; our local models stop decoding on abort.
-- Harness adapters, sandboxes, code mode and durable workflows (`@ai-sdk/harness`,
-  `@ai-sdk/code-mode`, `@ai-sdk/workflow`) are the next layer to adopt in place of our own.
+- Workflow code runs in AI SDK code mode, which replaced our QuickJS sandbox; the journal
+  that makes it durable stays ours (ADR 0002). Learned skills convert to AI SDK harness
+  skills, and the workflow library's workflows are AI SDK tools for session agents.
+- Harness adapters and sandboxes (`@ai-sdk/harness`, `@ai-sdk/harness-acp`) are the next
+  layer to adopt, for sessions run by Claude Code, Codex or any ACP agent.
 
 ## Revisit when
 

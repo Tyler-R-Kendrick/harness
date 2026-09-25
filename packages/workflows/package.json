@@ -2,18 +2,17 @@
   "name": "@harness/workflows",
   "version": "0.0.0",
   "private": true,
-  "description": "Durable workflows as code: deterministic workflow code runs in a QuickJS sandbox, and every effect (tool call, model question) is journaled, so a run that stops resumes by replay. Portable.",
+  "description": "Durable workflows as code: workflow code runs in AI SDK code mode (QuickJS in a worker), and every tool call and model question is journaled, so a run that stops resumes by replay. Node.",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ai-sdk/code-mode": "1.0.71",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
-    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "ai": "7.0.114",
-    "quickjs-emscripten-core": "0.32.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

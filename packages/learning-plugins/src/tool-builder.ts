@@ -6,7 +6,7 @@ import { constrain } from "@harness/cognitive";
 import type { TemplateConstraint, ToolSpec } from "@harness/cognitive";
 import { TARGETS } from "@harness/learning";
 import type { MaterializeInput, Materialized, Materializer } from "@harness/learning";
-import { checkWorkflow, WorkflowSchema } from "@harness/workflows";
+import { ASK, checkWorkflow, WorkflowSchema } from "@harness/workflows";
 import type { WorkflowLibrary } from "@harness/workflows";
 import type { PluginSettings } from "./settings.ts";
 import { workflowFiles } from "./workflow-builder.ts";
@@ -19,16 +19,14 @@ const Draft = z.strictObject({
 });
 type Draft = z.output<typeof Draft>;
 
-/** Tool names the code calls with a literal name: `ctx.tool("name", ...)`. */
-const calledTools = (code: string) => [...code.matchAll(/ctx\s*\.\s*tool\s*\(\s*(["'`])([^"'`]+)\1/g)].map((m) => m[2]!);
-
-const HEADER = "async function workflow(input, ctx) {\n";
-const FOOTER = "\n}\n";
+/** Tools the code calls by a literal name, `tools.name(...)` or `tools["name"](...)`, other than the model (`tools.ask`). */
+const calledTools = (code: string) =>
+  [...code.matchAll(/\btools\s*(?:\.\s*([A-Za-z_$][\w$]*)|\[\s*(["'`])([^"'`]+)\2\s*\])\s*\(/g)].map((m) => (m[1] ?? m[3])!).filter((name) => name !== ASK);
 
 /**
  * The answer's template: the model writes only the name, the description, the input's
- * JSON Schema and the workflow's body; the rest (labels, the code fence and the function
- * header and footer) is fixed. Generators that enforce templates put the fixed text in
+ * JSON Schema and the workflow's code (a code-mode program); the rest (labels and the
+ * code fence) is fixed. Generators that enforce templates put the fixed text in
  * the output themselves, never sampling it, and hold each hole to its constraint.
  */
 export const TOOL_TEMPLATE: TemplateConstraint = {
@@ -40,9 +38,9 @@ export const TOOL_TEMPLATE: TemplateConstraint = {
     { hole: "description", constraint: { type: "regex", pattern: "[^\\n]+" } },
     "\nparameters: ",
     { hole: "parameters", constraint: { type: "json-schema", schema: { type: "object" } } },
-    `\n\`\`\`js\n${HEADER}`,
+    "\n```js\n",
     { hole: "body" },
-    `${FOOTER}\`\`\`\n`,
+    "\n```\n",
   ],
 };
 
@@ -60,9 +58,9 @@ async function review(raw: string, tools: readonly ToolSpec[]): Promise<{ draft:
   } catch (e) {
     return { problem: `the parameters are not JSON: ${(e as Error).message}` };
   }
-  const parsed = Draft.safeParse({ name: holes["name"], description: holes["description"], parameters, code: `${HEADER}${holes["body"]}${FOOTER}` });
+  const parsed = Draft.safeParse({ name: holes["name"], description: holes["description"], parameters, code: holes["body"] });
   if (!parsed.success) return { problem: `the answer was not a tool\n${z.prettifyError(parsed.error)}` };
-  const checked = await checkWorkflow(parsed.data.code);
+  const checked = checkWorkflow(parsed.data.code);
   if (!checked.ok) return { problem: `the code does not work: ${checked.error}` };
   const unknown = calledTools(parsed.data.code).filter((t) => !tools.some((spec) => spec.name === t));
   if (unknown.length) return { problem: `the code calls tools that are not available: ${[...new Set(unknown)].join(", ")}` };
@@ -70,8 +68,9 @@ async function review(raw: string, tools: readonly ToolSpec[]): Promise<{ draft:
 }
 
 /**
- * Builds a tool in code mode: a model writes the tool as workflow code that composes the
- * available tools (`ctx.tool`) and questions to a model (`ctx.ask`). Each draft is
+ * Builds a tool in code mode: a model writes the tool as a code-mode program that
+ * composes the available tools (`tools.<name>(args)`) and questions to a model
+ * (`tools.ask({ prompt, constraint })`). Each draft is
  * checked (it compiles in the sandbox, defines the workflow, and calls only tools that
  * exist) and a failed check goes back to the model. The tool is kept in the library, so
  * calling it runs a durable workflow; learning then offers it on later tasks.

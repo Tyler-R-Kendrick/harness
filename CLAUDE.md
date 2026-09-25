@@ -18,7 +18,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
-| `packages/workflows` | durable workflows as code: QuickJS sandbox, journaled effects, library, extension | portable |
+| `packages/workflows` | durable workflows as code: AI SDK code mode, journaled tool calls, library, extension, workflows as AI SDK tools | host (Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
 | `packages/testkit` | deterministic ports, AI SDK model fakes (on `ai/test`) and reusable contract suites | pure |

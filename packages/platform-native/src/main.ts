@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
+import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
@@ -86,6 +87,8 @@ const worker: Worker =
             ...instructions,
             ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
             ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
+            // The workflow library's workflows are durable tools, looked up each turn as learning adds to them.
+            ...(cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
           }),
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
         })

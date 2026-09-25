@@ -51,22 +51,20 @@ export interface ToolDecision {
 
 const TOOL_SYSTEM = "Call the tools that fulfil the user's request. Call nothing if no tool applies.";
 
-/**
- * Tools as JSON, as an AI SDK tool set with no `execute`: calls come back to the
- * caller. The model sees each tool's JSON Schema as given; zod validates the calls
- * against it, so a call the schema rejects is an invalid call.
- */
+/** A JSON Schema as an AI SDK schema that validates with zod: models see the schema as given, and values it rejects are errors. */
+export function validatedSchema(schema: Readonly<Record<string, unknown>>) {
+  const parser = z.fromJSONSchema(schema as z.core.JSONSchema.JSONSchema);
+  return jsonSchema(schema as Record<string, unknown>, {
+    validate: (value: unknown) => {
+      const result = parser.safeParse(value);
+      return result.success ? { success: true as const, value: result.data } : { success: false as const, error: new Error(z.prettifyError(result.error)) };
+    },
+  });
+}
+
+/** Tools as JSON, as an AI SDK tool set with no `execute`: calls come back to the caller, validated against each tool's schema. */
 export function toolSet(tools: readonly ToolSpec[]): ToolSet {
-  return Object.fromEntries(
-    tools.map((t) => {
-      const schema = z.fromJSONSchema(t.parameters as z.core.JSONSchema.JSONSchema);
-      const validate = (value: unknown) => {
-        const result = schema.safeParse(value);
-        return result.success ? { success: true as const, value: result.data } : { success: false as const, error: new Error(z.prettifyError(result.error)) };
-      };
-      return [t.name, tool({ description: t.description, inputSchema: jsonSchema(t.parameters, { validate }) })];
-    }),
-  );
+  return Object.fromEntries(tools.map((t) => [t.name, tool({ description: t.description, inputSchema: validatedSchema(t.parameters) })]));
 }
 
 /** Calls the AI SDK could match to a tool and validate against its schema, and why the others were not. */

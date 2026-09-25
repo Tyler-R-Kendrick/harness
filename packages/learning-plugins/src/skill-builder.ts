@@ -50,3 +50,20 @@ export function skillBuilder(options: BuilderOptions & { readonly library: Workf
     },
   };
 }
+
+/**
+ * A made skill as an AI SDK harness skill (`{ name, description, content, files }`, what
+ * `HarnessAgent`'s `skills` setting takes): SKILL.md is the content, and the other files
+ * are bundled with paths relative to the skill.
+ */
+export function harnessSkill(made: Materialized): { name: string; description: string; content: string; files: { path: string; content: string }[] } {
+  const prefix = `${made.name}/`;
+  const main = made.files.find((f) => f.path === `${prefix}SKILL.md`);
+  if (made.target !== TARGETS.agentSkill || !main) throw new Error(`${made.name} is not an agent skill`);
+  return {
+    name: made.name,
+    description: made.description,
+    content: main.content,
+    files: made.files.filter((f) => f !== main).map((f) => ({ path: f.path.startsWith(prefix) ? f.path.slice(prefix.length) : f.path, content: f.content })),
+  };
+}

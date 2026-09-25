@@ -15,7 +15,7 @@ export type { StateChange } from "./options.ts";
 export { ImageInputSchema, JudgeAnswerSchema, JudgeQuestionSchema, ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./compression.ts";
-export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE, route, toolSet } from "./cascade.ts";
+export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE, route, toolSet, validatedSchema } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
 export { BenchmarksFileSchema, CatalogFileSchema, catalogJsonSchemas, parseCatalog } from "./catalog.ts";
 export type { Catalog, CompressionConfig, EmbeddingConfig, ModelEntry } from "./catalog.ts";

@@ -3,13 +3,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { WorkflowFiles } from "@harness/platform-native";
+import { tool } from "ai";
+import { z } from "zod";
 import { parseWorkflow, WorkflowHost } from "@harness/workflows";
 
 const dirs: string[] = [];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
-const count = parseWorkflow({ name: "count", description: "counts", inputs: { type: "object" }, code: "async function workflow(input, ctx) { const n = await ctx.tool('next', {}); return n + input.base; }" });
+const count = parseWorkflow({ name: "count", description: "counts", inputs: { type: "object" }, code: "const n = await tools.next({}); return n + input.base;" });
 
 describe("workflow files", () => {
   it("WX1.1 workflows are kept one file each, listed by name; unknown or unsafe names are absent", async () => {
@@ -32,7 +34,7 @@ describe("workflow files", () => {
     const files = new WorkflowFiles(dir);
     await files.put(count);
     let calls = 0;
-    const host = () => new WorkflowHost({ library: new WorkflowFiles(dir), journal: (r) => files.journal(r), ask: async () => "", tools: { call: async () => ++calls } });
+    const host = () => new WorkflowHost({ library: new WorkflowFiles(dir), journal: (r) => files.journal(r), ask: async () => "", tools: { next: tool({ inputSchema: z.object({}).loose(), execute: async () => ++calls }) } });
     expect(await host().run("count", { base: 10 }, "../../escape")).toMatchObject({ status: "completed", output: 11 });
     expect(await host().run("count", { base: 10 }, "../../escape")).toMatchObject({ status: "completed", output: 11, replayed: 1, performed: 0 });
     expect(calls).toBe(1);

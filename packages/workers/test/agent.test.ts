@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { tool } from "ai";
+import type { ToolSet } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { stateContent, usage } from "@harness/cognitive";
@@ -213,6 +214,16 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     b.permission({ type: "permission", sessionId: "s1", turnId: "t1", requestId: request.requestId, outcome: { outcome: "cancelled" } });
     await second.done;
     expect(end(second.events)).toMatchObject({ stopReason: "cancelled" });
+  });
+
+  it("AW1.13 tools can be given anew each turn, so tools added between turns are offered", async () => {
+    let tools: ToolSet = {};
+    const model = scripted([...text("one"), finish()], [...text("two"), finish()]);
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools: async () => tools }) });
+    await run(worker, [{ type: "text", text: "first" }]).done;
+    tools = { learned: tool({ description: "A learned tool.", inputSchema: z.object({}), execute: async () => "ok" }) };
+    await run(worker, [{ type: "text", text: "second" }], "s1", "t2").done;
+    expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([[], ["learned"]]);
   });
 
   it("AW1.12 an ACP prompt becomes AI SDK user content: text and image blocks, other blocks left out", () => {

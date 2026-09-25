@@ -29,7 +29,8 @@ export function sessionAgent(options: {
   /** Takes turns that send images, when given. */
   readonly vision?: LanguageModel;
   readonly instructions?: string;
-  readonly tools?: ToolSet;
+  /** Tools, or a function giving them anew each turn (e.g. a workflow library's, which grows as learning builds tools). */
+  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -37,7 +38,7 @@ export function sessionAgent(options: {
 }): ToolLoopAgent<TurnOptions, ToolSet> {
   return new ToolLoopAgent<TurnOptions, ToolSet>({
     model: options.model,
-    ...(options.tools ? { tools: options.tools } : {}),
+    ...(options.tools && typeof options.tools !== "function" ? { tools: options.tools } : {}),
     ...(options.toolApproval ? { toolApproval: options.toolApproval } : {}),
     ...(options.stopWhen ? { stopWhen: options.stopWhen } : {}),
     maxRetries: 0,
@@ -48,7 +49,8 @@ export function sessionAgent(options: {
       const playbook = options.learning && said ? await options.learning.recall(said).then((r) => r.playbook, () => "") : "";
       const memories = options.memory && said ? await options.memory.recall(said, { excludeSession: turn.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];
       const instructions = [options.instructions, playbook, memories.length ? `Relevant memories from earlier sessions:\n${memories.map((m) => `- ${m.text}`).join("\n")}` : ""].filter(Boolean).join("\n\n");
-      return { ...call, ...(instructions ? { instructions } : {}), ...(options.vision && hasImage(user) ? { model: options.vision } : {}) };
+      const tools = typeof options.tools === "function" ? await options.tools() : undefined;
+      return { ...call, ...(instructions ? { instructions } : {}), ...(options.vision && hasImage(user) ? { model: options.vision } : {}), ...(tools ? { tools } : {}) };
     },
   });
 }

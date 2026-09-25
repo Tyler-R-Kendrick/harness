@@ -1,9 +1,10 @@
+import { experimental_runCodeMode as runCodeMode } from "@ai-sdk/code-mode";
+import { jsonSchema, tool } from "ai";
+import type { Tool } from "ai";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
-import { ConstraintSchema } from "@harness/cognitive";
+import { ConstraintSchema, validatedSchema } from "@harness/cognitive";
 import type { Constraint } from "@harness/cognitive";
-import { evaluate } from "./sandbox.ts";
-import type { EffectOp } from "./sandbox.ts";
 
 /** What a workflow can do outside its sandbox. The host decides what a tool call reaches. */
 export interface Effects {
@@ -12,8 +13,19 @@ export interface Effects {
   ask(prompt: string, constraint?: Constraint): Promise<string>;
 }
 
-const FORMAT = "harness.workflow-run/v1";
-const Entry = z.strictObject({ op: z.enum(["tool", "ask"]), request: z.unknown(), result: z.unknown() });
+/** A tool a workflow can call, as code mode shows it to the code: its description and input schema. */
+export interface ToolSpec {
+  readonly description?: string;
+  readonly inputSchema?: Readonly<Record<string, unknown>>;
+}
+
+export type EffectOp = "tool" | "ask";
+
+/** `tools.ask` is the model; a tool of that name cannot be offered. */
+export const ASK = "ask";
+
+const FORMAT = "harness.workflow-run/v2";
+const Entry = z.strictObject({ seq: z.int().nonnegative(), op: z.enum(["tool", "ask"]), request: z.unknown(), result: z.unknown() });
 const Journal = z.strictObject({
   format: z.literal(FORMAT),
   workflow: z.string().min(1),
@@ -37,25 +49,37 @@ function canonical(value: unknown): string {
   );
 }
 
+const Ask = z.strictObject({ prompt: z.string(), constraint: z.unknown().optional() });
+const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? null)) as unknown;
+const message = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : typeof e === "object" && e !== null && "message" in e ? `Error: ${String((e as { message: unknown }).message)}` : String(e));
+
 /**
- * Run a workflow durably. Every effect's result is journaled before the code sees it,
- * so a run that stops (a failing effect, a crash, a restart) resumes by running the
- * code again: effects already in the journal are replayed, not performed, and the
- * run continues from the first one that is not. Replay is sound because workflow code
- * is deterministic (see sandbox.ts); a journal that no longer matches what the code
- * asks for is refused. A finished run returns its recorded result.
+ * Run a workflow durably. The code runs in AI SDK code mode (an isolated QuickJS
+ * worker with time, memory and stack limits); its only way out is `tools`, and every
+ * call's result is journaled before the code sees it. A run that stops (a failing
+ * effect, a crash, a restart) resumes by running the code again: calls already in the
+ * journal are replayed, not performed, and the run continues from the first that is
+ * not. Calls are numbered in the order the code makes them, so parallel calls replay
+ * too; a call that does not match its journal entry (the code is not deterministic,
+ * or the journal was edited) is refused, never performed again. A failing effect stops
+ * the run at once, so the code cannot swallow it and resume retries it. A finished run
+ * returns its recorded result.
  */
 export async function runWorkflow(options: {
   readonly name: string;
   readonly code: string;
   readonly input: unknown;
   readonly effects: Effects;
+  /** The tools the code may call, besides `tools.ask`. */
+  readonly tools?: Readonly<Record<string, ToolSpec>>;
   /** Where this run's journal is kept; one journal per run. */
   readonly journal: SnapshotStorage;
-  readonly budget?: number;
+  /** Wall-clock limit for the code between effects (code mode's timeout), in milliseconds. */
+  readonly timeoutMs?: number;
 }): Promise<RunResult> {
   const { code, effects } = options;
-  const input = JSON.parse(JSON.stringify(options.input ?? null)) as unknown;
+  if (options.tools && Object.hasOwn(options.tools, ASK)) throw new Error(`a tool cannot be named ${ASK}: tools.ask is the model`);
+  const input = json(options.input);
   const loaded = await options.journal.load();
   let journal: Journal;
   if (loaded === undefined) journal = { format: FORMAT, workflow: options.name, code, input, entries: [], status: "running" };
@@ -65,36 +89,89 @@ export async function runWorkflow(options: {
     journal = parsed.data;
     if (journal.code !== code || canonical(journal.input) !== canonical(input)) throw new Error("this run was started with other code or input; start a new run");
   }
-  const recorded = journal.entries.length;
-  if (journal.status === "completed") return { status: "completed", output: journal.output, replayed: recorded, performed: 0 };
+  const recorded = new Map(journal.entries.map((e) => [e.seq, e]));
+  if (journal.status === "completed") return { status: "completed", output: journal.output, replayed: recorded.size, performed: 0 };
 
   let seq = 0;
+  let replayed = 0;
   let performed = 0;
+  const abort = new AbortController();
+  let failure: { error: unknown } | undefined;
+  // Code mode reports a host tool's error without its message; the last one is kept to say why a run failed.
+  let toolError: string | undefined;
+  /** Stop the run on a failed effect: the abort ends the code, and this call never settles, so the code cannot catch it. */
+  const stop = (error: unknown): Promise<never> => {
+    failure ??= { error };
+    abort.abort();
+    return new Promise<never>(() => {});
+  };
+  // Journal writes are serialized: entries are saved in the order they complete.
+  let saving: Promise<void> = Promise.resolve();
+
   const effect = async (op: EffectOp, request: unknown): Promise<unknown> => {
-    const entry = journal.entries[seq++];
+    const n = seq++;
+    const entry = recorded.get(n);
     if (entry) {
       if (entry.op !== op || canonical(entry.request) !== canonical(request)) {
-        throw new Error(`step ${seq} diverged: the journal has ${entry.op} ${canonical(entry.request)}, the code asked for ${op} ${canonical(request)}`);
+        return stop(new Error(`step ${n + 1} diverged: the journal has ${entry.op} ${canonical(entry.request)}, the code asked for ${op} ${canonical(request)}`));
       }
+      replayed++;
       return entry.result;
     }
-    const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: unknown };
-    const perform = async () => {
-      if (op === "tool") return effects.tool(r.name, r.args);
-      if (r.constraint === undefined) return effects.ask(r.prompt);
-      const constraint = ConstraintSchema.safeParse(r.constraint);
-      if (!constraint.success) throw new Error(`ctx.ask was given a constraint that is not one: ${JSON.stringify(r.constraint)}`);
-      return effects.ask(r.prompt, constraint.data);
-    };
-    const result = JSON.parse(JSON.stringify((await perform()) ?? null)) as unknown;
-    journal = { ...journal, entries: [...journal.entries, { op, request, result }] };
-    await options.journal.save(journal);
-    performed++;
-    return result;
+    if (failure) return stop(failure.error);
+    try {
+      const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: Constraint };
+      const result = json(op === "tool" ? await effects.tool(r.name, r.args) : await effects.ask(r.prompt, r.constraint));
+      journal = { ...journal, entries: [...journal.entries, { seq: n, op, request, result }] };
+      const snapshot = journal;
+      await (saving = saving.then(() => options.journal.save(snapshot)));
+      performed++;
+      return result;
+    } catch (error) {
+      return stop(error);
+    }
   };
 
-  const outcome = await evaluate(code, input, effect, options.budget);
-  const replayed = Math.min(seq, recorded);
+  const tools: Record<string, Tool> = {
+    [ASK]: tool({
+      description: "Ask a model a question; with a constraint (JSON Schema, grammar, regex or template), the answer follows it where the model can enforce it.",
+      inputSchema: jsonSchema({ type: "object", properties: { prompt: { type: "string" }, constraint: { type: "object" } }, required: ["prompt"] }),
+      execute: async (args: unknown) => {
+        const { prompt, constraint } = Ask.parse(args);
+        if (constraint === undefined) return effect("ask", { prompt });
+        const parsed = ConstraintSchema.safeParse(constraint);
+        if (!parsed.success) throw new Error((toolError = `tools.ask was given a constraint that is not one: ${JSON.stringify(constraint)}`));
+        return effect("ask", { prompt, constraint: parsed.data });
+      },
+    }),
+    ...Object.fromEntries(
+      Object.entries(options.tools ?? {}).map(([name, spec]) => [
+        name,
+        tool({
+          ...(spec.description ? { description: spec.description } : {}),
+          inputSchema: validatedSchema(spec.inputSchema ?? {}),
+          execute: async (args: unknown) => effect("tool", { name, args: args ?? {} }),
+        }),
+      ]),
+    ),
+  };
+
+  let outcome: { ok: true; value: unknown } | { ok: false; error: string };
+  try {
+    const value = await runCodeMode({
+      js: `const input = ${JSON.stringify(input)};\n${code}`,
+      tools,
+      toolExecutionOptions: { abortSignal: abort.signal },
+      ...(options.timeoutMs === undefined ? {} : { options: { executionPolicy: { timeoutMs: options.timeoutMs } } }),
+    });
+    outcome = { ok: true, value: json(value) };
+  } catch (e) {
+    const error = message(e);
+    outcome = { ok: false, error: toolError && /Host tool failed/.test(error) ? `${error} ${toolError}` : error };
+  }
+  await saving;
+  // A failed effect leaves the run resumable: nothing is recorded as its outcome.
+  if (failure) throw failure.error;
   if (outcome.ok) {
     await options.journal.save({ ...journal, status: "completed", output: outcome.value });
     return { status: "completed", output: outcome.value, replayed, performed };
@@ -102,3 +179,4 @@ export async function runWorkflow(options: {
   await options.journal.save({ ...journal, status: "failed", error: outcome.error });
   return { status: "failed", error: outcome.error, replayed, performed };
 }
+

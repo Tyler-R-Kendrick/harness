@@ -42,8 +42,9 @@ export const describeLessons = (input: MaterializeInput): string => {
  * Compile learned procedures into workflow code, deterministically: the same lessons,
  * tools and router answers always give the same code. Each step the router confidently
  * fits to a tool calls that tool; every other step asks the model, with the purpose,
- * the guidance from the other lessons, the input and the results so far. The code
- * reaches the world only through `ctx`, so it runs durably (see @harness/workflows).
+ * the guidance from the other lessons, the input and the results so far. The code is a
+ * code-mode program that reaches the world only through `tools`, so it runs durably
+ * (see @harness/workflows).
  */
 export async function compileProcedure(options: BuilderOptions, input: MaterializeInput, name: string = kebab(input.purpose)): Promise<Workflow> {
   const { steps, guidance } = stepsAndGuidance(input);
@@ -58,25 +59,23 @@ export async function compileProcedure(options: BuilderOptions, input: Materiali
         // No router: the step asks the model instead.
       }
     }
-    lines.push(`  // ${i + 1}. ${oneLine(step)}`);
-    if (call) lines.push(`  steps.push(await ctx.tool(${JSON.stringify(call.name)}, ${JSON.stringify(call.arguments)}));`);
+    lines.push(`// ${i + 1}. ${oneLine(step)}`);
+    if (call) lines.push(`steps.push(await tools[${JSON.stringify(call.name)}](${JSON.stringify(call.arguments)}));`);
     else {
       const prompt = [`Step ${i + 1} of ${JSON.stringify(oneLine(input.purpose))}: ${oneLine(step)}`, ...guidance.map((g) => `Guidance: ${oneLine(g)}`), "Context: "].join("\n");
-      lines.push(`  steps.push(await ctx.ask(${JSON.stringify(prompt)} + JSON.stringify({ input, steps })));`);
+      lines.push(`steps.push(await tools.ask({ prompt: ${JSON.stringify(prompt)} + JSON.stringify({ input, steps }) }));`);
     }
   }
   const sources = input.lessons.map((l) => l.id).join(", ") || "none";
   const code = [
     `// ${name}: ${oneLine(input.purpose)}`,
-    `// Compiled by the workflow builder from lessons ${sources}. Deterministic: every effect goes through ctx.`,
-    "async function workflow(input, ctx) {",
-    "  const steps = [];",
+    `// Compiled by the workflow builder from lessons ${sources}. Every effect goes through tools, so it runs durably.`,
+    "const steps = [];",
     ...lines,
-    "  return { steps };",
-    "}",
+    "return { steps };",
     "",
   ].join("\n");
-  const checked = await checkWorkflow(code);
+  const checked = checkWorkflow(code);
   if (!checked.ok) throw new Error(`the workflow builder produced code that does not compile: ${checked.error}`);
   return parseWorkflow({ name, description: describeLessons(input), inputs: { type: "object", additionalProperties: true }, code });
 }

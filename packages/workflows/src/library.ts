@@ -1,15 +1,18 @@
 import { z } from "zod";
-import { generateText, jsonSchema, Output } from "ai";
-import type { LanguageModel } from "ai";
+import { generateText, jsonSchema, Output, tool } from "ai";
+import type { LanguageModel, ToolSet } from "ai";
 import { constrain } from "@harness/cognitive";
 import type { CognitiveExtension, Constraint } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
-import { runWorkflow } from "./run.ts";
-import type { Effects, RunResult } from "./run.ts";
+import { ASK, runWorkflow } from "./run.ts";
+import type { Effects, RunResult, ToolSpec } from "./run.ts";
 
 /** A workflow as kept: named, described, its input's JSON Schema, and its code. */
 export const WorkflowSchema = z.strictObject({
-  name: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "a kebab-case name"),
+  name: z
+    .string()
+    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "a kebab-case name")
+    .refine((n) => n !== ASK, `a workflow cannot be named ${ASK}: tools.ask is the model`),
   description: z.string(),
   inputs: z.record(z.string(), z.unknown()),
   code: z.string().min(1),
@@ -47,20 +50,15 @@ export class MemoryLibrary implements WorkflowLibrary {
   }
 }
 
-/** Tools beyond the library's own workflows, e.g. the client's. */
-export interface ToolExecutor {
-  call(name: string, args: Readonly<Record<string, unknown>>): Promise<unknown>;
-}
-
 /**
- * Runs library workflows durably. A tool call names another library workflow (which
- * runs as a nested durable run, journaled under the parent's run id) or a tool the host
- * provides; `ask` puts a question to a model.
+ * Runs library workflows durably. The code calls `tools.<name>(args)`: another library
+ * workflow (run as a nested durable run, journaled under the parent's run id) or one of
+ * the host's AI SDK tools; `tools.ask` puts a question to a model.
  */
 export class WorkflowHost {
-  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolExecutor };
+  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet };
 
-  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolExecutor }) {
+  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet }) {
     this.#options = options;
   }
 
@@ -69,29 +67,57 @@ export class WorkflowHost {
   }
 
   async run(name: string, input: unknown, run: string): Promise<RunResult> {
-    const workflow = await this.#options.library.get(name);
+    const { library, tools = {} } = this.#options;
+    const workflow = await library.get(name);
     if (!workflow) throw new Error(`no workflow ${name}`);
+    const specs: Record<string, ToolSpec> = {};
+    for (const [n, t] of Object.entries(tools)) specs[n] = typeof t.description === "string" ? { description: t.description } : {};
+    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { description: w.description, inputSchema: w.inputs };
     let calls = 0;
     return runWorkflow({
       name,
       code: workflow.code,
       input,
+      tools: specs,
       journal: this.#options.journal(run),
       effects: {
         ask: this.#options.ask,
-        tool: async (tool, args) => {
+        tool: async (name, args) => {
           calls++;
-          if (await this.#options.library.get(tool)) {
-            const nested = await this.run(tool, args, `${run}/${calls}:${tool}`);
-            if (nested.status === "failed") throw new Error(`workflow ${tool} failed: ${nested.error}`);
+          if (await library.get(name)) {
+            const nested = await this.run(name, args, `${run}/${calls}:${name}`);
+            if (nested.status === "failed") throw new Error(`workflow ${name} failed: ${nested.error}`);
             return nested.output;
           }
-          if (!this.#options.tools) throw new Error(`no tool ${tool} is available to workflows`);
-          return this.#options.tools.call(tool, args);
+          const execute = tools[name]?.execute;
+          if (!execute) throw new Error(`no tool ${name} is available to workflows`);
+          return execute(args, { toolCallId: `${run}/${calls}:${name}`, messages: [], context: undefined });
         },
       },
     });
   }
+}
+
+/**
+ * The library's workflows as AI SDK tools, for agents: calling one runs it durably (the
+ * tool call's id is its run id, so a repeated call resumes rather than reruns), and a
+ * failed run is a failed tool call.
+ */
+export async function workflowTools(host: WorkflowHost): Promise<ToolSet> {
+  return Object.fromEntries(
+    (await host.library.list()).map((w) => [
+      w.name,
+      tool({
+        description: w.description,
+        inputSchema: jsonSchema(w.inputs),
+        execute: async (input: unknown, { toolCallId }) => {
+          const result = await host.run(w.name, input ?? {}, `tool/${toolCallId}`);
+          if (result.status === "failed") throw new Error(`workflow ${w.name} failed: ${result.error}`);
+          return result.output;
+        },
+      }),
+    ]),
+  );
 }
 
 /**
@@ -112,18 +138,19 @@ const GetInput = z.strictObject({ name: z.string().min(1) });
 /**
  * Workflows for the cognitive core, as an extension: `workflows.list`, `workflows.get`
  * and `workflows.run` (durable: running the same run id again resumes it, or returns
- * its result) through `_harness/cognitive/invoke`. Questions go to `model`.
+ * its result) through `_harness/cognitive/invoke`, on `host`.
  */
-export function workflowsExtension(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly model: LanguageModel; readonly tools?: ToolExecutor }): CognitiveExtension {
-  const host = new WorkflowHost({ library: options.library, journal: options.journal, ask: askModel(options.model), ...(options.tools ? { tools: options.tools } : {}) });
+export function workflowsExtension(options: { readonly host: WorkflowHost }): CognitiveExtension {
+  const { host } = options;
+  const library = host.library;
   return {
     id: "workflows",
     models: [],
     operations: {
-      list: async () => ({ workflows: (await options.library.list()).map(({ name, description, inputs }) => ({ name, description, inputs })) }),
+      list: async () => ({ workflows: (await library.list()).map(({ name, description, inputs }) => ({ name, description, inputs })) }),
       get: async (input) => {
         const { name } = parse(GetInput, "workflows.get input", input ?? {});
-        const workflow = await options.library.get(name);
+        const workflow = await library.get(name);
         if (!workflow) throw new Error(`no workflow ${name}`);
         return workflow;
       },
