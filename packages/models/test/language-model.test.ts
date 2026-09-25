@@ -80,6 +80,14 @@ describe("llama-server as an AI SDK language model", () => {
     expect(JSON.stringify(requests[1]!.body)).not.toContain("regex");
   });
 
+  it("LS1.7 a JSON Schema sent as our constraint becomes the server's structured output", async () => {
+    const { f, requests } = server(() => [delta({ content: '{"n": 4}' }), delta({}, "stop")]);
+    const schema = { type: "object", properties: { n: { type: "integer" } } };
+    const result = streamText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "a number", ...constrain({ type: "json-schema", schema }), maxRetries: 0 });
+    expect(await result.text).toBe('{"n": 4}');
+    expect(requests[0]!.body["response_format"]).toMatchObject({ type: "json_schema", json_schema: { schema } });
+  });
+
   it("LS1.2 tool calls streamed in pieces are assembled and emitted before the finish", async () => {
     const { f } = server(() => [
       delta({ tool_calls: [{ index: 0, id: "c1", type: "function", function: { name: "get_weather", arguments: "" } }] }),

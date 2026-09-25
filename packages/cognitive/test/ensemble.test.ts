@@ -150,6 +150,15 @@ describe("Ensemble", () => {
     expect(grammar.response.headers?.[MODEL_HEADER]).toBe("loose");
   });
 
+  it("EN1.16 a JSON Schema constraint of ours reaches members as the AI SDK response format too", async () => {
+    const e = new Ensemble({ platform: "native" });
+    const member = new MockLanguageModelV4({ doGenerate: async () => ({ content: [{ type: "text", text: "{}" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] }) });
+    e.register(descriptor("json", ["chat"], ["generator"], { constraints: ["json-schema"] }), async () => ({ generator: member }));
+    const schema = { type: "object", properties: { a: { type: "integer" } } };
+    await generateText({ model: e.languageModel(), prompt: "p", maxRetries: 0, ...constrain({ type: "json-schema", schema }) });
+    expect(member.doGenerateCalls[0]!.responseFormat).toEqual({ type: "json", schema });
+  });
+
   it("EN1.13 as an AI SDK provider, model ids are tasks, optionally with the port kind", async () => {
     const e = new Ensemble({ platform: "native" });
     e.register(descriptor("chatty", ["chat"], ["generator"]), async () => ({ generator: generator("hi") }));

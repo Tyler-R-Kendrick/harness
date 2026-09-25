@@ -36,7 +36,10 @@ No: every model is an AI SDK model, and every agent is an AI SDK agent.
   `Experimental_EvaluationMockModelV4`). Our contract suites drive models through AI SDK
   functions.
 - **Middleware for cross-cutting behavior.** A document parser's trained instruction is
-  `pageInstruction` middleware on the model (`wrapLanguageModel`).
+  `pageInstruction` middleware on the model (`wrapLanguageModel`). A JSON Schema sent
+  with `constrain()` is copied into `responseFormat` (`jsonResponseFormat` middleware on
+  llama-server; the ensemble does the same for every member), so providers that enforce
+  only the AI SDK's response format still enforce it.
 
 ## What stays ours, and why
 

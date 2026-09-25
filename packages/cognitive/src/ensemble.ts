@@ -2,7 +2,7 @@ import { NoSuchModelError } from "@ai-sdk/provider";
 import type { EmbeddingModelV4, LanguageModelV4, LanguageModelV4CallOptions, ProviderV4 } from "@ai-sdk/provider";
 import { TASK_CATEGORIES } from "./models.ts";
 import type { ModelDescriptor, Platform, PortKind, TaskCategory } from "./models.ts";
-import { constraintOf, MODEL_HEADER } from "./options.ts";
+import { constraintOf, MODEL_HEADER, withResponseFormat } from "./options.ts";
 import type { Compression, CompressRequest, EvaluationModelV4, PortMap, Ports } from "./ports.ts";
 import { rankForTask } from "./selection.ts";
 import type { Ranked, SelectionOptions } from "./selection.ts";
@@ -209,11 +209,11 @@ export class Ensemble {
       modelId: kind === "generator" ? task : `${task}/${kind}`,
       supportedUrls: {},
       doGenerate: async (options) => {
-        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(options), prefer(options));
+        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(withResponseFormat(options)), prefer(options));
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
       doStream: async (options) => {
-        const { id, value } = await this.#call(task, kind, (m) => m.doStream(options), prefer(options));
+        const { id, value } = await this.#call(task, kind, (m) => m.doStream(withResponseFormat(options)), prefer(options));
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
     };

@@ -4,7 +4,7 @@
  * provider options under the `harness` key, which our own models read and other
  * providers ignore.
  */
-import type { JSONObject, JSONValue } from "@ai-sdk/provider";
+import type { JSONObject, JSONSchema7, JSONValue, LanguageModelV4CallOptions, LanguageModelV4Middleware } from "@ai-sdk/provider";
 import { z } from "zod";
 import { ConstraintSchema } from "./constraint.ts";
 import type { Constraint } from "./constraint.ts";
@@ -43,6 +43,22 @@ export function constraintOf(options: { readonly responseFormat?: { readonly typ
   if (format?.type === "json") return { type: "json-schema", schema: (format.schema ?? {}) as Record<string, unknown> };
   return undefined;
 }
+
+/**
+ * Call options with a JSON Schema constraint of ours also set as the AI SDK response
+ * format (unless one is set), so a provider that enforces only that still does.
+ */
+export function withResponseFormat(options: LanguageModelV4CallOptions): LanguageModelV4CallOptions {
+  if (options.responseFormat !== undefined) return options;
+  const constraint = constraintOf(options);
+  return constraint?.type === "json-schema" ? { ...options, responseFormat: { type: "json", schema: constraint.schema as JSONSchema7 } } : options;
+}
+
+/** `withResponseFormat` as middleware, for wrapping a provider's model. */
+export const jsonResponseFormat: LanguageModelV4Middleware = {
+  specificationVersion: "v4",
+  transformParams: async ({ params }) => withResponseFormat(params),
+};
 
 const EmbeddingOptions = z.object({
   kind: z.enum(["query", "document"]).default("document"),
