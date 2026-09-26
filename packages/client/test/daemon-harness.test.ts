@@ -1,6 +1,7 @@
 import { PassThrough, Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
+import type { AnyMessage } from "@agentclientprotocol/sdk";
 import { HarnessCapabilityUnsupportedError } from "@ai-sdk/harness";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { daemonHarness, noSandbox } from "@harness/client";
@@ -226,5 +227,33 @@ describe("daemonHarness: the harness daemon as an AI SDK harness (HarnessV1)", (
     const outer = new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness: daemonHarness({ connect: d2.connect }) }), { sandboxSession: noSandbox }) });
     await run(outer, "go", "s1", "t1", "deny").done;
     expect(answers).toEqual([{ outcome: "cancelled" }]);
+  });
+
+  it("DH1.11 updates that arrive in the same read as the prompt's answer still come before the finish", async () => {
+    // A daemon that writes a turn's last update and its answer together, as one chunk: the
+    // ACP SDK answers a request at once but hands notifications through async handlers.
+    const connect = (): DaemonLink => {
+      const toDaemon = new TransformStream<AnyMessage, AnyMessage>();
+      let answer = (_: AnyMessage[]) => {};
+      const fromDaemon = new ReadableStream<AnyMessage>({ start: (c) => void (answer = (ms) => ms.forEach((m) => c.enqueue(m))) });
+      void (async () => {
+        for await (const m of toDaemon.readable as unknown as AsyncIterable<{ id?: number; method?: string; params?: { sessionId?: string } }>) {
+          if (m.method === "initialize") answer([{ jsonrpc: "2.0", id: m.id!, result: { protocolVersion: PROTOCOL_VERSION } }]);
+          else if (m.method === "session/new") answer([{ jsonrpc: "2.0", id: m.id!, result: { sessionId: "d1" } }]);
+          else if (m.method === "session/prompt")
+            answer([
+              { jsonrpc: "2.0", method: "session/update", params: { sessionId: "d1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "all of it" } } } },
+              { jsonrpc: "2.0", id: m.id!, result: { stopReason: "end_turn" } },
+            ]);
+          else if (m.id !== undefined) answer([{ jsonrpc: "2.0", id: m.id, result: {} }]);
+        }
+      })();
+      return { stream: { readable: fromDaemon, writable: toDaemon.writable }, close: () => {} };
+    };
+    const agent = new HarnessAgent({ harness: daemonHarness({ connect }) });
+    const session = await agent.createSession({ sandboxSession: noSandbox() });
+    const result = await agent.stream({ session, prompt: "go" });
+    expect(await result.text).toBe("all of it");
+    await session.destroy();
   });
 });

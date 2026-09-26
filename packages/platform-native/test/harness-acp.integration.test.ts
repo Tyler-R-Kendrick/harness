@@ -53,6 +53,7 @@ describe("daemon sessions on a bridge-backed AI SDK harness in host sandboxes", 
     await c.acp.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     const { sessionId } = await c.acp.newSession({ cwd: "/", mcpServers: [] });
     expect(await c.acp.prompt({ sessionId, prompt: [{ type: "text", text: "through the bridge" }] })).toEqual({ stopReason: "end_turn" });
-    expect(c.text()).toBe("echo: through the bridge");
+    const log = host.daemon.snapshot().sessions[0]!.log as { entries: { payload: unknown }[] };
+    expect({ text: c.text(), log: log.entries.map((e) => e.payload) }).toMatchObject({ text: "echo: through the bridge" });
   }, 180_000);
 });
