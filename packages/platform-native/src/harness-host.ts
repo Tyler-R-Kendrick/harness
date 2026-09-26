@@ -1,4 +1,4 @@
-import type { HarnessV1 } from "@ai-sdk/harness";
+import type { HarnessV1, HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { createACP } from "@ai-sdk/harness-acp";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
@@ -6,6 +6,7 @@ import { createCodex } from "@ai-sdk/harness-codex";
 import { AgentWorker, harnessSessions } from "@harness/workers";
 import type { HarnessStore } from "@harness/workers";
 import { FileStorage } from "./file-storage.ts";
+import { dockerSandbox } from "./docker-sandbox.ts";
 import { hostSandbox } from "./host-sandbox.ts";
 
 /** Any AI SDK harness adapter: each declares its own builtin tools, which the worker never reads. */
@@ -45,6 +46,26 @@ export function harnessAdapter(spec: HarnessSpec): AnyHarness {
   }
 }
 
+/** Where harness sessions run: directories on this machine, or a Docker container each. */
+export type SandboxSpec = { readonly kind: "host" } | { readonly kind: "docker"; readonly image: string };
+
+/** Parse `host` or `docker:<image>`. */
+export function parseSandboxSpec(text: string): SandboxSpec {
+  if (text === "host") return { kind: "host" };
+  const image = /^docker:(\S+)$/.exec(text)?.[1];
+  if (image) return { kind: "docker", image };
+  throw new Error(`unknown sandbox "${text}": use host or docker:<image>`);
+}
+
+/**
+ * The sandbox provider for a spec. The host's keeps each session's directory under
+ * `root`; a Docker container runs `setup` once when created and gets `env` in every command.
+ */
+export function sandboxProvider(spec: SandboxSpec, options: { readonly root: string; readonly setup?: string; readonly env?: Readonly<Record<string, string>> }): HarnessV1SandboxProvider {
+  if (spec.kind === "host") return hostSandbox({ root: options.root });
+  return dockerSandbox({ image: spec.image, ...(options.setup === undefined ? {} : { setup: options.setup }), ...(options.env === undefined ? {} : { env: options.env }) });
+}
+
 /** Parked harness sessions in one JSON file (written atomically), by daemon session id. */
 export class FileHarnessStore implements HarnessStore {
   readonly #file: FileStorage;
@@ -77,12 +98,15 @@ export class FileHarnessStore implements HarnessStore {
 }
 
 /**
- * A session worker that runs every daemon session on a harness, each in a host sandbox
- * of its own under `sandboxRoot`. With a `stateFile`, closing parks the harness
- * sessions there and a daemon started later resumes them.
+ * A session worker that runs every daemon session on a harness, each in a sandbox of its
+ * own from `sandbox` (or a host sandbox under `sandboxRoot`). With a `stateFile`, closing
+ * parks the harness sessions there and a daemon started later resumes them.
  */
-export function harnessWorker(options: { readonly harness: AnyHarness; readonly sandboxRoot: string; readonly stateFile?: string; readonly instructions?: string }): { worker: AgentWorker; close(): Promise<void> } {
-  const agent = new HarnessAgent({ harness: options.harness, sandbox: hostSandbox({ root: options.sandboxRoot }), ...(options.instructions === undefined ? {} : { instructions: options.instructions }) });
+export function harnessWorker(
+  options: { readonly harness: AnyHarness; readonly stateFile?: string; readonly instructions?: string } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
+): { worker: AgentWorker; close(): Promise<void> } {
+  const sandbox = "sandbox" in options ? options.sandbox : hostSandbox({ root: options.sandboxRoot });
+  const agent = new HarnessAgent({ harness: options.harness, sandbox, ...(options.instructions === undefined ? {} : { instructions: options.instructions }) });
   const sessions = harnessSessions(agent, options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) });
   return { worker: new AgentWorker({ agent: sessions }), close: () => sessions.close() };
 }

@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
+import { parseCatalog } from "@harness/cognitive";
 import { chromium } from "playwright-core";
 import type { Browser, BrowserContext } from "playwright-core";
 import { build } from "vite";
@@ -16,6 +18,8 @@ let out: string;
 let server: Server;
 let origin: string;
 let browser: Browser;
+/** Model files the test server serves under /hub, as Hugging Face would. */
+const hubFiles: Record<string, Uint8Array> = {};
 
 // The browser host, bundled for the browser (as an app would), served over HTTP (IndexedDB
 // and shared workers need an origin) and run in real Chromium.
@@ -24,7 +28,7 @@ beforeAll(async () => {
   await build({
     configFile: false,
     logLevel: "silent",
-    resolve: { alias: Object.fromEntries(["platform-browser", "runtime", "core", "cognitive", "workers", "client", "protocol"].map((name) => [`@harness/${name}`, join(packages, name, "src/index.ts")])) },
+    resolve: { alias: Object.fromEntries(["platform-browser", "runtime", "core", "cognitive", "workers", "client", "protocol", "models", "constrained", "behavior"].map((name) => [`@harness/${name}`, join(packages, name, "src/index.ts")])) },
     build: {
       outDir: out,
       emptyOutDir: true,
@@ -34,6 +38,8 @@ beforeAll(async () => {
     },
   });
   server = createServer((req, res) => {
+    const hubFile = (req.url ?? "").startsWith("/hub/") ? Object.entries(hubFiles).find(([path]) => (req.url ?? "").endsWith(`/${path}`)) : undefined;
+    if (hubFile) return void res.writeHead(200).end(hubFile[1]);
     const name = req.url === "/" ? "index.html" : (req.url ?? "").slice(1);
     try {
       const body = name === "index.html" ? readFileSync(join(fixtures, name)) : readFileSync(join(out, name));
@@ -95,5 +101,50 @@ describe("the browser host in Chromium", () => {
     const result = await other.evaluate((id) => (globalThis as unknown as Smoke).smoke.takeOver(id), sessionId);
     expect(result).toMatchObject({ stopReason: "end_turn", said: expect.stringMatching(/echo: mine now$/) });
     await profile.close();
+  });
+
+  it("BI3.1 model files are kept in the real Cache API and found again by another instance", async () => {
+    const p = await page();
+    expect(await p.evaluate(() => (globalThis as unknown as { smoke: { cacheRoundTrip(): Promise<unknown> } }).smoke.cacheRoundTrip())).toEqual({ found: [1, 2, 3], missing: true });
+    await p.close();
+  });
+
+  it("BI3.2 XGrammar runs in the browser from its bundled source: a JSON Schema constrains tokens, and a grammar it cannot parse is recovered from", async () => {
+    const p = await page();
+    const result = await p.evaluate(() => (globalThis as unknown as { smoke: { xgrammar(): Promise<{ allowed: string[]; forced: string; broken: string; afterBroken: string[] }> } }).smoke.xgrammar());
+    expect(result.allowed).toEqual(["{"]);
+    expect(result.forced).toBe('{"n": ');
+    expect(result.broken).toMatch(/does not compile/);
+    expect(result.afterBroken).toEqual(["a", "b", "c"]);
+    await p.close();
+  });
+
+  it("BI3.3 the browser host's cognitive core loads a Cactus WASM router from verified files and answers a cognitive invoke over ACP", async () => {
+    const engine = new TextEncoder().encode(`
+      module.exports = async function (arg) {
+        const heap = new Uint8Array(1 << 16); let next = 16;
+        return {
+          HEAPU8: heap,
+          _malloc: (n) => { const p = next; next += Math.ceil((n + 8) / 16) * 16; return p; },
+          _free: () => {},
+          _tiny_load: () => (arg.wasmBinary.length > 0 ? 0 : -1),
+          UTF8ToString: (p) => { let e = p; while (heap[e]) e++; return new TextDecoder().decode(heap.subarray(p, e)); },
+          ccall: (name, _r, _t, args) => {
+            if (name === "tiny_embed") return 2;
+            if (name !== "tiny_complete") return 0;
+            const reply = new TextEncoder().encode(JSON.stringify({ success: true, function_calls: [{ name: "t", arguments: {} }], confidence: 0.9, reasoning: "" }));
+            heap.set(reply, args[2]); heap[args[2] + reply.length] = 0; return 1;
+          },
+        };
+      };`);
+    Object.assign(hubFiles, { "engine.js": engine, "engine.wasm": new Uint8Array([0, 97, 115, 109]), "weights.bin": new Uint8Array([1, 2, 3]) });
+    const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+    const data = (file: string) => JSON.parse(readFileSync(new URL(`../../cognitive/data/${file}`, import.meta.url), "utf8")) as unknown;
+    const router = parseCatalog(data("catalog.json"), data("benchmarks.json")).models.find((m) => m.runtime === "cactus-wasm" && m.platforms.includes("browser"))!;
+    const model = { ...router, run: { loader: "engine.js", wasm: "engine.wasm", weights: "weights.bin", prefix: "tiny" }, artifact: { ...router.artifact!, files: Object.entries(hubFiles).map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: sha(bytes) })) } };
+    const p = await page();
+    const routed = await p.evaluate(([m, hub]) => (globalThis as unknown as { smoke: { cognitive(m: unknown, hub: string): Promise<unknown> } }).smoke.cognitive(m, hub), [model, `${origin}/hub`] as const);
+    expect(routed).toMatchObject({ model: model.id, calls: [{ name: "t", arguments: {} }], confidence: 0.9 });
+    await p.close();
   });
 });

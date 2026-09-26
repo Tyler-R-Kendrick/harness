@@ -44,6 +44,14 @@ else can prompt that session.
   worker's script runs.
 - **Snapshots go to IndexedDB**, one record per daemon and a transaction per save, and
   it runs the same storage contract as the file and memory stores.
+- **The ensemble loads the same way as natively.** The loaders for runtimes that run on
+  every host (hosted and server judges, Cactus WASM, transformers.js) live in
+  `@harness/models` (`portableLoaders`); each host supplies how it fetches, caches and
+  instantiates. The browser keeps verified files in the Cache API, runs Emscripten
+  loaders with no `require`, and loads XGrammar from its bundled source (evaluated again
+  for a fresh instance after a grammar it cannot parse). Without an XGrammar loader, a
+  model the catalog says enforces constraints is registered without that claim, so a
+  constrained request is never sent to a model that would ignore it.
 
 ## Consequences
 

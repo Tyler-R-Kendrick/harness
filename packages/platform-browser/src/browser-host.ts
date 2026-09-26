@@ -2,6 +2,8 @@ import type { AgentInfo, Daemon, Identity, SnapshotStorage } from "@harness/core
 import type { Ensemble } from "@harness/cognitive";
 import { DaemonRuntime } from "@harness/runtime";
 import type { Worker } from "@harness/workers";
+import { extensionPort } from "./extension-port.ts";
+import type { ExtensionPort, ExtensionPortSource } from "./extension-port.ts";
 import { ambientLocks, PORT_CONTROL, portControl } from "./port.ts";
 import type { AcpPort, Locks } from "./port.ts";
 
@@ -91,11 +93,24 @@ export class BrowserHost {
    * `connect` comes as soon as its script runs.
    */
   static serve(source: PortSource, options: BrowserHostOptions): Promise<BrowserHost> {
+    return BrowserHost.#serving((accept) => source.addEventListener("connect", (event) => event.ports.forEach(accept)), options);
+  }
+
+  /**
+   * Start a host in an extension's background (its service worker) that accepts every
+   * runtime port named `portName` (default `acp`) from `onConnect`
+   * (`chrome.runtime.onConnect`), including ports that connect while it starts.
+   */
+  static serveExtension(onConnect: ExtensionPortSource, options: BrowserHostOptions & { readonly portName?: string }): Promise<BrowserHost> {
+    const name = options.portName ?? "acp";
+    return BrowserHost.#serving((accept) => onConnect.addListener((port: ExtensionPort) => (port.name === name ? accept(extensionPort(port)) : undefined)), options);
+  }
+
+  /** Start a host, taking ports from `subscribe` at once and queueing those that arrive before it is up. */
+  static #serving(subscribe: (accept: (port: AcpPort) => void) => void, options: BrowserHostOptions): Promise<BrowserHost> {
     const early: AcpPort[] = [];
     let accept = (port: AcpPort) => void early.push(port);
-    source.addEventListener("connect", (event) => {
-      for (const port of event.ports) accept(port);
-    });
+    subscribe((port) => accept(port));
     return BrowserHost.start(options).then((host) => {
       accept = (port) => void host.accept(port);
       for (const port of early.splice(0)) accept(port);

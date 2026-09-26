@@ -71,7 +71,7 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(vision.doStreamCalls[0]!.prompt.at(-1)!.content).toEqual([{ type: "text", text: "what is this?" }, { type: "file", data: { type: "data", data: new Uint8Array([1, 2, 3]) }, mediaType: "image/png" }]);
   });
 
-  it("AW1.4 finish reasons map to ACP stop reasons; a model error is a notice and the turn still ends", async () => {
+  it("AW1.4 finish reasons map to ACP stop reasons; a model error is a notice and the turn ends as a refusal, not a success", async () => {
     for (const [reason, stop] of [["length", "max_tokens"], ["content-filter", "refusal"], ["other", "end_turn"]] as const) {
       const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("x"), finish(reason)]) }) }), [{ type: "text", text: "go" }]);
       await done;
@@ -80,7 +80,7 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     const failing = run(new AgentWorker({ agent: sessionAgent({ model: scripted(Object.assign(new Error("model offline"), { statusCode: 400 })) }) }), [{ type: "text", text: "go" }]);
     await failing.done;
     expect(updates(failing.events)).toEqual([{ sessionUpdate: "notice", severity: "error", title: "Model call failed", description: expect.stringContaining("model offline") }]);
-    expect(end(failing.events)).toMatchObject({ stopReason: "end_turn" });
+    expect(end(failing.events)).toMatchObject({ stopReason: "refusal" });
   });
 
   it("AW1.5 cancelling stops the stream and ends the turn as cancelled; an unknown turn is ignored", async () => {

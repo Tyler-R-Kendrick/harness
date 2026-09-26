@@ -155,7 +155,11 @@ export class AgentWorker implements Worker {
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {
       if (running.abort.signal.aborted || e instanceof CancelledTurn) stopReason = "cancelled";
-      else update({ sessionUpdate: "notice", severity: "error", title: "Model call failed", description: e instanceof Error ? e.message : String(e) });
+      else {
+        // A failed turn is not a finished one: say why, and end it as a refusal (as the host does for a crashed worker).
+        update({ sessionUpdate: "notice", severity: "error", title: "Model call failed", description: e instanceof Error ? e.message : String(e) });
+        stopReason = "refusal";
+      }
     } finally {
       this.#running.delete(key);
     }
