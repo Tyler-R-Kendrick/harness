@@ -12,6 +12,7 @@ export { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog
 export { WorkflowFiles } from "./workflow-files.ts";
 export { daemonSocket } from "./daemon-link.ts";
 export { dockerSandbox } from "./docker-sandbox.ts";
+export { webSocketToken } from "./ws-token.ts";
 export type { DockerSandboxOptions } from "./docker-sandbox.ts";
 export { hostSandbox } from "./host-sandbox.ts";
 export { FileHarnessStore, harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";

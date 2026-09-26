@@ -206,7 +206,8 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | ACP framing on the official SDK (`ndJsonStream`), with a per-line byte bound in front of it; JSON-RPC validation in the pure core; ACP method names, protocol version and message types from the SDK (responses are checked against them at compile time) | built | NH1.4–NH1.5, LL1.1–LL1.3, JR1–JR3 (fuzzed), ACP1.1–ACP1.2 |
 | Transport bindings: stdio, Unix socket | built | NS1, NS2 |
 | Binding: MessagePort (one port per connection, one structured message per JSON-RPC message; `portStream` gives the ACP SDK's `Stream` for clients and `daemonHarness`). Ports have no reliable close event across browsers, so hanging up is a control message, and a client holds a Web Lock for its lifetime that the host waits on, so a tab that dies frees its connection and input lease | built | PS1.1–PS1.12, BH1.1–BH1.12, BI1.1–BI1.3 (real Chromium: a tab, a shared worker serving two clients, a dead tab's lease freed) |
-| Bindings: WebSocket, extension ports (`chrome.runtime.Port`) | not started | |
+| Binding: WebSocket on the native host (`--ws <port>`): loopback only, one JSON-RPC message per text frame, every connection presents a token (a bearer header, or from a browser the subprotocol `harness.token.<token>`), browser origins refused unless allowed (`--ws-origin`); clients use the ACP SDK's WebSocket stream | built | WS1.1–WS1.6 (the SDK's WebSocket client against the host), WT1.1–WT1.2 |
+| Binding: extension ports (`chrome.runtime.Port`): `extensionPort` adapts one to the MessagePort binding (its disconnect is reliable, so a closed page frees its connection), `BrowserHost.serveExtension(chrome.runtime.onConnect)` serves an extension's pages from its service worker | built | EP1.1–EP1.3, BI2.1–BI2.2 (an unpacked extension in Chromium) |
 | Version negotiation | partial | Protocol and profile versions advertised; no range negotiation |
 | MCP (south side) | not started | |
 
@@ -218,7 +219,7 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Native background service (Node): stdio/socket, file storage, workers, on the runtime | built | NS1, NS2, NH1; tested on Linux only |
 | Native model hosting: verified artifact cache, streamed GGUF files, Emscripten loader, llama-server processes, ensemble builder with one loader per runtime | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH3.2; CLI `--cognitive` |
 | Browser host (`@harness/platform-browser`): the runtime in a tab, PWA, shared worker (`BrowserHost.serve(self)`, one daemon for every tab of an origin) or extension background; `Date.now` clock, Web Crypto entropy, timer ticks, IndexedDB snapshots, any session worker (echo, an AI SDK agent) | built | BH1.1–BH1.12, BI1.1–BI1.3 (bundled with Vite, run in Chromium via Playwright); no browser ensemble wiring yet, extension ports not bound |
-| Browser extension ports, remote API, mobile | not started | Core and runtime are pure (lint + tsconfig enforced) so they can run there |
+| Remote API, mobile | not started | Core and runtime are pure (lint + tsconfig enforced) so they can run there |
 
 ## N. Federation
 

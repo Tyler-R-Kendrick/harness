@@ -26,8 +26,8 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/workers` | session workers: echo (deterministic), and any AI SDK agent (`AgentWorker`, `sessionAgent`), including AI SDK harnesses (`harnessSessions`) | portable |
 | `packages/client` | the daemon as an AI SDK harness (`daemonHarness`, a `HarnessV1` adapter over ACP) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
-| `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
-| `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts with Web Lock liveness, IndexedDB snapshots | host (browser) |
+| `packages/platform-native` | Node host: stdio/socket/WebSocket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
+| `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts (Web Lock liveness) and extension runtime ports, IndexedDB snapshots | host (browser) |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable

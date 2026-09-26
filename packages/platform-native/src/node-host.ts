@@ -1,9 +1,12 @@
-import { getRandomValues } from "node:crypto";
+import { getRandomValues, timingSafeEqual } from "node:crypto";
+import type { IncomingMessage } from "node:http";
 import { chmod, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import { Readable, Writable } from "node:stream";
 import { ndJsonStream } from "@agentclientprotocol/sdk";
+import { WebSocketServer } from "ws";
+import type { WebSocket } from "ws";
 import type { AnyMessage } from "@agentclientprotocol/sdk";
 import type { AgentInfo, Daemon, Identity, SnapshotStorage } from "@harness/core";
 import type { Ensemble } from "@harness/cognitive";
@@ -12,6 +15,9 @@ import { DaemonRuntime } from "@harness/runtime";
 import type { Worker } from "@harness/workers";
 import { FileStorage } from "./file-storage.ts";
 import { lineLimit } from "./line-limit.ts";
+
+/** The subprotocol prefix a browser sends its token in. */
+const PROTOCOL_TOKEN = "harness.token.";
 
 export interface NodeHostOptions {
   readonly worker: Worker;
@@ -41,6 +47,7 @@ export class NodeHost {
   readonly #maxLineBytes: number;
   #server: Server | undefined;
   #socketPath: string | undefined;
+  #webSockets: WebSocketServer | undefined;
 
   private constructor(runtime: DaemonRuntime, options: NodeHostOptions) {
     this.runtime = runtime;
@@ -104,13 +111,77 @@ export class NodeHost {
     this.#socketPath = path;
   }
 
+  /**
+   * Listen for ACP over WebSocket on this machine's loopback, one JSON-RPC message per text
+   * frame. Every connection must present `token`: as an `Authorization: Bearer` header, or
+   * (browsers cannot set headers) as the subprotocol `harness.token.<token>`. A browser
+   * page is refused unless its origin is one of `origins`, so no web page can drive the daemon.
+   */
+  async listenWebSocket(options: { readonly port?: number; readonly token: string; readonly origins?: readonly string[] }): Promise<{ url: string; port: number }> {
+    const expected = Buffer.from(options.token);
+    const matches = (token: string | undefined) => token !== undefined && token.length === options.token.length && timingSafeEqual(Buffer.from(token), expected);
+    const offered = (req: IncomingMessage) =>
+      (req.headers["sec-websocket-protocol"] ?? "")
+        .split(",")
+        .map((p) => p.trim())
+        .find((p) => p.startsWith(PROTOCOL_TOKEN));
+    const server = new WebSocketServer({
+      host: "127.0.0.1",
+      port: options.port ?? 0,
+      maxPayload: this.#maxLineBytes,
+      verifyClient: ({ req }, done) => {
+        const origin = req.headers.origin;
+        if (origin !== undefined && !(options.origins ?? []).includes(origin)) return done(false, 403, "origin not allowed");
+        const bearer = /^Bearer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+        const token = bearer ?? offered(req)?.slice(PROTOCOL_TOKEN.length);
+        done(matches(token), 401, "a token is required");
+      },
+      // Echo the token subprotocol a browser offered (its handshake requires one back).
+      handleProtocols: (protocols) => [...protocols].find((p) => p.startsWith(PROTOCOL_TOKEN)) ?? false,
+    });
+    server.on("connection", (socket: WebSocket) => this.#attachWebSocket(socket));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.once("listening", () => resolve());
+    });
+    this.#webSockets = server;
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    return { url: `ws://127.0.0.1:${port}`, port };
+  }
+
+  #attachWebSocket(socket: WebSocket): void {
+    const send = (message: object) => socket.send(JSON.stringify(message));
+    const connection = this.runtime.connect(this.#identity, send);
+    this.#closers.set(connection.id, () => socket.close(1001, "the daemon is shutting down"));
+    socket.on("message", (data: Buffer, binary: boolean) => {
+      if (binary) return send(failure(null, ERROR_CODES.invalidRequest, "binary frames are not ACP messages"));
+      let message: unknown;
+      try {
+        message = JSON.parse(data.toString());
+      } catch {
+        return send(failure(null, ERROR_CODES.parseError, "a frame is not JSON"));
+      }
+      connection.receive(message);
+    });
+    socket.on("close", () => {
+      this.#closers.delete(connection.id);
+      connection.disconnect();
+    });
+  }
+
   /** Stop accepting connections, let running turns finish, and flush state. */
   async close(): Promise<void> {
     clearInterval(this.#ticker);
     const server = this.#server;
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+    // The WebSocket server closes once its connections have: hang every connection up, then wait.
+    const webSockets = this.#webSockets;
+    const listening = webSockets ? new Promise<void>((resolve) => webSockets.close(() => resolve())) : undefined;
     for (const close of this.#closers.values()) close();
+    await listening;
     await this.runtime.close();
     if (this.#socketPath !== undefined && process.platform !== "win32") await unlink(this.#socketPath).catch(() => {});
   }
+
 }
