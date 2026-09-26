@@ -133,4 +133,38 @@ describe("extension ports (chrome.runtime.Port)", () => {
     expect(() => mine.postMessage({ late: true })).toThrow(/disconnected port/);
     expect(() => port.postMessage({ late: true })).not.toThrow();
   });
+
+  it("EP1.5 a page that speaks while the service worker is still starting is answered: its port's early messages wait for the daemon", async () => {
+    const connects: ((port: ExtensionPort) => void)[] = [];
+    let ready!: () => void;
+    const loaded = new Promise<void>((r) => (ready = r));
+    // A host that takes a while to start (its snapshot is slow to load).
+    const storage = { load: async () => (await loaded, undefined), save: async () => {} };
+    const starting = BrowserHost.serveExtension({ addListener: (l) => void connects.push(l) }, { worker: new EchoWorker(), identity: ME, log: () => {}, storage });
+    const [pageEnd, workerEnd] = portPair();
+    connects.forEach((l) => l(workerEnd));
+    const c = client(pageEnd);
+    const initialized = c.acp.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    // the request reaches the worker's end before the daemon is listening
+    await new Promise((r) => setTimeout(r, 10));
+    ready();
+    hosts.push(await starting);
+    expect(await initialized).toMatchObject({ protocolVersion: PROTOCOL_VERSION });
+    c.hangUp();
+  });
+
+  it("EP1.6 what arrives before the daemon listens is delivered in order once it starts, a disconnect included", async () => {
+    const [mine, theirs] = portPair();
+    const port = extensionPort(mine);
+    theirs.postMessage({ n: 1 });
+    theirs.postMessage({ n: 2 });
+    theirs.disconnect();
+    await new Promise((r) => setTimeout(r, 5));
+    const events: unknown[] = [];
+    port.addEventListener("message", (e) => events.push(e.data));
+    port.addEventListener("close", () => events.push("closed"));
+    expect(events).toEqual([]);
+    port.start();
+    expect(events).toEqual([{ n: 1 }, { n: 2 }, "closed"]);
+  });
 });

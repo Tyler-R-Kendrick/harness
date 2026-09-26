@@ -200,7 +200,19 @@ const agentTools = await workflowTools(workflows); // the library's workflows, f
 
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:
 `BrowserHost.serveExtension(chrome.runtime.onConnect, options)` there, and
-`portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page.
+`portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page. An
+extension may not evaluate code, so it packages what the ensemble would otherwise evaluate,
+with the `factoryImports()` build plugin from `@harness/platform-browser/vite` (and
+`'wasm-unsafe-eval'` in its manifest's `content_security_policy`):
+
+```ts
+import xgrammarBinding from "@mlc-ai/web-xgrammar?factory";
+import engineSource from "./vendor/cactus-engine.js?raw"; // the catalog's pinned loader, vendored
+import engine from "./vendor/cactus-engine.js?factory";
+import { buildBrowserEnsemble, packagedEmscripten, xgrammarFromFactory } from "@harness/platform-browser";
+
+const cognitive = buildBrowserEnsemble({ catalog, xgrammar: xgrammarFromFactory(xgrammarBinding), emscripten: packagedEmscripten([{ source: engineSource, factory: engine }]) });
+```
 
 Workers:
 

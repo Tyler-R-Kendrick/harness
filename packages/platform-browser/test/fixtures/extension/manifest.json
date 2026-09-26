@@ -2,5 +2,14 @@
   "manifest_version": 3,
   "name": "harness extension test",
   "version": "1.0.0",
-  "background": { "service_worker": "background.js", "type": "module" }
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "host_permissions": [
+    "http://127.0.0.1/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
 }
