@@ -24,6 +24,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      # The browser host's integration tests run it in Chromium.
+      - run: npx playwright-core install --with-deps chromium
       - run: npm run test:coverage
 
   mutation:

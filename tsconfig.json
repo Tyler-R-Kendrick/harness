@@ -45,6 +45,12 @@
     },
     {
       "path": "packages/client"
+    },
+    {
+      "path": "packages/runtime"
+    },
+    {
+      "path": "packages/platform-browser"
     }
   ]
 }

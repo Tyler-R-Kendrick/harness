@@ -24,6 +24,7 @@
     "@harness/memory": "0.0.0",
     "@harness/models": "0.0.0",
     "@harness/protocol": "0.0.0",
+    "@harness/runtime": "0.0.0",
     "@harness/workers": "0.0.0",
     "@harness/workflows": "0.0.0",
     "@mlc-ai/web-xgrammar": "0.1.27",

@@ -45,7 +45,7 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 |---|---|---|
 | In-process agent runtime: an AI SDK `ToolLoopAgent` on any model (e.g. Vercel AI Gateway) through the agent worker | built | AW1.1–AW1.12; CLI `--worker model` |
 | Deterministic echo worker (tests/demos) | built | WK1.1–WK1.7 |
-| SDK harness and ACP-agent workers: any AI SDK `HarnessAgent` (Claude Code, Codex, or any ACP agent through `@ai-sdk/harness-acp`) runs through the agent worker via `harnessSessions`: one harness session per daemon session, started on its first turn, given only each turn's new prompt; its calls of host tools run on the host, tool approvals go through the daemon's permission flow, cancel aborts the turn. On the native host (`--worker harness --harness claude-code|codex|acp:<package>@<version>:<executable>`) each session runs in a host sandbox of its own (`hostSandbox`: a directory and a loopback port on this machine, unisolated); shutdown parks harness sessions in a file (`--harness-state`) and a restarted daemon resumes them, starting fresh when a parked state cannot be resumed | built | HS1.1–HS1.11, HS2.1–HS2.2, TH1.1–TH1.4, HX1.1–HX1.5, HH1.1–HH1.4, HI1.1 (the official ACP adapter and its bridge in a host sandbox, end to end); no isolating local sandbox (Vercel's is hosted) |
+| SDK harness and ACP-agent workers: any AI SDK `HarnessAgent` (Claude Code, Codex, or any ACP agent through `@ai-sdk/harness-acp`) runs through the agent worker via `harnessSessions`: one harness session per daemon session, started on its first turn, given only each turn's new prompt; its calls of host tools run on the host, tool approvals go through the daemon's permission flow, cancel aborts the turn. On the native host (`--worker harness --harness claude-code|codex|acp:<package>@<version>:<executable>`) each session runs in a host sandbox of its own (`hostSandbox`: a directory and a loopback port on this machine, unisolated); shutdown parks harness sessions in a file (`--harness-state`) and a restarted daemon resumes them, starting fresh when a parked state cannot be resumed | built | HS1.1–HS1.11, HS2.1–HS2.2, TH1.1–TH1.4, HX1.1–HX1.5, HH1.1–HH1.4, HI1.1 (the official ACP adapter and its bridge in a host sandbox, end to end); no isolating local sandbox (Vercel's is hosted); the adapter's bridge can drop an update that arrives in the same read as the prompt's answer (seen in CI; the test agent flushes before answering) |
 | The daemon as an AI SDK harness: `daemonHarness` is a `HarnessV1` adapter, so any AI SDK `HarnessAgent` drives daemon sessions over ACP (a Unix socket through `daemonSocket`, or any ACP stream); each harness session is a daemon session, the daemon's worker runs the turn, its tool calls are provider executed, its permission requests are tool approvals, abort cancels the daemon turn, and a detached session resumes on the same daemon session | built | DH1.1–DH1.10, DL1.1–DL1.2 |
 | Native CLI and UHP workers | not started | |
 | Integration modes (integrated/cooperative/opaque) declared | not started | |
@@ -78,9 +78,9 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Effect ledger: intent first, logical effect ids, outcome-unknown, reconciliation, fencing | built (library) | EF1–EF5 (fault-injection property); workers do not route external effects through it yet |
-| Snapshot storage port with shared contract suite | built | SC1–SC6 against MemoryStorage and FileStorage |
+| Snapshot storage port with shared contract suite | built | SC1–SC6 against MemoryStorage, FileStorage and IndexedDbStorage |
 | Atomic file storage (native) | built | FS1.1–FS1.3, NS1.3, NS2.4 |
-| Browser (OPFS/IndexedDB) and remote storage | not started | |
+| Browser storage: snapshots in IndexedDB (`IndexedDbStorage`, one record per daemon, a transaction per save) | built | SC1–SC6, IDB1.1–IDB1.5 (fake-indexeddb), BI1.1 (restart restored from IndexedDB in Chromium); no OPFS, no remote storage |
 | Suspend anywhere; durable timers | partial | Snapshot/restore after every change (MX5.1, NS2.4); timers are not durable |
 
 ## F. Authority, security and privacy
@@ -123,7 +123,7 @@ The daemon's model ensemble. Models are mapped to task categories and to publish
 | Behavior per session: each daemon session has its own behavior state, carried across its turns (calls name their session in `harness` provider options; `sessionHooks` keeps one hook per session, least recently used forgotten); state changes are in the session log and published as `behavior.changed` hook events; plugins, or clients with control, raise host events for a session's graph (`_harness/behavior/event`, published as `behavior.raised`) | built | OP1.6, SG2.6–SG2.9, BH1.2, AW1.14, AW1.16, DB1.1–DB1.4, NH1.6, KS1.5 (real weights: after an insult the session's next turn starts soothing, another session starts neutral) |
 | Remote models as retrieval for the steered local kernel: with a model to consult (`--consult <gateway id>`), each turn gets its notes on what was asked as reference in the instructions, best effort; steering stays local (hosted APIs expose no residual stream) | built | AW1.15 |
 | Steerable kernel in the browser (onnxruntime-web) | not started | Native only; the int4 export's contrib ops are unverified on web |
-| Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Cactus WASM); no browser platform layer yet |
+| Browser host for the ensemble (Cache API/OPFS byte cache, WebGPU) | not started | Adapters are browser-ready (transformers.js, Cactus WASM) and the browser host takes an ensemble (`cognitive`); no browser byte cache or loaders wired yet |
 | Tool use through the daemon's permission flow: a tool that needs approval (AI SDK `toolApproval`) becomes a permission request routed to the session's approvers, and their answer continues the turn | built | AW1.10–AW1.11 |
 | Execution configurations, performance registry learned from our own runs, value of information | not started | Selection uses published benchmarks only |
 | Constrained decoding (the capability slot): a call can carry a constraint (a JSON Schema through the AI SDK's structured output, or a grammar, regex, or template of fixed text and holes that reads back into its holes, as `harness` provider options); the catalog says which generators enforce which kinds, and the ensemble sends a constrained call to those first | built | CN1.1–CN1.2, EN1.12, OP1.1–OP1.2, CT1.11 |
@@ -205,7 +205,8 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | `_harness` profile: attach/detach/ack/tree/event/resync, capabilities, hooks, cognitive | built | PR1, MX1, MX2, DM6, DM7, DM9 |
 | ACP framing on the official SDK (`ndJsonStream`), with a per-line byte bound in front of it; JSON-RPC validation in the pure core; ACP method names, protocol version and message types from the SDK (responses are checked against them at compile time) | built | NH1.4–NH1.5, LL1.1–LL1.3, JR1–JR3 (fuzzed), ACP1.1–ACP1.2 |
 | Transport bindings: stdio, Unix socket | built | NS1, NS2 |
-| Bindings: WebSocket, MessagePort, extension ports | not started | |
+| Binding: MessagePort (one port per connection, one structured message per JSON-RPC message; `portStream` gives the ACP SDK's `Stream` for clients and `daemonHarness`). Ports have no reliable close event across browsers, so hanging up is a control message, and a client holds a Web Lock for its lifetime that the host waits on, so a tab that dies frees its connection and input lease | built | PS1.1–PS1.12, BH1.1–BH1.12, BI1.1–BI1.3 (real Chromium: a tab, a shared worker serving two clients, a dead tab's lease freed) |
+| Bindings: WebSocket, extension ports (`chrome.runtime.Port`) | not started | |
 | Version negotiation | partial | Protocol and profile versions advertised; no range negotiation |
 | MCP (south side) | not started | |
 
@@ -213,9 +214,11 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Native background service (Node): stdio/socket, file storage, workers | built | NS1, NS2, NH1; tested on Linux only |
+| Portable daemon runtime (`@harness/runtime`, pure): the daemon core driven by its outputs (worker commands, cognitive work, capability mirroring) with coalesced snapshot saves; every host wraps it and supplies transports, ports and a ticker | built | RT1.1–RT3.6 |
+| Native background service (Node): stdio/socket, file storage, workers, on the runtime | built | NS1, NS2, NH1; tested on Linux only |
 | Native model hosting: verified artifact cache, streamed GGUF files, Emscripten loader, llama-server processes, ensemble builder with one loader per runtime | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH3.2; CLI `--cognitive` |
-| Browser extension, browser tab/PWA, remote API, mobile | not started | Core is pure (lint + tsconfig enforced) so it can run there |
+| Browser host (`@harness/platform-browser`): the runtime in a tab, PWA, shared worker (`BrowserHost.serve(self)`, one daemon for every tab of an origin) or extension background; `Date.now` clock, Web Crypto entropy, timer ticks, IndexedDB snapshots, any session worker (echo, an AI SDK agent) | built | BH1.1–BH1.12, BI1.1–BI1.3 (bundled with Vite, run in Chromium via Playwright); no browser ensemble wiring yet, extension ports not bound |
+| Browser extension ports, remote API, mobile | not started | Core and runtime are pure (lint + tsconfig enforced) so they can run there |
 
 ## N. Federation
 

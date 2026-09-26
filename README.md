@@ -20,6 +20,8 @@ Status of every feature: [`docs/features.md`](docs/features.md). Development rul
 - **Plugins.** External actors subscribe to durable hook events with at-least-once delivery.
 - **Capabilities.** Clients can offer and withdraw capabilities at runtime.
 - **Stock ACP clients work**, verified with the official ACP SDK client.
+- **It runs in the browser too.** The same daemon runs in a tab or a shared worker (one
+  daemon for every tab of an origin), with ACP over MessagePorts and snapshots in IndexedDB.
 
 ## Cognitive core
 
@@ -150,6 +152,20 @@ over stdio:
 node packages/platform-native/src/main.ts --stdio --state ~/.harness/state.json
 ```
 
+In the browser, run it in a shared worker so every tab of the origin shares one daemon:
+
+```ts
+// shared-worker.ts
+import { BrowserHost, IndexedDbStorage } from "@harness/platform-browser";
+import { EchoWorker } from "@harness/workers";
+
+void BrowserHost.serve(self, { worker: new EchoWorker(), identity: { principal: "me", kind: "human" }, storage: new IndexedDbStorage() });
+
+// in a tab: the official ACP SDK client over the worker's port
+const worker = new SharedWorker(new URL("./shared-worker.js", import.meta.url), { type: "module" });
+const acp = new ClientSideConnection(() => client, portStream(worker.port));
+```
+
 Workers:
 
 - `--worker echo` (default): deterministic; add `!permission` to a prompt to exercise
@@ -194,11 +210,13 @@ reported as `blocked`, never as a pass.
 |---|---|
 | `packages/protocol` | JSON-RPC validation for the pure core, ACP names from the official SDK, `_harness` profile (pure) |
 | `packages/core` | Sans-I/O daemon: sessions, subagents, routing, lease, flow control, effect ledger, capabilities, hook bus, task graph (pure) |
+| `packages/runtime` | The daemon runtime every host wraps: worker dispatch, cognitive work, capability mirroring, snapshot saves (pure) |
 | `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
 | `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |
 | `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
 | `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
+| `packages/platform-browser` | Browser host: MessagePort binding with Web Lock liveness, IndexedDB storage, shared-worker serving |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |

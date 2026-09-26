@@ -14,6 +14,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 |---|---|---|
 | `packages/protocol` | JSON-RPC envelopes for the pure core, ACP names from the official SDK, `_harness` profile | pure |
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
+| `packages/runtime` | the daemon runtime every host wraps: the core driven by its outputs (worker, cognitive work, capabilities) with snapshot saves | pure |
 | `packages/cognitive` | cognitive core: the ensemble as an AI SDK provider, task taxonomy, catalog + benchmarks, selection, cascade | pure |
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
@@ -26,6 +27,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/client` | the daemon as an AI SDK harness (`daemonHarness`, a `HarnessV1` adapter over ACP) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
 | `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, CLI | host |
+| `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts with Web Lock liveness, IndexedDB snapshots | host (browser) |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable
@@ -71,7 +73,8 @@ Test kinds (filename suffix decides the kind):
 - `*.property.test.ts`: fast-check properties/fuzzing. Model-based tests for state machines.
 - `*.contract.test.ts`: a suite from `@harness/testkit` run against every implementation of a port.
 - `*.integration.test.ts`: real processes and transports (e.g. the official ACP SDK client
-  talking to the native host over stdio).
+  talking to the native host over stdio, or the browser host bundled and run in Chromium
+  through `playwright-core`; install its browser with `npx playwright-core install chromium`).
 - `*.model.test.ts`: real model weights (pinned, sha256-verified, cached under
   `HARNESS_MODEL_CACHE`). Run with `npm run test:models`; CI runs them in the `models` job.
   Required when you change a model adapter or the catalog. Install with

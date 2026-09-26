@@ -1,0 +1,16 @@
+{
+  "name": "@harness/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The portable daemon runtime every host wraps: the daemon core with its worker, cognitive work, capability mirroring and snapshot persistence; hosts supply transports and ports.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "@harness/core": "0.0.0",
+    "@harness/workers": "0.0.0"
+  }
+}
