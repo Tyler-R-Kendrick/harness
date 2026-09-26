@@ -3,23 +3,11 @@ import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import type { HarnessV1NetworkSandboxSession, HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import type { Experimental_SandboxProcess, Experimental_SandboxSession } from "ai";
-
-/** A free TCP port on the loopback interface, as the OS hands it out. */
-function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const server = createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => (typeof address === "object" && address ? resolvePort(address.port) : reject(new Error("no port"))));
-    });
-  });
-}
+import { freePort } from "./free-port.ts";
 
 async function missingAsNull<T>(read: () => Promise<T>): Promise<T | null> {
   try {

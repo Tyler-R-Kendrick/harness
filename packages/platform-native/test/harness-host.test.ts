@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WorkerEvent } from "@harness/core";
-import { FileHarnessStore, harnessAdapter, harnessWorker, parseHarnessSpec } from "@harness/platform-native";
+import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
+import { FileHarnessStore, harnessAdapter, harnessWorker, hostSandbox, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "@harness/platform-native";
 import { scriptedHarness } from "@harness/testkit";
 
 const dir = () => mkdtempSync(join(tmpdir(), "harness-host-"));
@@ -53,5 +54,27 @@ describe("harness sessions on the native host", () => {
     expect(await turn(second.worker, "two", "s1", "t2")).toBe("got two");
     expect(harness.log.resumed).toEqual(["s1"]);
     await second.close();
+  });
+
+  it("HH1.5 a sandbox is named on the command line: this machine's, or a Docker image", () => {
+    expect(parseSandboxSpec("host")).toEqual({ kind: "host" });
+    expect(parseSandboxSpec("docker:public.ecr.aws/docker/library/node:22-bookworm-slim")).toEqual({ kind: "docker", image: "public.ecr.aws/docker/library/node:22-bookworm-slim" });
+    expect(parseSandboxSpec("docker:node@sha256:abc")).toEqual({ kind: "docker", image: "node@sha256:abc" });
+    for (const bad of ["", "docker", "docker:", "docker: x", "vm:x"]) expect(() => parseSandboxSpec(bad), bad).toThrow(/sandbox/);
+  });
+
+  it("HH1.6 each kind of sandbox is its provider", () => {
+    expect(sandboxProvider({ kind: "host" }, { root: dir() }).providerId).toBe("host");
+    expect(sandboxProvider({ kind: "docker", image: "any" }, { root: dir(), setup: "true", env: { A: "1" } }).providerId).toBe("docker");
+  });
+
+  it("HH1.7 the worker runs its sessions in the sandbox provider it is given", async () => {
+    const created: string[] = [];
+    const host = hostSandbox({ root: dir() });
+    const provider: HarnessV1SandboxProvider = { ...host, createSession: async (o = {}) => (created.push(o.sessionId ?? "?"), host.createSession(o)) };
+    const worker = harnessWorker({ harness: scriptedHarness((p) => `got ${p}`), sandbox: provider });
+    expect(await turn(worker.worker, "one")).toBe("got one");
+    expect(created).toEqual(["s1"]);
+    await worker.close();
   });
 });

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { instantiateEmscripten } from "@harness/models";
 import type { ByteCache } from "@harness/models";
 import writeFileAtomic from "write-file-atomic";
 
@@ -37,15 +38,10 @@ export class FileByteCache implements ByteCache {
 }
 
 /**
- * Instantiate an Emscripten module from its (already hash-verified) loader source. The
- * loader is CommonJS; it gets module/exports/require/__dirname, and the WASM bytes are
- * passed in so it never reads the file system for them.
+ * Instantiate an Emscripten module from its (already hash-verified) loader source, with
+ * Node's `require` for what it asks of the host; the WASM bytes are passed in, so it
+ * never reads the file system for them.
  */
 export async function loadEmscriptenModule<M>(source: Uint8Array, wasm: Uint8Array, name = "loader.js"): Promise<M> {
-  const module: { exports: unknown } = { exports: {} };
-  const require = createRequire(import.meta.url);
-  new Function("module", "exports", "require", "__filename", "__dirname", new TextDecoder().decode(source))(module, module.exports, require, name, ".");
-  const factory = module.exports;
-  if (typeof factory !== "function") throw new Error(`${name} did not export a module factory`);
-  return (factory as (arg: { wasmBinary: Uint8Array }) => Promise<M>)({ wasmBinary: wasm });
+  return instantiateEmscripten<M>(source, wasm, { name, require: createRequire(import.meta.url) });
 }

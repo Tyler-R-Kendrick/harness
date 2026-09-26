@@ -12,7 +12,9 @@
     "@agentclientprotocol/sdk": "1.5.0",
     "@harness/client": "0.0.0",
     "@harness/cognitive": "0.0.0",
+    "@harness/constrained": "0.0.0",
     "@harness/core": "0.0.0",
+    "@harness/models": "0.0.0",
     "@harness/runtime": "0.0.0",
     "@harness/workers": "0.0.0"
   },

@@ -17,3 +17,5 @@ export { encodeNode, encodeValueInfo, int, lengthDelimited, makeSteerable, str, 
 export type { Tap } from "./onnx-steer.ts";
 export { OnnxSteerableSession } from "./onnx-session.ts";
 export type { DecoderConfig, OrtLike, OrtTensorLike } from "./onnx-session.ts";
+export { instantiateEmscripten, portableLoaders } from "./loaders.ts";
+export type { Constrainer, LoaderHost, RuntimeLoaders } from "./loaders.ts";
