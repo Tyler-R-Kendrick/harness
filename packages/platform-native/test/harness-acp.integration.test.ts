@@ -8,6 +8,7 @@ import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclie
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import { createACP } from "@ai-sdk/harness-acp";
 import { dockerSandbox, harnessWorker, NodeHost } from "@harness/platform-native";
+import { ensureImage, IMAGE } from "./docker-image.ts";
 
 // A real bridge-backed harness: the official ACP adapter installs its bridge (pnpm) and a
 // small ACP agent into a host sandbox, and the daemon runs sessions on it.
@@ -20,8 +21,6 @@ const echoAgent = () =>
     modelMapping: { type: "session-config-option", path: "model" },
   });
 
-// Any image with node; the public ECR mirror of Docker's official images.
-const IMAGE = "public.ecr.aws/docker/library/node:22-bookworm-slim";
 
 /**
  * How a container reaches the npm registry (the bridge installs from it). Behind a proxy
@@ -109,6 +108,7 @@ describe("daemon sessions on a bridge-backed AI SDK harness in host sandboxes", 
   }, 240_000);
 
   it("HI1.3 in a Docker sandbox, the harness bridge and the agent run in a container of the session's own, and the reply comes back", async () => {
+    ensureImage();
     const harness = harnessWorker({ harness: echoAgent(), sandbox: dockerSandbox({ image: IMAGE, setup: "npm install -g pnpm@10.33.0 >/dev/null", labels: { "harness.test": `hi${process.pid}` }, ...egress() }) });
     const host = await NodeHost.start({ worker: harness.worker, identity: { principal: "me", kind: "human" } });
     closers.push(async () => {
