@@ -1,8 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dockerSandbox } from "@harness/platform-native";
 
 // A real Docker daemon runs these (CI's runner has one). The image is any with a POSIX
@@ -14,12 +14,19 @@ const text = async (s: ReadableStream<Uint8Array>) => new Response(s).text();
 let sessions = 0;
 const id = () => `${RUN}-${++sessions}`;
 
+// Pull once, before any test's clock starts: a fresh runner has no image yet.
+beforeAll(() => {
+  const pulled = spawnSync("docker", ["pull", "-q", IMAGE], { encoding: "utf8" });
+  if (pulled.status !== 0) throw new Error(`docker pull ${IMAGE} failed: ${pulled.stderr}`);
+}, 300_000);
+
 afterAll(() => {
   const listed = spawnSync("docker", ["ps", "-aq", "--filter", `label=harness.test=${RUN}`], { encoding: "utf8" }).stdout.trim();
   if (listed) spawnSync("docker", ["rm", "-f", ...listed.split("\n")]);
 });
 
-describe("dockerSandbox: an AI SDK network sandbox in a container of its own", () => {
+// Containers start slower on a loaded machine than an in-process test runs.
+describe("dockerSandbox: an AI SDK network sandbox in a container of its own", { timeout: 60_000 }, () => {
   it("DS1.1 commands run inside the session's container, not on this machine", async () => {
     const box = await provider().createSession({ sessionId: id() });
     expect(box.defaultWorkingDirectory).toBe("/workspace");
@@ -130,5 +137,33 @@ describe("dockerSandbox: an AI SDK network sandbox in a container of its own", (
     await expect(box.writeTextFile({ path: "/mnt/ro/x.txt", content: "no" })).rejects.toThrow(/writing \/mnt\/ro\/x.txt in .* failed/);
     await box.destroy();
     await expect(provider({ docker: "/nonexistent/docker" }).createSession({ sessionId: id() })).rejects.toThrow(/ENOENT/);
+  });
+
+  it("DS1.9 environment values reach commands but never the docker command line, where other users could read them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-docker-cli-"));
+    const log = join(dir, "argv.log");
+    const cli = join(dir, "docker");
+    writeFileSync(cli, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec docker "$@"\n`);
+    chmodSync(cli, 0o755);
+    const box = await provider({ docker: cli, env: { API_KEY: "s3cret-at-create" } }).createSession({ sessionId: id() });
+    expect((await box.run({ command: "echo $API_KEY $OTHER", env: { OTHER: "s3cret-per-command" } })).stdout).toBe("s3cret-at-create s3cret-per-command\n");
+    const argv = readFileSync(log, "utf8");
+    expect(argv).toMatch(/-e API_KEY/);
+    expect(argv).not.toMatch(/s3cret/);
+    await box.destroy();
+  });
+
+  it("DS1.10 session ids that read alike once made safe for docker still get containers of their own", async () => {
+    const sandboxes = provider();
+    const a = await sandboxes.createSession({ sessionId: `${RUN}-a/b` });
+    const b = await sandboxes.createSession({ sessionId: `${RUN}-a_b` });
+    await a.writeTextFile({ path: "who", content: "a" });
+    expect(await b.readTextFile({ path: "who" })).toBeNull();
+    await a.destroy();
+    await b.destroy();
+  });
+
+  it("DS1.11 a mount whose path docker's mount syntax cannot carry is refused", () => {
+    expect(() => provider({ mounts: [{ source: "/tmp/a,b", target: "/mnt" }] })).toThrow(/mount path .* cannot contain a comma/);
   });
 });
