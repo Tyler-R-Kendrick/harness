@@ -47,6 +47,7 @@ export class MemoryLibrary implements WorkflowLibrary {
     this.#workflows.set(workflow.name, parseWorkflow(workflow));
   }
   async list(): Promise<Workflow[]> {
+    // Stryker disable next-line EqualityOperator: equivalent; names are unique, so < and <= order them alike
     return [...this.#workflows.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
   }
 }
@@ -81,9 +82,11 @@ export class WorkflowHost {
     const { library, tools = {} } = this.#options;
     const workflow = await library.get(name);
     if (!workflow) throw new Error(`no workflow ${name}`);
+    // The code may call the host's tools (their own schemas check their input) and the
+    // library's other workflows (checked against their inputs); not itself.
     const specs: Record<string, ToolSpec> = {};
-    for (const [n, t] of Object.entries(tools)) specs[n] = typeof t.description === "string" ? { description: t.description } : {};
-    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { description: w.description, inputSchema: w.inputs };
+    for (const n of Object.keys(tools)) specs[n] = {};
+    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { inputSchema: w.inputs };
     let calls = 0;
     return runWorkflow({
       name,
@@ -101,6 +104,7 @@ export class WorkflowHost {
             if (nested.status === "failed") throw new Error(`workflow ${name} failed: ${nested.error}`);
             return nested.output;
           }
+          // Stryker disable next-line OptionalChaining: equivalent; a name that reaches here is a tool's (the code may call no other)
           const execute = tools[name]?.execute;
           if (!execute) throw new Error(`no tool ${name} is available to workflows`);
           return execute(args, { toolCallId: `${run}/${calls}:${name}`, messages: [], context: undefined });

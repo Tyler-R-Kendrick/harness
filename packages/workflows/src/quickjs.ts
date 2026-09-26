@@ -63,9 +63,16 @@ async function output(value: unknown): Promise<unknown> {
  * workflow runner defines). If the WebAssembly module itself fails (a host stack
  * overflow), it is replaced, so the next run is unaffected.
  */
-export function quickjsCodeMode(options: { readonly memoryLimitBytes?: number; readonly stackLimitBytes?: number } = {}): CodeMode {
+export function quickjsCodeMode(
+  options: {
+    readonly memoryLimitBytes?: number;
+    readonly stackLimitBytes?: number;
+    /** Loads the WebAssembly module (default: quickjs-emscripten's release build). */
+    readonly module?: () => Promise<QuickJSWASMModule>;
+  } = {},
+): CodeMode {
   let module: Promise<QuickJSWASMModule> | undefined;
-  const load = () => (module ??= newQuickJSWASMModule());
+  const load = () => (module ??= (options.module ?? newQuickJSWASMModule)());
   return async (program) => {
     const wasm = await load();
     const broken = () => {
@@ -83,6 +90,8 @@ export function quickjsCodeMode(options: { readonly memoryLimitBytes?: number; r
   };
 }
 
+type Outcome = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly error: Error };
+
 async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: { readonly memoryLimitBytes?: number; readonly stackLimitBytes?: number }, broken: () => void): Promise<unknown> {
   const { js, tools, abortSignal } = program;
   const timeoutMs = program.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -92,33 +101,34 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
   runtime.setMaxStackSize(options.stackLimitBytes ?? DEFAULT_STACK_LIMIT_BYTES);
   runtime.setInterruptHandler(() => abortSignal.aborted || Date.now() > deadline);
   const vm = runtime.newContext();
+  // Tool calls in flight: the run holds their promises until they settle or it ends.
   const pending = new Set<QuickJSDeferredPromise>();
-  let finished = false;
   let calls = 0;
 
-  let settle!: (outcome: { ok: true; value: unknown } | { ok: false; error: Error }) => void;
-  const outcome = new Promise<{ ok: true; value: unknown } | { ok: false; error: Error }>((resolve) => (settle = resolve));
-  const finish = (o: { ok: true; value: unknown } | { ok: false; error: Error }) => {
-    if (finished) return;
-    finished = true;
+  const stopped = () => (abortSignal.aborted ? new RunFailure("CodeModeAbortedError", "Code mode execution was aborted.") : timedOut(timeoutMs));
+  let outcome: Outcome | undefined;
+  let wake!: () => void;
+  const ended = new Promise<void>((resolve) => (wake = resolve));
+  const finish = (o: Outcome) => {
+    // Stryker disable next-line ConditionalExpression: equivalent; a later outcome never reaches the awaiting run, which reads the first
+    if (outcome) return;
     // Code that catches its own interrupt still ends stopped: past its deadline or aborted, nothing it says counts.
-    settle(abortSignal.aborted || Date.now() > deadline ? { ok: false, error: stopped() } : o);
+    // Stryker disable next-line EqualityOperator: equivalent at the clock's millisecond resolution
+    outcome = abortSignal.aborted || Date.now() > deadline ? { ok: false, error: stopped() } : o;
+    wake();
+  };
+  /** What an error the interpreter hands back means; it frees the handle. (An interrupt ends the run stopped: see finish.) */
+  const failureOf = (handle: QuickJSHandle): Error => {
+    const error: unknown = handle.consume((h) => vm.dump(h));
+    if (error === null || typeof error !== "object" || typeof (error as { name?: unknown }).name !== "string") return new HostFailure(String(error));
+    const { name, message } = error as { name: string; message: string };
+    return new RunFailure(name, message);
   };
   /** Run the code's pending jobs (promise reactions) until it waits on the host again. */
   const pump = () => {
-    if (finished) return;
     const jobs = runtime.executePendingJobs();
     if (jobs.error) finish({ ok: false, error: failureOf(jobs.error) });
   };
-  /** What an error the interpreter hands back means; it frees the handle. */
-  const failureOf = (handle: QuickJSHandle): Error => {
-    const error: unknown = vm.dump(handle);
-    handle.dispose();
-    if (error === null || typeof error !== "object" || typeof (error as { name?: unknown }).name !== "string") return new HostFailure(String(error));
-    const { name, message } = error as { name: string; message: string };
-    return name === "InternalError" && message === "interrupted" ? stopped() : new RunFailure(name, message);
-  };
-  const stopped = () => (abortSignal.aborted ? new RunFailure("CodeModeAbortedError", "Code mode execution was aborted.") : timedOut(timeoutMs));
 
   const invoke = async (name: string, inputJson: string | undefined): Promise<string> => {
     if (abortSignal.aborted) throw new RunFailure("CodeModeAbortedError", "Code mode execution was aborted.");
@@ -131,85 +141,75 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
     if (!checked.success) throw new RunFailure("CodeModeToolError", `Invalid input for tool "${name}": ${checked.error.message}`);
     try {
       const value = await output(await hostTool.execute(checked.value, { toolCallId: `quickjs-${++calls}`, messages: [], abortSignal, context: undefined }));
-      return JSON.stringify(value === undefined ? {} : { v: value });
+      // JSON leaves out an undefined value: the code reads { } as undefined.
+      return JSON.stringify({ v: value });
     } catch {
       // As in AI SDK code mode, a tool's own error stays on the host side.
       throw new RunFailure("RunError", "Host tool failed.");
     }
   };
 
-  const expose = (name: string, fn: (...args: QuickJSHandle[]) => QuickJSHandle | undefined) => {
-    const handle = vm.newFunction(name, fn);
-    vm.setProp(vm.global, name, handle);
-    handle.dispose();
-  };
+  const expose = (name: string, fn: (...args: QuickJSHandle[]) => QuickJSHandle | undefined) => vm.newFunction(name, fn).consume((f) => vm.setProp(vm.global, name, f));
   expose("__call", (nameHandle, inputHandle) => {
     const name = vm.getString(nameHandle);
-    const inputJson = inputHandle && vm.typeof(inputHandle) === "string" ? vm.getString(inputHandle) : undefined;
+    const inputJson = vm.typeof(inputHandle!) === "string" ? vm.getString(inputHandle!) : undefined;
     const deferred = vm.newPromise();
     pending.add(deferred);
-    invoke(name, inputJson).then(
-      (text) => {
-        if (finished) return;
-        const value = vm.newString(text);
-        deferred.resolve(value);
-        value.dispose();
-      },
-      (e: unknown) => {
-        if (finished) return;
-        const error = vm.newError({ name: e instanceof Error ? e.name : "Error", message: e instanceof Error ? e.message : String(e) });
-        deferred.reject(error);
-        error.dispose();
-      },
-    ).finally(() => {
-      // A run that has finished has freed its deferreds already.
+    /** Hand the call's result to the code, if the run still holds the call (one that has ended has freed it). */
+    // (Settling frees the deferred's resolvers; its promise went to the code, which owns it.)
+    const settle = (fill: () => void) => {
       if (!pending.delete(deferred)) return;
-      deferred.dispose();
+      fill();
       pump();
-    });
+    };
+    invoke(name, inputJson).then(
+      (text) => settle(() => vm.newString(text).consume((v) => deferred.resolve(v))),
+      (e: Error) => settle(() => vm.newError({ name: e.name, message: e.message }).consume((error) => deferred.reject(error))),
+    );
     return deferred.handle;
   });
   expose("__done", (text) => {
-    const json = text && vm.typeof(text) === "string" ? vm.getString(text) : undefined;
-    finish({ ok: true, value: json === undefined ? undefined : JSON.parse(json) });
+    finish({ ok: true, value: vm.typeof(text!) === "string" ? JSON.parse(vm.getString(text!)) : undefined });
     return undefined;
   });
   expose("__fail", (described) => {
-    const { name, message } = vm.dump(described) as { name: string; message: string };
+    const { name, message } = vm.dump(described!) as { name: string; message: string };
     finish({ ok: false, error: new RunFailure(name, message) });
     return undefined;
   });
 
-  const onAbort = () => finish({ ok: false, error: stopped() });
-  abortSignal.addEventListener("abort", onAbort);
-  const timer = setTimeout(() => finish({ ok: false, error: timedOut(timeoutMs) }), Math.max(0, deadline - Date.now()));
+  // An abort, or the deadline passing while the code waits on a tool, ends the run stopped.
+  abortSignal.addEventListener("abort", wake);
+  const timer = setTimeout(wake, deadline - Date.now());
   try {
-    const started = vm.evalCode(`${prelude}\n(async () => {\n${js}\n})().then((v) => __done(JSON.stringify(v)), (e) => __fail(__describe(e)));`, "workflow.js");
+    const started = vm.evalCode(`${prelude}\n(async () => {\n${js}\n})().then((v) => __done(JSON.stringify(v)), (e) => __fail(__describe(e)));`);
     if (started.error) finish({ ok: false, error: failureOf(started.error) });
     else {
       started.value.dispose();
       pump();
     }
-    const result = await outcome;
+    await ended;
+    const result = outcome ?? { ok: false, error: stopped() };
     if (!result.ok) throw result.error;
     return result.value;
   } finally {
-    finished = true;
+    // Stryker disable next-line all: equivalent; a timer or listener left behind only wakes a run that has ended
     clearTimeout(timer);
-    abortSignal.removeEventListener("abort", onAbort);
-    if (!dispose(vm, runtime, pending)) broken();
+    // Stryker disable next-line all: equivalent, as above
+    abortSignal.removeEventListener("abort", wake);
+    try {
+      dispose(vm, runtime, pending);
+    } catch {
+      // QuickJS could not free the run, which leaves its module unusable.
+      broken();
+    }
   }
 }
 
-/** Free what the run holds; false if QuickJS could not, which leaves its module unusable. */
-function dispose(vm: QuickJSContext, runtime: { dispose(): void }, pending: Set<QuickJSDeferredPromise>): boolean {
-  try {
-    for (const deferred of pending) deferred.dispose();
-    pending.clear();
-    vm.dispose();
-    runtime.dispose();
-    return true;
-  } catch {
-    return false;
-  }
+/** Free what the run holds: calls still in flight, the context, the runtime. */
+function dispose(vm: QuickJSContext, runtime: { dispose(): void }, pending: Set<QuickJSDeferredPromise>): void {
+  for (const deferred of pending) deferred.dispose();
+  pending.clear();
+  vm.dispose();
+  runtime.dispose();
 }

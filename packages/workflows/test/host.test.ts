@@ -34,7 +34,7 @@ function host(options: { tools?: boolean } = {}) {
     library,
     journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!),
     ask: async (prompt) => `tip: ${prompt}`,
-    ...(options.tools === false ? {} : { tools: { open_ticket: tool({ description: "Opens a ticket.", inputSchema: z.object({ title: z.string() }), execute: async (args) => (called.push(`open_ticket:${JSON.stringify(args)}`), { id: 7 }) }) } }),
+    ...(options.tools === false ? {} : { tools: { open_ticket: tool({ description: "Opens a ticket.", inputSchema: z.object({ title: z.string() }), execute: async (args, { toolCallId, messages }) => (called.push(`open_ticket:${JSON.stringify(args)} as ${toolCallId} with ${messages.length} messages`), { id: 7 }) }) } }),
   });
   return { h, journals, library, called };
 }
@@ -44,7 +44,8 @@ describe("workflow library and host", () => {
     const { h, journals, called } = host();
     expect(await h.run("welcome", { who: "Ada" }, "r1")).toEqual({ status: "completed", output: { hello: "Hello, Ada!", tip: "tip: One tip for Ada", ticket: { id: 7 } }, replayed: 0, performed: 3 });
     expect([...journals.keys()].sort()).toEqual(["r1", "r1/1:greet"]);
-    expect(called).toEqual(['open_ticket:{"title":"Hello, Ada!"}']);
+    // a host tool's call is named by the run and the call's place in it
+    expect(called).toEqual(['open_ticket:{"title":"Hello, Ada!"} as r1/2:open_ticket with 0 messages']);
   });
 
   it("WH1.2 an unknown workflow is an error; a tool nobody provides is not there for the code, so the run fails saying so", async () => {
@@ -54,7 +55,8 @@ describe("workflow library and host", () => {
   });
 
   it("WH1.3 definitions are parsed: names are kebab-case (and not ask), code must be present, inputs a JSON Schema object", () => {
-    expect(() => parseWorkflow({ ...greet, name: "Not Kebab" })).toThrow(/name/);
+    expect(() => parseWorkflow({ ...greet, name: "Not Kebab" })).toThrow(/^invalid workflow\n.*a kebab-case name/s);
+    expect(() => parseWorkflow({ ...greet, name: "greet!" })).toThrow(/a kebab-case name/);
     expect(() => parseWorkflow({ ...greet, name: "ask" })).toThrow("a workflow cannot be named ask: tools.ask is the model");
     expect(() => parseWorkflow({ ...greet, code: "" })).toThrow(/code/);
     expect(() => parseWorkflow({ ...greet, inputs: "x" })).toThrow(/inputs/);
@@ -138,5 +140,20 @@ describe("workflow library and host", () => {
     const broken = parseWorkflow({ name: "broken", description: "Fails.", inputs: {}, code: "throw new Error('inner');" });
     const failing = await workflowTools(new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([broken]), journal: () => new MemoryStorage(), ask: async () => "" }));
     await expect(failing["broken"]!.execute!({}, { toolCallId: "x", messages: [], context: undefined })).rejects.toThrow(/workflow broken failed: .*inner/);
+  });
+
+  it("WH1.9 an empty library lists nothing; a tool that has nothing to execute is not available to workflows, so the run fails saying so", async () => {
+    expect(await new MemoryLibrary().list()).toEqual([]);
+    const caller = parseWorkflow({ name: "caller", description: "Calls a tool.", inputs: {}, code: "return tools.remote({});" });
+    const h = new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([caller]), journal: () => new MemoryStorage(), ask: async () => "", tools: { remote: { description: "Runs elsewhere.", inputSchema: z.object({}) } } });
+    await expect(h.run("caller", {}, "r")).rejects.toThrow("no tool remote is available to workflows");
+  });
+
+  it("WH1.10 a nested workflow's input is checked against its inputs, and a workflow cannot call itself", async () => {
+    const caller = parseWorkflow({ name: "caller", description: "Greets a number.", inputs: {}, code: "return tools.greet({ who: 42 });" });
+    const loop = parseWorkflow({ name: "loop", description: "Calls itself.", inputs: {}, code: "return tools.loop({});" });
+    const h = new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([greet, caller, loop]), journal: () => new MemoryStorage(), ask: async () => "" });
+    expect(await h.run("caller", {}, "c")).toMatchObject({ status: "failed", error: expect.stringMatching(/Invalid input for tool "greet"/) });
+    expect(await h.run("loop", {}, "l")).toMatchObject({ status: "failed", error: expect.stringMatching(/Unknown tool: loop/) });
   });
 });
