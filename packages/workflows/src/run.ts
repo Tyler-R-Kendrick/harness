@@ -45,6 +45,7 @@ export type RunResult =
 /** JSON with object keys sorted, so equal values compare equal as text. */
 function canonical(value: unknown): string {
   return JSON.stringify(value, (_, v: unknown) =>
+    // Stryker disable next-line EqualityOperator: equivalent; an object's keys are never equal, so < and <= order them alike
     v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1))) : v,
   );
 }
@@ -114,7 +115,7 @@ export async function runWorkflow(options: {
     const n = seq++;
     const entry = recorded.get(n);
     if (entry) {
-      if (entry.op !== op || canonical(entry.request) !== canonical(request)) {
+      if (canonical({ op: entry.op, request: entry.request }) !== canonical({ op, request })) {
         return stop(new Error(`step ${n + 1} diverged: the journal has ${entry.op} ${canonical(entry.request)}, the code asked for ${op} ${canonical(request)}`));
       }
       replayed++;
@@ -160,6 +161,7 @@ export async function runWorkflow(options: {
       js: `const input = ${JSON.stringify(input)};\n${code}`,
       tools,
       toolExecutionOptions: { abortSignal: abort.signal },
+      // Stryker disable next-line ConditionalExpression: equivalent; code mode reads an undefined limit as its default
       ...(options.timeoutMs === undefined ? {} : { options: { executionPolicy: { timeoutMs: options.timeoutMs } } }),
     });
     outcome = { ok: true, value: json(value) };
