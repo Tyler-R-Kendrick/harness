@@ -1,5 +1,5 @@
 import { experimental_runCodeMode as runCodeMode } from "@ai-sdk/code-mode";
-import { jsonSchema, tool } from "ai";
+import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
@@ -13,7 +13,7 @@ export interface Effects {
   ask(prompt: string, constraint?: Constraint): Promise<string>;
 }
 
-/** A tool a workflow can call, as code mode shows it to the code: its description and input schema. */
+/** A tool a workflow can call: its input schema checks each call (the description is for whoever writes the code). */
 export interface ToolSpec {
   readonly description?: string;
   readonly inputSchema?: Readonly<Record<string, unknown>>;
@@ -51,7 +51,8 @@ function canonical(value: unknown): string {
 
 const Ask = z.strictObject({ prompt: z.string(), constraint: z.unknown().optional() });
 const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? null)) as unknown;
-const message = (e: unknown) => (e instanceof Error ? `${e.name}: ${e.message}` : typeof e === "object" && e !== null && "message" in e ? `Error: ${String((e as { message: unknown }).message)}` : String(e));
+// Code mode rejects with an Error whatever the code throws; its text is "name: message".
+const message = (e: unknown) => String(e);
 
 /**
  * Run a workflow durably. The code runs in AI SDK code mode (an isolated QuickJS
@@ -98,6 +99,7 @@ export async function runWorkflow(options: {
   const abort = new AbortController();
   let failure: { error: unknown } | undefined;
   // Code mode reports a host tool's error without its message; the last one is kept to say why a run failed.
+  // (Once the run is aborted, code mode performs no further calls.)
   let toolError: string | undefined;
   /** Stop the run on a failed effect: the abort ends the code, and this call never settles, so the code cannot catch it. */
   const stop = (error: unknown): Promise<never> => {
@@ -118,7 +120,6 @@ export async function runWorkflow(options: {
       replayed++;
       return entry.result;
     }
-    if (failure) return stop(failure.error);
     try {
       const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: Constraint };
       const result = json(op === "tool" ? await effects.tool(r.name, r.args) : await effects.ask(r.prompt, r.constraint));
@@ -134,10 +135,8 @@ export async function runWorkflow(options: {
 
   const tools: Record<string, Tool> = {
     [ASK]: tool({
-      description: "Ask a model a question; with a constraint (JSON Schema, grammar, regex or template), the answer follows it where the model can enforce it.",
-      inputSchema: jsonSchema({ type: "object", properties: { prompt: { type: "string" }, constraint: { type: "object" } }, required: ["prompt"] }),
-      execute: async (args: unknown) => {
-        const { prompt, constraint } = Ask.parse(args);
+      inputSchema: Ask,
+      execute: async ({ prompt, constraint }) => {
         if (constraint === undefined) return effect("ask", { prompt });
         const parsed = ConstraintSchema.safeParse(constraint);
         if (!parsed.success) throw new Error((toolError = `tools.ask was given a constraint that is not one: ${JSON.stringify(constraint)}`));
@@ -148,7 +147,6 @@ export async function runWorkflow(options: {
       Object.entries(options.tools ?? {}).map(([name, spec]) => [
         name,
         tool({
-          ...(spec.description ? { description: spec.description } : {}),
           inputSchema: validatedSchema(spec.inputSchema ?? {}),
           execute: async (args: unknown) => effect("tool", { name, args: args ?? {} }),
         }),
