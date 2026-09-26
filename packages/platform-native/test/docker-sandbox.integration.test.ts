@@ -4,10 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dockerSandbox } from "@harness/platform-native";
+import { ensureImage, IMAGE } from "./docker-image.ts";
 
-// A real Docker daemon runs these (CI's runner has one). The image is any with a POSIX
-// shell and node; it comes from the public ECR mirror of Docker's official images.
-const IMAGE = "public.ecr.aws/docker/library/node:22-bookworm-slim";
+// A real Docker daemon runs these (CI's runner has one).
 const RUN = `t${process.pid}`;
 const provider = (options: Partial<Parameters<typeof dockerSandbox>[0]> = {}) => dockerSandbox({ image: IMAGE, labels: { "harness.test": RUN }, ...options });
 const text = async (s: ReadableStream<Uint8Array>) => new Response(s).text();
@@ -15,10 +14,7 @@ let sessions = 0;
 const id = () => `${RUN}-${++sessions}`;
 
 // Pull once, before any test's clock starts: a fresh runner has no image yet.
-beforeAll(() => {
-  const pulled = spawnSync("docker", ["pull", "-q", IMAGE], { encoding: "utf8" });
-  if (pulled.status !== 0) throw new Error(`docker pull ${IMAGE} failed: ${pulled.stderr}`);
-}, 300_000);
+beforeAll(ensureImage, 300_000);
 
 afterAll(() => {
   const listed = spawnSync("docker", ["ps", "-aq", "--filter", `label=harness.test=${RUN}`], { encoding: "utf8" }).stdout.trim();
