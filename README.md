@@ -178,8 +178,11 @@ Workers:
   that need approval go through the daemon's permission routing.
 - `--worker harness --harness claude-code|codex|acp:<package>@<version>:<executable>`:
   runs each session on an AI SDK harness, in a directory of its own under `--sandboxes`
-  (unisolated: it runs as you). `--harness-state <file>` parks sessions at shutdown and
-  resumes them after a restart. ACP agents need `pnpm` on `PATH`: the adapter installs its
+  (unisolated: it runs as you), or with `--sandbox docker:<image>` in a Docker container of
+  its own (`--sandbox-setup <command>` runs once in each new container; `--sandbox-env
+  <NAME>` passes a variable in, e.g. a harness's API key). `--harness-state <file>` parks
+  sessions at shutdown and resumes them after a restart. ACP agents need `pnpm` on `PATH`
+  (in a container: `--sandbox-setup "npm install -g pnpm"`): the adapter installs its
   bridge with it.
 
 ## Evals
