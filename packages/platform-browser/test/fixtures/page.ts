@@ -1,7 +1,11 @@
 // The smoke test's page: drives browser hosts over MessagePorts with the ACP SDK's client.
 import { ClientSideConnection, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
-import { BrowserHost, IndexedDbStorage, portStream } from "@harness/platform-browser";
+import type { ModelDescriptor } from "@harness/cognitive";
+import { ConstraintEngine } from "@harness/constrained";
+import { BrowserHost, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, portStream, xgrammarFromSource } from "@harness/platform-browser";
+// The XGrammar web binding's source, bundled as text (Vite's ?raw), as an app would ship it.
+import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
 import type { AcpPort } from "@harness/platform-browser";
 import { EchoWorker } from "@harness/workers";
 
@@ -83,5 +87,41 @@ async function takeOver(sessionId: string) {
   return { stopReason: turn.stopReason, said: b.said() };
 }
 
-Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver } });
+/** Model files in the real Cache API: kept, found again by another instance, a missing key is not there. */
+async function cacheRoundTrip() {
+  const first = new CacheStorageByteCache({ name: "smoke-models" });
+  await first.put("repo@rev/model.bin", new Uint8Array([1, 2, 3]));
+  const again = new CacheStorageByteCache({ name: "smoke-models" });
+  return { found: [...((await again.get("repo@rev/model.bin")) ?? [])], missing: (await again.get("repo@rev/other.bin")) === undefined };
+}
+
+/** XGrammar in the browser from its bundled source: a JSON Schema allows only what keeps the output valid. */
+async function xgrammar() {
+  const vocab = [..."abcdefghijklmnopqrstuvwxyz0123456789{}\":, ", "<eos>"];
+  const engine = await ConstraintEngine.create(xgrammarFromSource(xgrammarSource), { tokens: vocab, stopTokens: [vocab.length - 1] });
+  const matcher = await engine.matcher({ type: "json-schema", schema: { type: "object", properties: { n: { type: "integer" } }, required: ["n"], additionalProperties: false } });
+  const logits = new Float32Array(vocab.length);
+  matcher.mask(logits);
+  const allowed = vocab.filter((_, i) => logits[i] !== -Infinity);
+  // a grammar XGrammar cannot parse fails, and the engine recovers on a fresh instance
+  const broken = await engine.matcher({ type: "grammar", ebnf: "root ::= (" }).then(() => "compiled", (e: Error) => e.message);
+  const after = await engine.matcher({ type: "regex", pattern: "[a-c]+" });
+  const second = new Float32Array(vocab.length);
+  after.mask(second);
+  return { allowed, forced: matcher.forced(), broken, afterBroken: vocab.filter((_, i) => second[i] !== -Infinity) };
+}
+
+/** The cognitive core in the browser host: a Cactus WASM router, its files fetched from a hub, verified and kept in the Cache API. */
+async function cognitive(model: ModelDescriptor, hub: string) {
+  const ensemble = buildBrowserEnsemble({ catalog: { models: [model], preferences: {} }, hub, cache: new CacheStorageByteCache({ name: "smoke-cognitive" }) });
+  const host = await BrowserHost.start({ worker: new EchoWorker(), identity: ME, cognitive: ensemble });
+  const channel = new MessageChannel();
+  host.accept(channel.port2);
+  const c = await client(channel.port1);
+  const routed = await c.acp.extMethod("_harness/cognitive/invoke", { op: "route", input: { input: "go", tools: [{ name: "t", description: "", parameters: {} }] } });
+  await host.close();
+  return routed;
+}
+
+Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver, cacheRoundTrip, xgrammar, cognitive } });
 document.title = "ready";
