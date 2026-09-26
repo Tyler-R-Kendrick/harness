@@ -37,7 +37,8 @@ async function session(id: string, directory: string): Promise<HarnessV1NetworkS
     await writeFile(at(path), content);
   };
   const start = (o: { command: string; workingDirectory?: string; env?: Record<string, string> }) =>
-    spawn("sh", ["-c", o.command], { cwd: o.workingDirectory === undefined ? directory : resolve(directory, o.workingDirectory), env: { ...process.env, ...o.env } });
+    // Each command leads its own process group, so killing it reaches what the shell started.
+    spawn("sh", ["-c", o.command], { cwd: o.workingDirectory === undefined ? directory : resolve(directory, o.workingDirectory), env: { ...process.env, ...o.env }, detached: true });
   const endpoint = async ({ port: asked, protocol = "http" }: { port: number; protocol?: "http" | "https" | "ws" }) => {
     if (asked !== port) throw new Error(`port ${asked} is not exposed by this sandbox`);
     return { url: `${protocol}://127.0.0.1:${port}` };
@@ -63,7 +64,9 @@ async function session(id: string, directory: string): Promise<HarnessV1NetworkS
         stdout: Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
         stderr: Readable.toWeb(child.stderr) as ReadableStream<Uint8Array>,
         wait: () => exited,
-        kill: async () => void child.kill(),
+        kill: async () => {
+          if (child.pid !== undefined && child.exitCode === null) process.kill(-child.pid, "SIGTERM");
+        },
       };
     },
     run: (o) =>
