@@ -174,6 +174,19 @@ const worker = new SharedWorker(new URL("./shared-worker.js", import.meta.url), 
 const acp = new ClientSideConnection(() => client, portStream(worker.port));
 ```
 
+The browser host takes the cognitive core too: the catalog's browser models, their files
+verified and kept in the Cache API, transformers.js on WebGPU when asked:
+
+```ts
+import catalog from "@harness/cognitive/data/catalog.json" with { type: "json" };
+import benchmarks from "@harness/cognitive/data/benchmarks.json" with { type: "json" };
+import xgrammar from "@mlc-ai/web-xgrammar?raw"; // the binding's source, bundled as text
+import { parseCatalog } from "@harness/cognitive";
+import { buildBrowserEnsemble, xgrammarFromSource } from "@harness/platform-browser";
+
+const cognitive = buildBrowserEnsemble({ catalog: parseCatalog(catalog, benchmarks), device: "webgpu", xgrammar: xgrammarFromSource(xgrammar) });
+```
+
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:
 `BrowserHost.serveExtension(chrome.runtime.onConnect, options)` there, and
 `portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page.

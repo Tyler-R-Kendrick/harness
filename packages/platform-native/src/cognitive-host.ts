@@ -8,23 +8,14 @@ import {
   ArtifactStore,
   behaviorHook,
   sessionHooks,
-  CactusWasmEngine,
-  gatewayEvaluationModel,
   llamaServer,
   loadChatTokenizer,
-  loadFeatureExtractionBackend,
-  loadTokenClassificationBackend,
-  loadVisionChatBackend,
   OnnxSteerableSession,
   pageInstruction,
-  promptedEmbeddingModel,
-  serviceAvailable,
+  portableLoaders,
   steeredModel,
-  TokenClassifierCompressor,
-  typesafeApiEvaluationModel,
-  visionChatModel,
 } from "@harness/models";
-import type { CactusModule, OrtLike } from "@harness/models";
+import type { OrtLike } from "@harness/models";
 import { Memory, memoryExtension, sharedEmbeddingSize } from "@harness/memory";
 import { ensembleReasoner, Learning, learningExtension, Plugins } from "@harness/learning";
 import type { Settings } from "@harness/learning";
@@ -139,45 +130,18 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
       : undefined;
 
   const loaders: Loaders = {
-    // Without a credential the model fails to load, and the next one for the task takes over.
-    "ai-gateway": async (m) => {
-      if (!env["AI_GATEWAY_API_KEY"] && !env["VERCEL_OIDC_TOKEN"]) throw new Error("no AI Gateway credential (AI_GATEWAY_API_KEY or VERCEL_OIDC_TOKEN)");
-      return { judge: gatewayEvaluationModel(m.run.model) };
-    },
-    "typesafe-api": async (m) => {
-      const baseUrl = ((m.run.baseUrlEnv && env[m.run.baseUrlEnv]) || m.run.baseUrl).replace(/\/$/, "");
-      if (m.run.health && !(await serviceAvailable(`${baseUrl}${m.run.health}`, fetchFn))) {
-        throw new Error(`${m.name} is not answering at ${baseUrl}; start its server${m.run.baseUrlEnv ? ` or set ${m.run.baseUrlEnv}` : ""}`);
-      }
-      const apiKey = m.run.apiKeyEnv ? env[m.run.apiKeyEnv] : undefined;
-      return { judge: typesafeApiEvaluationModel({ baseUrl, model: m.run.model, fetch: fetchFn, ...(apiKey ? { apiKey } : {}) }) };
-    },
-    "cactus-wasm": async (m) => {
+    ...portableLoaders({
+      fetch: fetchFn,
+      artifacts,
+      env,
+      transformers: { cacheDir: join(options.cacheDir, "transformers"), ...(options.transformers === undefined ? {} : { module: options.transformers }) },
+      emscripten: (loader, wasm, name) => loadEmscriptenModule(loader, wasm, name),
       // The engine reads the real process environment.
-      for (const [k, v] of Object.entries(m.run.env ?? {})) process.env[k] ??= v;
-      const [loader, wasm, weights] = await Promise.all([m.run.loader, m.run.wasm, m.run.weights].map((p) => artifacts.file(m.artifact!, p)));
-      const engine = await CactusWasmEngine.create(await loadEmscriptenModule<CactusModule>(loader!, wasm!, m.run.loader), weights!, m.run.prefix);
-      return { router: engine.router(m.id) };
-    },
-    "transformers.js": async (m) => {
-      const at = { ...pinned(m), dtype: m.run.dtype };
-      const chat = m.run.modelClass
-        ? await loadVisionChatBackend({
-            ...at,
-            modelClass: m.run.modelClass,
-            ...(m.run.template ? { templateOptions: m.run.template } : {}),
-            ...(m.run.imagesFirst ? { imagesFirst: true } : {}),
-            ...(constrainer(m) ? { constrainer: constrainer(m)! } : {}),
-          })
-        : undefined;
-      const model = chat && visionChatModel(chat, { modelId: m.id });
-      return {
-        ...(m.embedding ? { embedder: promptedEmbeddingModel(await loadFeatureExtractionBackend(at), m.embedding, { modelId: m.id }) } : {}),
-        ...(m.compression ? { compressor: new TokenClassifierCompressor(await loadTokenClassificationBackend({ ...at, keepLabel: m.compression.keepLabel }), m.compression) } : {}),
-        ...(model && serves(m, "generator") ? { generator: model } : {}),
-        ...(model && serves(m, "document-parser") ? { "document-parser": model } : {}),
-      };
-    },
+      engineEnv: (vars) => {
+        for (const [k, v] of Object.entries(vars)) process.env[k] ??= v;
+      },
+      constrainer,
+    }),
     ...(options.llamaServer
       ? {
           "llama.cpp-server": async (m: Of<"llama.cpp-server">) => {
