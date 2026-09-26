@@ -36,7 +36,7 @@ export async function runSession(
       } else if (o.kind !== "worker") continue;
       else if (o.command.type === "prompt") running.push(worker.run(o.command, (e) => apply(daemon.workerEvent(e))));
       else if (o.command.type === "cancel") worker.cancel(o.command.sessionId, o.command.turnId);
-      else worker.permission(o.command);
+      else if (o.command.type === "permission") worker.permission(o.command);
     }
   };
   // Unattended evals must never leave a permission request hanging: apply the policy.

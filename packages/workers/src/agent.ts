@@ -2,9 +2,9 @@ import { base64 } from "@scure/base";
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { Agent, ModelMessage, ToolApprovalResponse, ToolSet, UserContent } from "ai";
 import { stateOf } from "@harness/cognitive";
-import type { CallbackOutcome, StopReason } from "@harness/core";
+import type { BehaviorChange, CallbackOutcome, StopReason } from "@harness/core";
 import { textChunk } from "./worker.ts";
-import type { Emit, PermissionCommand, PromptCommand, Worker } from "./worker.ts";
+import type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } from "./worker.ts";
 
 /** What each turn tells the agent: which session it belongs to (see sessionAgent). */
 export interface TurnOptions {
@@ -47,12 +47,24 @@ interface Running {
 export class AgentWorker implements Worker {
   readonly #agent: Agent<TurnOptions, ToolSet>;
   readonly #onTurn: ((turn: Turn) => Promise<unknown>) | undefined;
+  readonly #onEvent: ((sessionId: string, name: string) => BehaviorChange | undefined) | undefined;
   readonly #history = new Map<string, ModelMessage[]>();
   readonly #running = new Map<string, Running>();
 
-  constructor(options: { readonly agent: Agent<TurnOptions, ToolSet>; readonly onTurn?: (turn: Turn) => Promise<unknown> }) {
+  constructor(options: {
+    readonly agent: Agent<TurnOptions, ToolSet>;
+    readonly onTurn?: (turn: Turn) => Promise<unknown>;
+    /** A session's behavior (a steered model's): takes host events and returns the change each caused. */
+    readonly onEvent?: (sessionId: string, name: string) => BehaviorChange | undefined;
+  }) {
     this.#agent = options.agent;
     this.#onTurn = options.onTurn;
+    this.#onEvent = options.onEvent;
+  }
+
+  event(command: EventCommand, emit: Emit): void {
+    const change = this.#onEvent?.(command.sessionId, command.name);
+    if (change) emit({ type: "behavior", sessionId: command.sessionId, change });
   }
 
   async run(command: PromptCommand, emit: Emit): Promise<void> {

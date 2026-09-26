@@ -5,7 +5,7 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { streamText } from "ai";
 import type { TextStreamPart, ToolSet } from "ai";
-import { stateOf } from "@harness/cognitive";
+import { inSession, stateOf } from "@harness/cognitive";
 import type { LanguageModelV4 } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
 import { generatorContract } from "@harness/testkit";
@@ -43,10 +43,10 @@ const behavior = once(async () => {
 const steered = once(async () => kernel((await behavior()).pack));
 const plain = once(() => kernel());
 
-async function reply(content: string, isSteered: boolean) {
+async function reply(content: string, isSteered: boolean, session?: string) {
   const model = await (isSteered ? steered() : plain());
   const parts: TextStreamPart<ToolSet>[] = [];
-  for await (const part of streamText({ model, prompt: content, maxOutputTokens: 40, maxRetries: 0 }).fullStream) parts.push(part);
+  for await (const part of streamText({ model, prompt: content, maxOutputTokens: 40, maxRetries: 0, ...(session === undefined ? {} : inSession(session)) }).fullStream) parts.push(part);
   const changes = parts.flatMap((p) => {
     const change = stateOf(p as { type: string });
     return change ? [change] : [];
@@ -90,5 +90,16 @@ describe("the steerable kernel with a behavior graph, real weights", () => {
     expect(steered.states).toEqual([]);
     expect(steered.text).toBe(plain.text);
     expect(steered.text).toMatch(/Paris/);
+  });
+
+  it("KS1.5 behavior state belongs to the daemon session: after an insult, that session's next turn starts soothing, while another session starts neutral", async () => {
+    expect((await reply("You useless idiot, I am furious with you!", true, "angry-session")).states).toEqual(["neutral->soothing"]);
+    const next = await reply("What is the capital of France?", true, "angry-session");
+    expect(next.states).not.toContain("neutral->soothing");
+    expect(next.states.every((s) => s.startsWith("soothing->"))).toBe(true);
+    const other = await reply("What is the capital of France?", true, "calm-session");
+    const plainReply = await reply("What is the capital of France?", false);
+    expect(other.states).toEqual([]);
+    expect(other.text).toBe(plainReply.text);
   });
 });

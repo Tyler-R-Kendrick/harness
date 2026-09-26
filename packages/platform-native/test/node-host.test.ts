@@ -77,6 +77,22 @@ describe("NodeHost", () => {
     await host.close();
   });
 
+  it("NH1.6 a behavior event raised for a session reaches the worker, and the change it reports lands in the session log", async () => {
+    const raised: string[] = [];
+    const worker: Worker = { run: async () => {}, cancel: () => {}, permission: () => {}, event: (c, emit) => (raised.push(c.name), emit({ type: "behavior", sessionId: c.sessionId, change: { state: "cheerful", cause: `event ${c.name}` } })) };
+    const host = await NodeHost.start({ worker, identity: { principal: "me", kind: "human" } });
+    const c = wire(host);
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    c.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/", mcpServers: [] } });
+    const { result } = (await c.waitFor((m) => m["id"] === 2)) as { result: { sessionId: string } };
+    c.send({ jsonrpc: "2.0", id: 3, method: "_harness/behavior/event", params: { sessionId: result.sessionId, event: "praised" } });
+    expect(await c.waitFor((m) => m["id"] === 3)).toMatchObject({ result: {} });
+    expect(raised).toEqual(["praised"]);
+    const log = host.daemon.snapshot().sessions[0]!.log as { entries: { payload: { event?: string; data?: unknown } }[] };
+    expect(log.entries.map((e) => e.payload)).toContainEqual({ event: "behavior.changed", data: { state: "cheerful", cause: "event praised" } });
+    await host.close();
+  });
+
   it("NH1.3 an unreadable snapshot location fails startup loudly", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-host-"));
     mkdirSync(join(dir, "state.json"));

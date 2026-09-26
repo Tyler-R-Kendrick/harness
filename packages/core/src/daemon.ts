@@ -70,7 +70,16 @@ export type PermissionOptionSpec = PermissionOption;
 export type WorkerCommand =
   | { readonly type: "prompt"; readonly sessionId: string; readonly turnId: string; readonly prompt: readonly unknown[]; readonly cwd: string }
   | { readonly type: "cancel"; readonly sessionId: string; readonly turnId: string }
-  | { readonly type: "permission"; readonly sessionId: string; readonly turnId: string; readonly requestId: string; readonly outcome: CallbackOutcome };
+  | { readonly type: "permission"; readonly sessionId: string; readonly turnId: string; readonly requestId: string; readonly outcome: CallbackOutcome }
+  /** A host event for the session's behavior (see `_harness/behavior/event`). */
+  | { readonly type: "event"; readonly sessionId: string; readonly name: string };
+
+/** A behavior state change: the state entered, the one left, and what caused it. */
+export interface BehaviorChange {
+  readonly state: string;
+  readonly from?: string;
+  readonly cause?: string;
+}
 
 /** What a worker reports back through the host. */
 export type WorkerEvent =
@@ -83,7 +92,9 @@ export type WorkerEvent =
       readonly toolCall: ToolCallUpdate;
       readonly options: readonly PermissionOptionSpec[];
     }
-  | { readonly type: "end"; readonly sessionId: string; readonly turnId: string; readonly stopReason: StopReason };
+  | { readonly type: "end"; readonly sessionId: string; readonly turnId: string; readonly stopReason: StopReason }
+  /** A behavior change outside any turn (after a raised event). */
+  | { readonly type: "behavior"; readonly sessionId: string; readonly change: BehaviorChange };
 
 /** Cognitive-core operations clients can ask for, and the task each one needs a model for. */
 export const COGNITIVE_OPS = {
@@ -185,6 +196,17 @@ const invalidParams = (message: string) => new RpcError(ERROR_CODES.invalidParam
 /** Returned by handlers whose response is sent later (a prompt is answered when its turn ends). */
 const DEFER = Symbol("defer");
 
+/** The behavior state change a session update carries in `_meta.harness.behavior`, if it is one. */
+function behaviorChange(update: SessionUpdate): BehaviorChange | undefined {
+  const b = record(record(record(update)["_meta"])["harness"])["behavior"];
+  const c = record(b);
+  if (typeof c["state"] !== "string") return undefined;
+  const text = (v: unknown) => (typeof v === "string" ? v : undefined);
+  const from = text(c["from"]);
+  const cause = text(c["cause"]);
+  return { state: c["state"], ...(from === undefined ? {} : { from }), ...(cause === undefined ? {} : { cause }) };
+}
+
 function record(v: unknown): Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }
@@ -258,8 +280,18 @@ export class Daemon {
   workerEvent(event: WorkerEvent): Output[] {
     return this.#run(() => {
       const session = this.#sessions.get(event.sessionId);
-      if (!session || session.turn?.turnId !== event.turnId) return;
-      if (event.type === "update") this.#append(session, "update", { update: event.update });
+      if (!session) return;
+      if (event.type === "behavior") {
+        this.#append(session, "event", { event: "behavior.changed", data: { ...event.change } });
+        this.#publish("behavior.changed", session.id, { ...event.change });
+        return;
+      }
+      if (session.turn?.turnId !== event.turnId) return;
+      if (event.type === "update") {
+        this.#append(session, "update", { update: event.update });
+        const change = behaviorChange(event.update);
+        if (change) this.#publish("behavior.changed", session.id, { turnId: event.turnId, ...change });
+      }
       else if (event.type === "permission") this.#openPermission(session, event);
       else this.#endTurn(session, event.stopReason);
     });
@@ -398,6 +430,18 @@ export class Daemon {
         const r = this.#hooks.poll(this.#plugin(conn), params["max"] === undefined ? Number.POSITIVE_INFINITY : int(params["max"], "max"));
         if (!r.ok) throw invalidParams(r.error.message);
         return { events: r.value };
+      }
+      case HARNESS_METHODS.behaviorEvent: {
+        const session = this.#session(str(params["sessionId"], "sessionId"));
+        const name = str(params["event"], "event");
+        // Plugins act on sessions through the hook bus; clients need control of this one.
+        if (conn.identity.kind !== "plugin") {
+          const sub = session.subscribers.get(conn.id);
+          if (!sub || !session.tree.hasGrant(sub.nodeId, "control")) throw new RpcError(ERROR_CODES.forbidden, "raising a behavior event needs control of the session");
+        }
+        this.#out.push({ kind: "worker", command: { type: "event", sessionId: session.id, name } });
+        this.#publish("behavior.raised", session.id, { event: name, by: conn.identity.principal });
+        return {};
       }
       case HARNESS_METHODS.hooksAck: {
         const r = this.#hooks.ack(this.#plugin(conn), int(params["offset"], "offset"));

@@ -3,10 +3,11 @@ import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { wrapLanguageModel } from "ai";
 import { Ensemble } from "@harness/cognitive";
-import type { Catalog, Dimensions, ModelDescriptor, Ports, Runtime } from "@harness/cognitive";
+import type { Catalog, Dimensions, ModelDescriptor, Ports, Runtime, StateChange } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
+  sessionHooks,
   CactusWasmEngine,
   gatewayEvaluationModel,
   llamaServer,
@@ -100,7 +101,18 @@ type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
  * use. Nothing here knows a model: the catalog entry says which runtime runs it, how
  * (its `run` settings) and which ports it serves.
  */
-export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble: Ensemble; memory?: Memory; learning?: Learning; workflows?: WorkflowFiles; workflowHost?: WorkflowHost; close(): Promise<void> } {
+export function buildNativeEnsemble(options: NativeEnsembleOptions): {
+  ensemble: Ensemble;
+  memory?: Memory;
+  learning?: Learning;
+  workflows?: WorkflowFiles;
+  workflowHost?: WorkflowHost;
+  /** A host event for a daemon session's behavior (a plugin's); the state change it caused, if any. */
+  raiseBehavior(session: string, event: string): StateChange | undefined;
+  close(): Promise<void>;
+} {
+  // One behavior state per daemon session, kept across its turns.
+  const behavior = options.behavior ? sessionHooks(() => behaviorHook(new BehaviorEngine(options.behavior!))) : undefined;
   if (options.learning && !options.memory) throw new Error("learning requires memory: install memory too");
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
@@ -196,7 +208,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
       const build = constrainer(m);
       const constrain = build && tokenizer.vocabulary ? await build({ tokens: tokenizer.vocabulary(), stopTokens: tokenizer.endTokens }) : undefined;
       return {
-        generator: steeredModel({ modelId: m.id, session, tokenizer, ...(options.behavior ? { hook: () => behaviorHook(new BehaviorEngine(options.behavior!)) } : {}), ...(constrain ? { constrain } : {}) }),
+        generator: steeredModel({ modelId: m.id, session, tokenizer, ...(behavior ? { hook: behavior.hookFor } : {}), ...(constrain ? { constrain } : {}) }),
       };
     },
   };
@@ -227,6 +239,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): { ensemble:
     ...(learning ? { learning } : {}),
     ...(workflows ? { workflows } : {}),
     ...(workflowHost ? { workflowHost } : {}),
+    raiseBehavior: (session, event) => behavior?.raise(session, event),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
     },

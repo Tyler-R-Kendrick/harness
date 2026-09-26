@@ -60,6 +60,17 @@ export const jsonResponseFormat: LanguageModelV4Middleware = {
   transformParams: async ({ params }) => withResponseFormat(params),
 };
 
+/** Call settings naming the daemon session a call belongs to (a steered model keeps behavior state per session). */
+export function inSession(sessionId: string): { providerOptions: { harness: JSONObject } } {
+  return { providerOptions: { [HARNESS]: { session: sessionId } } };
+}
+
+/** The daemon session a call names, if any. */
+export function sessionOf(providerOptions: ProviderOptions): string | undefined {
+  const session = harness(providerOptions)["session"];
+  return typeof session === "string" && session !== "" ? session : undefined;
+}
+
 const EmbeddingOptions = z.object({
   kind: z.enum(["query", "document"]).default("document"),
   task: z.string().exactOptional(),

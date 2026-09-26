@@ -11,7 +11,7 @@ export type { TemplateMessage, TemplatePart, TemplateTool } from "./local-model.
 export { llamaServer } from "./language-model.ts";
 export { applyImageProcessorDefaults, loadChatTokenizer, loadFeatureExtractionBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "./transformers-backends.ts";
 export type { Dtype, TransformersOptions } from "./transformers-backends.ts";
-export { behaviorHook, steeredModel } from "./steerable.ts";
+export { behaviorHook, sessionHooks, steeredModel } from "./steerable.ts";
 export type { SteerableSession, SteeredModelOptions, SteeringHook, TokenizerLike } from "./steerable.ts";
 export { encodeNode, encodeValueInfo, int, lengthDelimited, makeSteerable, str, varint } from "./onnx-steer.ts";
 export type { Tap } from "./onnx-steer.ts";

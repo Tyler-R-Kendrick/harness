@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrain, constraintOf, dimensions, jsonResponseFormat, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf } from "@harness/cognitive";
+import { constrain, constraintOf, dimensions, inSession, jsonResponseFormat, sessionOf, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf } from "@harness/cognitive";
 
 describe("our settings on AI SDK calls", () => {
   it("OP1.1 a constraint travels as harness provider options and reads back parsed; a JSON response format is a JSON Schema constraint", () => {
@@ -29,6 +29,14 @@ describe("our settings on AI SDK calls", () => {
     expect(await transform({ prompt, ...constrain({ type: "regex", pattern: "a" }) })).toEqual({ prompt, ...constrain({ type: "regex", pattern: "a" }) });
     expect(await transform({ prompt })).toEqual({ prompt });
     expect(jsonResponseFormat.specificationVersion).toBe("v4");
+  });
+
+  it("OP1.6 a call names its daemon session in harness provider options, so a model can keep per-session state", () => {
+    expect(inSession("s1")).toEqual({ providerOptions: { [HARNESS]: { session: "s1" } } });
+    expect(sessionOf(inSession("s1").providerOptions)).toBe("s1");
+    expect(sessionOf({ [HARNESS]: { session: 3 } })).toBeUndefined();
+    expect(sessionOf({ [HARNESS]: { session: "" } })).toBeUndefined();
+    expect(sessionOf(undefined)).toBeUndefined();
   });
 
   it("OP1.3 embedding settings say what the texts are and the size wanted; documents are the default", () => {

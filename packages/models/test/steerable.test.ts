@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { generateText, streamText } from "ai";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { behaviorHook, steeredModel } from "@harness/models";
+import { behaviorHook, sessionHooks, steeredModel } from "@harness/models";
 import type { SteerableSession, SteeringHook, TokenizerLike } from "@harness/models";
 import { BehaviorEngine, compilePack, defineGraph } from "@harness/behavior";
-import { constrain, stateOf, toolSet } from "@harness/cognitive";
+import { inSession, constrain, stateOf, toolSet } from "@harness/cognitive";
 import { generatorContract } from "@harness/testkit";
 
 /** Token ids are characters of a tiny vocabulary; id 0 ends the turn. */
@@ -231,6 +231,7 @@ describe("behavior hook", () => {
     transitions: [
       { from: "calm", to: "guarded", when: { sensor: "threat", is: "on" } },
       { from: "guarded", to: "calm", when: { sensor: "threat", is: "off" } },
+      { from: "guarded", to: "calm", when: { event: "reassured" } },
     ],
   });
   const unit = (i: number) => Float32Array.from([0, 1].map((j) => (j === i ? 1 : 0)));
@@ -242,6 +243,15 @@ describe("behavior hook", () => {
     expect(Array.from(hook.initial()!)).toEqual([0, 1]);
     expect(hook.at(Float32Array.from([0.5, 0]))).toEqual({ steering: Float32Array.from([0, 1]) });
     expect(hook.at(Float32Array.from([3, 0]))).toEqual({ steering: Float32Array.from([0, -2]), state: { state: "guarded", from: "calm", cause: "sensor threat on" } });
+  });
+
+  it("BH1.2 a host event takes the graph's transition for it and reports the state change; an event with no transition changes nothing", () => {
+    const hook = behaviorHook(new BehaviorEngine(pack));
+    expect(hook.event!("reassured")).toBeUndefined();
+    hook.at(Float32Array.from([3, 0]));
+    expect(hook.event!("unknown")).toBeUndefined();
+    expect(hook.event!("reassured")).toEqual({ state: "calm", from: "guarded", cause: "event reassured" });
+    expect(Array.from(hook.initial()!)).toEqual([0, 1]);
   });
 });
 
@@ -322,6 +332,54 @@ describe("constrained steered generation", () => {
     expect(session.calls.map((c) => c.steer?.[0])).toEqual([1, 1, 2, 2]);
     const wrong = steeredModel({ modelId: "kernel", session, tokenizer, hook: () => ({ ...hook(), layer: 9 }) });
     await expect(generateText({ model: wrong, prompt: "a", maxRetries: 0 })).rejects.toThrow("the hook reads layer 9 but the session taps layer 5");
+  });
+
+  it("SG2.6 the hook factory is asked for each generation's hook with the daemon session the call names", async () => {
+    const asked: (string | undefined)[] = [];
+    const hook = (session?: string): SteeringHook => (asked.push(session), { layer: 5, initial: () => undefined, at: () => ({ steering: undefined }) });
+    const model = steeredModel({ modelId: "kernel", session: new FakeSession([0, 0]), tokenizer, hook });
+    await run(model, "a", inSession("s1"));
+    await run(model, "a");
+    expect(asked).toEqual(["s1", undefined]);
+  });
+
+  it("SG2.7 session hooks: a session's behavior state carries from one generation to the next; other sessions, and calls outside any, have their own", async () => {
+    let made = 0;
+    const hooks = sessionHooks(() => {
+      made++;
+      let steps = 0;
+      return { layer: 5, initial: () => Float32Array.from([steps, 0]), at: () => ({ steering: Float32Array.from([++steps, 0]) }) };
+    });
+    const session = new FakeSession([1, 0, 1, 0, 1, 0, 1, 0]);
+    const model = steeredModel({ modelId: "kernel", session, tokenizer, hook: hooks.hookFor });
+    await run(model, "a", inSession("s1"));
+    await run(model, "a", inSession("s1"));
+    await run(model, "a", inSession("s2"));
+    await run(model, "a");
+    expect(made).toBe(3);
+    // s1's second generation starts steering from where its first left off; s2 starts afresh
+    expect(session.calls[2]!.steer![0]).toBeGreaterThan(0);
+    expect(session.calls[4]!.steer![0]).toBe(0);
+  });
+
+  it("SG2.8 session hooks are kept for a bounded number of sessions, forgetting the least recently used", () => {
+    const made: number[] = [];
+    const hooks = sessionHooks(() => (made.push(made.length), { layer: 5, initial: () => undefined, at: () => ({ steering: undefined }) }), { limit: 2 });
+    const seen = ["a", "b", "a", "c", "a", "b"].map((s) => hooks.hookFor(s));
+    expect(made).toHaveLength(4);
+    expect(seen[2]).toBe(seen[0]);
+    expect(seen[4]).toBe(seen[0]);
+    expect(seen[5]).not.toBe(seen[1]);
+  });
+
+  it("SG2.9 a host event raised for a session reaches that session's behavior and reports the change it caused", () => {
+    const events: string[] = [];
+    const hooks = sessionHooks(() => ({ layer: 5, initial: () => undefined, at: () => ({ steering: undefined }), event: (name) => (events.push(name), name === "praise" ? { state: "cheerful", from: "neutral", cause: `event ${name}` } : undefined) }));
+    expect(hooks.raise("s1", "praise")).toEqual({ state: "cheerful", from: "neutral", cause: "event praise" });
+    expect(hooks.raise("s1", "nothing")).toBeUndefined();
+    expect(events).toEqual(["praise", "nothing"]);
+    const plain = sessionHooks(() => ({ layer: 5, initial: () => undefined, at: () => ({ steering: undefined }) }));
+    expect(plain.raise("s1", "praise")).toBeUndefined();
   });
 
   it("SG2.5 a JSON response format is decoded under a JSON Schema constraint", async () => {

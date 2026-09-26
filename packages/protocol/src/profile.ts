@@ -29,6 +29,8 @@ export const HARNESS_METHODS = {
   cognitiveInvoke: "_harness/cognitive/invoke",
   /** The model ensemble: members, their state, and the ranking per task. */
   cognitiveStatus: "_harness/cognitive/status",
+  /** Raise a host event for a session's behavior graph (plugins, or clients with control). */
+  behaviorEvent: "_harness/behavior/event",
 } as const;
 
 /** ACP methods the daemon uses from the base protocol, named by the official SDK. */

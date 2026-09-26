@@ -10,7 +10,7 @@ export type { Evidence, Ranked, SelectionOptions } from "./selection.ts";
 export { CognitiveError, Ensemble } from "./ensemble.ts";
 export type { CognitiveExtension, EnsembleOptions, MemberEvent, MemberState } from "./ensemble.ts";
 export type { Compression, CompressRequest, Compressor, EmbeddingModelV4, EvaluationModelV4, ImageInput, JudgeAnswer, JudgeQuestion, LanguageModelV4, PortMap, Ports, ToolSpec } from "./ports.ts";
-export { HARNESS, MODEL_HEADER, STATE_KIND, constrain, constraintOf, embedding, embedInputs, jsonResponseFormat, stateContent, stateOf, withResponseFormat } from "./options.ts";
+export { HARNESS, MODEL_HEADER, STATE_KIND, constrain, constraintOf, embedding, embedInputs, inSession, jsonResponseFormat, sessionOf, stateContent, stateOf, withResponseFormat } from "./options.ts";
 export type { StateChange } from "./options.ts";
 export { ImageInputSchema, JudgeAnswerSchema, JudgeQuestionSchema, ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";

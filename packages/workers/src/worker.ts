@@ -3,6 +3,7 @@ import type { WorkerCommand, WorkerEvent } from "@harness/core";
 
 export type PromptCommand = Extract<WorkerCommand, { type: "prompt" }>;
 export type PermissionCommand = Extract<WorkerCommand, { type: "permission" }>;
+export type EventCommand = Extract<WorkerCommand, { type: "event" }>;
 export type Emit = (event: WorkerEvent) => void;
 
 /**
@@ -14,6 +15,8 @@ export interface Worker {
   run(command: PromptCommand, emit: Emit): Promise<void>;
   cancel(sessionId: string, turnId: string): void;
   permission(command: PermissionCommand): void;
+  /** A host event for a session's behavior; a worker that has behavior reports the change it caused. */
+  event?(command: EventCommand, emit: Emit): void;
 }
 
 export function promptText(prompt: readonly unknown[]): string {

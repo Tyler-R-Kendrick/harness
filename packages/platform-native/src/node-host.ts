@@ -152,6 +152,7 @@ export class NodeHost {
   #dispatch(command: WorkerCommand): void {
     if (command.type === "cancel") this.#worker.cancel(command.sessionId, command.turnId);
     else if (command.type === "permission") this.#worker.permission(command);
+    else if (command.type === "event") this.#worker.event?.(command, (event) => this.#apply(this.daemon.workerEvent(event)));
     else {
       const turn = this.#worker
         .run(command, (event) => this.#apply(this.daemon.workerEvent(event)))

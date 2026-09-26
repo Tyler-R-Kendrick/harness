@@ -4,7 +4,7 @@ import { tool } from "ai";
 import type { ToolSet } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
-import { stateContent, usage } from "@harness/cognitive";
+import { sessionOf, stateContent, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
 import { promptText } from "@harness/testkit";
 import { AgentWorker, rememberTurns, sessionAgent, userContent } from "@harness/workers";
@@ -158,6 +158,40 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
       await run(new AgentWorker({ agent: sessionAgent({ model: m, learning }) }), [{ type: "text", text: "deploy" }]).done;
       expect(m.doStreamCalls[0]!.prompt.map((p) => p.role)).toEqual(["user"]);
     }
+  });
+
+  it("AW1.14 every model call names its daemon session, so a steered model keeps that session's behavior state", async () => {
+    const model = scripted([...text("one"), finish()], [...text("two"), finish()]);
+    const worker = new AgentWorker({ agent: sessionAgent({ model }) });
+    await run(worker, [{ type: "text", text: "a" }], "s1").done;
+    await run(worker, [{ type: "text", text: "b" }], "s2").done;
+    expect(model.doStreamCalls.map((c) => sessionOf(c.providerOptions))).toEqual(["s1", "s2"]);
+  });
+
+  it("AW1.15 with a model to consult, a turn is given its notes on what was asked as reference; a failing or empty consult adds nothing", async () => {
+    const consult = scripted([...text("Lagos is the largest city in Nigeria."), finish()]);
+    const model = scripted([...text("ok"), finish()]);
+    await run(new AgentWorker({ agent: sessionAgent({ model, consult, instructions: "Help." }) }), [{ type: "text", text: "biggest city in Nigeria?" }]).done;
+    expect(consult.doStreamCalls[0]!.prompt.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "biggest city in Nigeria?" }] });
+    expect(model.doStreamCalls[0]!.prompt[0]).toEqual({ role: "system", content: "Help.\n\nReference notes from a larger model (check them before relying on them):\nLagos is the largest city in Nigeria." });
+    for (const broken of [scripted(new Error("down")), scripted([...text("  "), finish()])]) {
+      const m = scripted([...text("ok"), finish()]);
+      await run(new AgentWorker({ agent: sessionAgent({ model: m, consult: broken }) }), [{ type: "text", text: "q" }]).done;
+      expect(m.doStreamCalls[0]!.prompt.map((p) => p.role)).toEqual(["user"]);
+    }
+  });
+
+  it("AW1.16 a behavior event for a session goes to the worker's behavior, and the change it caused is reported", () => {
+    const raised: [string, string][] = [];
+    const worker = new AgentWorker({ agent: sessionAgent({ model: scripted([finish()]) }), onEvent: (sessionId, name) => (raised.push([sessionId, name]), name === "praised" ? { state: "cheerful", from: "neutral", cause: "event praised" } : undefined) });
+    const events: WorkerEvent[] = [];
+    worker.event({ type: "event", sessionId: "s1", name: "praised" }, (e) => events.push(e));
+    worker.event({ type: "event", sessionId: "s1", name: "ignored" }, (e) => events.push(e));
+    expect(raised).toEqual([["s1", "praised"], ["s1", "ignored"]]);
+    expect(events).toEqual([{ type: "behavior", sessionId: "s1", change: { state: "cheerful", from: "neutral", cause: "event praised" } }]);
+    // a worker without behavior ignores events
+    new AgentWorker({ agent: sessionAgent({ model: scripted([finish()]) }) }).event({ type: "event", sessionId: "s1", name: "praised" }, (e) => events.push(e));
+    expect(events).toHaveLength(1);
   });
 
   it("AW1.9 tool calls run in the agent's loop and reach the client as tool calls and their results or failures", async () => {

@@ -1,6 +1,6 @@
 import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { Mutex } from "async-mutex";
-import { ChatStreamParser, constraintOf, StreamParts } from "@harness/cognitive";
+import { ChatStreamParser, constraintOf, sessionOf, StreamParts } from "@harness/cognitive";
 import type { Constraint, StateChange, TokenConstraint } from "@harness/cognitive";
 import type { BehaviorEngine } from "@harness/behavior";
 import { localLanguageModel, templateOf } from "./local-model.ts";
@@ -40,6 +40,8 @@ export interface SteeringHook {
   initial(): Float32Array | undefined;
   /** The tapped residual after a forward pass; returns steering for the next pass. */
   at(residual: Float32Array): { steering: Float32Array | undefined; state?: StateChange };
+  /** A host event (between turns); returns the state change it caused, if any. */
+  event?(name: string): StateChange | undefined;
 }
 
 /** Drive a behavior engine from the kernel: sense each token, steer the next. */
@@ -51,6 +53,34 @@ export function behaviorHook(engine: BehaviorEngine, layer: number = engine.laye
       const r = engine.step(residual);
       return { steering: r.steering, ...(r.transition ? { state: { state: r.state, from: r.transition.from, cause: r.transition.cause } } : {}) };
     },
+    event: (name) => {
+      const t = engine.event(name);
+      return t ? { state: t.to, from: t.from, cause: t.cause } : undefined;
+    },
+  };
+}
+
+/**
+ * Behavior state per daemon session: one hook per session, made on first use and kept
+ * from one generation to the next, so a session's state carries across its turns; a
+ * generation outside any session gets a fresh hook. At most `limit` sessions are kept
+ * (the least recently used is forgotten). Pass `hookFor` as a steered model's hook.
+ */
+export function sessionHooks(make: () => SteeringHook, options: { readonly limit?: number } = {}) {
+  const limit = options.limit ?? 256;
+  const hooks = new Map<string, SteeringHook>();
+  const hookFor = (session?: string): SteeringHook => {
+    if (session === undefined) return make();
+    const hook = hooks.get(session) ?? make();
+    hooks.delete(session);
+    hooks.set(session, hook);
+    if (hooks.size > limit) hooks.delete(hooks.keys().next().value!);
+    return hook;
+  };
+  return {
+    hookFor,
+    /** A host event for a session's behavior (e.g. a plugin's); returns the state change it caused. */
+    raise: (session: string, name: string): StateChange | undefined => hookFor(session).event?.(name),
   };
 }
 
@@ -84,8 +114,12 @@ export interface SteeredModelOptions {
   readonly modelId: string;
   readonly session: SteerableSession;
   readonly tokenizer: TokenizerLike;
-  /** A hook shared by every generation, or a factory that gives each generation its own (its own behavior state). */
-  readonly hook?: SteeringHook | (() => SteeringHook);
+  /**
+   * A hook shared by every generation, or a factory asked for each generation's hook
+   * with the daemon session the call names (`inSession`), if any; `sessionHooks` keeps
+   * one per session so a session's behavior state carries across its turns.
+   */
+  readonly hook?: SteeringHook | ((session?: string) => SteeringHook);
   /** Defaults for calls that do not set them. */
   readonly temperature?: number;
   readonly topP?: number;
@@ -110,7 +144,7 @@ export function steeredModel(options: SteeredModelOptions): LanguageModelV4 {
   async function* decode(call: LanguageModelV4CallOptions, constraint: TokenConstraint | undefined): AsyncIterable<LanguageModelV4StreamPart> {
     const { session, tokenizer } = o;
     const max = call.maxOutputTokens ?? o.maxTokens ?? 256;
-    const hook = typeof o.hook === "function" ? o.hook() : o.hook;
+    const hook = typeof o.hook === "function" ? o.hook(sessionOf(call.providerOptions)) : o.hook;
     if (hook && hook.layer !== session.layer) throw new Error(`the hook reads layer ${hook.layer} but the session taps layer ${session.layer}`);
     session.reset();
     const { messages, images, tools } = templateOf(call);

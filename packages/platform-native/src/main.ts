@@ -31,6 +31,7 @@ const { values } = parseArgs({
     learning: { type: "string" },
     workflows: { type: "string" },
     harness: { type: "string" },
+    consult: { type: "string" },
     "harness-state": { type: "string" },
     sandboxes: { type: "string" },
   },
@@ -41,7 +42,8 @@ if (!values.stdio && values.socket === undefined) {
     "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
-      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]]\n",
+      "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
+      "                            [--consult <gateway id>]]\n",
   );
   process.exit(2);
 }
@@ -108,10 +110,14 @@ const worker: Worker = harness
             ...instructions,
             ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
             ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
+            // A larger hosted model's notes on each request, as reference for the local kernel.
+            ...(values.consult === undefined ? {} : { consult: gateway(values.consult) }),
             // The workflow library's workflows are durable tools, looked up each turn as learning adds to them.
             ...(cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
           }),
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
+          // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
+          ...(behavior ? { onEvent: (sessionId: string, name: string) => cognitive!.raiseBehavior(sessionId, name) } : {}),
         })
       : new EchoWorker();
 
