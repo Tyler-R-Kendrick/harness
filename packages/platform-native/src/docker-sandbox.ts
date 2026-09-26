@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { posix } from "node:path";
 import { Readable } from "node:stream";
 import type { HarnessV1NetworkSandboxSession, HarnessV1SandboxProvider } from "@ai-sdk/harness";
@@ -37,10 +37,10 @@ interface Result {
   readonly stderr: string;
 }
 
-/** Run the docker CLI to completion, optionally feeding it stdin. */
-function docker(cli: string, args: readonly string[], input?: Uint8Array): Promise<Result> {
+/** Run the docker CLI to completion, optionally feeding it stdin and giving it environment to pass on. */
+function docker(cli: string, args: readonly string[], input?: Uint8Array, env?: Readonly<Record<string, string>>): Promise<Result> {
   return new Promise((done, reject) => {
-    const child = spawn(cli, args);
+    const child = spawn(cli, args, env ? { env: { ...process.env, ...env } } : {});
     const out: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (b: Buffer) => out.push(b));
@@ -51,35 +51,33 @@ function docker(cli: string, args: readonly string[], input?: Uint8Array): Promi
   });
 }
 
-const nameOf = (sessionId: string) => `harness-sandbox-${sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
+/** A container name for a session: readable, and unique even when two ids read alike once made safe. */
+const nameOf = (sessionId: string) => `harness-sandbox-${sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 40)}-${createHash("sha256").update(sessionId).digest("hex").slice(0, 12)}`;
 const pairs = (flag: string, values: Readonly<Record<string, string>>) => Object.entries(values).flatMap(([k, v]) => [flag, `${k}=${v}`]);
+/** Environment passed by name only: docker reads each value from its own environment, so none is on its command line. */
+const names = (values: Readonly<Record<string, string>>) => Object.keys(values).flatMap((k) => ["-e", k]);
 
 function session(options: DockerSandboxOptions, id: string, name: string, port: number | undefined): HarnessV1NetworkSandboxSession {
   const cli = options.docker ?? "docker";
   const at = (path: string) => posix.resolve(WORKDIR, path);
-  const exec = (args: readonly string[], o: { workingDirectory?: string; env?: Record<string, string>; stdin?: boolean } = {}) => [
-    "exec",
-    ...(o.stdin ? ["-i"] : []),
-    "-w",
-    o.workingDirectory === undefined ? WORKDIR : at(o.workingDirectory),
-    ...pairs("-e", { ...options.env, ...o.env }),
-    name,
-    ...args,
-  ];
+  const exec = (args: readonly string[], o: { workingDirectory?: string; env?: Record<string, string>; stdin?: boolean } = {}) => ({
+    args: ["exec", ...(o.stdin ? ["-i"] : []), "-w", o.workingDirectory === undefined ? WORKDIR : at(o.workingDirectory), ...names({ ...options.env, ...o.env }), name, ...args],
+    env: { ...options.env, ...o.env },
+  });
   // Each command leads a session of its own in the container and records its id, so
   // killing it reaches everything it started (the docker CLI here is only a client).
   const command = (o: { command: string; workingDirectory?: string; env?: Record<string, string> }) => {
     const pidFile = `/tmp/.harness-${randomUUID()}.pid`;
-    return { pidFile, args: exec(["setsid", "-w", "sh", "-c", 'echo $$ > "$0"; exec sh -c "$1"', pidFile, o.command], o) };
+    return { pidFile, ...exec(["setsid", "-w", "sh", "-c", 'echo $$ > "$0"; exec sh -c "$1"', pidFile, o.command], o) };
   };
   const read = async (path: string): Promise<Buffer | null> => {
-    const r = await docker(cli, exec(["sh", "-c", 'if [ -e "$0" ]; then exec cat "$0"; else exit 44; fi', at(path)]));
+    const r = await docker(cli, exec(["sh", "-c", 'if [ -e "$0" ]; then exec cat "$0"; else exit 44; fi', at(path)]).args);
     if (r.exitCode === MISSING) return null;
     if (r.exitCode !== 0) throw new Error(`reading ${at(path)} in ${name} failed: ${r.stderr.trim()}`);
     return r.stdout;
   };
   const write = async (path: string, content: Uint8Array) => {
-    const r = await docker(cli, exec(["sh", "-c", 'mkdir -p "$(dirname "$0")" && cat > "$0"', at(path)], { stdin: true }), content);
+    const r = await docker(cli, exec(["sh", "-c", 'mkdir -p "$(dirname "$0")" && cat > "$0"', at(path)], { stdin: true }).args, content);
     if (r.exitCode !== 0) throw new Error(`writing ${at(path)} in ${name} failed: ${r.stderr.trim()}`);
   };
   const endpoint = async ({ port: asked, protocol = "http" }: { port: number; protocol?: "http" | "https" | "ws" }) => {
@@ -107,8 +105,8 @@ function session(options: DockerSandboxOptions, id: string, name: string, port: 
     writeBinaryFile: (o) => write(o.path, o.content),
     writeTextFile: (o) => write(o.path, new TextEncoder().encode(o.content)),
     spawn: async (o): Promise<Experimental_SandboxProcess> => {
-      const { pidFile, args } = command(o);
-      const child = spawn(cli, args);
+      const { pidFile, args, env } = command(o);
+      const child = spawn(cli, args, { env: { ...process.env, ...env } });
       const exited = new Promise<{ exitCode: number }>((done) => child.on("close", (code) => done({ exitCode: code ?? 1 })));
       return {
         ...(child.pid === undefined ? {} : { pid: child.pid }),
@@ -122,7 +120,8 @@ function session(options: DockerSandboxOptions, id: string, name: string, port: 
       };
     },
     run: async (o) => {
-      const r = await docker(cli, command(o).args);
+      const { args, env } = command(o);
+      const r = await docker(cli, args, undefined, env);
       return { exitCode: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr };
     },
   };
@@ -148,6 +147,9 @@ function session(options: DockerSandboxOptions, id: string, name: string, port: 
  * A stopped session keeps its container, and resuming starts it again.
  */
 export function dockerSandbox(options: DockerSandboxOptions): HarnessV1SandboxProvider {
+  for (const m of options.mounts ?? []) {
+    if (m.source.includes(",") || m.target.includes(",")) throw new Error(`mount path ${m.source}:${m.target} cannot contain a comma (docker's --mount syntax)`);
+  }
   const cli = options.docker ?? "docker";
   const network = options.network ?? "bridge";
   /** The container's published port, if it exists; it is started when stopped. */
@@ -179,13 +181,13 @@ export function dockerSandbox(options: DockerSandboxOptions): HarnessV1SandboxPr
         ...pairs("--label", { ...options.labels, "harness.sandbox": "true", "harness.port": port === undefined ? "" : String(port) }),
         "-w",
         WORKDIR,
-        ...pairs("-e", options.env ?? {}),
+        ...names(options.env ?? {}),
         ...(options.mounts ?? []).flatMap((m) => ["--mount", `type=bind,source=${m.source},target=${m.target}${m.readonly ? ",readonly" : ""}`]),
         ...(network === "bridge" ? ["-p", `127.0.0.1:${port}:${port}`] : ["--network", network]),
         options.image,
         "sleep",
         "infinity",
-      ]);
+      ], undefined, options.env);
       if (r.exitCode !== 0) throw new Error(`starting a container for ${id} failed: ${r.stderr.trim()}`);
       const created = session(options, id, name, port);
       if (options.setup !== undefined) {

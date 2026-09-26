@@ -21,7 +21,15 @@ export interface ExtensionPortSource {
  */
 export function extensionPort(port: ExtensionPort): AcpPort {
   return {
-    postMessage: (message) => port.postMessage(message),
+    // A port whose other end is gone throws on posting (a MessagePort drops it): its
+    // disconnect is on the way, so drop the message rather than throw into the daemon.
+    postMessage: (message) => {
+      try {
+        port.postMessage(message);
+      } catch {
+        // disconnected
+      }
+    },
     addEventListener: (type, listener) => {
       if (type === "message") port.onMessage.addListener((data) => listener({ data }));
       else port.onDisconnect.addListener(() => listener({}));

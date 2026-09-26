@@ -160,8 +160,13 @@ if (values.socket !== undefined) {
   process.stderr.write(`harness listening on ${values.socket}\n`);
 }
 if (values.ws !== undefined) {
+  const port = Number(values.ws);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    process.stderr.write(`--ws takes a port number (0 for any free one), not "${values.ws}"\n`);
+    process.exit(2);
+  }
   // Clients on this machine read the token from its file; browser pages need their origin allowed.
   const tokenFile = values["ws-token-file"] ?? join(homedir(), ".cache", "harness", "ws-token");
-  const { url } = await host.listenWebSocket({ port: Number(values.ws), token: await webSocketToken(tokenFile), origins: values["ws-origin"] ?? [] });
+  const { url } = await host.listenWebSocket({ port, token: await webSocketToken(tokenFile), origins: values["ws-origin"] ?? [] });
   process.stderr.write(`harness listening on ${url} (token in ${tokenFile})\n`);
 }

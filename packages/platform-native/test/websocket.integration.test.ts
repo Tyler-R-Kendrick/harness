@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(hosts.splice(0).map((h) => h.close()));
 });
 
-async function host(options: { origins?: readonly string[] } = {}) {
+async function host(options: { origins?: readonly string[]; token?: string } = {}) {
   const h = await NodeHost.start({ worker: new EchoWorker(), identity: { principal: "me", kind: "human" } });
   hosts.push(h);
   const { url } = await h.listenWebSocket({ port: 0, token: TOKEN, ...options });
@@ -126,5 +126,16 @@ describe("NodeHost over WebSocket", () => {
     hosts.splice(hosts.indexOf(h), 1);
     await closed;
     expect((await upgrade(url, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(0);
+  });
+
+  it("WS1.7 a token of the same length in characters but not in bytes is refused like any other, and the right one still works", async () => {
+    const { url } = await host({ token: "tök-en" });
+    expect((await upgrade(url, { headers: { authorization: "Bearer tok-en" } })).status).toBe(401);
+    expect((await upgrade(url, { protocols: ["harness.token.tok-en"] })).status).toBe(401);
+    const ok = await upgrade(url, { headers: { authorization: `Bearer ${encodeURIComponent("tök-en")}` } });
+    expect(ok.status).toBe(401);
+    const right = await upgrade(url, { headers: { authorization: "Bearer tök-en" } });
+    expect(right.status).toBe(101);
+    right.socket!.close();
   });
 });

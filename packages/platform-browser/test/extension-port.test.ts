@@ -14,7 +14,9 @@ function portPair(name = "acp"): [ExtensionPort & { disconnected: boolean }, Ext
   };
   const a = make();
   const b = make();
+  const pair: { disconnected: boolean }[] = [];
   const end = (self: ReturnType<typeof make>, other: ReturnType<typeof make>) => {
+    const otherEnd = () => pair.find((p) => p !== port)!;
     const port = {
       name,
       disconnected: false,
@@ -25,12 +27,15 @@ function portPair(name = "acp"): [ExtensionPort & { disconnected: boolean }, Ext
       },
       disconnect: () => {
         if (port.disconnected) return;
+        // Chrome disconnects both ends; only the other end hears of it.
         port.disconnected = true;
+        otherEnd().disconnected = true;
         setTimeout(() => other.onDisconnect.forEach((l) => l()), 0);
       },
       onMessage: { addListener: (l: (m: unknown) => void) => void self.onMessage.push(l) },
       onDisconnect: { addListener: (l: () => void) => void self.onDisconnect.push(l) },
     };
+    pair.push(port);
     return port;
   };
   return [end(a, b), end(b, a)];
@@ -119,5 +124,13 @@ describe("extension ports (chrome.runtime.Port)", () => {
     await second.acp.loadSession({ sessionId, cwd: "/", mcpServers: [] });
     expect(await second.acp.prompt({ sessionId, prompt: [{ type: "text", text: "mine now" }] })).toEqual({ stopReason: "end_turn" });
     second.hangUp();
+  });
+
+  it("EP1.4 a message for a page whose port is gone is dropped, not thrown into the daemon", async () => {
+    const [mine, theirs] = portPair();
+    const port = extensionPort(mine);
+    theirs.disconnect();
+    expect(() => mine.postMessage({ late: true })).toThrow(/disconnected port/);
+    expect(() => port.postMessage({ late: true })).not.toThrow();
   });
 });

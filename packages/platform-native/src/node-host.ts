@@ -119,7 +119,11 @@ export class NodeHost {
    */
   async listenWebSocket(options: { readonly port?: number; readonly token: string; readonly origins?: readonly string[] }): Promise<{ url: string; port: number }> {
     const expected = Buffer.from(options.token);
-    const matches = (token: string | undefined) => token !== undefined && token.length === options.token.length && timingSafeEqual(Buffer.from(token), expected);
+    // Compared as bytes: equal lengths in characters can differ in bytes, which timingSafeEqual refuses.
+    const matches = (token: string | undefined) => {
+      const got = Buffer.from(token ?? "");
+      return token !== undefined && got.length === expected.length && timingSafeEqual(got, expected);
+    };
     const offered = (req: IncomingMessage) =>
       (req.headers["sec-websocket-protocol"] ?? "")
         .split(",")
