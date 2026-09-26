@@ -26,6 +26,8 @@ jobs:
       - run: npm run lint
       # The browser host's integration tests run it in Chromium.
       - run: npx playwright-core install --with-deps chromium
+      # The ACP harness adapter installs its bridge into each sandbox with pnpm.
+      - run: npm install -g pnpm@10.33.0
       - run: npm run test:coverage
 
   mutation:

@@ -176,6 +176,11 @@ Workers:
 - `--worker ensemble`: runs each session as an AI SDK agent on the ensemble (the steered
   kernel when a behavior pack is given), with memory and learning when installed. Tools
   that need approval go through the daemon's permission routing.
+- `--worker harness --harness claude-code|codex|acp:<package>@<version>:<executable>`:
+  runs each session on an AI SDK harness, in a directory of its own under `--sandboxes`
+  (unisolated: it runs as you). `--harness-state <file>` parks sessions at shutdown and
+  resumes them after a restart. ACP agents need `pnpm` on `PATH`: the adapter installs its
+  bridge with it.
 
 ## Evals
 

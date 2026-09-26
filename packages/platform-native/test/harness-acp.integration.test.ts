@@ -54,6 +54,7 @@ describe("daemon sessions on a bridge-backed AI SDK harness in host sandboxes", 
     const { sessionId } = await c.acp.newSession({ cwd: "/", mcpServers: [] });
     expect(await c.acp.prompt({ sessionId, prompt: [{ type: "text", text: "through the bridge" }] })).toEqual({ stopReason: "end_turn" });
     const log = host.daemon.snapshot().sessions[0]!.log as { entries: { payload: unknown }[] };
-    expect({ text: c.text(), log: log.entries.map((e) => e.payload) }).toMatchObject({ text: "echo: through the bridge" });
+    // On failure, the session log says what the harness turn produced instead.
+    expect(c.text(), JSON.stringify(log.entries.map((e) => e.payload), null, 1)).toBe("echo: through the bridge");
   }, 180_000);
 });
