@@ -11,6 +11,7 @@ import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
+import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
 
 const { values } = parseArgs({
@@ -35,14 +36,17 @@ const { values } = parseArgs({
     "harness-state": { type: "string" },
     sandboxes: { type: "string" },
     sandbox: { type: "string", default: "host" },
+    ws: { type: "string" },
+    "ws-token-file": { type: "string" },
+    "ws-origin": { type: "string", multiple: true },
     "sandbox-setup": { type: "string" },
     "sandbox-env": { type: "string", multiple: true },
   },
 });
 
-if (!values.stdio && values.socket === undefined) {
+if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
+    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>]\n" +
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
@@ -154,4 +158,15 @@ if (values.stdio) {
 if (values.socket !== undefined) {
   await host.listen(values.socket);
   process.stderr.write(`harness listening on ${values.socket}\n`);
+}
+if (values.ws !== undefined) {
+  const port = Number(values.ws);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    process.stderr.write(`--ws takes a port number (0 for any free one), not "${values.ws}"\n`);
+    process.exit(2);
+  }
+  // Clients on this machine read the token from its file; browser pages need their origin allowed.
+  const tokenFile = values["ws-token-file"] ?? join(homedir(), ".cache", "harness", "ws-token");
+  const { url } = await host.listenWebSocket({ port, token: await webSocketToken(tokenFile), origins: values["ws-origin"] ?? [] });
+  process.stderr.write(`harness listening on ${url} (token in ${tokenFile})\n`);
 }
