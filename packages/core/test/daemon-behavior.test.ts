@@ -16,7 +16,7 @@ function setup() {
   d.connect("p", PLUGIN);
   d.initialize("p");
   d.request("p", "_harness/hooks/subscribe", { types: ["behavior.*"] });
-  return { d, sessionId };
+  return { d, sessionId, daemon };
 }
 
 const hooks = (d: DaemonDriver) => (d.request("p", "_harness/hooks/poll", {}).result as { events: { type: string; sessionId?: string; payload: unknown }[] }).events.map((e) => [e.type, e.sessionId, e.payload]);
@@ -67,5 +67,33 @@ describe("behavior per daemon session", () => {
     d.worker({ type: "behavior", sessionId: "gone", change: { state: "x" } });
     expect(hooks(d)).toEqual([["behavior.changed", sessionId, { state: "cheerful", from: "neutral", cause: "event praised" }]]);
     expect(logEvents(d, sessionId)).toContainEqual(["behavior.changed", { state: "cheerful", from: "neutral", cause: "event praised" }]);
+  });
+
+  it("DB1.5 a change's from and cause are kept only when they are text; nothing else is added", () => {
+    const { d, sessionId } = setup();
+    d.send("c1", { jsonrpc: "2.0", id: 9, method: "session/prompt", params: { sessionId, prompt: [] } });
+    const { turnId } = d.commands().find((c) => c.type === "prompt") as Extract<WorkerCommand, { type: "prompt" }>;
+    const update = (behavior: unknown) => d.worker({ type: "update", sessionId, turnId, update: { sessionUpdate: "notice", severity: "info", title: "b", _meta: { harness: { behavior } } } });
+    update({ state: "wary", from: 3, cause: null });
+    update({ state: "calm" });
+    const published = hooks(d).map(([, , payload]) => payload);
+    expect(published).toStrictEqual([{ turnId, state: "wary" }, { turnId, state: "calm" }]);
+  });
+
+  it("DB1.6 a change between turns is logged as an event, a turn's update as an update", () => {
+    const { d, sessionId, daemon } = setup();
+    d.worker({ type: "behavior", sessionId, change: { state: "cheerful" } });
+    d.send("c1", { jsonrpc: "2.0", id: 9, method: "session/prompt", params: { sessionId, prompt: [] } });
+    const { turnId } = d.commands().find((c) => c.type === "prompt") as Extract<WorkerCommand, { type: "prompt" }>;
+    d.worker({ type: "update", sessionId, turnId, update: { sessionUpdate: "notice", severity: "info", title: "hi" } });
+    const log = daemon.snapshot().sessions[0]!.log as { entries: { kind: string; payload: { event?: string; update?: unknown } }[] };
+    expect(log.entries.filter((e) => e.payload.event === "behavior.changed").map((e) => e.kind)).toEqual(["event"]);
+    expect(log.entries.filter((e) => (e.payload.update as { title?: string } | undefined)?.title === "hi").map((e) => e.kind)).toEqual(["update"]);
+  });
+
+  it("DB1.7 a bad raise names the field that is wrong", () => {
+    const { d, sessionId } = setup();
+    expect(d.request("p", "_harness/behavior/event", { event: "calm" }).error).toMatchObject({ message: expect.stringMatching(/^sessionId must be a string/) });
+    expect(d.request("p", "_harness/behavior/event", { sessionId }).error).toMatchObject({ message: expect.stringMatching(/^event must be a string/) });
   });
 });
