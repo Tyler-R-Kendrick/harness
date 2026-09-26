@@ -116,7 +116,7 @@ describe("harnessSessions: an AI SDK harness (Claude Code, Codex, any ACP agent)
     const { events, done } = run(worker, "hi");
     await done;
     expect(events).toContainEqual(expect.objectContaining({ type: "update", update: expect.objectContaining({ sessionUpdate: "notice", severity: "error", description: expect.stringMatching(/no sandbox port/) }) }));
-    expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
+    expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "refusal" });
   });
 
   it("HS1.10 generate runs a whole turn on the session's harness session too", async () => {
