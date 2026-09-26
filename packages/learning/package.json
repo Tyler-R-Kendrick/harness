@@ -1,0 +1,22 @@
+{
+  "name": "@harness/learning",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Learning for the cognitive core, as an extension on memory: lessons distilled from sessions, a capability ladder (native, tool, build a tool, be taught) and plugins that turn lessons into skills, workflows and tools. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@harness/memory": "0.0.0",
+    "ai": "7.0.114",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0"
+  }
+}

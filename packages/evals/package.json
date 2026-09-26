@@ -1,0 +1,26 @@
+{
+  "name": "@harness/evals",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Eval runner with LLM-as-judge: the best judgment model the host can reach, from the catalog.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "ai": "7.0.114",
+    "@ai-sdk/gateway": "4.0.92",
+    "@harness/core": "0.0.0",
+    "@harness/workers": "0.0.0",
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/models": "0.0.0",
+    "sharp": "0.35.4",
+    "@harness/platform-native": "0.0.0"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0",
+    "@harness/memory": "0.0.0"
+  }
+}

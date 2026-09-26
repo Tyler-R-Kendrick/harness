@@ -1,0 +1,123 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # onnxruntime-node (via transformers.js) otherwise downloads CUDA libraries at install.
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      # The browser host's integration tests run it in Chromium.
+      - run: npx playwright-core install --with-deps chromium
+      # The ACP harness adapter installs its bridge into each sandbox with pnpm.
+      - run: npm install -g pnpm@10.33.0
+      - run: npm run test:coverage
+
+  mutation:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:mutation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutation-report
+          path: reports/mutation
+
+  evals:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The judge is the catalog's best reachable one (hosted ones need a gateway credential).
+      # Without one the runner records every case as `blocked` and warns; never a pass.
+      - run: npm run eval -- --out eval-results/results.json
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: eval-results
+
+  models:
+    runs-on: ubuntu-latest
+    needs: check
+    timeout-minutes: 120
+    env:
+      HARNESS_MODEL_CACHE: /mnt/harness-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: sudo mkdir -p "$HARNESS_MODEL_CACHE" && sudo chown "$USER" "$HARNESS_MODEL_CACHE"
+      # Weights are pinned by revision and sha256 in the catalog, so the cache key follows it.
+      - uses: actions/cache@v4
+        with:
+          path: /mnt/harness-models
+          key: models-${{ hashFiles('packages/*/data/catalog.json') }}
+      # llama-server serves the catalog's llama.cpp-server models.
+      - name: Download llama.cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # "Latest" can be a nightly marker with no binaries, so take the newest release that
+        # has an Ubuntu x64 build. It has shipped as .zip and as .tar.gz; take either.
+        run: |
+          tag="$(gh api 'repos/ggml-org/llama.cpp/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not) | select(any(.assets[]; .name | test("bin-ubuntu-x64\\.(zip|tar\\.gz)$")))][0].tag_name')"
+          test -n "$tag" && test "$tag" != null || { echo "no recent llama.cpp release has an Ubuntu x64 build"; exit 1; }
+          echo "llama.cpp $tag"
+          gh release download "$tag" --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama
+          for f in /tmp/llama/*; do
+            case "$f" in
+              *.zip) unzip -q "$f" -d /tmp/llama ;;
+              *.tar.gz) tar -xzf "$f" -C /tmp/llama ;;
+            esac
+          done
+          server="$(find /tmp/llama -name llama-server -type f | head -1)"
+          test -n "$server" || { echo "no llama-server in the release archive"; find /tmp/llama -maxdepth 3; exit 1; }
+          chmod +x "$server"
+          echo "LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+          # Its shared libraries ship next to it.
+          echo "LD_LIBRARY_PATH=$(dirname "$server")" >> "$GITHUB_ENV"
+      - run: npm run test:models
+      # The cognitive core, judged, on real local models.
+      - run: npm run eval -- --suite cognitive --out eval-results/cognitive.json
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cognitive-eval-results
+          path: eval-results

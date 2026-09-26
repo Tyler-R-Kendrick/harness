@@ -1,0 +1,23 @@
+{
+  "$schema": "../data/graph.schema.json",
+  "version": 1,
+  "id": "host",
+  "model": { "id": "Qwen/Qwen3-1.7B", "layer": 14 },
+  "initial": "neutral",
+  "maxStrength": 96,
+  "features": { "anger": 60326, "joy": 2976, "apology": 17589 },
+  "sensors": {
+    "userAngry": { "feature": "anger", "on": 20, "off": 8 },
+    "userHappy": { "feature": "joy", "on": 5, "off": 2 }
+  },
+  "states": {
+    "neutral": {},
+    "soothing": { "steer": { "apology": 48 } },
+    "cheerful": { "steer": { "joy": 64 } }
+  },
+  "transitions": [
+    { "from": "*", "to": "soothing", "when": { "sensor": "userAngry", "is": "on" }, "priority": 10 },
+    { "from": "neutral", "to": "cheerful", "when": { "sensor": "userHappy", "is": "on" } },
+    { "from": "*", "to": "neutral", "when": { "event": "reset" } }
+  ]
+}

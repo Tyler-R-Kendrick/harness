@@ -1,0 +1,34 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".types",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../cognitive"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../workers"
+    },
+    {
+      "path": "../models"
+    },
+    {
+      "path": "../platform-native"
+    }
+  ]
+}

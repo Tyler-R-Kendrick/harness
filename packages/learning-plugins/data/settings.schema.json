@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "workflow": {
+      "type": "object",
+      "properties": {
+        "toolConfidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "toolConfidence"
+      ],
+      "additionalProperties": false
+    },
+    "toolBuilder": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "attempts": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "system",
+        "maxTokens",
+        "attempts"
+      ],
+      "additionalProperties": false
+    },
+    "teacher": {
+      "type": "object",
+      "properties": {
+        "screen": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "screen",
+        "maxTokens"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "workflow",
+    "toolBuilder",
+    "teacher"
+  ],
+  "additionalProperties": false
+}

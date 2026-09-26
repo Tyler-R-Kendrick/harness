@@ -1,0 +1,56 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "packages/protocol"
+    },
+    {
+      "path": "packages/core"
+    },
+    {
+      "path": "packages/cognitive"
+    },
+    {
+      "path": "packages/behavior"
+    },
+    {
+      "path": "packages/memory"
+    },
+    {
+      "path": "packages/learning"
+    },
+    {
+      "path": "packages/workflows"
+    },
+    {
+      "path": "packages/constrained"
+    },
+    {
+      "path": "packages/learning-plugins"
+    },
+    {
+      "path": "packages/models"
+    },
+    {
+      "path": "packages/testkit"
+    },
+    {
+      "path": "packages/platform-native"
+    },
+    {
+      "path": "packages/evals"
+    },
+    {
+      "path": "packages/workers"
+    },
+    {
+      "path": "packages/client"
+    },
+    {
+      "path": "packages/runtime"
+    },
+    {
+      "path": "packages/platform-browser"
+    }
+  ]
+}

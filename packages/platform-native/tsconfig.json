@@ -1,0 +1,58 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".types",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../protocol"
+    },
+    {
+      "path": "../workers"
+    },
+    {
+      "path": "../models"
+    },
+    {
+      "path": "../cognitive"
+    },
+    {
+      "path": "../behavior"
+    },
+    {
+      "path": "../memory"
+    },
+    {
+      "path": "../learning"
+    },
+    {
+      "path": "../workflows"
+    },
+    {
+      "path": "../constrained"
+    },
+    {
+      "path": "../learning-plugins"
+    },
+    {
+      "path": "../client"
+    },
+    {
+      "path": "../runtime"
+    }
+  ]
+}

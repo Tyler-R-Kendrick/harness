@@ -1,0 +1,12 @@
+{
+  "name": "@harness/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Portable daemon core (sans-I/O): sessions, subagents, routing, ledger, capabilities, hooks, task graph.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {"@agentclientprotocol/sdk": "1.5.0", "@harness/protocol": "0.0.0"}
+}
