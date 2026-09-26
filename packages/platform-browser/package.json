@@ -16,7 +16,9 @@
     "@harness/core": "0.0.0",
     "@harness/models": "0.0.0",
     "@harness/runtime": "0.0.0",
-    "@harness/workers": "0.0.0"
+    "@harness/workers": "0.0.0",
+    "@harness/workflows": "0.0.0",
+    "ai": "7.0.114"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0",

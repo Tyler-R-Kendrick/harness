@@ -6,6 +6,7 @@ import { z } from "zod";
 import { bytes, Ensemble, invokeCognitive, usage } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { askModel, MemoryLibrary, parseWorkflow, WorkflowHost, workflowsExtension, workflowTools } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
 import { MemoryStorage, promptText, scriptedModel } from "@harness/testkit";
 
 const greet = parseWorkflow({
@@ -29,6 +30,7 @@ function host(options: { tools?: boolean } = {}) {
   const library = new MemoryLibrary([greet, welcome]);
   const called: string[] = [];
   const h = new WorkflowHost({
+    codeMode: aiCodeMode,
     library,
     journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!),
     ask: async (prompt) => `tip: ${prompt}`,
@@ -73,7 +75,7 @@ describe("workflow library and host", () => {
     const generator = scriptedModel(() => "Stretch.");
     ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
     const journals = new Map<string, MemoryStorage>();
-    const host = new WorkflowHost({ library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), ask: askModel(ensemble.languageModel()), tools: { open_ticket: tool({ inputSchema: z.object({}).loose(), execute: async () => ({ id: 1 }) }) } });
+    const host = new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([greet, welcome]), journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!), ask: askModel(ensemble.languageModel()), tools: { open_ticket: tool({ inputSchema: z.object({}).loose(), execute: async () => ({ id: 1 }) }) } });
     const extension = workflowsExtension({ host });
     ensemble.install(extension);
     expect(ensemble.extensions()).toEqual(["workflows"]);
@@ -87,11 +89,11 @@ describe("workflow library and host", () => {
   it("WH1.6 a nested workflow that fails fails its caller's step; a run without input gets {}", async () => {
     const broken = parseWorkflow({ name: "broken", description: "", inputs: {}, code: "throw new Error('inner');" });
     const caller = parseWorkflow({ name: "caller", description: "", inputs: {}, code: "return [input, await tools.broken({})];" });
-    const h = new WorkflowHost({ library: new MemoryLibrary([broken, caller]), journal: () => new MemoryStorage(), ask: async () => "" });
+    const h = new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([broken, caller]), journal: () => new MemoryStorage(), ask: async () => "" });
     await expect(h.run("caller", {}, "r1")).rejects.toThrow(/workflow broken failed: .*inner/);
     expect(h.library).toBeInstanceOf(MemoryLibrary);
     const echo = parseWorkflow({ name: "echo", description: "", inputs: {}, code: "return input;" });
-    const ext = workflowsExtension({ host: new WorkflowHost({ library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), ask: askModel(scriptedModel(() => "")) }) });
+    const ext = workflowsExtension({ host: new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([echo]), journal: () => new MemoryStorage(), ask: askModel(scriptedModel(() => "")) }) });
     expect(await ext.operations!["run"]!({ name: "echo", run: "r" })).toMatchObject({ output: {} });
     await expect(ext.operations!["get"]!(undefined)).rejects.toThrow(/invalid workflows.get input/);
   });
@@ -134,7 +136,7 @@ describe("workflow library and host", () => {
     expect(result.steps[0]!.toolResults.map((r) => r.output)).toEqual(["Hello, Ada!"]);
     expect([...journals.keys()]).toEqual(["tool/call-1"]);
     const broken = parseWorkflow({ name: "broken", description: "Fails.", inputs: {}, code: "throw new Error('inner');" });
-    const failing = await workflowTools(new WorkflowHost({ library: new MemoryLibrary([broken]), journal: () => new MemoryStorage(), ask: async () => "" }));
+    const failing = await workflowTools(new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary([broken]), journal: () => new MemoryStorage(), ask: async () => "" }));
     await expect(failing["broken"]!.execute!({}, { toolCallId: "x", messages: [], context: undefined })).rejects.toThrow(/workflow broken failed: .*inner/);
   });
 });

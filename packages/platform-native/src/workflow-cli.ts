@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { askModel, MemoryLibrary, parseWorkflow, WorkflowHost } from "@harness/workflows";
 import type { WorkflowLibrary } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
 
@@ -42,7 +43,7 @@ const cognitive = buildNativeEnsemble({
   ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
 });
 const journals = new WorkflowFiles(dirname(file));
-const host = new WorkflowHost({ library, journal: (run) => journals.journal(run), ask: askModel(cognitive.ensemble.languageModel()) });
+const host = new WorkflowHost({ codeMode: aiCodeMode, library, journal: (run) => journals.journal(run), ask: askModel(cognitive.ensemble.languageModel()) });
 try {
   const result = await host.run(workflow.name, JSON.parse(values.input), values.run);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

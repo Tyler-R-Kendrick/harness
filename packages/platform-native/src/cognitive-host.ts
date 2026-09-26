@@ -21,6 +21,7 @@ import { ensembleReasoner, Learning, learningExtension, Plugins } from "@harness
 import type { Settings } from "@harness/learning";
 import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
 import { askModel, WorkflowHost, workflowsExtension } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
 import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
 import type { ToolSet } from "ai";
@@ -195,7 +196,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
   const workflows = options.workflows && new WorkflowFiles(options.workflows.dir);
   const workflowHost =
     workflows &&
-    new WorkflowHost({ library: workflows, journal: (run) => workflows.journal(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
+    new WorkflowHost({ codeMode: aiCodeMode, library: workflows, journal: (run) => workflows.journal(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
   if (workflowHost) ensemble.install(workflowsExtension({ host: workflowHost }));
   const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {

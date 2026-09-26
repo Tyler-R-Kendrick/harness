@@ -6,6 +6,7 @@ import type { CognitiveExtension, Constraint } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { ASK, runWorkflow } from "./run.ts";
 import type { Effects, RunResult, ToolSpec } from "./run.ts";
+import type { CodeMode } from "./code-mode.ts";
 
 /** A workflow as kept: named, described, its input's JSON Schema, and its code. */
 export const WorkflowSchema = z.strictObject({
@@ -50,15 +51,25 @@ export class MemoryLibrary implements WorkflowLibrary {
   }
 }
 
+export interface WorkflowHostOptions {
+  readonly library: WorkflowLibrary;
+  /** Each run's journal, by run id. */
+  readonly journal: (run: string) => SnapshotStorage;
+  readonly ask: Effects["ask"];
+  /** Where workflow code runs (`aiCodeMode` natively, `quickjsCodeMode()` anywhere). */
+  readonly codeMode: CodeMode;
+  readonly tools?: ToolSet;
+}
+
 /**
  * Runs library workflows durably. The code calls `tools.<name>(args)`: another library
  * workflow (run as a nested durable run, journaled under the parent's run id) or one of
  * the host's AI SDK tools; `tools.ask` puts a question to a model.
  */
 export class WorkflowHost {
-  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet };
+  readonly #options: WorkflowHostOptions;
 
-  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet }) {
+  constructor(options: WorkflowHostOptions) {
     this.#options = options;
   }
 
@@ -80,6 +91,7 @@ export class WorkflowHost {
       input,
       tools: specs,
       journal: this.#options.journal(run),
+      codeMode: this.#options.codeMode,
       effects: {
         ask: this.#options.ask,
         tool: async (name, args) => {

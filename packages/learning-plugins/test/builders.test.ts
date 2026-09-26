@@ -6,7 +6,7 @@ import { HARNESS, usage } from "@harness/cognitive";
 import { describe, expect, it } from "vitest";
 import { Learning, Plugins, TARGETS } from "@harness/learning";
 import type { Lesson, Materialized } from "@harness/learning";
-import { MemoryLibrary, WorkflowHost } from "@harness/workflows";
+import { MemoryLibrary, quickjsCodeMode, WorkflowHost } from "@harness/workflows";
 import type { ToolSpec } from "@harness/cognitive";
 import { MemoryStorage, promptText } from "@harness/testkit";
 import { compileProcedure, harnessSkill, parsePluginSettings, pluginSettingsJsonSchema, skillBuilder, TOOL_TEMPLATE, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
@@ -37,9 +37,12 @@ async function learned(reflect = () => reply([procedure])) {
   await learning.observe({ id: "t1", task: "deploy to staging", steps: [], outcome: { status: "success" } });
   return { ...s, learning };
 }
+const codeMode = quickjsCodeMode();
 /** A host whose tools (the ones these tests offer) answer with `results`, or { ok: true }. */
 const host = (library: MemoryLibrary, results: Record<string, unknown> = {}) =>
   new WorkflowHost({
+    // The plugins are portable, so their workflows run on the portable code mode.
+    codeMode,
     library,
     journal: () => new MemoryStorage(),
     ask: async (p) => `answer(${p.split("\n")[0]})`,

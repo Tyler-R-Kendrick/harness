@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const fixtures = new URL("./fixtures/", import.meta.url).pathname;
 const packages = new URL("../../", import.meta.url).pathname;
-const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript" };
+const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm" };
 
 let out: string;
 let server: Server;
@@ -28,7 +28,7 @@ beforeAll(async () => {
   await build({
     configFile: false,
     logLevel: "silent",
-    resolve: { alias: Object.fromEntries(["platform-browser", "runtime", "core", "cognitive", "workers", "client", "protocol", "models", "constrained", "behavior"].map((name) => [`@harness/${name}`, join(packages, name, "src/index.ts")])) },
+    resolve: { alias: Object.fromEntries(["platform-browser", "runtime", "core", "cognitive", "workers", "client", "protocol", "models", "constrained", "behavior", "workflows"].map((name) => [`@harness/${name}`, join(packages, name, "src/index.ts")])) },
     build: {
       outDir: out,
       emptyOutDir: true,
@@ -116,6 +116,16 @@ describe("the browser host in Chromium", () => {
     expect(result.forced).toBe('{"n": ');
     expect(result.broken).toMatch(/does not compile/);
     expect(result.afterBroken).toEqual(["a", "b", "c"]);
+    await p.close();
+  });
+
+  it("BI4.1 a durable workflow runs on QuickJS in the page, journaled in IndexedDB: a run that stopped resumes by replay after the page reloads", async () => {
+    const p = await page();
+    type Run = { smoke: { workflows(phase: string): Promise<unknown> } };
+    expect(await p.evaluate(() => (globalThis as unknown as Run).smoke.workflows("first"))).toEqual({ error: "next is down" });
+    await p.reload();
+    await p.waitForFunction(() => document.title === "ready");
+    expect(await p.evaluate(() => (globalThis as unknown as Run).smoke.workflows("resume"))).toEqual({ status: "completed", output: [1, 2], replayed: 1, performed: 1 });
     await p.close();
   });
 

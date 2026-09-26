@@ -19,7 +19,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
-| `packages/workflows` | durable workflows as code: AI SDK code mode, journaled tool calls, library, extension, workflows as AI SDK tools | host (Node) |
+| `packages/workflows` | durable workflows as code: a code mode port (AI SDK code mode natively from `/node`, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension, workflows as AI SDK tools | portable (`/node`: Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
 | `packages/testkit` | deterministic ports, AI SDK model fakes (on `ai/test`), a scripted AI SDK harness, and reusable contract suites | pure |
@@ -27,7 +27,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/client` | the daemon as an AI SDK harness (`daemonHarness`, a `HarnessV1` adapter over ACP) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX; the runtime loaders every host shares | portable |
 | `packages/platform-native` | Node host: stdio/socket/WebSocket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
-| `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts (Web Lock liveness) and extension runtime ports, IndexedDB snapshots, the ensemble with a Cache API byte cache | host (browser) |
+| `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts (Web Lock liveness) and extension runtime ports, IndexedDB snapshots, the ensemble with a Cache API byte cache, durable workflows on QuickJS | host (browser) |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable

@@ -99,9 +99,9 @@ With `--workflows`, learning ships four plugins. The workflow builder compiles l
 procedures into deterministic workflow code. The skill builder writes an agent skill that
 runs such a workflow. The tool builder has a model write a tool as workflow code (code mode),
 checked before it is kept. The recording teacher turns transcripts, input events and screen
-frames into demonstrations. Workflows run durably in AI SDK code mode: every tool call and
-model question is journaled, so an interrupted run resumes where it stopped. Session agents
-get the library's workflows as tools.
+frames into demonstrations. Workflows run durably in a code mode (AI SDK code mode natively,
+QuickJS on WebAssembly in browsers): every tool call and model question is journaled, so an
+interrupted run resumes where it stopped. Session agents get the library's workflows as tools.
 
 ```sh
 harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env":"staging"}'
@@ -187,6 +187,17 @@ import { buildBrowserEnsemble, xgrammarFromSource } from "@harness/platform-brow
 const cognitive = buildBrowserEnsemble({ catalog: parseCatalog(catalog, benchmarks), device: "webgpu", xgrammar: xgrammarFromSource(xgrammar) });
 ```
 
+And durable workflows, on QuickJS (WebAssembly), with the library and run journals in
+IndexedDB, so a run resumes after the page reloads:
+
+```ts
+import { browserWorkflows, IndexedDbWorkflows } from "@harness/platform-browser";
+import { workflowTools } from "@harness/workflows";
+
+const workflows = browserWorkflows(cognitive, { library: new IndexedDbWorkflows(), tools });
+const agentTools = await workflowTools(workflows); // the library's workflows, for the page's agents
+```
+
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:
 `BrowserHost.serveExtension(chrome.runtime.onConnect, options)` there, and
 `portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page.
@@ -249,9 +260,9 @@ reported as `blocked`, never as a pass.
 | `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
 | `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
-| `packages/platform-browser` | Browser host: MessagePort binding with Web Lock liveness, IndexedDB storage, shared-worker serving |
+| `packages/platform-browser` | Browser host: MessagePort and extension-port bindings, IndexedDB storage, shared-worker serving, the ensemble with a Cache API byte cache, durable workflows on QuickJS |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
-| `packages/workflows` | Durable workflows as code: AI SDK code mode, journaled tool calls, library, extension (Node) |
+| `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |
