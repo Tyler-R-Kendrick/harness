@@ -143,6 +143,9 @@ describe("harnessSessions: an AI SDK harness (Claude Code, Codex, any ACP agent)
     await run(new AgentWorker({ agent }), "before").done;
     await agent.close();
     expect(harness.log.ended).toEqual(["s1"]);
+    // stopped, not detached: a detached harness leaves its runtime (and sandbox) running for another process
+    expect(harness.log.stopped).toEqual(["s1"]);
+    expect(harness.log.detached).toEqual([]);
     expect([...saved.keys()]).toEqual(["s1"]);
     // a new daemon process: the same session resumes from its parked state, which is then spent
     const { events, done } = run(make(), "after", "s1", "t2");

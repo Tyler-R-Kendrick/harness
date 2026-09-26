@@ -22,8 +22,8 @@ export interface HarnessStore {
  * its first turn and kept for the rest. The harness keeps the conversation, so only
  * each turn's new prompt reaches it; approvals continue a paused turn as with any
  * agent. `sandboxSession` supplies a sandbox per session when the agent has no
- * sandbox provider. With a `store`, closing parks each harness session there and the
- * session's next turn (in this process or a later one) resumes it.
+ * sandbox provider. With a `store`, closing stops each harness session and parks it
+ * there, and the session's next turn (in this process or a later one) resumes it.
  */
 export function harnessSessions(
   // Any harness and tool set: the worker reads the stream, not the tools' types.
@@ -68,14 +68,18 @@ export function harnessSessions(
     async stream({ options: turn, ...call }: AgentStreamParameters<TurnOptions, ToolSet>) {
       return agent.stream({ ...call, session: await session(turn.sessionId) });
     },
-    /** End every harness session: parked in the store when there is one, otherwise destroyed. */
+    /**
+     * End every harness session: parked in the store when there is one, otherwise
+     * destroyed. Parking stops the harness's runtime and sandbox (a detach would leave
+     * them running for another process); a later turn resumes from the parked state.
+     */
     async close() {
       const open = [...sessions.entries()];
       sessions.clear();
       await Promise.allSettled(
         open.map(async ([sessionId, s]) => {
           const live = await s;
-          if (store) await store.set(sessionId, await live.detach());
+          if (store) await store.set(sessionId, await live.stop());
           else await live.destroy();
         }),
       );

@@ -70,4 +70,28 @@ describe("hostSandbox: an AI SDK network sandbox that runs on this machine, unis
     expect(existsSync(again.defaultWorkingDirectory)).toBe(false);
     await expect(provider.resumeSession!({ sessionId: "keep" })).rejects.toThrow(/no sandbox/);
   });
+
+  it("HX1.6 stopping a session ends the commands still running in it, with what they started; finished ones are left alone", async () => {
+    const provider = hostSandbox({ root: root() });
+    const box = await provider.createSession({ sessionId: "s6" });
+    await box.run({ command: "true" });
+    const bridge = await box.spawn({ command: "sleep 30 & wait" });
+    const running = box.run({ command: "sleep 30" });
+    // the same session resumed elsewhere in the process still reaches what the first handle started
+    const resumed = await provider.resumeSession!({ sessionId: "s6" });
+    await resumed.stop();
+    expect((await bridge.wait()).exitCode).not.toBe(0);
+    expect((await running).exitCode).not.toBe(0);
+    expect(existsSync(box.defaultWorkingDirectory)).toBe(true);
+    expect((await box.run({ command: "echo still usable" })).stdout).toBe("still usable\n");
+    await box.destroy();
+  });
+
+  it("HX1.7 destroying a session ends its running commands and removes its directory", async () => {
+    const box = await hostSandbox({ root: root() }).createSession();
+    const long = await box.spawn({ command: "sleep 30" });
+    await box.destroy();
+    expect((await long.wait()).exitCode).not.toBe(0);
+    expect(existsSync(box.defaultWorkingDirectory)).toBe(false);
+  });
 });

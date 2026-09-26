@@ -15,6 +15,9 @@ export interface HarnessLog {
   /** Sessions started from a parked session's state. */
   readonly resumed: string[];
   readonly ended: string[];
+  /** Sessions ended by detaching (the runtime left running) or by stopping (the runtime stopped); both park them. */
+  readonly detached: string[];
+  readonly stopped: string[];
   readonly turns: { readonly sessionId: string; readonly prompt: unknown; readonly instructions: string | undefined }[];
 }
 
@@ -32,7 +35,7 @@ function promptOf(prompt: HarnessV1PromptTurnOptions["prompt"]): string {
  * result before replying (a continued turn attaches to it); an aborted turn fails. Everything it sees is in `log`.
  */
 export function scriptedHarness(reply: (prompt: string) => ScriptedTurn | string): HarnessV1 & { readonly log: HarnessLog } {
-  const log: HarnessLog = { started: [], resumed: [], ended: [], turns: [] };
+  const log: HarnessLog = { started: [], resumed: [], ended: [], detached: [], stopped: [], turns: [] };
   return {
     specificationVersion: "harness-v1",
     harnessId: "scripted",
@@ -102,10 +105,12 @@ export function scriptedHarness(reply: (prompt: string) => ScriptedTurn | string
           throw new Error("the scripted harness does not suspend turns");
         },
         async doDetach() {
+          log.detached.push(sessionId);
           await end();
           return parked;
         },
         async doStop() {
+          log.stopped.push(sessionId);
           await end();
           return parked;
         },

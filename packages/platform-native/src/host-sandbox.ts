@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -29,16 +30,32 @@ async function missingAsNull<T>(read: () => Promise<T>): Promise<T | null> {
   }
 }
 
-async function session(id: string, directory: string): Promise<HarnessV1NetworkSandboxSession> {
+/** End each command still running, with the processes it started (its process group). */
+function endAll(running: Set<ChildProcess>): void {
+  for (const child of running) {
+    try {
+      process.kill(-child.pid!, "SIGTERM");
+    } catch {
+      // it ended on its own meanwhile
+    }
+  }
+  running.clear();
+}
+
+async function session(id: string, directory: string, running: Set<ChildProcess>): Promise<HarnessV1NetworkSandboxSession> {
   const port = await freePort();
   const at = (path: string) => (isAbsolute(path) ? path : join(directory, path));
   const put = async (path: string, content: Uint8Array | string) => {
     await mkdir(dirname(at(path)), { recursive: true });
     await writeFile(at(path), content);
   };
-  const start = (o: { command: string; workingDirectory?: string; env?: Record<string, string> }) =>
+  const start = (o: { command: string; workingDirectory?: string; env?: Record<string, string> }) => {
     // Each command leads its own process group, so killing it reaches what the shell started.
-    spawn("sh", ["-c", o.command], { cwd: o.workingDirectory === undefined ? directory : resolve(directory, o.workingDirectory), env: { ...process.env, ...o.env }, detached: true });
+    const child = spawn("sh", ["-c", o.command], { cwd: o.workingDirectory === undefined ? directory : resolve(directory, o.workingDirectory), env: { ...process.env, ...o.env }, detached: true });
+    running.add(child);
+    child.on("close", () => running.delete(child));
+    return child;
+  };
   const endpoint = async ({ port: asked, protocol = "http" }: { port: number; protocol?: "http" | "https" | "ws" }) => {
     if (asked !== port) throw new Error(`port ${asked} is not exposed by this sandbox`);
     return { url: `${protocol}://127.0.0.1:${port}` };
@@ -87,8 +104,12 @@ async function session(id: string, directory: string): Promise<HarnessV1NetworkS
     ports: [port],
     getPortEndpoint: endpoint,
     getPortUrl: async (o) => (await endpoint(o)).url,
-    stop: async () => {},
-    destroy: async () => void (await rm(directory, { recursive: true, force: true })),
+    // Stopping ends what runs in the session (a harness bridge, say); its files stay for a resume.
+    stop: async () => endAll(running),
+    destroy: async () => {
+      endAll(running);
+      await rm(directory, { recursive: true, force: true });
+    },
     restricted: () => box,
   };
 }
@@ -102,6 +123,13 @@ async function session(id: string, directory: string): Promise<HarnessV1NetworkS
  */
 export function hostSandbox(options: { readonly root: string }): HarnessV1SandboxProvider {
   const directoryOf = (sessionId: string) => join(options.root, sessionId);
+  // What runs in each session, whichever handle started it (a resumed session is a new handle).
+  const sessions = new Map<string, Set<ChildProcess>>();
+  const runningIn = (sessionId: string) => {
+    let running = sessions.get(sessionId);
+    if (!running) sessions.set(sessionId, (running = new Set()));
+    return running;
+  };
   return {
     specificationVersion: "harness-sandbox-v1",
     providerId: "host",
@@ -110,14 +138,14 @@ export function hostSandbox(options: { readonly root: string }): HarnessV1Sandbo
       const directory = directoryOf(id);
       const fresh = !existsSync(directory);
       await mkdir(directory, { recursive: true });
-      const created = await session(id, directory);
+      const created = await session(id, directory, runningIn(id));
       if (fresh) await o.onFirstCreate?.(created.restricted(), o.abortSignal ? { abortSignal: o.abortSignal } : {});
       return created;
     },
     async resumeSession({ sessionId }) {
       const directory = directoryOf(sessionId);
       if (!existsSync(directory)) throw new Error(`no sandbox for session ${sessionId}`);
-      return session(sessionId, directory);
+      return session(sessionId, directory, runningIn(sessionId));
     },
   };
 }

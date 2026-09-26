@@ -57,4 +57,36 @@ describe("daemon sessions on a bridge-backed AI SDK harness in host sandboxes", 
     // On failure, the session log says what the harness turn produced instead.
     expect(c.text(), JSON.stringify(log.entries.map((e) => e.payload), null, 1)).toBe("echo: through the bridge");
   }, 180_000);
+
+  it("HI1.2 a daemon restart parks the harness session, stopping its bridge, and the session's next turn resumes on a new one", async () => {
+    const root = mkdtempSync(join(tmpdir(), "harness-acp-"));
+    const options = { sandboxRoot: join(root, "sandboxes"), stateFile: join(root, "harness-sessions.json") };
+    const start = async () => {
+      const harness = harnessWorker({ harness: echoAgent(), ...options });
+      const host = await NodeHost.start({ worker: harness.worker, identity: { principal: "me", kind: "human" }, statePath: join(root, "daemon.json") });
+      const stop = async () => {
+        await host.close();
+        await harness.close();
+      };
+      closers.push(stop);
+      return { host, stop };
+    };
+    const first = await start();
+    const a = client(first.host);
+    await a.acp.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const { sessionId } = await a.acp.newSession({ cwd: "/", mcpServers: [] });
+    await a.acp.prompt({ sessionId, prompt: [{ type: "text", text: "one" }] });
+    await first.stop();
+    closers.splice(closers.indexOf(first.stop), 1);
+    expect(JSON.parse(readFileSync(options.stateFile, "utf8"))).toHaveProperty(sessionId);
+
+    const second = await start();
+    const b = client(second.host);
+    await b.acp.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await b.acp.loadSession({ sessionId, cwd: "/", mcpServers: [] });
+    expect(await b.acp.prompt({ sessionId, prompt: [{ type: "text", text: "two" }] })).toEqual({ stopReason: "end_turn" });
+    const log = second.host.daemon.snapshot().sessions[0]!.log as { entries: { payload: unknown }[] };
+    expect(b.text(), JSON.stringify(log.entries.map((e) => e.payload), null, 1)).toContain("echo again: two");
+    expect(JSON.parse(readFileSync(options.stateFile, "utf8"))).not.toHaveProperty(sessionId);
+  }, 240_000);
 });
