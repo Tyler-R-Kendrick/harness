@@ -1,4 +1,5 @@
 import { base64 } from "@scure/base";
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { Agent, ModelMessage, ToolApprovalResponse, ToolSet, UserContent } from "ai";
 import { stateOf } from "@harness/cognitive";
 import type { CallbackOutcome, StopReason } from "@harness/core";
@@ -59,7 +60,7 @@ export class AgentWorker implements Worker {
     const running: Running = { abort: new AbortController(), decisions: new Map() };
     this.#running.set(key, running);
     const base = { sessionId: command.sessionId, turnId: command.turnId };
-    const update = (u: Readonly<Record<string, unknown>>) => emit({ type: "update", ...base, update: u });
+    const update = (u: SessionUpdate) => emit({ type: "update", ...base, update: u });
     const { content, said } = userContent(command.prompt);
     const messages: ModelMessage[] = [...(this.#history.get(command.sessionId) ?? []), { role: "user", content }];
     let stopReason: StopReason = "end_turn";

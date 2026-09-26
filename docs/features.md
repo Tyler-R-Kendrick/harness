@@ -202,7 +202,7 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 |---|---|---|
 | ACP base: initialize, session new/load/list/prompt/cancel, update, request_permission, $/cancel_request | built | DM1–DM2, NS1.1–NS1.3 (official SDK client), ACP1.1–ACP1.2 (SDK contract) |
 | `_harness` profile: attach/detach/ack/tree/event/resync, capabilities, hooks, cognitive | built | PR1, MX1, MX2, DM6, DM7, DM9 |
-| Bounded NDJSON framing; JSON-RPC validation | built | FR1–FR3, JR1–JR3 (fuzzed) |
+| ACP framing on the official SDK (`ndJsonStream`), with a per-line byte bound in front of it; JSON-RPC validation in the pure core; ACP method names, protocol version and message types from the SDK (responses are checked against them at compile time) | built | NH1.4–NH1.5, LL1.1–LL1.3, JR1–JR3 (fuzzed), ACP1.1–ACP1.2 |
 | Transport bindings: stdio, Unix socket | built | NS1, NS2 |
 | Bindings: WebSocket, MessagePort, extension ports | not started | |
 | Version negotiation | partial | Protocol and profile versions advertised; no range negotiation |

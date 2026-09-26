@@ -1,3 +1,4 @@
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { WorkerCommand, WorkerEvent } from "@harness/core";
 
 export type PromptCommand = Extract<WorkerCommand, { type: "prompt" }>;
@@ -22,4 +23,4 @@ export function promptText(prompt: readonly unknown[]): string {
     .join("\n");
 }
 
-export const textChunk = (text: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+export const textChunk = (text: string): SessionUpdate => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });

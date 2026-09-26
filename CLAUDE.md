@@ -12,7 +12,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 
 | Package | Role | Purity |
 |---|---|---|
-| `packages/protocol` | ACP framing, JSON-RPC envelopes, `_harness` profile | pure |
+| `packages/protocol` | JSON-RPC envelopes for the pure core, ACP names from the official SDK, `_harness` profile | pure |
 | `packages/core` | sans-I/O daemon core: sessions, subagents, routing, ledger, capabilities, hooks, task graph | pure |
 | `packages/cognitive` | cognitive core: the ensemble as an AI SDK provider, task taxonomy, catalog + benchmarks, selection, cascade | pure |
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |

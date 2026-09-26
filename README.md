@@ -192,7 +192,7 @@ reported as `blocked`, never as a pass.
 
 | Package | Role |
 |---|---|
-| `packages/protocol` | ACP framing, JSON-RPC validation, `_harness` profile (pure) |
+| `packages/protocol` | JSON-RPC validation for the pure core, ACP names from the official SDK, `_harness` profile (pure) |
 | `packages/core` | Sans-I/O daemon: sessions, subagents, routing, lease, flow control, effect ledger, capabilities, hook bus, task graph (pure) |
 | `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
 | `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |

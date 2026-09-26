@@ -1,3 +1,4 @@
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 import { Daemon, parseId } from "@harness/core";
 import type { Identity, WorkerCommand } from "@harness/core";
@@ -28,7 +29,7 @@ function promptCommand(commands: WorkerCommand[]): Extract<WorkerCommand, { type
   return c;
 }
 
-const text = (t: string) => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
+const text = (t: string): SessionUpdate => ({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: t } });
 
 describe("Daemon: initialization and envelope handling", () => {
   it("DM1.1 initialize negotiates ACP v1 and advertises the _harness profile and capabilities", () => {

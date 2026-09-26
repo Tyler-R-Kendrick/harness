@@ -14,7 +14,7 @@ describe("EchoWorker", () => {
     const w = new EchoWorker();
     const { events, emit } = collect();
     await w.run(cmd("hello world"), emit);
-    const chunks = events.filter((e) => e.type === "update").map((e) => (e.update["content"] as { text: string }).text);
+    const chunks = events.filter((e) => e.type === "update").map((e) => (e.update as { content: { text: string } }).content.text);
     expect(chunks.join("")).toBe("echo: hello world");
     expect(chunks.length).toBeGreaterThan(1);
     expect(events.at(-1)).toEqual({ type: "end", sessionId: "s1", turnId: "t1", stopReason: "end_turn" });
@@ -24,7 +24,7 @@ describe("EchoWorker", () => {
     const w = new EchoWorker();
     const { events, emit } = collect();
     await w.run({ ...cmd("x"), prompt: [{ type: "image", data: "..." }, { type: "text", text: "hi" }] }, emit);
-    const text = events.filter((e) => e.type === "update").map((e) => (e.update["content"] as { text: string }).text).join("");
+    const text = events.filter((e) => e.type === "update").map((e) => (e.update as { content: { text: string } }).content.text).join("");
     expect(text).toBe("echo: hi");
   });
 
@@ -38,7 +38,7 @@ describe("EchoWorker", () => {
     w.permission({ type: "permission", sessionId: "s1", turnId: "t1", requestId: "t1:permission", outcome: { outcome: "selected", optionId: "allow" } });
     await done;
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
-    expect(events.some((e) => e.type === "update" && (e.update["content"] as { text: string }).text.includes("echo"))).toBe(true);
+    expect(events.some((e) => e.type === "update" && (e.update as { content: { text: string } }).content.text.includes("echo"))).toBe(true);
   });
 
   it("WK1.4 a denied permission ends the turn without echoing", async () => {
@@ -48,7 +48,7 @@ describe("EchoWorker", () => {
     await Promise.resolve();
     w.permission({ type: "permission", sessionId: "s1", turnId: "t1", requestId: "t1:permission", outcome: { outcome: "selected", optionId: "deny" } });
     await done;
-    const texts = events.filter((e) => e.type === "update").map((e) => (e.update["content"] as { text: string }).text);
+    const texts = events.filter((e) => e.type === "update").map((e) => (e.update as { content: { text: string } }).content.text);
     expect(texts).toEqual(["permission denied"]);
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });

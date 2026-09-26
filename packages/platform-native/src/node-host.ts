@@ -2,14 +2,17 @@ import { randomUUID, getRandomValues } from "node:crypto";
 import { chmod, unlink } from "node:fs/promises";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
-import type { Readable, Writable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { ndJsonStream } from "@agentclientprotocol/sdk";
+import type { AnyMessage } from "@agentclientprotocol/sdk";
 import { Daemon } from "@harness/core";
 import type { AgentInfo, CognitiveWork, Identity, Output, SnapshotStorage, WorkerCommand } from "@harness/core";
 import { invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
-import { ERROR_CODES, NdjsonDecoder, encodeFrame, failure } from "@harness/protocol";
+import { ERROR_CODES, failure } from "@harness/protocol";
 import type { Worker } from "@harness/workers";
 import { FileStorage } from "./file-storage.ts";
+import { lineLimit } from "./line-limit.ts";
 
 export interface NodeHostOptions {
   readonly worker: Worker;
@@ -23,10 +26,12 @@ export interface NodeHostOptions {
   readonly tickMs?: number;
   /** The cognitive core's model ensemble; its tasks become `cognitive.*` capabilities. */
   readonly cognitive?: Ensemble;
+  /** The longest ACP message line a peer may send, in bytes (default 16 MiB). */
+  readonly maxLineBytes?: number;
 }
 
 interface ConnectionIo {
-  readonly output: Writable;
+  readonly send: (message: object) => void;
   readonly close: () => void;
 }
 
@@ -45,6 +50,7 @@ export class NodeHost {
   readonly #connections = new Map<string, ConnectionIo>();
   readonly #turns = new Set<Promise<void>>();
   readonly #ticker: ReturnType<typeof setInterval>;
+  readonly #maxLineBytes: number;
   #server: Server | undefined;
   #socketPath: string | undefined;
   #saving: Promise<void> = Promise.resolve();
@@ -56,6 +62,7 @@ export class NodeHost {
     this.#identity = options.identity;
     this.#storage = storage;
     this.#ensemble = options.cognitive;
+    this.#maxLineBytes = options.maxLineBytes ?? 16 * 1024 * 1024;
     this.#stopMirror = this.#ensemble
       ? mirrorCapabilities(this.#ensemble, {
           offer: (name) => this.daemon.offerPlatformCapability({ name, version: 1, trust: "trusted" }),
@@ -82,30 +89,28 @@ export class NodeHost {
     return host;
   }
 
-  /** Bind one ACP connection to a byte stream pair (stdio, a socket, a pipe). */
+  /**
+   * Bind one ACP connection to a byte stream pair (stdio, a socket, a pipe). Framing is
+   * the ACP SDK's NDJSON stream (a line that is not JSON gets a parse error from it);
+   * each message goes to the daemon core, which multiplexes every connection.
+   */
   attach(input: Readable, output: Writable, close: () => void = () => output.end(), identity: Identity = this.#identity): string {
     const id = `c-${randomUUID()}`;
-    this.#connections.set(id, { output, close });
+    const bytes = Readable.toWeb(input) as ReadableStream<Uint8Array>;
+    const acp = ndJsonStream(Writable.toWeb(output), bytes.pipeThrough(lineLimit(this.#maxLineBytes, () => send(failure(null, ERROR_CODES.invalidRequest, `message line exceeds ${this.#maxLineBytes} bytes`)))));
+    const writer = acp.writable.getWriter();
+    const send = (message: object) => void writer.write(message as AnyMessage).catch(() => undefined);
+    this.#connections.set(id, { send, close });
     this.daemon.connect(id, identity);
-    const text = new TextDecoder();
-    const framer = new NdjsonDecoder();
-    const handle = (results: ReturnType<NdjsonDecoder["push"]>) => {
-      for (const r of results) {
-        if (r.kind === "message") this.#apply(this.daemon.receive(id, r.value));
-        else this.#write(id, failure(null, r.code === "parse_error" ? ERROR_CODES.parseError : ERROR_CODES.invalidRequest, r.detail));
+    void (async () => {
+      try {
+        for await (const message of acp.readable) this.#apply(this.daemon.receive(id, message));
+      } catch {
+        // the peer's stream failed; treat it as a disconnect
       }
-    };
-    input.on("data", (chunk: Buffer) => handle(framer.push(text.decode(chunk, { stream: true }))));
-    const end = () => {
-      if (!this.#connections.has(id)) return;
-      handle(framer.push(text.decode()));
-      handle(framer.end());
-      this.#connections.delete(id);
+      if (!this.#connections.delete(id)) return;
       this.#apply(this.daemon.disconnect(id));
-    };
-    input.on("end", end);
-    input.on("close", end);
-    input.on("error", end);
+    })();
     return id;
   }
 
@@ -172,8 +177,7 @@ export class NodeHost {
   }
 
   #write(connectionId: string, message: object): void {
-    const io = this.#connections.get(connectionId);
-    if (io?.output.writable) io.output.write(encodeFrame(message));
+    this.#connections.get(connectionId)?.send(message);
   }
 
   /** Coalesce snapshot saves; each save captures the state at the time it runs. */

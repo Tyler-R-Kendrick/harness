@@ -1,3 +1,4 @@
+import type { PermissionOption } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 import { Daemon } from "@harness/core";
 import type { Identity, WorkerCommand } from "@harness/core";
@@ -25,7 +26,11 @@ function prompt(d: DaemonDriver, conn: string, sessionId: string, id = 1): strin
   return cmd.turnId;
 }
 
-const offer = [{ optionId: "ok", name: "OK", kind: "allow_once" }, { optionId: "no", name: "No", kind: "reject_once" }];
+const offer: PermissionOption[] = [
+  { optionId: "ok", name: "OK", kind: "allow_once" },
+  { optionId: "no", name: "No", kind: "reject_once" },
+];
+const call = { toolCallId: "t1" };
 
 describe("Daemon hardening: responses and validation", () => {
   it("DH1.1 initialize advertises session listing and no auth methods", () => {
@@ -115,7 +120,7 @@ describe("Daemon hardening: disconnects and detaches", () => {
     d.initialize("c2");
     d.request("c2", "session/load", { sessionId, cwd: "/w", mcpServers: [] });
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const req = d.inbox("c2").find((m) => m.method === "session/request_permission")!;
     d.request("c1", "_harness/session/detach", { sessionId });
     d.inbox("c1");
@@ -130,9 +135,9 @@ describe("Daemon hardening: permissions", () => {
     const { d } = setup();
     const sessionId = open(d);
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     d.inbox("c1");
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     expect(d.inbox("c1")).toEqual([]);
   });
 
@@ -140,7 +145,7 @@ describe("Daemon hardening: permissions", () => {
     const { d } = setup();
     const sessionId = open(d);
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
     d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "cancelled" } } });
     expect(d.commands()).toEqual([{ type: "permission", sessionId, turnId, requestId: "p", outcome: { outcome: "cancelled" } }]);
@@ -151,7 +156,7 @@ describe("Daemon hardening: permissions", () => {
       const { d } = setup();
       const sessionId = open(d);
       const turnId = prompt(d, "c1", sessionId);
-      d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+      d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
       const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
       d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome } });
       expect(d.commands(), JSON.stringify(outcome)).toEqual([]);
@@ -162,7 +167,7 @@ describe("Daemon hardening: permissions", () => {
     const { d } = setup();
     const sessionId = open(d);
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     d.notify("c1", "session/cancel", { sessionId });
     d.connect("late", ALICE);
     d.initialize("late");
@@ -177,7 +182,7 @@ describe("Daemon hardening: permissions", () => {
     d.initialize("c2");
     d.request("c2", "session/load", { sessionId, cwd: "/w", mcpServers: [] });
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const toC1 = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
     d.send("c2", { jsonrpc: "2.0", id: toC1.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
     expect(d.commands()).toEqual([]);
@@ -187,7 +192,7 @@ describe("Daemon hardening: permissions", () => {
     const { d } = setup();
     const sessionId = open(d, "c1");
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
     d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
     expect(d.inbox("c1")).toEqual([]);
@@ -215,7 +220,7 @@ describe("Daemon hardening: events and hooks carry their data", () => {
     const { d } = setup();
     const sessionId = open(d, "c1");
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
     d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
     d.worker({ type: "end", sessionId, turnId, stopReason: "end_turn" });
@@ -239,7 +244,7 @@ describe("Daemon hardening: events and hooks carry their data", () => {
     d.request("p", "_harness/hooks/subscribe", { types: ["session.*", "turn.*", "permission.*"] });
     const sessionId = open(d, "c1");
     const turnId = prompt(d, "c1", sessionId);
-    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: {}, options: offer });
+    d.worker({ type: "permission", sessionId, turnId, requestId: "p", toolCall: call, options: offer });
     const req = d.inbox("c1").find((m) => m.method === "session/request_permission")!;
     d.send("c1", { jsonrpc: "2.0", id: req.id, result: { outcome: { outcome: "selected", optionId: "ok" } } });
     d.worker({ type: "end", sessionId, turnId, stopReason: "end_turn" });

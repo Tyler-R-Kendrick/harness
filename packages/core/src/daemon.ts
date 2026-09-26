@@ -11,6 +11,18 @@ import {
   success,
 } from "@harness/protocol";
 import type { JsonRpcId } from "@harness/protocol";
+import type {
+  StopReason as AcpStopReason,
+  InitializeResponse,
+  ListSessionsResponse,
+  LoadSessionResponse,
+  NewSessionResponse,
+  PermissionOption,
+  PromptResponse,
+  RequestPermissionRequest,
+  SessionUpdate,
+  ToolCallUpdate,
+} from "@agentclientprotocol/sdk";
 import { CapabilityRegistry } from "./capabilities.ts";
 import type { CapabilityOffer, Trust } from "./capabilities.ts";
 import { FlowController } from "./flow.ts";
@@ -48,13 +60,11 @@ export interface DaemonDeps {
   readonly hookDepth?: number;
 }
 
-export type StopReason = "end_turn" | "max_tokens" | "max_turn_requests" | "refusal" | "cancelled";
+/** Why a turn ended, as ACP defines it. */
+export type StopReason = AcpStopReason;
 
-export interface PermissionOptionSpec {
-  readonly optionId: string;
-  readonly name: string;
-  readonly kind: string;
-}
+/** A choice offered with a permission request, as ACP defines it. */
+export type PermissionOptionSpec = PermissionOption;
 
 /** Instructions for the host to carry out against the session's worker. */
 export type WorkerCommand =
@@ -64,13 +74,13 @@ export type WorkerCommand =
 
 /** What a worker reports back through the host. */
 export type WorkerEvent =
-  | { readonly type: "update"; readonly sessionId: string; readonly turnId: string; readonly update: Readonly<Record<string, unknown>> }
+  | { readonly type: "update"; readonly sessionId: string; readonly turnId: string; readonly update: SessionUpdate }
   | {
       readonly type: "permission";
       readonly sessionId: string;
       readonly turnId: string;
       readonly requestId: string;
-      readonly toolCall: unknown;
+      readonly toolCall: ToolCallUpdate;
       readonly options: readonly PermissionOptionSpec[];
     }
   | { readonly type: "end"; readonly sessionId: string; readonly turnId: string; readonly stopReason: StopReason };
@@ -122,7 +132,7 @@ interface Subscriber {
 
 interface PendingPermission {
   readonly turnId: string;
-  readonly toolCall: unknown;
+  readonly toolCall: ToolCallUpdate;
   readonly options: readonly PermissionOptionSpec[];
   /** connectionId -> outbound JSON-RPC request id */
   readonly outbound: Map<string, string>;
@@ -349,7 +359,7 @@ export class Daemon {
       case ACP_METHODS.sessionList:
         return {
           sessions: [...this.#sessions.values()].filter((s) => s.owner === conn.identity.principal).map((s) => ({ sessionId: s.id, cwd: s.cwd })),
-        };
+        } satisfies ListSessionsResponse;
       case ACP_METHODS.sessionPrompt:
         return this.#prompt(conn, id, params);
       case HARNESS_METHODS.sessionAttach:
@@ -411,7 +421,7 @@ export class Daemon {
       _meta: {
         harness: { profileVersion: HARNESS_PROFILE_VERSION, methods: Object.values(HARNESS_METHODS), capabilities: this.#capabilities.inventory() },
       },
-    };
+    } satisfies InitializeResponse;
   }
 
   #sessionNew(conn: Connection, params: Record<string, unknown>): unknown {
@@ -423,14 +433,14 @@ export class Daemon {
     this.#append(session, "event", { event: "session.created", data: { cwd, owner: conn.identity.principal } });
     this.#publish("session.created", session.id, { cwd });
     this.#attach(conn, session, OWNER_GRANTS, session.log.head(), false);
-    return { sessionId: session.id };
+    return { sessionId: session.id } satisfies NewSessionResponse;
   }
 
   #sessionLoad(conn: Connection, params: Record<string, unknown>): unknown {
     const session = this.#session(str(params["sessionId"], "sessionId"));
     this.#authorize(conn, session);
     this.#attach(conn, session, OWNER_GRANTS, session.log.base(), true);
-    return {};
+    return {} satisfies LoadSessionResponse;
   }
 
   #sessionAttach(conn: Connection, params: Record<string, unknown>): unknown {
@@ -616,7 +626,7 @@ export class Daemon {
     this.#append(session, "event", { event: "turn.ended", data: { turnId: turn.turnId, stopReason } });
     this.#publish("turn.ended", session.id, { turnId: turn.turnId, stopReason });
     if (turn.prompt && this.#connections.has(turn.prompt.connectionId)) {
-      this.#send(turn.prompt.connectionId, success(turn.prompt.id, { stopReason }));
+      this.#send(turn.prompt.connectionId, success(turn.prompt.id, { stopReason } satisfies PromptResponse));
     }
   }
 
@@ -652,7 +662,7 @@ export class Daemon {
     const outboundId = `hr-${++this.#outboundSeq}`;
     this.#outbound.set(outboundId, { connectionId, sessionId: session.id, requestId });
     perm.outbound.set(connectionId, outboundId);
-    this.#send(connectionId, rpcRequest(outboundId, ACP_METHODS.requestPermission, { sessionId: session.id, toolCall: perm.toolCall, options: perm.options }));
+    this.#send(connectionId, rpcRequest(outboundId, ACP_METHODS.requestPermission, { sessionId: session.id, toolCall: perm.toolCall, options: [...perm.options] } satisfies RequestPermissionRequest));
   }
 
   /** The router has already recorded the resolution; tell the worker and withdraw the other requests. */

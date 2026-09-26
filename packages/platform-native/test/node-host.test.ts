@@ -1,25 +1,26 @@
 import { mkdtempSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
+import { ndJsonStream } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
-import { NdjsonDecoder, encodeFrame } from "@harness/protocol";
 import type { Worker } from "@harness/workers";
 import { bytes, Ensemble } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { FileStorage, NodeHost } from "@harness/platform-native";
 import { hashEmbeddingModel } from "@harness/testkit";
 
+/** An ACP client on the official SDK's NDJSON stream, wired to the host through in-memory pipes. */
 function wire(host: NodeHost) {
   const input = new PassThrough();
   const output = new PassThrough();
   const received: Record<string, unknown>[] = [];
-  const framer = new NdjsonDecoder();
-  output.on("data", (b: Buffer) => {
-    for (const r of framer.push(b.toString("utf8"))) if (r.kind === "message") received.push(r.value as Record<string, unknown>);
-  });
+  const client = ndJsonStream(Writable.toWeb(input), Readable.toWeb(output) as ReadableStream<Uint8Array>);
+  void (async () => {
+    for await (const m of client.readable) received.push(m as Record<string, unknown>);
+  })();
   host.attach(input, output);
-  const send = (m: unknown) => input.write(encodeFrame(m));
+  const send = (m: unknown) => input.write(`${JSON.stringify(m)}\n`);
   const waitFor = async (pred: (m: Record<string, unknown>) => boolean) => {
     for (let i = 0; i < 200; i++) {
       const m = received.find(pred);
@@ -50,6 +51,29 @@ describe("NodeHost", () => {
     c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
     expect(await c.waitFor((m) => m["id"] === 1)).toMatchObject({ result: { protocolVersion: 1 } });
     c.input.end();
+    await host.close();
+  });
+
+  it("NH1.4 a line that is not JSON gets a parse error and the connection carries on", async () => {
+    const host = await NodeHost.start({ worker: { run: async () => {}, cancel: () => {}, permission: () => {} }, identity: { principal: "me", kind: "human" } });
+    const c = wire(host);
+    c.input.write("{nope\n");
+    expect(await c.waitFor((m) => (m["error"] as { code?: number } | undefined)?.code === -32700)).toMatchObject({ id: null });
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    expect(await c.waitFor((m) => m["id"] === 1)).toMatchObject({ result: { protocolVersion: 1 } });
+    await host.close();
+  });
+
+  it("NH1.5 a line longer than the host allows is refused without buffering it, and the connection carries on", async () => {
+    const host = await NodeHost.start({ worker: { run: async () => {}, cancel: () => {}, permission: () => {} }, identity: { principal: "me", kind: "human" }, maxLineBytes: 120 });
+    const c = wire(host);
+    // split across writes, so the limit holds for a line that arrives in pieces
+    c.input.write(`{"jsonrpc":"2.0","id":9,"method":"initialize","params":{"x":"${"a".repeat(60)}`);
+    c.input.write(`${"b".repeat(40)}"}}\n`);
+    expect(await c.waitFor((m) => m["error"] !== undefined)).toMatchObject({ id: null, error: { code: -32600, message: expect.stringMatching(/120 bytes/) } });
+    c.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    expect(await c.waitFor((m) => m["id"] === 1)).toMatchObject({ result: { protocolVersion: 1 } });
+    expect(c.received.some((m) => m["id"] === 9)).toBe(false);
     await host.close();
   });
 

@@ -1,5 +1,7 @@
-/** Base ACP protocol version this implementation speaks. */
-export const ACP_PROTOCOL_VERSION = 1;
+import { AGENT_METHODS, CLIENT_METHODS, PROTOCOL_METHODS, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+
+/** Base ACP protocol version this implementation speaks: the official SDK's. */
+export const ACP_PROTOCOL_VERSION = PROTOCOL_VERSION;
 
 /** Version of the `_harness` ACP extension profile, negotiated in `initialize`. */
 export const HARNESS_PROFILE_VERSION = 1;
@@ -29,15 +31,15 @@ export const HARNESS_METHODS = {
   cognitiveStatus: "_harness/cognitive/status",
 } as const;
 
-/** ACP methods the daemon uses from the base protocol. */
+/** ACP methods the daemon uses from the base protocol, named by the official SDK. */
 export const ACP_METHODS = {
-  initialize: "initialize",
-  sessionNew: "session/new",
-  sessionLoad: "session/load",
-  sessionList: "session/list",
-  sessionPrompt: "session/prompt",
-  sessionCancel: "session/cancel",
-  sessionUpdate: "session/update",
-  requestPermission: "session/request_permission",
-  cancelRequest: "$/cancel_request",
+  initialize: AGENT_METHODS.initialize,
+  sessionNew: AGENT_METHODS.session_new,
+  sessionLoad: AGENT_METHODS.session_load,
+  sessionList: AGENT_METHODS.session_list,
+  sessionPrompt: AGENT_METHODS.session_prompt,
+  sessionCancel: AGENT_METHODS.session_cancel,
+  sessionUpdate: CLIENT_METHODS.session_update,
+  requestPermission: CLIENT_METHODS.session_request_permission,
+  cancelRequest: PROTOCOL_METHODS.cancel_request,
 } as const;
