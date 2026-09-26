@@ -11,6 +11,9 @@
   "dependencies": {
     "@ai-sdk/gateway": "4.0.92",
     "@ai-sdk/harness": "1.0.124",
+    "@ai-sdk/harness-acp": "1.0.62",
+    "@ai-sdk/harness-claude-code": "1.0.128",
+    "@ai-sdk/harness-codex": "1.0.126",
     "@harness/behavior": "0.0.0",
     "@harness/client": "0.0.0",
     "@harness/cognitive": "0.0.0",

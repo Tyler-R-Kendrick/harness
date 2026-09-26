@@ -11,3 +11,6 @@ export { steerableModel } from "./steerable-model.ts";
 export { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
 export { WorkflowFiles } from "./workflow-files.ts";
 export { daemonSocket } from "./daemon-link.ts";
+export { hostSandbox } from "./host-sandbox.ts";
+export { FileHarnessStore, harnessAdapter, harnessWorker, parseHarnessSpec } from "./harness-host.ts";
+export type { HarnessSpec } from "./harness-host.ts";

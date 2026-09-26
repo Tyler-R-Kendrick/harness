@@ -12,6 +12,8 @@ export interface ScriptedTurn {
 /** What the harness saw: sessions started and ended, and each turn's prompt and settings. */
 export interface HarnessLog {
   readonly started: string[];
+  /** Sessions started from a parked session's state. */
+  readonly resumed: string[];
   readonly ended: string[];
   readonly turns: { readonly sessionId: string; readonly prompt: unknown; readonly instructions: string | undefined }[];
 }
@@ -30,20 +32,22 @@ function promptOf(prompt: HarnessV1PromptTurnOptions["prompt"]): string {
  * result before replying (a continued turn attaches to it); an aborted turn fails. Everything it sees is in `log`.
  */
 export function scriptedHarness(reply: (prompt: string) => ScriptedTurn | string): HarnessV1 & { readonly log: HarnessLog } {
-  const log: HarnessLog = { started: [], ended: [], turns: [] };
+  const log: HarnessLog = { started: [], resumed: [], ended: [], turns: [] };
   return {
     specificationVersion: "harness-v1",
     harnessId: "scripted",
     builtinTools: {},
     log,
-    async doStart({ sessionId }) {
+    async doStart({ sessionId, resumeFrom }) {
+      if (resumeFrom && (resumeFrom.data as { sessionId?: unknown } | null)?.sessionId !== sessionId) throw new Error("this parked state belongs to another session");
       log.started.push(sessionId);
+      if (resumeFrom) log.resumed.push(sessionId);
       const end = async () => void log.ended.push(sessionId);
       let live: ((options: HarnessV1ContinueTurnOptions) => HarnessV1PromptControl) | undefined;
-      const parked: HarnessV1ResumeSessionState = { type: "resume-session", specificationVersion: "harness-v1", harnessId: "scripted", data: {} };
+      const parked: HarnessV1ResumeSessionState = { type: "resume-session", specificationVersion: "harness-v1", harnessId: "scripted", data: { sessionId } };
       const session: HarnessV1Session = {
         sessionId,
-        isResume: false,
+        isResume: resumeFrom !== undefined,
         async doPromptTurn(options) {
           log.turns.push({ sessionId, prompt: options.prompt, instructions: options.instructions });
           const turn = reply(promptOf(options.prompt));

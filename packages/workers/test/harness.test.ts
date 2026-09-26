@@ -133,4 +133,37 @@ describe("harnessSessions: an AI SDK harness (Claude Code, Codex, any ACP agent)
     await done;
     expect(events).toContainEqual(expect.objectContaining({ type: "update", update: expect.objectContaining({ sessionUpdate: "notice", severity: "error" }) }));
   });
+
+  it("HS2.1 with a store, closing parks every harness session and a later turn resumes it, as across a daemon restart", async () => {
+    const saved = new Map<string, unknown>();
+    const store = { get: async (id: string) => saved.get(id), set: async (id: string, state: unknown) => void saved.set(id, state), delete: async (id: string) => void saved.delete(id) };
+    const harness = scriptedHarness((p) => p);
+    const make = () => new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness }), { sandboxSession: nullSandbox, store }) });
+    const agent = harnessSessions(new HarnessAgent({ harness }), { sandboxSession: nullSandbox, store });
+    await run(new AgentWorker({ agent }), "before").done;
+    await agent.close();
+    expect(harness.log.ended).toEqual(["s1"]);
+    expect([...saved.keys()]).toEqual(["s1"]);
+    // a new daemon process: the same session resumes from its parked state, which is then spent
+    const { events, done } = run(make(), "after", "s1", "t2");
+    await done;
+    expect(reply(events)).toBe("after");
+    expect(harness.log.resumed).toEqual(["s1"]);
+    expect(saved.has("s1")).toBe(false);
+  });
+
+  it.each([
+    ["another harness", { type: "resume-session", specificationVersion: "harness-v1", harnessId: "other", data: {} }],
+    ["a state the harness refuses", { type: "resume-session", specificationVersion: "harness-v1", harnessId: "scripted", data: { sessionId: "elsewhere" } }],
+  ])("HS2.2 a parked state from %s is dropped and the session starts fresh", async (_, parked) => {
+    const saved = new Map<string, unknown>([["s1", parked]]);
+    const store = { get: async (id: string) => saved.get(id), set: async (id: string, state: unknown) => void saved.set(id, state), delete: async (id: string) => void saved.delete(id) };
+    const harness = scriptedHarness((p) => p);
+    const worker = new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness }), { sandboxSession: nullSandbox, store }) });
+    const { events, done } = run(worker, "fresh");
+    await done;
+    expect(reply(events)).toBe("fresh");
+    expect(harness.log.resumed).toEqual([]);
+    expect(saved.has("s1")).toBe(false);
+  });
 });

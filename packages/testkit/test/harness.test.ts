@@ -7,12 +7,16 @@ const start = (h: ReturnType<typeof scriptedHarness>) => h.doStart({ sessionId: 
 describe("scripted harness and null sandbox (test doubles for AI SDK harnesses)", () => {
   it("TH1.1 a session's lifecycle ends are logged; parking returns resumable state", async () => {
     const h = scriptedHarness(() => "ok");
-    const state = { type: "resume-session", specificationVersion: "harness-v1", harnessId: "scripted", data: {} };
+    const state = { type: "resume-session", specificationVersion: "harness-v1", harnessId: "scripted", data: { sessionId: "s" } };
     expect(await (await start(h)).doDetach()).toEqual(state);
     expect(await (await start(h)).doStop()).toEqual(state);
     await (await start(h)).doDestroy();
     expect(h.log.started).toEqual(["s", "s", "s"]);
     expect(h.log.ended).toEqual(["s", "s", "s"]);
+    const resumed = await h.doStart({ sessionId: "s", resumeFrom: state as never, sandboxSession: nullSandbox(), sessionWorkDir: "/sandbox/s" });
+    expect(resumed.isResume).toBe(true);
+    expect(h.log.resumed).toEqual(["s"]);
+    await expect(h.doStart({ sessionId: "t", resumeFrom: state as never, sandboxSession: nullSandbox(), sessionWorkDir: "/sandbox/t" })).rejects.toThrow(/another session/);
   });
 
   it("TH1.2 there is no turn to continue before one starts, and turns are never suspended", async () => {

@@ -66,8 +66,13 @@ No: every model is an AI SDK model, and every agent is an AI SDK agent.
 - Sessions can run on an AI SDK `HarnessAgent` (Claude Code, Codex, any ACP agent through
   `@ai-sdk/harness-acp`): `harnessSessions` gives each daemon session its own harness session
   and the agent worker runs it like any other agent. The harness keeps the conversation and
-  returns no response messages, so the worker adds the approval requests it answers.
-  Hosts still need a sandbox provider with an exposed port for bridge-backed harnesses.
+  returns no response messages, so the worker adds the approval requests it answers. Harness
+  sessions park in a store on shutdown and resume on the next turn.
+- Bridge-backed harnesses need a network sandbox (a port the host can reach). The only
+  official provider is Vercel's hosted one, so the native host has its own provider,
+  `hostSandbox`: a directory and a free loopback port per session, running commands as the
+  daemon's user. It isolates nothing, as the harnesses' own CLIs do not; an isolating
+  provider plugs in the same way (`HarnessV1SandboxProvider`).
 
 ## Revisit when
 

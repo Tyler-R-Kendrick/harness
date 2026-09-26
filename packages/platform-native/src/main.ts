@@ -10,6 +10,7 @@ import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
+import { harnessAdapter, harnessWorker, parseHarnessSpec } from "./harness-host.ts";
 import { NodeHost } from "./node-host.ts";
 
 const { values } = parseArgs({
@@ -29,12 +30,16 @@ const { values } = parseArgs({
     memory: { type: "string" },
     learning: { type: "string" },
     workflows: { type: "string" },
+    harness: { type: "string" },
+    "harness-state": { type: "string" },
+    sandboxes: { type: "string" },
   },
 });
 
 if (!values.stdio && values.socket === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble] [--model <gateway id>]\n" +
+    "usage: harness (--stdio | --socket <path>) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
+      "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]]\n",
   );
@@ -74,10 +79,26 @@ const cognitive =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
+if ((values.worker === "harness") !== (values.harness !== undefined)) {
+  process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
+  process.exit(2);
+}
+// The harness worker runs each session on an AI SDK harness (Claude Code, Codex, an ACP
+// agent), in a host sandbox of its own; parked sessions resume after a restart.
+const harness =
+  values.harness === undefined
+    ? undefined
+    : harnessWorker({
+        harness: harnessAdapter(parseHarnessSpec(values.harness)),
+        sandboxRoot: values.sandboxes ?? join(homedir(), ".cache", "harness", "sandboxes"),
+        stateFile: values["harness-state"] ?? join(homedir(), ".cache", "harness", "harness-sessions.json"),
+        ...instructions,
+      });
 // The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
 // on the ensemble (the steered kernel with a behavior pack), with memory and learning.
-const worker: Worker =
-  values.worker === "model"
+const worker: Worker = harness
+  ? harness.worker
+  : values.worker === "model"
     ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }) })
     : values.worker === "ensemble"
       ? new AgentWorker({
@@ -103,6 +124,7 @@ const host = await NodeHost.start({
 
 const shutdown = async () => {
   await host.close();
+  await harness?.close();
   await cognitive?.close();
   process.exit(0);
 };
