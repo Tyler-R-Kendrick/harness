@@ -11,10 +11,20 @@ export interface CacheStorageLike {
  * The files are verified (sha256) by the artifact store before they are kept.
  */
 export class CacheStorageByteCache implements ByteCache {
-  readonly #cache: ReturnType<CacheStorageLike["open"]>;
+  readonly #name: string;
+  readonly #caches: CacheStorageLike | undefined;
+  #cache: ReturnType<CacheStorageLike["open"]> | undefined;
 
   constructor(options: { readonly name?: string; readonly caches?: CacheStorageLike } = {}) {
-    this.#cache = (options.caches ?? (globalThis as unknown as { caches: CacheStorageLike }).caches).open(options.name ?? "harness-models");
+    this.#name = options.name ?? "harness-models";
+    this.#caches = options.caches ?? (globalThis as { caches?: CacheStorageLike }).caches;
+  }
+
+  /** The cache, opened on first use; a page without the Cache API (an insecure one) says so then. */
+  #open(): ReturnType<CacheStorageLike["open"]> {
+    const caches = this.#caches;
+    if (!caches) return Promise.reject(new Error("the Cache API is not available here (it needs a secure context); pass a cache"));
+    return (this.#cache ??= caches.open(this.#name));
   }
 
   static #url(key: string): string {
@@ -22,11 +32,11 @@ export class CacheStorageByteCache implements ByteCache {
   }
 
   async get(key: string): Promise<Uint8Array | undefined> {
-    const hit = await (await this.#cache).match(CacheStorageByteCache.#url(key));
+    const hit = await (await this.#open()).match(CacheStorageByteCache.#url(key));
     return hit ? new Uint8Array(await hit.arrayBuffer()) : undefined;
   }
 
   async put(key: string, bytes: Uint8Array): Promise<void> {
-    await (await this.#cache).put(CacheStorageByteCache.#url(key), new Response(bytes as Uint8Array<ArrayBuffer>));
+    await (await this.#open()).put(CacheStorageByteCache.#url(key), new Response(bytes as Uint8Array<ArrayBuffer>));
   }
 }

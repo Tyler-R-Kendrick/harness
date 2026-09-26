@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { streamText } from "ai";
-import { bytes, parseCatalog, route, sha256 } from "@harness/cognitive";
+import { bytes, constrain, parseCatalog, route, sha256 } from "@harness/cognitive";
 import type { ModelDescriptor, Runtime } from "@harness/cognitive";
 import { MemoryByteCache } from "@harness/models";
-import { buildBrowserEnsemble, CacheStorageByteCache } from "@harness/platform-browser";
+import { buildBrowserEnsemble, CacheStorageByteCache, xgrammarFromSource } from "@harness/platform-browser";
 import type { CacheStorageLike } from "@harness/platform-browser";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
+import { loadXGrammar } from "../../constrained/test/xgrammar.ts";
 
 const data = (file: string) => JSON.parse(readFileSync(new URL(`../../cognitive/data/${file}`, import.meta.url), "utf8")) as unknown;
 const catalog = parseCatalog(data("catalog.json"), data("benchmarks.json"));
@@ -151,5 +152,37 @@ describe("the browser host's cognitive core", () => {
     } finally {
       delete (globalThis as { caches?: unknown }).caches;
     }
+  });
+
+  it("BE1.9 without the Cache API (an insecure page), the byte cache is still made and says why it cannot keep files", async () => {
+    const cache = new CacheStorageByteCache();
+    await expect(cache.get("k")).rejects.toThrow(/the Cache API is not available here \(it needs a secure context\); pass a cache/);
+    await expect(cache.put("k", new Uint8Array([1]))).rejects.toThrow(/secure context/);
+    expect(() => buildBrowserEnsemble({ catalog, allowHosted: false })).not.toThrow();
+  });
+
+  it("BE1.10 with an XGrammar loader, a constrained request to a transformers.js model is decoded under its constraint", async () => {
+    // the fake model takes the best logit at each step: unconstrained, all are equal and token 0 wins
+    const { module, log } = fakeTransformers({ generated: ["a", "b", ""] });
+    // its tokenizer's vocabulary is plain letters, so the model's tokens are read as raw text
+    const generator = catalog.models.find((m) => m.platforms.includes("browser") && m.runtime === "transformers.js" && m.constraints && m.ports.includes("generator")) as Extract<ModelDescriptor, { runtime: "transformers.js" }>;
+    const raw = { models: [{ ...generator, run: { ...generator.run, vocab: "raw" as const } }], preferences: {} };
+    const ensemble = buildBrowserEnsemble({ catalog: raw, cache: new MemoryByteCache(), transformers: module, xgrammar: async () => loadXGrammar() });
+    const steps = () => log.filter((l) => l.name === "step").map((l) => l.args[1]);
+    await streamText({ model: ensemble.languageModel(), prompt: "go", maxRetries: 0 }).text;
+    expect(steps()).toEqual([0, 0, 0]);
+    const held = streamText({ model: ensemble.languageModel(), prompt: "go", maxRetries: 0, ...constrain({ type: "regex", pattern: "ab" }) });
+    expect(await held.text).toBe("ab");
+    // masked by the constraint: a, then b, then only the end token
+    expect(steps().slice(3)).toEqual([1, 2, 0]);
+  });
+
+  it("BE1.11 an XGrammar loader from source evaluates it once, and again only when asked for a fresh instance", async () => {
+    const load = xgrammarFromSource("module.exports = { instance: Symbol('xgrammar') };");
+    const first = await load(false);
+    expect(await load(false)).toBe(first);
+    const fresh = await load(true);
+    expect(fresh).not.toBe(first);
+    expect(await load(false)).toBe(fresh);
   });
 });
