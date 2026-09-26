@@ -196,7 +196,8 @@ reported as `blocked`, never as a pass.
 | `packages/core` | Sans-I/O daemon: sessions, subagents, routing, lease, flow control, effect ledger, capabilities, hook bus, task graph (pure) |
 | `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
 | `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |
-| `packages/workers` | Echo worker, and a worker that runs any AI SDK agent (portable) |
+| `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
+| `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |

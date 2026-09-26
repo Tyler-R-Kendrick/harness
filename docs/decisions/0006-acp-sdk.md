@@ -31,6 +31,13 @@ library does it.
   function. The SDK's per-stream connection classes are used by clients and in the
   integration tests (the official client talks to the native host over stdio).
 
+- **The daemon is an AI SDK harness.** `daemonHarness` (`@harness/client`) is a
+  `HarnessV1` adapter over the SDK's `ClientSideConnection`, so any AI SDK `HarnessAgent`
+  drives daemon sessions. `@ai-sdk/harness-acp` was considered: it installs an ACP agent
+  inside a sandbox and starts it per session, which would give each harness session its
+  own daemon; a daemon's sessions outlive connections and are shared, so the adapter
+  connects to the running daemon instead. It exports no ACP-to-harness mapping to reuse.
+
 ## Consequences
 
 - Upgrading the SDK surfaces protocol drift as a type error or a failing contract test.

@@ -47,6 +47,9 @@
     },
     {
       "path": "../learning-plugins"
+    },
+    {
+      "path": "../client"
     }
   ]
 }

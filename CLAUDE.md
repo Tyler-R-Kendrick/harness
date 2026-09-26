@@ -23,6 +23,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
 | `packages/testkit` | deterministic ports, AI SDK model fakes (on `ai/test`), a scripted AI SDK harness, and reusable contract suites | pure |
 | `packages/workers` | session workers: echo (deterministic), and any AI SDK agent (`AgentWorker`, `sessionAgent`), including AI SDK harnesses (`harnessSessions`) | portable |
+| `packages/client` | the daemon as an AI SDK harness (`daemonHarness`, a `HarnessV1` adapter over ACP) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges, Cactus WASM, transformers.js, llama-server, steerable ONNX | portable |
 | `packages/platform-native` | Node host: stdio/socket ACP bindings, atomic file storage, model files and llama-server, CLI | host |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |

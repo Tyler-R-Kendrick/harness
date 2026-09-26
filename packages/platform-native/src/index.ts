@@ -10,3 +10,4 @@ export type { NativeEnsembleOptions } from "./cognitive-host.ts";
 export { steerableModel } from "./steerable-model.ts";
 export { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
 export { WorkflowFiles } from "./workflow-files.ts";
+export { daemonSocket } from "./daemon-link.ts";
