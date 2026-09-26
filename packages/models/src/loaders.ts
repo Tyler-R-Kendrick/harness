@@ -23,7 +23,11 @@ export interface LoaderHost {
   readonly transformers?: { readonly module?: unknown; readonly cacheDir?: string; readonly device?: "cpu" | "wasm" | "webgpu" };
   /** Instantiate an Emscripten module from its verified loader source and WASM bytes. */
   readonly emscripten: <M>(loader: Uint8Array, wasm: Uint8Array, name: string) => Promise<M>;
-  /** Give an engine its environment variables where it reads them (natively, the process environment). */
+  /**
+   * Give an engine its catalog environment where the host has one (natively, the process
+   * environment). A browser has none; the Cactus WASM build reads only its own defaults and
+   * makes no network calls beyond loading itself, which the verified bytes replace.
+   */
   readonly engineEnv?: (vars: Readonly<Record<string, string>>) => void;
   /** Constrained decoding for a model, when this host can enforce its constraints. */
   readonly constrainer?: (m: ModelDescriptor) => Constrainer | undefined;

@@ -136,7 +136,8 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
       env,
       transformers: { cacheDir: join(options.cacheDir, "transformers"), ...(options.transformers === undefined ? {} : { module: options.transformers }) },
       emscripten: (loader, wasm, name) => loadEmscriptenModule(loader, wasm, name),
-      // The engine reads the real process environment.
+      // A catalog entry's engine environment goes into the process environment, where a
+      // native engine build can read it (the WASM build reads only its own defaults).
       engineEnv: (vars) => {
         for (const [k, v] of Object.entries(vars)) process.env[k] ??= v;
       },
