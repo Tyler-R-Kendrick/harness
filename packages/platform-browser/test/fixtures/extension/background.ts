@@ -12,6 +12,9 @@ import xgrammarBinding from "@mlc-ai/web-xgrammar?factory";
 import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
 import engineSource from "./engine.js?raw";
 import engineFactory from "./engine.js?factory";
+// The engine under transformers.js, from the entry it imports (a bundle with its glue inlined).
+import * as ort from "onnxruntime-web/webgpu";
+import { encodeModel } from "../../../../models/test/onnx-builder.ts";
 
 declare const chrome: { runtime: { onConnect: ExtensionPortSource } };
 
@@ -71,4 +74,21 @@ async function cognitive(model: ModelDescriptor, hub: string) {
   return { evalRefused: evalRefused(), refused, routed: await invokeCognitive(ensemble, "route", route) };
 }
 
-Object.assign(globalThis, { smoke: { xgrammar, cognitive } });
+/** onnxruntime-web (what transformers.js models run on) runs a model in the service worker. */
+async function onnx() {
+  await nextTask();
+  const model = encodeModel({
+    opsets: { "": 17 },
+    inputs: [{ name: "x", elemType: 1, dims: [2] }],
+    outputs: [{ name: "y", elemType: 1, dims: [2] }],
+    initializers: [{ name: "one", dims: [2], floats: [1, 1] }],
+    nodes: [{ name: "add", opType: "Add", inputs: ["x", "one"], outputs: ["y"] }],
+  });
+  // A service worker cannot start workers, so onnxruntime runs on its own thread.
+  ort.env.wasm.numThreads = 1;
+  const session = await ort.InferenceSession.create(model);
+  const out = await session.run({ x: new ort.Tensor("float32", new Float32Array([1, 2]), [2]) });
+  return { evalRefused: evalRefused(), y: [...(out["y"]!.data as Float32Array)] };
+}
+
+Object.assign(globalThis, { smoke: { xgrammar, cognitive, onnx } });

@@ -23,7 +23,11 @@ export interface BrowserEnsembleOptions {
   readonly only?: readonly string[];
   /** Where transformers.js models run: WebGPU, or WebAssembly (its default). */
   readonly device?: "wasm" | "webgpu";
-  /** transformers.js module override (tests). */
+  /**
+   * The transformers.js module (`import * as transformers from "@huggingface/transformers"`),
+   * for hosts that cannot import it on demand: an extension's service worker, where
+   * `import()` is not allowed. Otherwise it is imported when its first model loads.
+   */
   readonly transformers?: unknown;
   /** An XGrammar loader (`xgrammarFromSource`, or `xgrammarFromFactory` where code cannot be evaluated); without one no model here claims to enforce constraints. */
   readonly xgrammar?: (fresh: boolean) => Promise<XGrammar>;

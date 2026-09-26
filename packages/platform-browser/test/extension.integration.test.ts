@@ -115,4 +115,12 @@ describe("the browser host in an extension, in Chromium", { timeout: 60_000 }, (
     expect(result).toMatchObject({ evalRefused: true, refused: expect.stringMatching(/unsafe-eval/), routed: { model: model.id, calls: [{ name: "t", arguments: {} }], confidence: 0.9 } });
     await p.close();
   });
+
+  it("BI2.4 onnxruntime-web, which transformers.js models run on, runs a model in the extension's service worker", async () => {
+    const p = await page();
+    const sw = context.serviceWorkers().find((w) => w.url().startsWith(`chrome-extension://${extensionId}/`))!;
+    const result = await sw.evaluate(() => (globalThis as unknown as { smoke: { onnx(): Promise<{ evalRefused: boolean; y: number[] }> } }).smoke.onnx());
+    expect(result).toEqual({ evalRefused: true, y: [2, 3] });
+    await p.close();
+  });
 });
