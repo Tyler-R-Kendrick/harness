@@ -935,6 +935,14 @@ As built (P12). These refine the shapes above; no name another phase uses change
     plugin connection with a durable hook-bus cursor, acknowledging each event after its
     handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
     `[from, to?)` from the daemon's snapshot.
+  - `nativeDream({store, settings, model, trajectories, preset?, holder?})` is P6's
+    `runDream` with `modelRefiner` on `model` (the ensemble's reasoning model in `main.ts`
+    and the CLI), the preset's settings and the host's clock and entropy.
+    `daemonTrajectories({daemon, store})` is its `TrajectorySource`: every ended turn of a
+    session pinned to the graph, projected (P11), kept when it ran under the revision, the
+    most recent `limit`, scored with the overlay's latest score for the turn (source
+    `feedback`, since the host configures no scorer). The CLI reads a saved daemon snapshot
+    (`--state`) for it.
   - `nativeLiveLearner({runtime, store, settings, preset?, intervalMs?, log?})` is P11's
     `LiveLearner` (the preset's settings, `readLog` from the daemon) fed by
     `pumpHookEvents` as plugin `procedural-learner` on `turn.ended`; `main.ts` starts it
@@ -948,7 +956,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
 - `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
   operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`);
   `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
-  file, `revert` `--to`. A result a caller handles exits 1, bad usage 2.
+  file, `revert` `--to`, and `dream` `--state`, `--model-cache`, `--llama-server` and
+  `--no-hosted`. A result a caller handles (a dream that did not finish included) exits 1,
+  bad usage 2.
 - Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
   extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
 
@@ -993,7 +1003,7 @@ Cross-phase wiring that no single phase owned; the finalizer resolves these test
 
 - **Dream uses composition (P6 × P13).** Dream calls `pathCandidates`, `recordedRuns`, `compilePath`, `StagingLibrary.stage` and `composeCandidate` for promotion, and gates the composed `document` (an `EditSet` cannot carry a binding) through the same gates as any candidate.
 - **Live reflection (plan §6.2.4).** `live.reflection` set to `turn` or `batch` must call `reflect` (P5). Every entry runs through `editFilter` before it is `proposed` with `source.by = "reflection"`. The setting stays off in the harness preset.
-- **Dream from the host.** `procedural.dream` and the `harness-procedural dream` CLI run `runDream` with real ports: the refiner is `refine` on the ensemble's generator, and the evaluator and approver are optional. The permission flow is the approver when one is configured.
+- **Dream from the host: approver, evaluator and tool catalog (P6 × P12).** `procedural.dream` and `harness-procedural dream` run `runDream` through `nativeDream` (refiner: `modelRefiner` on the ensemble's reasoning model; trajectories: `daemonTrajectories`). Still open: an `Approver` over the daemon's permission flow (MX3) bound to the candidate id, a configured `Evaluator`, and passing the session tool catalog (`tools`, `sideEffectFree`) so `enforceToolCatalog` and `approval-for-side-effects` see real tools. Without them the gates do what the preset says for their absence.
 
 - P6: the stride (the paper's S) is a `runDream` option, not a `DreamSettings` field,
   because P6 does not own `settings.ts`; the defaults are the training tasks once over
@@ -1004,3 +1014,15 @@ Cross-phase wiring that no single phase owned; the finalizer resolves these test
 - P6: revisions are keyed by content id and `put` is an upsert, so a rejected candidate
   equal to an older head outside the current dream would overwrite that head's record.
   The reducer guards G₀, the retained graph and the dream's own commits.
+- P12: the same content-id keying means two graphs holding the same document share one
+  record (its `graph` is whichever wrote last), and a revert replaces its target's record;
+  `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by
+  `(graph, id)` in the store would remove both.
+- P12: `sessionLogReader` and `daemonTrajectories` read logs from `Daemon.snapshot()`,
+  which copies every session's log per read. A host-side `Daemon.readLog(sessionId, from,
+  to)` in core would avoid the copy.
+- P12: `harness-procedural` opens the store file itself, so it must not run while a
+  daemon holds the same `--procedural` directory (one owner per store file). Routing the
+  CLI through a running daemon's `_harness/cognitive/invoke` would lift that.
+- P12: `procedural.feedback` answers `recorded` once the learner has the score, even when
+  the learner skips it (for example, a turn it cannot find in the log).

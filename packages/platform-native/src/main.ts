@@ -8,13 +8,14 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
+import type { GraphId } from "@harness/procedural";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hostAuthorizer, nativeLiveLearner, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
+import { daemonTrajectories, hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -88,8 +89,8 @@ const learned = await learningFile?.load();
 const principal = userInfo().username;
 const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
 const proceduralPolicy = values["procedural-policy"] === undefined ? undefined : loadProceduralPolicy(values["procedural-policy"]);
-// The live learner starts with the daemon (it reads the daemon's hook events and logs); `procedural.feedback` reaches it then.
-const live: { learner?: ReturnType<typeof nativeLiveLearner> } = {};
+// The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
+const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream> } = {};
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
@@ -105,6 +106,7 @@ const cognitive =
                 settings: proceduralSettings!,
                 authorize: hostAuthorizer(proceduralPolicy, principal),
                 feedback: async (session: string, turn: string, score: number) => live.learner?.learner.feedback(session, turn, score),
+                dream: async (graph: GraphId) => live.dream?.(graph),
               },
             }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
@@ -176,6 +178,8 @@ const host = await NodeHost.start({
 });
 
 if (procedural) live.learner = nativeLiveLearner({ runtime: host.runtime, ...procedural, log: (message) => void process.stderr.write(`${message}\n`) });
+// Dream's refiner thinks with the ensemble's reasoning model, on trajectories from the daemon's session logs.
+if (procedural && cognitive) live.dream = nativeDream({ ...procedural, model: cognitive.ensemble.languageModel("reasoning"), trajectories: daemonTrajectories({ daemon: host.daemon, store: procedural.store }) });
 
 const shutdown = async () => {
   live.learner?.close();

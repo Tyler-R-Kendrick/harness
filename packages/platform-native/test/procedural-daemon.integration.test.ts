@@ -32,12 +32,15 @@ function launch(dir: string, ...extra: string[]) {
 const invoke = (client: ClientSideConnection, op: string, input: unknown) => client.extMethod("_harness/cognitive/invoke", { op, input });
 
 describe("procedural graphs on the native daemon", () => {
-  it("PX2.50 --procedural serves procedural.* over ACP, kept in the directory across a restart", async () => {
+  it("PX2.50 --procedural serves procedural.* over ACP (dream and feedback included), kept in the directory across a restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     const first = launch(dir);
     await first.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     expect(await invoke(first.client, "procedural.import", { graph: "team/search" })).toEqual({ status: "head", revision: revisionId(seedGraph()) });
     expect(await invoke(first.client, "procedural.export", { graph: "team/search", format: "mermaid" })).toMatchObject({ status: "ok", text: expect.stringMatching(/^flowchart TD\n/) });
+    // Dream and feedback reach the host's dream runner and live learner.
+    expect(await invoke(first.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    expect(await invoke(first.client, "procedural.feedback", { session: "s", turn: "t", score: 1 })).toEqual({ status: "missing", reason: "session s is not pinned to a graph" });
     first.child.stdin.end();
     expect(await first.exited).toBe(0);
 
