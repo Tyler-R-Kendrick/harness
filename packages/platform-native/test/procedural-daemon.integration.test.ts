@@ -49,11 +49,15 @@ describe("procedural graphs on the native daemon", () => {
     expect(await proceduralStore(join(dir, "procedural")).heads.get(GraphIdSchema.parse("team/search"))).toEqual({ revision: revisionId(seedGraph()), history: [] });
   });
 
-  it("PX2.51 --procedural without the cognitive core is a usage error", async () => {
-    const child = spawn(process.execPath, [MAIN, "--stdio", "--procedural", "/tmp/never-written"], { env: { ...process.env, NODE_OPTIONS: "" } });
-    let stderr = "";
-    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-    expect(await new Promise<number | null>((resolve) => child.on("exit", resolve))).toBe(2);
-    expect(stderr).toContain("--procedural needs the cognitive core");
+  it("PX2.51 without the cognitive core --procedural still starts (sessions are guided), and procedural.* is not served", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", "--procedural", join(dir, "procedural")], { env: { ...process.env, NODE_OPTIONS: "" } });
+    children.push(child);
+    const stream = ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>);
+    const client = new ClientSideConnection(() => ({ sessionUpdate: async () => {}, requestPermission: async () => ({ outcome: { outcome: "cancelled" } }) }), stream);
+    await client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await expect(invoke(client, "procedural.history", { graph: "g" })).rejects.toMatchObject({ message: expect.stringMatching(/procedural|cognitive/) });
+    const { sessionId } = await client.newSession({ cwd: "/tmp", mcpServers: [] });
+    expect(await client.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] })).toMatchObject({ stopReason: "end_turn" });
   });
 });

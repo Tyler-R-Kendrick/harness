@@ -9,11 +9,12 @@ import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/w
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
-import { loadProceduralSettings } from "./catalog-files.ts";
+import { loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
+import { hostAuthorizer, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -34,6 +35,8 @@ const { values } = parseArgs({
     workflows: { type: "string" },
     procedural: { type: "string" },
     "procedural-settings": { type: "string" },
+    "procedural-resolver": { type: "string" },
+    "procedural-policy": { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -55,7 +58,7 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
-      "               [--procedural <dir> [--procedural-settings <settings.json>]]\n",
+      "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>]]\n",
   );
   process.exit(2);
 }
@@ -80,12 +83,11 @@ const saved = await memoryFile?.load();
 const learningFile = values.learning === undefined ? undefined : new FileStorage(values.learning);
 const learned = await learningFile?.load();
 
-if (values.procedural !== undefined && !values.cognitive && values.worker !== "ensemble") {
-  process.stderr.write("--procedural needs the cognitive core (--cognitive or --worker ensemble): its operations are procedural.*\n");
-  process.exit(2);
-}
-// Procedural graphs keep one store in their directory; the cognitive core serves its operations as `procedural.*`.
+// Procedural graphs keep one store in their directory: sessions are guided by the graph the
+// resolver names, and the cognitive core serves the operations as `procedural.*`, under the policy.
+const principal = userInfo().username;
 const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
+const proceduralPolicy = values["procedural-policy"] === undefined ? undefined : loadProceduralPolicy(values["procedural-policy"]);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
@@ -95,10 +97,20 @@ const cognitive =
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
         ...(values.workflows === undefined ? {} : { workflows: { dir: values.workflows } }),
-        ...(values.procedural === undefined ? {} : { procedural: { dir: values.procedural, settings: proceduralSettings! } }),
+        ...(values.procedural === undefined ? {} : { procedural: { dir: values.procedural, settings: proceduralSettings!, authorize: hostAuthorizer(proceduralPolicy, principal) } }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
+const procedural = cognitive?.procedural ?? (values.procedural === undefined ? undefined : { store: proceduralStore(values.procedural), settings: proceduralSettings! });
+// Agent workers are guided by their session's own model; a harness is guided once per turn, by the ensemble's chat model or the gateway model.
+const step =
+  procedural &&
+  nativeProceduralStep({
+    ...procedural,
+    resolver: loadProceduralResolver(values["procedural-resolver"]),
+    principal,
+    ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
+  });
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
@@ -119,19 +131,21 @@ const harness =
         }),
         stateFile: values["harness-state"] ?? join(homedir(), ".cache", "harness", "harness-sessions.json"),
         ...instructions,
+        ...(step ? { step } : {}),
       });
 // The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
 // on the ensemble (the steered kernel with a behavior pack), with memory and learning.
 const worker: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions, ...(step ? { step } : {}) }) })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
             model: cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat"),
             vision: cognitive!.ensemble.languageModel("vision-qa"),
             ...instructions,
+            ...(step ? { step } : {}),
             ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
             ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
             // A larger hosted model's notes on each request, as reference for the local kernel.
@@ -147,7 +161,7 @@ const worker: Worker = harness
 
 const host = await NodeHost.start({
   worker,
-  identity: { principal: userInfo().username, kind: "human" },
+  identity: { principal, kind: "human" },
   ...(cognitive ? { cognitive: cognitive.ensemble } : {}),
   ...(values.state === undefined ? {} : { statePath: values.state }),
 });

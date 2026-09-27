@@ -6,8 +6,22 @@ import { describe, expect, it } from "vitest";
 import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
-import { GraphIdSchema } from "@harness/procedural";
-import { buildNativeEnsemble, loadProceduralSettings, NodeHost, pumpHookEvents, sessionLogReader } from "@harness/platform-native";
+import type { WorkerEvent } from "@harness/core";
+import { GraphIdSchema, importGraph, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, seedGraph } from "@harness/procedural";
+import { scriptedHarness, scriptedModel } from "@harness/testkit";
+import {
+  buildNativeEnsemble,
+  harnessWorker,
+  hostAuthorizer,
+  hostPorts,
+  loadProceduralPolicy,
+  loadProceduralResolver,
+  loadProceduralSettings,
+  nativeProceduralStep,
+  NodeHost,
+  pumpHookEvents,
+  sessionLogReader,
+} from "@harness/platform-native";
 
 const require = createRequire(import.meta.url);
 
@@ -144,6 +158,56 @@ describe("procedural host plumbing", () => {
     expect(loadProceduralSettings(file).presets.harness.guidanceCache).toBe(false);
     writeFileSync(file, JSON.stringify({ ...copy, presets: {} }));
     expect(() => loadProceduralSettings(file)).toThrow(/invalid procedural settings/);
+  });
+});
+
+describe("procedural guidance and access on the native host", () => {
+  const graph = GraphIdSchema.parse("default");
+  const seeded = async () => {
+    const store = new MemoryProceduralStore();
+    await importGraph({ store, graph, clock: hostPorts.clock });
+    return store;
+  };
+  const mine = parseResolver({ rules: [{ when: { principal: "me" }, graph: "default" }] });
+
+  it("PX2.53 the step hook resolves a session with the host's principal, pins it and delivers guidance from the session's model", async () => {
+    const store = await seeded();
+    const notices: unknown[] = [];
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine, principal: "me" });
+    const input = { sessionId: "s1", turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Start by searching."), report: (n: unknown) => void notices.push(n) };
+    const prepared = await step.prepare(input);
+    expect(JSON.stringify(prepared?.messages?.at(-1))).toContain("Start by searching.");
+    expect(await store.pins.get("s1")).toMatchObject({ graph, core: revisionId(seedGraph()) });
+    expect(notices).toHaveLength(1);
+    const other = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine, principal: "someone-else", preset: "paper" });
+    expect(await other.prepare({ ...input, sessionId: "s2" })).toBeUndefined();
+    expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine }).prepare({ ...input, sessionId: "s3" })).toBeUndefined();
+    expect(await store.pins.get("s2")).toBeUndefined();
+  });
+
+  it("PX2.54 a harness worker with the step hook prepends each turn's guidance, from the hook's guidance model, to its prompt", async () => {
+    const store = await seeded();
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: parseResolver({ rules: [{ when: {}, graph: "default" }] }), model: scriptedModel(() => "Search first.") });
+    const harness = harnessWorker({ harness: scriptedHarness((p) => `got ${p}`), sandboxRoot: mkdtempSync(join(tmpdir(), "procedural-")), step });
+    const events: WorkerEvent[] = [];
+    await harness.worker.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "one" }], cwd: "/" }, (e) => events.push(e));
+    const text = events.flatMap((e) => (e.type === "update" && e.update.sessionUpdate === "agent_message_chunk" && e.update.content.type === "text" ? [e.update.content.text] : [])).join("");
+    expect(text).toMatch(/^got .*Search first\.[\s\S]*one$/);
+    await harness.close();
+  });
+
+  it("PX2.55 the policy file binds to the host's principal; the resolver loads from procedural's data file by default", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "procedural-")), "policy.json");
+    writeFileSync(file, JSON.stringify({ rules: [{ when: { principal: "me", actions: ["revert"] }, allow: false }] }));
+    const policy = loadProceduralPolicy(file);
+    expect(hostAuthorizer(policy, "me")("revert", graph)).toBe(false);
+    expect(hostAuthorizer(policy, "me")("read", graph)).toBe(true);
+    expect(hostAuthorizer(policy, "you")("revert", graph)).toBe(true);
+    expect(hostAuthorizer(undefined, "me")("revert", graph)).toBe(true);
+    expect(resolveGraph(loadProceduralResolver(), {})).toBe("default");
+    writeFileSync(file, JSON.stringify({ rules: "none" }));
+    expect(() => loadProceduralResolver(file)).toThrow(/invalid procedural resolver/);
+    expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
   });
 });
 

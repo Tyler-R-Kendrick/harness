@@ -7,8 +7,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
-import { parseSettings as parseProceduralSettings } from "@harness/procedural";
-import type { Settings as ProceduralSettings } from "@harness/procedural";
+import { parsePolicy, parseResolver, parseSettings as parseProceduralSettings } from "@harness/procedural";
+import type { AccessPolicy, Resolver, Settings as ProceduralSettings } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -35,4 +35,14 @@ export function loadPluginSettings(file: string = require.resolve("@harness/lear
 /** Read and parse procedural graphs' settings (presets, decoding, prompts) at startup: its own data file by default, or a tweaked copy. */
 export function loadProceduralSettings(file: string = require.resolve("@harness/procedural/data/settings.json")): ProceduralSettings {
   return parseProceduralSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse the procedural resolver (which graph a session uses) at startup: procedural's own data file by default, or a deployment's. */
+export function loadProceduralResolver(file: string = require.resolve("@harness/procedural/data/resolver.json")): Resolver {
+  return parseResolver(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse a procedural access policy (who may read, write, dream, revert or import which graph). */
+export function loadProceduralPolicy(file: string): AccessPolicy {
+  return parsePolicy(JSON.parse(readFileSync(file, "utf8")));
 }

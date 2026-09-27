@@ -1,9 +1,50 @@
+import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import type { Daemon, HookEvent, LogEntry } from "@harness/core";
-import { SnapshotProceduralStore } from "@harness/procedural";
-import type { ProceduralStore } from "@harness/procedural";
+import { authorize, pinSession, proceduralStep, resolveGraph, SnapshotProceduralStore } from "@harness/procedural";
+import type { AccessPolicy, Action, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
+import type { LanguageModel } from "ai";
 import { FileStorage } from "./file-storage.ts";
+
+/** This host's clock and entropy, for pinning and the step hook. */
+export const hostPorts = {
+  clock: { now: (): number => Date.now() },
+  entropy: { bytes: (length: number): Uint8Array => getRandomValues(new Uint8Array(length)) },
+};
+
+/**
+ * The procedural step hook for this host's sessions (plan §5): each session resolves to a
+ * graph through the resolver (the host's principal as the owner) and is pinned by P9's
+ * `pinSession`. It goes to `sessionAgent({ step })` and, with a guidance model,
+ * `harnessSessions({ step })`.
+ */
+export function nativeProceduralStep(options: {
+  readonly store: ProceduralStore;
+  readonly settings: Settings;
+  readonly resolver: Resolver;
+  readonly principal?: string;
+  readonly preset?: string;
+  /** The guidance model; a step's own model when not given. Turn-level guidance (harness workers) needs one. */
+  readonly model?: LanguageModel;
+}): ProceduralStepHook {
+  const { store, settings, resolver, principal, preset, model } = options;
+  return proceduralStep({
+    store,
+    settings,
+    resolve: (context) => resolveGraph(resolver, principal === undefined ? context : { ...context, principal }),
+    pin: pinSession,
+    ...hostPorts,
+    ...(preset === undefined ? {} : { preset }),
+    ...(model === undefined ? {} : { model }),
+  });
+}
+
+/** The access policy bound to the host's principal, as the extension's `authorize`. With no policy, everything is allowed. */
+export const hostAuthorizer =
+  (policy: AccessPolicy | undefined, principal: string) =>
+  (action: Action, graph: GraphId): boolean =>
+    authorize(policy, action, graph, { principal });
 
 /** The procedural store kept in `dir`: one file, saved atomically after every change. One process owns it. */
 export function proceduralStore(dir: string): ProceduralStore {

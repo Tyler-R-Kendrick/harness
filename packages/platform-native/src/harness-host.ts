@@ -4,7 +4,7 @@ import { createACP } from "@ai-sdk/harness-acp";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodex } from "@ai-sdk/harness-codex";
 import { AgentWorker, harnessSessions } from "@harness/workers";
-import type { HarnessStore } from "@harness/workers";
+import type { HarnessStore, StepHook } from "@harness/workers";
 import { FileStorage } from "./file-storage.ts";
 import { dockerSandbox } from "./docker-sandbox.ts";
 import { hostSandbox } from "./host-sandbox.ts";
@@ -103,10 +103,11 @@ export class FileHarnessStore implements HarnessStore {
  * parks the harness sessions there and a daemon started later resumes them.
  */
 export function harnessWorker(
-  options: { readonly harness: AnyHarness; readonly stateFile?: string; readonly instructions?: string } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
+  options: { readonly harness: AnyHarness; readonly stateFile?: string; readonly instructions?: string; readonly step?: StepHook } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
 ): { worker: AgentWorker; close(): Promise<void> } {
   const sandbox = "sandbox" in options ? options.sandbox : hostSandbox({ root: options.sandboxRoot });
   const agent = new HarnessAgent({ harness: options.harness, sandbox, ...(options.instructions === undefined ? {} : { instructions: options.instructions }) });
-  const sessions = harnessSessions(agent, options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) });
+  // With a step hook (procedural graphs), each turn's prompt is prepended with its guidance.
+  const sessions = harnessSessions(agent, { ...(options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) }), ...(options.step ? { step: options.step } : {}) });
   return { worker: new AgentWorker({ agent: sessions }), close: () => sessions.close() };
 }
