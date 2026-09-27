@@ -28,7 +28,10 @@ import type { Vocabulary } from "@harness/constrained";
 import type { ToolSet } from "ai";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
-import { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
+import { proceduralExtension } from "@harness/procedural";
+import type { ProceduralExtensionOptions, ProceduralStore, Settings as ProceduralSettings } from "@harness/procedural";
+import { loadCatalog, loadLearningSettings, loadPluginSettings, loadProceduralSettings } from "./catalog-files.ts";
+import { proceduralStore } from "./procedural-host.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
 import { loadXGrammar } from "./xgrammar.ts";
 import { ModelFiles } from "./model-files.ts";
@@ -78,6 +81,16 @@ export interface NativeEnsembleOptions {
     readonly plugins?: Plugins;
   };
   /** Install durable workflows, kept in this directory (one file each, with run journals). */
+  /**
+   * Install procedural graphs' operations (`procedural.*`) over the store kept in `dir`. The
+   * returned store is the one to share with the step hook and the live learner: one process
+   * owns a store file.
+   */
+  readonly procedural?: {
+    readonly dir: string;
+    /** Presets, decoding and prompts; defaults to procedural's data file. */
+    readonly settings?: ProceduralSettings;
+  } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback">;
   readonly workflows?: {
     readonly dir: string;
     /** Tools beyond the library's own workflows. */
@@ -100,6 +113,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
   learning?: Learning;
   workflows?: WorkflowFiles;
   workflowHost?: WorkflowHost;
+  procedural?: { store: ProceduralStore; settings: ProceduralSettings };
   /** A host event for a daemon session's behavior (a plugin's); the state change it caused, if any. */
   raiseBehavior(session: string, event: string): StateChange | undefined;
   close(): Promise<void>;
@@ -201,6 +215,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
     workflows &&
     new WorkflowHost({ codeMode: aiCodeMode, library: workflows, journal: (run) => workflows.journal(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
   if (workflowHost) ensemble.install(workflowsExtension({ host: workflowHost }));
+  const procedural = options.procedural && installProcedural(ensemble, options.procedural);
   const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {
     ensemble,
@@ -208,6 +223,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
     ...(learning ? { learning } : {}),
     ...(workflows ? { workflows } : {}),
     ...(workflowHost ? { workflowHost } : {}),
+    ...(procedural ? { procedural } : {}),
     raiseBehavior: (session, event) => behavior?.raise(session, event),
     close: async () => {
       await Promise.all(servers.map((s) => s.stop()));
@@ -252,4 +268,12 @@ function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullabl
   const plugins = options.plugins ?? (workflows ? defaultPlugins(ensemble, workflows) : new Plugins());
   ensemble.install(learningExtension({ learning, reasoner, plugins }));
   return learning;
+}
+
+/** Procedural graphs' operations over the store in the directory, with the host's clock. */
+function installProcedural(ensemble: Ensemble, options: NonNullable<NativeEnsembleOptions["procedural"]>): { store: ProceduralStore; settings: ProceduralSettings } {
+  const { dir, settings = loadProceduralSettings(), ...rest } = options;
+  const store = proceduralStore(dir);
+  ensemble.install(proceduralExtension({ store, settings, clock: { now: () => Date.now() }, ...rest }));
+  return { store, settings };
 }

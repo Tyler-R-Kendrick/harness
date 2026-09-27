@@ -23,6 +23,7 @@
     "@harness/learning-plugins": "0.0.0",
     "@harness/memory": "0.0.0",
     "@harness/models": "0.0.0",
+    "@harness/procedural": "0.0.0",
     "@harness/protocol": "0.0.0",
     "@harness/runtime": "0.0.0",
     "@harness/workers": "0.0.0",
@@ -41,6 +42,7 @@
   },
   "bin": {
     "harness": "./src/main.ts",
+    "harness-procedural": "./src/procedural-cli.ts",
     "harness-workflow": "./src/workflow-cli.ts"
   }
 }

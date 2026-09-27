@@ -784,15 +784,29 @@ As built (P12). These refine the shapes above; no name another phase uses change
   `learned` or `learned (provisional)`, cautions as `Caution: <text>` lines on their edge's
   label with a `linkStyle` for the cautioned edges. Notes and guidance are left out. Label
   text escapes `# " < > | \`` as Mermaid entities and line breaks as `<br/>`.
-- Native host (`packages/platform-native`): `loadProceduralSettings(file?)`;
-  `proceduralStore(dir)` is a `SnapshotProceduralStore` over `FileStorage` at
-  `<dir>/procedural.json`; `buildNativeEnsemble({ procedural: { dir, settings?, preset?,
-  authorize?, dream?, feedback? } })` installs the extension and returns
-  `procedural: {store, settings}` for the step hook and the learner to share;
-  `pumpHookEvents(runtime, {plugin, types, onEvent})` is an in-process plugin connection
-  with a durable hook-bus cursor, acknowledging each event after its handler resolves;
-  `sessionLogReader(daemon)` reads a session's log entries in `[from, to)`. `main.ts`
-  takes `--procedural <dir>` and `--procedural-settings <file>`.
+- Native host (`packages/platform-native`):
+  - `loadProceduralSettings(file?)` and `loadProceduralResolver(file?)` read procedural's
+    data files by default, or a deployment's copies; `loadProceduralPolicy(file)` reads an
+    access policy.
+  - `proceduralStore(dir)` is a `SnapshotProceduralStore` over `FileStorage` at
+    `<dir>/procedural.json`.
+  - `buildNativeEnsemble({ procedural: { dir, settings?, preset?, authorize?, dream?,
+    feedback? } })` installs the extension and returns `procedural: {store, settings}`, the
+    one store the step hook and the learner share.
+  - `nativeProceduralStep({store, settings, resolver, principal?, preset?, model?})` is
+    P10's `proceduralStep` with `resolveGraph` (the host's principal as the owner),
+    `pinSession`, and the host's clock and entropy (`hostPorts`).
+    `hostAuthorizer(policy, principal)` is P9's `authorize` bound to the host's principal.
+  - `pumpHookEvents(runtime, {plugin, types, onEvent, intervalMs?, log?})` is an in-process
+    plugin connection with a durable hook-bus cursor, acknowledging each event after its
+    handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
+    `[from, to)` from the daemon's snapshot.
+  - `main.ts` takes `--procedural <dir>` with `--procedural-settings`,
+    `--procedural-resolver` and `--procedural-policy` files. The step hook goes to
+    `sessionAgent` for the model and ensemble workers (guided by the session's own model)
+    and to `harnessWorker({ step })` for harness workers (guided by the ensemble's chat
+    model, or the gateway model). With the cognitive core, `procedural.*` is served under the
+    policy.
 - `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
   operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`);
   `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
