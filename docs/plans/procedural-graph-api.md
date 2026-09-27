@@ -860,7 +860,11 @@ As built (P12). These refine the shapes above; no name another phase uses change
   - `pumpHookEvents(runtime, {plugin, types, onEvent, intervalMs?, log?})` is an in-process
     plugin connection with a durable hook-bus cursor, acknowledging each event after its
     handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
-    `[from, to)` from the daemon's snapshot.
+    `[from, to?)` from the daemon's snapshot.
+  - `nativeLiveLearner({runtime, store, settings, preset?, intervalMs?, log?})` is P11's
+    `LiveLearner` (the preset's settings, `readLog` from the daemon) fed by
+    `pumpHookEvents` as plugin `procedural-learner` on `turn.ended`; `main.ts` starts it
+    with the daemon, and the extension's `feedback` goes to `learner.feedback`.
   - `main.ts` takes `--procedural <dir>` with `--procedural-settings`,
     `--procedural-resolver` and `--procedural-policy` files. The step hook goes to
     `sessionAgent` for the model and ensemble workers (guided by the session's own model)
@@ -915,5 +919,4 @@ Cross-phase wiring that no single phase owned; the finalizer resolves these test
 
 - **Dream uses composition (P6 × P13).** Dream calls `pathCandidates`, `recordedRuns`, `compilePath`, `StagingLibrary.stage` and `composeCandidate` for promotion, and gates the composed `document` (an `EditSet` cannot carry a binding) through the same gates as any candidate.
 - **Live reflection (plan §6.2.4).** `live.reflection` set to `turn` or `batch` must call `reflect` (P5). Every entry runs through `editFilter` before it is `proposed` with `source.by = "reflection"`. The setting stays off in the harness preset.
-- **Host wiring for the live learner (P11 × P12).** The native host creates a `LiveLearner` and subscribes it to the daemon's hook events (`turn.ended`). `readLog` reads the session log, and `learner.feedback` goes to the extension's `feedback` op. Consumers that count turns must skip `observed` events that carry `rescore`.
 - **Dream from the host.** `procedural.dream` and the `harness-procedural dream` CLI run `runDream` with real ports: the refiner is `refine` on the ensemble's generator, and the evaluator and approver are optional. The permission flow is the approver when one is configured.
