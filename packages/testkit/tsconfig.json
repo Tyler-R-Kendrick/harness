@@ -7,5 +7,5 @@
     "types": []
   },
   "include": ["src"],
-  "references": [{ "path": "../core" }, { "path": "../protocol" }, { "path": "../cognitive" }]
+  "references": [{ "path": "../core" }, { "path": "../protocol" }, { "path": "../cognitive" }, { "path": "../procedural" }]
 }

@@ -8,6 +8,7 @@ export { BindingSchema, CandidateDocumentSchema, checkGraph, DecisionSchema, DEF
 export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "./guide.ts";
 export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
 export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate.ts";
+export { MemoryProceduralStore, redactRecord, STORE_FORMAT, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
 export { exportMermaid } from "./mermaid.ts";
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
@@ -17,6 +18,7 @@ export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { reflect, reflectionJsonSchema, type ReflectRequest } from "./reflect.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
+export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
 export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepPorts, type StepRecord, type StepResolveContext, type StepScope, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";
