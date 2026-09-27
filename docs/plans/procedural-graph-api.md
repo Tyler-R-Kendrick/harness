@@ -680,15 +680,15 @@ changed.
 - Procedural (`step.ts`):
   - `proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook`, structurally a workers
     `StepHook` (procedural does not depend on workers). `ProceduralStepDeps` is
-    `{ store; resolve(context: {meta?, cwd?}): GraphId | undefined; pin(request): Promise<Pin>; settings; preset? /* "harness" */; model? /* the step's own */; clock; entropy }`.
-    `resolve` and `pin` are P9's `resolveGraph` (bound to a resolver) and `pinSession`,
-    injected. The turn variant needs `model`, since a harness turn has none.
+    `{ store; resolver: Resolver; principal?; settings; preset? /* "harness" */; model? /* the step's own */; clock; entropy }`;
+    `principal` is the owner the resolver sees for every session (the host's).
+    The turn variant needs `model`, since a harness turn has none.
   - A turn boundary is a new `turnId` (or, without one, step 0). At a boundary the session
-    re-resolves and re-pins, reads the pinned core, and folds the overlay: the newest on
-    the pinned core under `overlayRefresh: "turn"`, otherwise events while the version
-    stays within `pin.overlay` (the frozen version). A fold whose base is not the pinned
-    core is replaced by an empty overlay. Every step until the next boundary reads that
-    pair (I3). A missing or unparsable pinned revision throws.
+    re-resolves (`resolveGraph` over its meta and cwd), re-pins (`pinSession` with the
+    preset's `repinOnDream` and `overlayRefresh`), reads the pinned core, and reads the
+    overlay at the pin (`readOverlay`). An overlay whose base is not the pinned core is
+    replaced by an empty one. Every step until the next boundary reads that pair (I3). A
+    missing or unparsable (for example redacted) pinned revision throws.
   - Localization reads `messages` without system messages and advisories; under `start`
     only from the last user message on. The action is the last `tool-call` of the last
     assistant message that has one. The task is the first user message's text, the query

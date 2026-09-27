@@ -6,13 +6,12 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { HARNESS, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GUIDANCE_LABEL, parseGraph, parseSettings, proceduralStep, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
-import type { ProceduralGraph, ProceduralStepDeps, Settings, StepRecord } from "@harness/procedural";
+import { GUIDANCE_LABEL, MemoryProceduralStore, parseGraph, parseSettings, proceduralStep, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
+import type { ProceduralStepDeps, ProceduralStore, Settings, StepRecord } from "@harness/procedural";
 import { ManualClock, MemoryStorage, nullSandbox, scriptedHarness, SeededEntropy } from "@harness/testkit";
 import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
 import { hotpot } from "../../procedural/test/fixtures.ts";
-import { fakePin, fakeStore, GRAPH, hotpotGraph, seed, settingsFile } from "../../procedural/test/step-fakes.ts";
-import type { FakeStore } from "../../procedural/test/step-fakes.ts";
+import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "../../procedural/test/step-fixtures.ts";
 
 const finish = (unified: "stop" | "tool-calls" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
 const text = (t: string): LanguageModelV4StreamPart[] => [
@@ -39,16 +38,11 @@ function guidance() {
   });
 }
 
-function variant(suffix: string): ProceduralGraph {
-  const parsed = parseGraph({ ...hotpot(), nodes: hotpot().nodes.map((n) => ({ ...n, description: `${n.description}${suffix}` })) });
-  if (!parsed.ok) throw new Error("fixture");
-  return parsed.graph;
-}
 
-async function deps(preset: string, store?: FakeStore, settings: Settings = settingsFile): Promise<ProceduralStepDeps & { store: FakeStore; model: ReturnType<typeof guidance> }> {
-  const s = store ?? fakeStore();
-  if (!store) await seed(s, hotpotGraph());
-  return { store: s, resolve: (c) => (c.meta?.["procedural"] === false ? undefined : GRAPH), pin: fakePin, settings, preset, model: guidance(), clock: new ManualClock(), entropy: new SeededEntropy(3) };
+async function deps(preset: string, settings: Settings = settingsFile): Promise<ProceduralStepDeps & { store: ProceduralStore; model: ReturnType<typeof guidance> }> {
+  const s = new MemoryProceduralStore();
+  await seed(s, hotpotGraph());
+  return { store: s, resolver, settings, preset, model: guidance(), clock: new ManualClock(), entropy: new SeededEntropy(3) };
 }
 
 const retrieve = tool({ inputSchema: z.object({ q: z.string() }), execute: async () => "passages" });
@@ -139,7 +133,7 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
 
   it("PW1.19 a pin survives a restart: a new worker and hook on the same store keep the session's core (repinOnDream never) and its exposure salt", async () => {
     const settings = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, kept: { ...settingsFile.presets.harness, repinOnDream: "never" } } });
-    const d = await deps("kept", undefined, settings);
+    const d = await deps("kept", settings);
     const worker = () => new AgentWorker({ agent: sessionAgent({ model: scripted([...text("ok"), finish()]), step: proceduralStep({ ...d, model: guidance() }) }) });
     const first = run(worker(), "q");
     await first.done;
@@ -155,7 +149,7 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
   it("PW1.23 on the persistent snapshot store, a pin survives a daemon restart: a new store over the same storage keeps the session's core, and the guidance texts are there", async () => {
     const storage = new MemoryStorage();
     const settings = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, kept: { ...settingsFile.presets.harness, repinOnDream: "never" } } });
-    const hook = (store: SnapshotProceduralStore) => proceduralStep({ store, resolve: () => GRAPH, pin: fakePin, settings, preset: "kept", model: guidance(), clock: new ManualClock(), entropy: new SeededEntropy(5) });
+    const hook = (store: SnapshotProceduralStore) => proceduralStep({ store, resolver, settings, preset: "kept", model: guidance(), clock: new ManualClock(), entropy: new SeededEntropy(5) });
     const before = new SnapshotProceduralStore(storage);
     await seed(before, hotpotGraph());
     const first = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("ok"), finish()]), step: hook(before) }) }), "q");
@@ -175,7 +169,7 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
     const model = scripted([...text("ok"), finish()]);
     const worker = new AgentWorker({ agent: sessionAgent({ model, instructions: "Be brief.", step: proceduralStep(d) }) });
     const events: WorkerEvent[] = [];
-    await worker.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "hi" }], cwd: "/", sessionMeta: { procedural: false } }, (e) => events.push(e));
+    await worker.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "hi" }], cwd: "/", sessionMeta: { procedural: "off" } }, (e) => events.push(e));
     expect(records(events)).toEqual([]);
     expect(model.doStreamCalls[0]!.prompt.map((m) => m.role)).toEqual(["system", "user"]);
   });

@@ -1,7 +1,7 @@
 import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import type { Daemon, HookEvent, LogEntry } from "@harness/core";
-import { authorize, pinSession, proceduralStep, resolveGraph, SnapshotProceduralStore } from "@harness/procedural";
+import { authorize, proceduralStep, SnapshotProceduralStore } from "@harness/procedural";
 import type { AccessPolicy, Action, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
@@ -32,8 +32,8 @@ export function nativeProceduralStep(options: {
   return proceduralStep({
     store,
     settings,
-    resolve: (context) => resolveGraph(resolver, principal === undefined ? context : { ...context, principal }),
-    pin: pinSession,
+    resolver,
+    ...(principal === undefined ? {} : { principal }),
     ...hostPorts,
     ...(preset === undefined ? {} : { preset }),
     ...(model === undefined ? {} : { model }),

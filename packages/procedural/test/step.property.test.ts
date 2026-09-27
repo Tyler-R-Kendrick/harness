@@ -3,11 +3,10 @@ import { describe, expect } from "vitest";
 import type { Instructions, ModelMessage } from "ai";
 import { HARNESS } from "@harness/cognitive";
 import { ManualClock, SeededEntropy } from "@harness/testkit";
-import { ADVISORY, GUIDANCE_LABEL, parseGraph, proceduralStep } from "@harness/procedural";
-import type { ProceduralGraph, StepRecord } from "@harness/procedural";
-import { hotpot } from "./fixtures.ts";
+import { ADVISORY, GUIDANCE_LABEL, MemoryProceduralStore, proceduralStep } from "@harness/procedural";
+import type { StepRecord } from "@harness/procedural";
 import { answering } from "./models.ts";
-import { fakePin, fakeStore, GRAPH, hotpotGraph, seed, settingsFile } from "./step-fakes.ts";
+import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
 
 /** What happens between two steps of a session. */
 type Move =
@@ -24,11 +23,6 @@ const move: fc.Arbitrary<Move> = fc.oneof(
   fc.constant({ kind: "dream" as const }),
 );
 
-function variant(n: number): ProceduralGraph {
-  const parsed = parseGraph({ ...hotpot(), nodes: hotpot().nodes.map((node) => ({ ...node, description: `${node.description} (${n})` })) });
-  if (!parsed.ok) throw new Error("fixture");
-  return parsed.graph;
-}
 
 const isAdvisory = (m: ModelMessage) => m.role === "user" && m.providerOptions?.[HARNESS]?.["advisory"] === ADVISORY.advisory;
 const count = (text: string, part: string) => text.split(part).length - 1;
@@ -40,9 +34,9 @@ const instructionText = (i: Instructions): string => (typeof i === "string" ? i 
  * only what the model and tools said, and an approval round restarts the stream.
  */
 async function drive(preset: "paper" | "harness", moves: readonly Move[]) {
-  const store = fakeStore();
+  const store = new MemoryProceduralStore();
   await seed(store, hotpotGraph());
-  const hook = proceduralStep({ store, resolve: () => GRAPH, pin: fakePin, settings: settingsFile, preset, model: answering((n) => `advice ${n}`), clock: new ManualClock(), entropy: new SeededEntropy(1) });
+  const hook = proceduralStep({ store, resolver, settings: settingsFile, preset, model: answering((n) => `advice ${n}`), clock: new ManualClock(), entropy: new SeededEntropy(1) });
   const records: { turn: number; record: StepRecord }[] = [];
   const results: Awaited<ReturnType<typeof hook.prepare>>[] = [];
   let history: ModelMessage[] = [{ role: "user", content: "start" }];
@@ -67,7 +61,7 @@ async function drive(preset: "paper" | "harness", moves: readonly Move[]) {
   await prepare();
   for (const m of moves) {
     if (m.kind === "dream") {
-      await seed(store, variant(++dreams), GRAPH, "dream");
+      await seed(store, variant(` (${++dreams})`), GRAPH, "dream");
       continue;
     }
     if (m.kind === "call") {
