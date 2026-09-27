@@ -702,3 +702,29 @@ As built (P12). These refine the shapes above; no name another phase uses change
 - `StagingLibrary`, a `WorkflowLibrary` that is never the shared one.
 - `revisionTools({ base, pinnedCore, staging })` returns the base tools plus exactly the
   workflows the pinned core binds.
+
+As built (P13). The names above keep their meaning; these are the refinements.
+
+- `pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[]`.
+  The overlay's `observed` events are the statistics, because support counts distinct
+  sessions per path, which `EdgeStats` does not keep. A redelivered turn counts once.
+  - `PathCandidate = { path: NodeName[]; support: number; turns: number; meanScore: Score }`.
+  - `CompositionSettings = { support, minScore: Score, maxLength }`, parsed by
+    `parseCompositionSettings`, with `data/composition.json` and a drift-tested
+    `data/composition.schema.json` (`compositionJsonSchema()`).
+- `recordedRuns(core, trajectories: readonly ScoredTrajectory[], path, mode: MatchMode): RecordedCall[][]`
+  takes each window of consecutive tool calls that walked the path.
+  `RecordedCall = { name: string; arguments: Record<string, unknown> }`.
+- `compilePath(path, recordedCalls, toolSpecs: Record<string, ToolSpec>)` returns
+  `{ ok: true; workflow: Workflow } | { ok: false; error: string }`. `ToolSpec` is the
+  workflows one. The workflow returns `{ steps }`, every call's result in order.
+- `StagingLibrary(staged?: WorkflowLibrary)` refuses code that does not compile and
+  keeps a name's code immutable. `stage(workflow)` returns its `WorkflowBinding`
+  (`workflowBinding(workflow)`: the name and the sha256 of the code).
+- `composeCandidate(core, path, workflow)` returns
+  `{ ok: true; node; binding; edits: EditSet; document: CandidateDocument } | { ok: false; error }`.
+  An `EditSet` carries no binding, so `document` is the edited core with the binding
+  set. That document is what dream gates.
+- `revisionTools({ base: ToolSet, pinnedCore: ProceduralGraph, staging: WorkflowHost })`.
+  `staging` is a `WorkflowHost` over the staging library. The code hash is checked when
+  the tools are built and again at each call.

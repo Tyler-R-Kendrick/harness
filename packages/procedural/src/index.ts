@@ -1,5 +1,6 @@
 // @harness/procedural: see docs/decisions/0011-procedural-graph.md and docs/plans/procedural-graph.md.
 export { canonicalJson, sha256Hex } from "./canonical.ts";
+export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
 export { applyEdits, prepareCandidate, type PreparedCandidate, type PrepareOptions, type RepairedEdge } from "./edits.ts";
 export { proceduralExtension, type ProceduralAction, type ProceduralExtensionOptions } from "./extension.ts";
 export { editFilter, type EntropyOptions, type FilterCode, type FilterFinding, type FilterOptions } from "./filter.ts";
