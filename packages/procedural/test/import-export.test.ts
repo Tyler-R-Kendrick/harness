@@ -183,8 +183,16 @@ describe("graphHistory", () => {
       [revisionId(shorter()), "dream", 1],
       [revisionId(other()), "import", 1_000],
     ]);
-    expect(history.revisions[1]).toEqual({ id: revisionId(shorter()), origin: "dream", parents: [revisionId(doc())], decision: { kind: "head" }, at: 1 });
-    expect(await graphHistory({ store, graph: GraphIdSchema.parse("none") })).toEqual({ heads: [], revisions: [] });
+    expect(history.revisions[1]).toStrictEqual({ id: revisionId(shorter()), origin: "dream", parents: [revisionId(doc())], decision: { kind: "head" }, at: 1 });
+    expect(await graphHistory({ store, graph: GraphIdSchema.parse("none") })).toStrictEqual({ heads: [], revisions: [] });
+  });
+
+  it("PX2.39 revisions are listed by time whatever order the store keeps them in", async () => {
+    const store = new FakeStore();
+    for (const [d, at] of [[other(), 30], [doc(), 10], [shorter(), 20]] as const) {
+      await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(d), graph, parents: [], document: d, edits: null, origin: "import", evidence: {}, decision: { kind: "pending-approval" }, at }));
+    }
+    expect((await graphHistory({ store, graph })).revisions.map((r) => r.at)).toEqual([10, 20, 30]);
   });
 
   it("PX2.22 a revision's dream, edits and redaction show when it has them", async () => {

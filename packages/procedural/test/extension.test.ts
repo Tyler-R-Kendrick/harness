@@ -37,6 +37,7 @@ describe("proceduralExtension", () => {
     expect(view).toMatchObject({ status: "ok", head: revisionId(core()), revision: revisionId(core()), origin: "import", document: core() });
     expect(view.effective.overlay).toBe(0);
     expect(await op("export", { graph })).toEqual({ status: "ok", revision: revisionId(core()), text: `${JSON.stringify(core(), null, 2)}\n` });
+    expect(await op("export", { graph, format: "json" })).toEqual(await op("export", { graph }));
     expect(await op("export", { graph, format: "mermaid" })).toMatchObject({ status: "ok", text: expect.stringMatching(/^flowchart TD\n/) });
     expect(await op("history", { graph })).toMatchObject({ head: revisionId(core()), heads: [revisionId(core())], revisions: [{ origin: "import", at: 5 }] });
   });

@@ -81,7 +81,8 @@ export async function readGraph(input: { store: ProceduralStore; graph: GraphId;
   if (!parsed.ok) return { status: "missing", reason: `revision ${revision} does not parse (it may be redacted)` };
   const core = parsed.graph;
   const state = revision === head.revision && input.overlay !== false ? foldAll(revision, await overlayEvents(store, graph)) : undefined;
-  // A probation share of 1 exposes every probationary entry: this is the operator's view, not a session's.
+  // A probation share of 1 exposes every probationary entry whatever the salt: this is the operator's view, not a session's.
+  // Stryker disable next-line StringLiteral: equivalent; at a share of 1 no salt hides an entry
   const effective = state?.base === revision ? effectiveGraph(core, state, { salt: "", probationShare: 1 }) : coreView(core);
   return { status: "ok", head: head.revision, revision, record: found, graph: core, effective };
 }

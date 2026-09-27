@@ -82,9 +82,9 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
     models: [],
     operations: {
       graph: async (value) => {
-        const { graph: g, revision, overlay } = input("graph", value);
-        check("graph", "read", g);
-        const view = await readGraph({ store, graph: g, ...(revision === undefined ? {} : { revision }), ...(overlay === undefined ? {} : { overlay }) });
+        const request = input("graph", value);
+        check("graph", "read", request.graph);
+        const view = await readGraph({ store, ...request });
         if (view.status !== "ok") return view;
         return { status: "ok", head: view.head, revision: view.revision, origin: view.record.origin, document: view.record.document, effective: view.effective };
       },
@@ -94,9 +94,9 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
         return graphHistory({ store, graph: g });
       },
       export: async (value) => {
-        const { graph: g, revision, format, overlay } = input("export", value);
-        check("export", "read", g);
-        return exportGraph({ store, graph: g, format, ...(revision === undefined ? {} : { revision }), ...(overlay === undefined ? {} : { overlay }) });
+        const request = input("export", value);
+        check("export", "read", request.graph);
+        return exportGraph({ store, ...request });
       },
       feedback: async (value) => {
         const { session, turn, score } = input("feedback", value);
@@ -114,14 +114,14 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
         return { status: "done", result: await options.dream(g) };
       },
       revert: async (value) => {
-        const { graph: g, to } = input("revert", value);
-        check("revert", "revert", g);
-        return revertGraph({ store, graph: g, clock, ...(to === undefined ? {} : { to }) });
+        const request = input("revert", value);
+        check("revert", "revert", request.graph);
+        return revertGraph({ store, clock, ...request });
       },
       import: async (value) => {
-        const { graph: g, document } = input("import", value);
-        check("import", "import", g);
-        return importGraph({ store, graph: g, clock, cycles, ...(document === undefined ? {} : { document }) });
+        const request = input("import", value);
+        check("import", "import", request.graph);
+        return importGraph({ store, clock, cycles, ...request });
       },
     },
   };
