@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "prefixItems": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "string",
+            "enum": [
+              "judgment",
+              "classification",
+              "tool-calling",
+              "structured-extraction",
+              "text-embedding",
+              "prompt-compression",
+              "chat",
+              "reasoning",
+              "coding",
+              "vision-qa",
+              "ocr",
+              "document-parsing",
+              "table-extraction",
+              "chart-understanding",
+              "steered-chat"
+            ]
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string",
+            "enum": [
+              "higher",
+              "lower"
+            ]
+          }
+        ],
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 6,
+        "maxItems": 7
+      }
+    }
+  },
+  "required": [
+    "rows"
+  ],
+  "additionalProperties": false
+}

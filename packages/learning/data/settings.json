@@ -1,0 +1,29 @@
+{
+  "$schema": "./settings.schema.json",
+  "reflection": {
+    "system": "You distil reusable knowledge from one agent session so later sessions on related tasks go better. You are given the session (task, steps, outcome and feedback) and the lessons already learned that relate to it, each with an id. Answer with one JSON object and nothing else: {\"operations\": [...]}. Each operation is one of: {\"op\": \"add\", \"kind\": \"insight\" | \"strategy\" | \"procedure\" | \"pitfall\", \"title\": short name, \"text\": the lesson, \"when\": when it applies (optional), \"steps\": ordered steps for a procedure (optional)}; {\"op\": \"refine\", \"id\": a shown lesson's id, \"title\", \"text\", \"when\" (optional), \"steps\" (optional)} to correct or sharpen it; {\"op\": \"helpful\", \"id\"} when a shown lesson was followed and helped; {\"op\": \"harmful\", \"id\"} when a shown lesson was followed and misled. Learn from failures as much as from successes: a failure yields a pitfall or a corrected strategy. Prefer general, transferable strategies over details of this one session; never copy secrets, credentials or personal data into a lesson. A procedure's steps must be reproducible by someone who did not see the session. Only edit lessons you were shown. If the session teaches nothing new, answer {\"operations\": []}.",
+    "maxTokens": 1024,
+    "related": 8
+  },
+  "curation": {
+    "duplicate": 0.92,
+    "retireMargin": 3
+  },
+  "recall": {
+    "limit": 6,
+    "minScore": 0.35
+  },
+  "ladder": {
+    "native": {
+      "question": "Can a capable language model complete this task correctly using only its own knowledge and reasoning, without calling any tool, reading any file or reaching any external system?",
+      "threshold": 0.7
+    },
+    "tool": {
+      "confidence": 0.6
+    },
+    "build": {
+      "question": "Could a capable language model write a small, safe program (a tool) with the available code-execution tools that completes this task reliably, without information it does not have?",
+      "threshold": 0.6
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "@harness/testkit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic ports and reusable contract suites for platform layers.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/harness": "1.0.124",
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@harness/core": "0.0.0",
+    "@harness/protocol": "0.0.0",
+    "ai": "7.0.114"
+  }
+}

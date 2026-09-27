@@ -1,0 +1,46 @@
+{
+  "name": "@harness/platform-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Native background-service platform layer: stdio/socket ACP bindings and Node host ports.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/gateway": "4.0.92",
+    "@ai-sdk/harness": "1.0.124",
+    "@ai-sdk/harness-acp": "1.0.62",
+    "@ai-sdk/harness-claude-code": "1.0.128",
+    "@ai-sdk/harness-codex": "1.0.126",
+    "@harness/behavior": "0.0.0",
+    "@harness/client": "0.0.0",
+    "@harness/cognitive": "0.0.0",
+    "@harness/constrained": "0.0.0",
+    "@harness/core": "0.0.0",
+    "@harness/learning": "0.0.0",
+    "@harness/learning-plugins": "0.0.0",
+    "@harness/memory": "0.0.0",
+    "@harness/models": "0.0.0",
+    "@harness/protocol": "0.0.0",
+    "@harness/runtime": "0.0.0",
+    "@harness/workers": "0.0.0",
+    "@harness/workflows": "0.0.0",
+    "@mlc-ai/web-xgrammar": "0.1.27",
+    "ai": "7.0.114",
+    "write-file-atomic": "8.0.0",
+    "ws": "8.22.0"
+  },
+  "devDependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "@harness/testkit": "0.0.0",
+    "@types/write-file-atomic": "4.0.3",
+    "@types/ws": "8.18.1",
+    "sharp": "0.35.4"
+  },
+  "bin": {
+    "harness": "./src/main.ts",
+    "harness-workflow": "./src/workflow-cli.ts"
+  }
+}

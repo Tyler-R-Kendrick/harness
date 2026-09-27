@@ -1,0 +1,8 @@
+{
+  "$schema": "../../cognitive/data/benchmarks.schema.json",
+  "rows": [
+    ["google/embeddinggemma-300m","text-embedding","MTEB (Multilingual, v2)","mean (task)",61.15,"higher","768d"],
+    ["google/embeddinggemma-300m","text-embedding","MTEB (English, v2)","mean (task)",69.67,"higher","768d"],
+    ["google/embeddinggemma-300m","text-embedding","MTEB (Code, v1)","mean (task)",68.76,"higher","768d"]
+  ]
+}

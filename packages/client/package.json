@@ -1,0 +1,18 @@
+{
+  "name": "@harness/client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Clients of the harness daemon: the daemon as an AI SDK harness (HarnessV1), so any HarnessAgent can drive its sessions over ACP.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "@ai-sdk/harness": "1.0.124",
+    "@harness/protocol": "0.0.0",
+    "ai": "7.0.114",
+    "zod": "4.6.5"
+  }
+}

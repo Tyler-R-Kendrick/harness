@@ -1,0 +1,71 @@
+/**
+ * What the cognitive core knows about a model: the task categories it serves, the
+ * ports its adapter implements, where it can run, and the published benchmark
+ * results that back choosing it for a task.
+ */
+
+export const PLATFORMS = ["native", "browser"] as const;
+export type Platform = (typeof PLATFORMS)[number];
+
+/** Task categories the cognitive core routes work by. */
+export const TASK_CATEGORIES = [
+  "judgment",
+  "classification",
+  "tool-calling",
+  "structured-extraction",
+  "text-embedding",
+  "prompt-compression",
+  "chat",
+  "reasoning",
+  "coding",
+  "vision-qa",
+  "ocr",
+  "document-parsing",
+  "table-extraction",
+  "chart-understanding",
+  /** Chat through the local kernel, steered by a behavior graph over SAE features. */
+  "steered-chat",
+] as const;
+export type TaskCategory = (typeof TASK_CATEGORIES)[number];
+
+/** Adapter interfaces (see ports.ts); a model may implement several. */
+export const PORT_KINDS = ["judge", "router", "embedder", "compressor", "generator", "document-parser"] as const;
+export type PortKind = (typeof PORT_KINDS)[number];
+
+/** Which ports can serve each task. */
+export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
+  judgment: ["judge"],
+  classification: ["judge", "router"],
+  "tool-calling": ["router", "generator"],
+  "structured-extraction": ["router", "generator"],
+  "text-embedding": ["embedder"],
+  "prompt-compression": ["compressor"],
+  chat: ["generator"],
+  reasoning: ["generator"],
+  coding: ["generator"],
+  "vision-qa": ["generator"],
+  ocr: ["document-parser", "generator"],
+  "document-parsing": ["document-parser", "generator"],
+  "table-extraction": ["document-parser", "generator"],
+  "chart-understanding": ["document-parser", "generator"],
+  "steered-chat": ["generator"],
+};
+
+export const LOCALITIES = ["local", "hosted"] as const;
+export type Locality = (typeof LOCALITIES)[number];
+export const RUNTIMES = ["ai-gateway", "typesafe-api", "cactus-wasm", "transformers.js", "llama.cpp-server", "onnxruntime"] as const;
+export type Runtime = (typeof RUNTIMES)[number];
+
+export interface BenchmarkResult {
+  /** Benchmark name with version or split, e.g. "MTEB (Multilingual, v2)". */
+  readonly benchmark: string;
+  readonly task: TaskCategory;
+  readonly metric: string;
+  readonly score: number;
+  readonly higherIsBetter: boolean;
+  /** Conditions the number depends on, e.g. "thinking", "768d". Only equal settings are compared. */
+  readonly setting?: string;
+}
+
+/** A catalog model, its pinned weights and their files, as parsed from the catalog data (see catalog.ts). */
+export type { Artifact, ArtifactFile, ModelDescriptor } from "./catalog.ts";

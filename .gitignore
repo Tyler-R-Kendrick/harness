@@ -1,0 +1,10 @@
+node_modules/
+coverage/
+reports/
+.stryker-tmp/
+*.tsbuildinfo
+dist/
+.types/
+.env
+.env.*
+eval-results/

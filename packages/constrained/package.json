@@ -1,0 +1,15 @@
+{
+  "name": "@harness/constrained",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Constrained decoding on XGrammar(-2): token masks for JSON Schema, grammar, regex and template constraints, and jump-forward text a decoder need not sample. Portable.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "@mlc-ai/web-xgrammar": "0.1.27"
+  }
+}
