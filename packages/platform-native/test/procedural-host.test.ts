@@ -5,7 +5,9 @@ import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
-import { loadProceduralSettings, NodeHost, pumpHookEvents, sessionLogReader } from "@harness/platform-native";
+import { invokeCognitive } from "@harness/cognitive";
+import { GraphIdSchema } from "@harness/procedural";
+import { buildNativeEnsemble, loadProceduralSettings, NodeHost, pumpHookEvents, sessionLogReader } from "@harness/platform-native";
 
 const require = createRequire(import.meta.url);
 
@@ -114,5 +116,22 @@ describe("procedural host plumbing", () => {
     expect(loadProceduralSettings(file).presets.harness.guidanceCache).toBe(false);
     writeFileSync(file, JSON.stringify({ ...copy, presets: {} }));
     expect(() => loadProceduralSettings(file)).toThrow(/invalid procedural settings/);
+  });
+});
+
+describe("procedural on the native cognitive host", () => {
+  it("PX2.48 the ensemble serves procedural.* over the store in the directory, which a later host reads back; the policy it is given applies", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "procedural-"));
+    const none = { models: [], preferences: {} };
+    const first = buildNativeEnsemble({ cacheDir: join(dir, "cache"), allowHosted: false, catalog: none, procedural: { dir: join(dir, "store") } });
+    expect(first.ensemble.extensions()).toEqual(["procedural"]);
+    const imported = (await invokeCognitive(first.ensemble, "procedural.import", { graph: "team/search" })) as { status: string; revision: string };
+    expect(imported.status).toBe("head");
+    expect(await first.procedural!.store.heads.get(GraphIdSchema.parse("team/search"))).toEqual({ revision: imported.revision, history: [] });
+    expect(first.procedural!.settings).toEqual(loadProceduralSettings());
+    const second = buildNativeEnsemble({ cacheDir: join(dir, "cache"), allowHosted: false, catalog: none, procedural: { dir: join(dir, "store"), authorize: (action) => action === "read" } });
+    expect(await invokeCognitive(second.ensemble, "procedural.history", { graph: "team/search" })).toMatchObject({ head: imported.revision });
+    await expect(invokeCognitive(second.ensemble, "procedural.revert", { graph: "team/search" })).rejects.toThrow("revert on graph team/search is not allowed");
+    await Promise.all([first.close(), second.close()]);
   });
 });

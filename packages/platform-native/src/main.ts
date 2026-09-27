@@ -9,10 +9,12 @@ import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/w
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
+import { loadProceduralSettings } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
+import { proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -31,6 +33,8 @@ const { values } = parseArgs({
     memory: { type: "string" },
     learning: { type: "string" },
     workflows: { type: "string" },
+    procedural: { type: "string" },
+    "procedural-settings": { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -51,7 +55,8 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
-      "                            [--consult <gateway id>]]\n",
+      "                            [--consult <gateway id>]]\n" +
+      "               [--procedural <dir> [--procedural-settings <settings.json>]]\n",
   );
   process.exit(2);
 }
@@ -76,6 +81,8 @@ const saved = await memoryFile?.load();
 const learningFile = values.learning === undefined ? undefined : new FileStorage(values.learning);
 const learned = await learningFile?.load();
 
+// Procedural graphs keep one store in their directory; with the cognitive core its operations are `procedural.*`.
+const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
@@ -85,9 +92,11 @@ const cognitive =
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
         ...(values.workflows === undefined ? {} : { workflows: { dir: values.workflows } }),
+        ...(values.procedural === undefined ? {} : { procedural: { dir: values.procedural, settings: proceduralSettings! } }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
+const procedural = cognitive?.procedural ?? (values.procedural === undefined ? undefined : { store: proceduralStore(values.procedural), settings: proceduralSettings! });
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");

@@ -36,6 +36,9 @@
     },
     {
       "path": "../workflows"
+    },
+    {
+      "path": "../procedural"
     }
   ]
 }

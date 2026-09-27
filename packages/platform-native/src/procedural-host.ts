@@ -1,5 +1,14 @@
+import { join } from "node:path";
 import type { Daemon, HookEvent, LogEntry } from "@harness/core";
+import { SnapshotProceduralStore } from "@harness/procedural";
+import type { ProceduralStore } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
+import { FileStorage } from "./file-storage.ts";
+
+/** The procedural store kept in `dir`: one file, saved atomically after every change. One process owns it. */
+export function proceduralStore(dir: string): ProceduralStore {
+  return new SnapshotProceduralStore(new FileStorage(join(dir, "procedural.json")));
+}
 
 /**
  * Host plumbing for procedural graphs on the native host (plan §6.1, P12): the live
