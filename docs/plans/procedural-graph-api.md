@@ -276,6 +276,33 @@ As built (P1). These are additions; nothing above changed meaning.
 - `editFilter(texts: readonly string[], observations: readonly string[], options?: { ngram?: number /* 8 */ }): FilterFinding[]`.
   `FilterFinding = { code: "shared-ngram" | "url" | "absolute-path" | "high-entropy" | "secret"; text: string; detail: string }`.
 
+As built (P2). These are additions; nothing above changed meaning.
+
+- `prepareCandidate` validates the edit set again (it may come from stored JSON). A
+  malformed set gives `malformed` diagnostics at `edits.<path>` (or
+  `binding-not-allowed` when an edit sets `binding`), and the document is then the base,
+  unedited.
+- A deletion naming a node the base does not have is `missing-endpoint` at
+  `edits.delete_nodes[i]` or `edits.delete_edges[i].source|target`. Deleting edges
+  between existing nodes that have none is a no-op.
+- Diagnostics come in this order: the edit set, the structure (`checkGraph`, with its
+  `nodes[i]`/`edges[i]` paths into the returned document), the catalog (`nodes[i]`),
+  then the filter (`filtered`, at `edits.add_nodes[i].id|description` or
+  `edits.add_edges[i].condition|guidance|pitfalls`, message `<finding code>: <detail>`).
+- Repair cuts the back edges of a depth-first walk from `Start`, then from the other
+  nodes in document order, following edges in document order; edges with a missing
+  endpoint are left to the checks. `repaired` lists the cut edges in document order as
+  `RepairedEdge = {from, relation, to}`.
+- `PrepareOptions.filter` also takes `options?: FilterOptions`.
+- `editFilter`'s options also take `entropy?: { minLength?: number /* 20 */; hexBits?: number /* 3 */; base64Bits?: number /* 3.5 */ }`.
+  A high-entropy run is a run of base64 characters at least `minLength` long that holds
+  a digit and a letter and reaches `hexBits` (all-hex runs, one case) or `base64Bits`
+  bits per character. Each detector reports at most once per text; `detail` never
+  quotes the matched text (a secret or an injected instruction), and a shared n-gram
+  names the index of the first observation it occurs in.
+- Also exported: `type PreparedCandidate`, `type PrepareOptions`, `type RepairedEdge`,
+  `type FilterCode`, `type FilterOptions`, `type EntropyOptions`.
+
 ## P3: localization and serialization (`locate.ts`, `serialize.ts`)
 
 - `match(action: string | undefined, g: EffectiveGraph, mode: "exact" | "case-insensitive"): NodeName | undefined`
