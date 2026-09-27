@@ -7,6 +7,7 @@ export { editFilter, type EntropyOptions, type FilterCode, type FilterFinding, t
 export { BindingSchema, CandidateDocumentSchema, checkGraph, DecisionSchema, DEFAULT_NODE_TYPES, DEFAULT_RELATIONS, DIAGNOSTIC_CODES, DiagnosticSchema, DreamIdSchema, EditSetSchema, editSetJsonSchema, END, EntryIdSchema, FORMAT, GraphEdgeSchema, GraphIdSchema, graphJsonSchema, GraphNodeSchema, incoming, nodeById, NodeNameSchema, NodeTypeNameSchema, outgoing, parseGraph, ProceduralGraphSchema, RelationNameSchema, revisionId, RevisionIdSchema, RevisionRecordSchema, ScoreSchema, seedGraph, START, TrajectoryIdSchema, type Binding, type CandidateDocument, type CyclePolicy, type Decision, type Diagnostic, type DiagnosticCode, type DreamId, type EditSet, type EntryId, type GraphEdge, type GraphId, type GraphNode, type NodeName, type NodeTypeName, type ParsedGraph, type ProceduralGraph, type RelationName, type RevisionId, type RevisionRecord, type Score, type TrajectoryId } from "./graph.ts";
 export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "./guide.ts";
 export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
+export { LiveLearner, type LearnerEvent, type LearnerResult, type LiveLearnerDeps } from "./learner.ts";
 export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate.ts";
 export { MemoryProceduralStore, redactRecord, STORE_FORMAT, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
 export { exportMermaid } from "./mermaid.ts";
@@ -15,6 +16,7 @@ export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, ty
 export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldOverlay, MAX_SESSIONS, MAX_TURNS, rebaseOverlay } from "./overlay.ts";
 export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES, type PinRequest } from "./pinning.ts";
 export { AccessPolicySchema, ACTIONS, authorize, globMatches, parsePolicy, policyJsonSchema, type AccessPolicy, type Action } from "./policy.ts";
+export { projectTurn, turnProjection, type LogEntryLike, type LogGap, type ProjectionContext, type ScoreSource, type TurnProjection, type VersionPair } from "./projection.ts";
 export { readJsonBlock, renderPrompt, type Decoding } from "./prompt.ts";
 export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { reflect, reflectionJsonSchema, type ReflectRequest } from "./reflect.ts";
