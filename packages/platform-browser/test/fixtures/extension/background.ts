@@ -1,9 +1,11 @@
 // The daemon in an extension's service worker, serving the extension's pages over runtime ports.
-import { invokeCognitive } from "@harness/cognitive";
+import { Ensemble, invokeCognitive } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { ConstraintEngine } from "@harness/constrained";
 import { instantiateEmscripten } from "@harness/models";
-import { BrowserHost, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, packagedEmscripten, xgrammarFromFactory, xgrammarFromSource } from "@harness/platform-browser";
+import { BrowserHost, browserWorkflows, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, IndexedDbWorkflows, packagedEmscripten, xgrammarFromFactory, xgrammarFromSource } from "@harness/platform-browser";
+import { parseWorkflow } from "@harness/workflows";
+import { jsonSchema, tool } from "ai";
 import type { ExtensionPortSource } from "@harness/platform-browser";
 import { EchoWorker } from "@harness/workers";
 // Code an extension may not evaluate, packaged at build time instead (factoryImports).
@@ -91,4 +93,18 @@ async function onnx() {
   return { evalRefused: evalRefused(), y: [...(out["y"]!.data as Float32Array)] };
 }
 
-Object.assign(globalThis, { smoke: { xgrammar, cognitive, onnx } });
+/** A durable workflow on QuickJS in the service worker, where import() is not allowed, journaled in IndexedDB. */
+async function workflows() {
+  await nextTask();
+  const library = new IndexedDbWorkflows({ name: "extension-workflows" });
+  await library.put(parseWorkflow({ name: "double", description: "Doubles.", inputs: { type: "object" }, code: "const n: number = await tools.seven({}); return n * 2;" }));
+  const ensemble = new Ensemble({ platform: "browser" });
+  browserWorkflows(ensemble, { library, tools: { seven: tool({ inputSchema: jsonSchema({}), execute: async () => 7 }) } });
+  try {
+    return { evalRefused: evalRefused(), run: await invokeCognitive(ensemble, "workflows.run", { name: "double", run: "smoke" }) };
+  } finally {
+    await library.close();
+  }
+}
+
+Object.assign(globalThis, { smoke: { xgrammar, cognitive, onnx, workflows } });

@@ -115,5 +115,25 @@ export function codeModeContract(label: string, make: () => CodeModeUnderTest, h
       expect(await run({ js: "return typeof leak;", tools: {}, abortSignal: signal() })).toBe("undefined");
       expect(await Promise.all([run({ js: "return 'a';", tools: {}, abortSignal: signal() }), run({ js: "return 'b';", tools: {}, abortSignal: signal() })])).toEqual(["a", "b"]);
     });
+
+    it("CM1.10 a result that is not JSON fails the run at once with a TypeError, rather than at the time limit", async () => {
+      const run = make();
+      const tools = { echo: tool({ inputSchema: jsonSchema({}), execute: async (x: unknown) => x }) };
+      for (const js of ["const a = {}; a.a = a; return a;", "return 1n;", "return tools;"]) {
+        expect(await failure(run({ js, tools, abortSignal: signal(), timeoutMs: 5000 }))).toMatch(/^TypeError: /);
+      }
+    });
+
+    it("CM1.12 code that ends with a tool call it did not wait for fails", async () => {
+      const run = make();
+      const tools = { slow: tool({ inputSchema: jsonSchema({}), execute: async () => (await host.delay(100), "late") }) };
+      expect(await failure(run({ js: "void tools.slow({}); return 'done';", tools, abortSignal: signal() }))).toMatch(/^CodeModeDetachedBridgeRequestError: /);
+      expect(await run({ js: "const p = tools.slow({}); return await p;", tools, abortSignal: signal() })).toBe("late");
+    });
+
+    it("CM1.11 the code cannot reach the bridge that carries its calls and its result", async () => {
+      const run = make();
+      expect(await run({ js: "return [typeof __call, typeof __done, typeof __fail, typeof __describe].join();", tools: {}, abortSignal: signal() })).toBe("undefined,undefined,undefined,undefined");
+    });
   });
 }

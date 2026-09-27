@@ -156,4 +156,12 @@ describe("workflow library and host", () => {
     expect(await h.run("caller", {}, "c")).toMatchObject({ status: "failed", error: expect.stringMatching(/Invalid input for tool "greet"/) });
     expect(await h.run("loop", {}, "l")).toMatchObject({ status: "failed", error: expect.stringMatching(/Unknown tool: loop/) });
   });
+
+  it("WH1.11 a host tool's input is checked against the tool's own schema before it is called", async () => {
+    const bad = parseWorkflow({ name: "bad-ticket", description: "Opens a ticket with a number for a title.", inputs: {}, code: "return tools.open_ticket({ title: 5 });" });
+    const { h, library, called } = host();
+    await library.put(bad);
+    expect(await h.run("bad-ticket", {}, "b")).toMatchObject({ status: "failed", error: expect.stringMatching(/Invalid input for tool "open_ticket"/) });
+    expect(called).toEqual([]);
+  });
 });

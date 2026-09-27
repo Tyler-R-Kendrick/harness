@@ -13,12 +13,15 @@
     "@ai-sdk/code-mode": "1.0.71",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
+    "@jitl/quickjs-ffi-types": "0.32.0",
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "ai": "7.0.114",
-    "quickjs-emscripten": "0.32.0",
+    "quickjs-emscripten-core": "0.32.0",
     "sucrase": "3.35.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "quickjs-emscripten": "0.32.0"
   }
 }

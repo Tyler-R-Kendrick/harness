@@ -42,7 +42,10 @@ so a run that stops resumes instead of starting over. What should run them?
   (`aiCodeMode`, from `@harness/workflows/node`); where code mode cannot run (browsers,
   extensions) it is **QuickJS on WebAssembly** (`quickjsCodeMode`, on
   `quickjs-emscripten`: a runtime per run, an interrupt handler for the deadline and
-  aborts, and the module replaced if the host's own stack runs out). One contract suite
+  aborts, and the module replaced if the host's own stack runs out or it fails to load).
+  Its WebAssembly module is put together from parts imported statically, because
+  quickjs-emscripten's own loaders `import()` them and a service worker (an extension's
+  background) may not. One contract suite
   (`codeModeContract` in testkit) and every durable-run test run against both, so a
   workflow behaves the same on every host: the same errors, limits and JSON results.
 - Types are stripped once, by the runner, with sucrase (pure JavaScript, keeps line

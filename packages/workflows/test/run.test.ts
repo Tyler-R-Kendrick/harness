@@ -214,4 +214,15 @@ describe.each(MODES)("durable workflows (%s)", (_, codeMode) => {
     await new Promise((r) => setTimeout(r, 100));
     expect(performed).toEqual(["wait"]);
   });
+
+  it("WF1.22 code that ends with a call it did not wait for fails, and that call finishing later does not change the recorded outcome", async () => {
+    let finish!: () => void;
+    const late = new Promise<void>((r) => (finish = r));
+    const fx: Effects = { tool: async () => (await late, null), ask: async () => "" };
+    const journal = new MemoryStorage();
+    expect(await runWorkflow({ codeMode, name: "w", code: "void tools.a({}); return 'done';", input: {}, effects: fx, journal, tools: { a: {} } })).toMatchObject({ status: "failed", error: expect.stringMatching(/^CodeModeDetachedBridgeRequestError: /) });
+    finish();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await journal.load()).toMatchObject({ status: "failed", entries: [] });
+  });
 });

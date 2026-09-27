@@ -123,4 +123,12 @@ describe("the browser host in an extension, in Chromium", { timeout: 60_000 }, (
     expect(result).toEqual({ evalRefused: true, y: [2, 3] });
     await p.close();
   });
+
+  it("BI2.5 a durable workflow runs on QuickJS in the extension's service worker, where modules cannot be imported on demand", async () => {
+    const p = await page();
+    const sw = context.serviceWorkers().find((w) => w.url().startsWith(`chrome-extension://${extensionId}/`))!;
+    const result = await sw.evaluate(() => (globalThis as unknown as { smoke: { workflows(): Promise<unknown> } }).smoke.workflows());
+    expect(result).toMatchObject({ evalRefused: true, run: { status: "completed", output: 14 } });
+    await p.close();
+  });
 });

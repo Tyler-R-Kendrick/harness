@@ -41,8 +41,9 @@ models (`EvaluationModelV4`) but nothing that makes one of a language model.
   `judgment` task**, ranked after Jev and CLM, so it judges only when neither is
   reachable. Ornith is that entry; no judgment benchmark is published for it, which its
   notes say.
-- **CI's evals job runs llama-server** with the models job's cached weights, so the
-  evals are judged: by Jev if a gateway credential is ever set, else by the generator.
+- **CI's evals job runs llama-server**, restoring the models job's cached weights when
+  there are some (right after a catalog change the models job has not saved them yet,
+  so that run downloads the judge's weights itself), so the evals are judged: by Jev if a gateway credential is ever set, else by the generator.
   The real-weights tests hold a generator judge to the judge contract and to calibrated
   answers on real weights.
 

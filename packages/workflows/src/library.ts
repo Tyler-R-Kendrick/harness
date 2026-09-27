@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generateText, jsonSchema, Output, tool } from "ai";
+import { asSchema, generateText, jsonSchema, Output, tool } from "ai";
 import type { LanguageModel, ToolSet } from "ai";
 import { constrain } from "@harness/cognitive";
 import type { CognitiveExtension, Constraint } from "@harness/cognitive";
@@ -82,10 +82,10 @@ export class WorkflowHost {
     const { library, tools = {} } = this.#options;
     const workflow = await library.get(name);
     if (!workflow) throw new Error(`no workflow ${name}`);
-    // The code may call the host's tools (their own schemas check their input) and the
-    // library's other workflows (checked against their inputs); not itself.
+    // The code may call the host's tools and the library's other workflows, each call
+    // checked against the tool's own input schema or the workflow's inputs; not itself.
     const specs: Record<string, ToolSpec> = {};
-    for (const n of Object.keys(tools)) specs[n] = {};
+    for (const [n, t] of Object.entries(tools)) specs[n] = { inputSchema: (await asSchema(t.inputSchema).jsonSchema) as Record<string, unknown> };
     for (const w of await library.list()) if (w.name !== name) specs[w.name] = { inputSchema: w.inputs };
     let calls = 0;
     return runWorkflow({

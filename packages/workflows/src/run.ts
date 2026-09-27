@@ -113,6 +113,8 @@ export async function runWorkflow(options: {
   };
   // Journal writes are serialized: entries are saved in the order they complete.
   let saving: Promise<void> = Promise.resolve();
+  // Once the code has ended its outcome is the run's: a call it did not wait for records nothing after that.
+  let ended = false;
 
   const effect = async (op: EffectOp, request: unknown): Promise<unknown> => {
     const n = seq++;
@@ -127,6 +129,7 @@ export async function runWorkflow(options: {
     try {
       const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: Constraint };
       const result = json(op === "tool" ? await effects.tool(r.name, r.args) : await effects.ask(r.prompt, r.constraint));
+      if (ended) return result;
       journal = { ...journal, entries: [...journal.entries, { seq: n, op, request, result }] };
       const snapshot = journal;
       await (saving = saving.then(() => options.journal.save(snapshot)));
@@ -172,6 +175,7 @@ export async function runWorkflow(options: {
     const error = message(e);
     outcome = { ok: false, error: toolError && /Host tool failed/.test(error) ? `${error} ${toolError}` : error };
   }
+  ended = true;
   await saving;
   // A failed effect leaves the run resumable: nothing is recorded as its outcome.
   if (failure) throw failure.error;

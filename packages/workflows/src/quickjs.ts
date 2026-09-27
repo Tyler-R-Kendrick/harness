@@ -1,7 +1,10 @@
 import { asSchema } from "ai";
 import type { Tool } from "ai";
-import { newQuickJSWASMModule } from "quickjs-emscripten";
-import type { QuickJSContext, QuickJSDeferredPromise, QuickJSHandle, QuickJSWASMModule } from "quickjs-emscripten";
+import { QuickJSWASMModule } from "quickjs-emscripten-core";
+import type { QuickJSContext, QuickJSDeferredPromise, QuickJSHandle } from "quickjs-emscripten-core";
+import { QuickJSFFI } from "@jitl/quickjs-wasmfile-release-sync/ffi";
+import emscriptenModule from "@jitl/quickjs-wasmfile-release-sync/emscripten-module";
+import type { EmscriptenModuleLoader, QuickJSEmscriptenModule } from "@jitl/quickjs-ffi-types";
 import type { CodeMode, CodeModeProgram } from "./code-mode.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -12,22 +15,43 @@ const DEFAULT_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
 const DEFAULT_STACK_LIMIT_BYTES = 128 * 1024;
 
 /**
- * The code's side of the bridge. `tools` is a proxy, so `tools.<name>` is always a
- * function and an unknown name fails when called, as in AI SDK code mode. Values cross
- * as JSON text; what the body returns or throws goes back through __done and __fail.
+ * quickjs-emscripten's release build, put together from parts imported statically, as
+ * its own loader does: that loader import()s them (and a module of its own), which a
+ * service worker (an extension's background) forbids.
  */
-const prelude = `
-const __call = globalThis.__call, __done = globalThis.__done, __fail = globalThis.__fail;
-delete globalThis.__call; delete globalThis.__done; delete globalThis.__fail;
-const tools = new Proxy({}, {
-  get: (_, name) => typeof name !== "string" ? undefined : (input) =>
-    __call(name, input === undefined ? undefined : JSON.stringify(input)).then((text) => { const r = JSON.parse(text); return "v" in r ? r.v : undefined; }),
-  ownKeys: () => [],
-});
-const __describe = (e) => e instanceof Error
-  ? { name: e.name, message: e.message }
-  : { name: "Error", message: e !== null && typeof e === "object" && typeof e.message === "string" ? e.message : String(e) };
-`;
+async function releaseModule(): Promise<QuickJSWASMModule> {
+  // Its types describe a CommonJS module (whose default is the exports object); imported as ESM, the default is the loader.
+  const wasm = await (emscriptenModule as unknown as EmscriptenModuleLoader<QuickJSEmscriptenModule>)();
+  // Stryker disable next-line StringLiteral: equivalent; the sync module reads no type, which is set as the library's own loader sets it
+  wasm.type = "sync";
+  return new QuickJSWASMModule(wasm, new QuickJSFFI(wasm));
+}
+
+/**
+ * The code's side of the bridge, evaluated before the code: it takes the host's
+ * functions off the global object and returns a function that runs the code's body
+ * (compiled on its own, so the bridge is out of its reach) with `tools`. `tools` is a
+ * proxy, so `tools.<name>` is always a function and an unknown name fails when called,
+ * as in AI SDK code mode; it is not a thenable. Values cross as JSON text; what the body
+ * returns (or a TypeError, if that is not JSON) or throws goes back through done and fail.
+ */
+const prelude = `(() => {
+  const call = globalThis.__call, done = globalThis.__done, fail = globalThis.__fail;
+  delete globalThis.__call; delete globalThis.__done; delete globalThis.__fail;
+  const tools = new Proxy({}, {
+    get: (_, name) => typeof name !== "string" || name === "then" ? undefined : (input) =>
+      call(name, input === undefined ? undefined : JSON.stringify(input)).then((text) => { const r = JSON.parse(text); return "v" in r ? r.v : undefined; }),
+    ownKeys: () => [],
+  });
+  const describe = (e) => e instanceof Error
+    ? { name: e.name, message: e.message }
+    : { name: "Error", message: e !== null && typeof e === "object" && typeof e.message === "string" ? e.message : String(e) };
+  const result = (v) => {
+    if (v === tools) throw new TypeError("tools is not a result");
+    return JSON.stringify(v);
+  };
+  return (body) => body(tools).then(result).then(done, (e) => fail(describe(e)));
+})()`;
 
 class RunFailure extends Error {
   constructor(name: string, message: string) {
@@ -72,7 +96,12 @@ export function quickjsCodeMode(
   } = {},
 ): CodeMode {
   let module: Promise<QuickJSWASMModule> | undefined;
-  const load = () => (module ??= (options.module ?? newQuickJSWASMModule)());
+  const load = () =>
+    (module ??= (options.module ?? releaseModule)().catch((e: unknown) => {
+      // A module that failed to load (a failed fetch) is loaded again by the next run.
+      module = undefined;
+      throw e;
+    }));
   return async (program) => {
     const wasm = await load();
     const broken = () => {
@@ -170,7 +199,9 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
     return deferred.handle;
   });
   expose("__done", (text) => {
-    finish({ ok: true, value: vm.typeof(text!) === "string" ? JSON.parse(vm.getString(text!)) : undefined });
+    // As in AI SDK code mode, code may not end while a tool call it made is still open.
+    if (pending.size > 0) finish({ ok: false, error: new RunFailure("CodeModeDetachedBridgeRequestError", "The code ended with a tool call it did not wait for.") });
+    else finish({ ok: true, value: vm.typeof(text!) === "string" ? JSON.parse(vm.getString(text!)) : undefined });
     return undefined;
   });
   expose("__fail", (described) => {
@@ -183,12 +214,16 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
   abortSignal.addEventListener("abort", wake);
   const timer = setTimeout(wake, deadline - Date.now());
   try {
-    const started = vm.evalCode(`${prelude}\n(async () => {\n${js}\n})().then((v) => __done(JSON.stringify(v)), (e) => __fail(__describe(e)));`);
+    const start = vm.evalCode(prelude);
+    const body = vm.evalCode(`(async (tools) => {\n${js}\n})`);
+    // The first step that failed (an interrupt, code that does not compile) fails the run.
+    const started = start.error ? start : body.error ? body : vm.callFunction(start.value, vm.undefined, body.value);
     if (started.error) finish({ ok: false, error: failureOf(started.error) });
     else {
       started.value.dispose();
       pump();
     }
+    for (const r of [start, body]) if (r !== started) (r.error ?? r.value).dispose();
     await ended;
     const result = outcome ?? { ok: false, error: stopped() };
     if (!result.ok) throw result.error;

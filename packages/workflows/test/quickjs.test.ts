@@ -240,6 +240,14 @@ describe("QuickJS code mode, at its edges", () => {
     expect(loads).toBe(1);
   });
 
+  it("QJ1.12 a WebAssembly module that fails to load (a failed fetch) is loaded again by the next run", async () => {
+    let loads = 0;
+    const run = quickjsCodeMode({ module: async () => (++loads === 1 ? Promise.reject(new Error("offline")) : newQuickJSWASMModule()) });
+    await expect(run({ js: "return 1;", tools: {}, abortSignal: signal() })).rejects.toThrow("offline");
+    expect(await run({ js: "return 2;", tools: {}, abortSignal: signal() })).toBe(2);
+    expect(loads).toBe(2);
+  });
+
   it("QJ1.11 a call the code makes after an abort, before the run has ended, is refused: no tool runs after an abort", async () => {
     // a aborts as it runs, before the code has asked for b: b and c are refused
     const abort = new AbortController();
