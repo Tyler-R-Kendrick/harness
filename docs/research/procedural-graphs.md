@@ -197,16 +197,17 @@ strongest objection, and what we do about it.
    - It requires superiority, or non-inferiority *and* a smaller graph.
    - It is anchored to `G_0`, so the loss cannot compound across rounds.
    - Its margin is derived from power.
-   - Claims are made on a confirm split the loop never saw.
+   - It is applied only when a user supplies an evaluator. Without one, dream is gated
+     by live evidence and approval.
 
-   The plan (§4.3) has the details, including a worked example. That example shows why a
+   The plan (§7.4) has the details, including a worked example. That example shows why a
    fixed 2-point margin at n = 200 would reject nearly every *equal* candidate.
 3. **We cannot tell how reasoning and status nodes become active.** Under exact matching
    on tool calls, a node like `Scan_Index` or `Decide_Capital` would never be active. It
    would only be visible as a hop target, and with `h = 2` two such nodes after an action
    would hide the next tool node. Rule 6's "state tracker" suggests the implementation
-   localizes more than tool names (§1.2). So `exact` versus `case-insensitive` matching is
-   a pre-registered ablation, and a state-tracker mode is future work.
+   localizes more than tool names (§1.2). So `exact` and `case-insensitive` matching are
+   both settings, and a state-tracker mode is future work.
 4. **Relations are unused at inference.** The serializer drops the labels, so their only
    role is structural. We keep the vocabulary, because the refiner is told to use it and a
    later serializer may print it. But no code branches on relation labels until an
@@ -237,19 +238,20 @@ strongest objection, and what we do about it.
    - The guidance prompt makes this worse by asking to "include any specific command
      patterns, file paths".
 
-   The plan (§6) replaces prose with controls:
+   The plan (§9) replaces prose with controls:
    - a deterministic edit filter;
+   - probation with randomized exposure for anything learned live;
+   - an overlay that cannot delete core structure or bind tools;
    - approval for edits that route to tools with side effects;
-   - revocation;
-   - owner-only data.
+   - revert.
 10. **Tool-catalog membership is not enforced.** The `harness` preset enforces it, both
     when a candidate is prepared and when a session pins a revision.
 11. **HotpotQA's two tables use different metrics.** The +7.58 F1 gain comes from the
     construction study, which uses exact EM and F1 (Table 2). The main table reports
     "Acc." (Table 1), where HotpotQA margins are −0.90 to +1.30. One refiner pitfall
     ("matches exact Wikipedia capitalization") suggests part of the EM/F1 gain is
-    formatting. We pre-register F1 as the primary metric and normalized-EM accuracy as
-    the secondary one.
+    formatting. This matters to anyone who evaluates a graph with the Evaluator port, not
+    to the framework.
 
 ### 2.3 The one-sentence reading
 
@@ -264,12 +266,12 @@ that admits edits to it.
 | Paper piece | Harness piece today | Gap |
 |---|---|---|
 | Trajectory `T_t` | Session log (SL1–SL4) and hook bus (HK1–HK5) | Tool calls exist only as ACP `tool_call` updates. There is no projection into trajectories, and learning's `Trajectory` has no score or revision. |
-| Score `S ∈ [0,1]` | Evals: judge verdicts and probabilities | Only judged pass/fail cases. We need metric cases (EM, F1) and per-task score vectors. |
+| Score `S ∈ [0,1]` | Judge probabilities, learning outcomes | Scores are optional live. A null score still counts as traversal evidence. |
 | Refiner, guidance model | Cognitive core: selection, constrained decoding | None. They use existing task categories. |
-| Candidate evaluation on `D_val` | Evals runner and suites | Datasets, concurrency, a budget meter and a text ReAct solver |
-| Durable offline loop | The daemon's pattern: a pure reducer with an event log | A round runner. Code-mode workflows do not fit, because their timeout is terminal and their journals are rewritten whole. |
-| Baselines ExpeL / AWM / MemoryBank / RAP | Lessons, the workflow builder, session memory | None. The reproduction compares PG against our own baselines. |
-| Solver | Agent worker (`ToolLoopAgent`) | A per-step hook (`prepareStep`), the session's domain, and a path to the log |
+| Candidate evaluation on `D_val` | Nothing general | An Evaluator port. Users bring task sets; the framework does not. |
+| Offline loop | The daemon's pattern: a pure reducer with an event log | The dream runner. Code-mode workflows do not fit, because their timeout is terminal and their journals are rewritten whole. |
+| Solver | Agent worker (`ToolLoopAgent`) | A per-step hook (`prepareStep`), session metadata, and a path to the log |
+| (nothing: the paper is frozen online) | Hook bus actors with cursors | The dynamic layer: a live learner and an event-sourced overlay |
 
 ### 3.2 Procedural beside semantic and episodic memory
 
@@ -281,57 +283,69 @@ kinds of memory:
 
 The PG replaces neither. It is the *connective structure* between procedures:
 
-- Lessons about a transition inform edge attributes, through the refiner's context.
+- Lessons about a transition inform edge attributes, through dream's context.
 - Lessons about facts stay lessons.
 - A node can bind a durable workflow, so the graph is also an index of what can be done
   next.
 
-### 3.3 The three integrations the request names
+### 3.3 Two layers: what the paper leaves out
+
+The paper's graph is frozen online and changes only in offline rounds against a
+validation set. A deployed harness has live traffic and usually no validation set. So we
+split the graph in two:
+
+- **The static core** is the paper's graph. It changes only through **dream**, a
+  separate consolidation process. With an evaluator, dream is the paper's Algorithm 1.
+  Without one, it is gated by live evidence and approval.
+- **The dynamic layer** is new. It is an event-sourced overlay, learned from live
+  traffic, that can only *add and annotate*. It holds:
+  - edge statistics;
+  - transitions the core lacks;
+  - cautions;
+  - optional notes from reflection.
+
+  Its entries are on probation, shown to a random share of sessions, and promoted only
+  when exposed sessions do no worse.
+
+Dream absorbs what the overlay proved, prunes what it condemned, and rebases the rest.
+This keeps the core stable, the property the paper's gate protects, while the system
+still learns between dreams.
+
+### 3.4 The three integrations the request names
 
 1. **The agent bus and its log.**
-   - A session pins one revision, and the pin is recorded in the revision store.
-   - Each guidance step appends a record to the session log: the revision, the active
-     node, whether it matched, a digest, and the id of the guidance text.
-   - Trajectories are projections of the log.
-   - Evolution publishes its decisions on the hook bus as notifications, with the round
-     as a saga.
+   - Each step records its `(core revision, overlay version)` pair, the active node, the
+     match result, the exposures and a guidance digest in the session log.
+   - The live learner is a hook-bus actor. On `turn.ended` it projects the log into a
+     scored trajectory and appends overlay events.
+   - Dream publishes its decisions as notifications.
 
-   Guidance is **evidence, not a replayed effect**, because turns do not resume mid-step.
-   The session log is not write-ahead today: the runtime dispatches effects before it
-   saves. Making it write-ahead is a separate decision, and nothing here depends on it.
+   Guidance is evidence, not a replayed effect. The session log is not write-ahead
+   today: the runtime dispatches before it saves. Nothing here depends on write-ahead.
 2. **Agent trajectory evolution.**
-   - Trajectories are keyed by the revision they ran under.
-   - Each revision accumulates evidence: match, fallback and inert rates, per-edge
-     traversals and outcomes, steps and tokens.
-   - Evolution consumes scored trajectories from a replayable task suite and produces
-     revisions.
-   - Live sessions contribute training evidence only, because they cannot be re-run
-     under a candidate.
+   - Trajectories are keyed by the version pair they ran under.
+   - Live trajectories feed the overlay continuously.
+   - Dream consumes the overlay and the trajectories, and produces core revisions.
 
    The population of trajectories evolves because the graph they run under does.
-3. **Dynamic workflow composition.**
-   - Nodes can bind tools, library workflows or skills.
-   - A path that is traversed often, succeeds, and offers one unconditional choice at each
-     step is a candidate to compile:
-     1. A path compiler writes a durable workflow from the recorded calls. It keeps data
-        flow: arguments become inputs, or constrained `ask`s.
-     2. A candidate revision adds the workflow as a node, and the workflow is bound by
-        its code's sha256.
-     3. The same gate decides.
-   - Only sessions pinned to a revision that binds a workflow get that workflow as a
-     tool.
-   - At run time, the agent's path through the graph composes tools and workflows.
+3. **Dynamic workflow composition.** It is a dream output:
+   1. A frequent, successful, unbranched path is compiled from its recorded calls into a
+      durable workflow. The compiler keeps data flow.
+   2. The workflow goes into a staging library.
+   3. A candidate core revision binds it to a node, by the sha256 of its code.
+   4. The candidate goes through the gates.
 
-### 3.4 Invariants the paper does not need but we do
+   Sessions get only the workflows their pinned core binds.
 
-- **Advisory, never authority.** Guidance cannot grant or widen capabilities; grants and
-  approvals stay in the core. A node whose tool the session lacks is inert.
-- **Provenance on every revision.** Each records its parent, its edits, the trajectories
-  the refiner saw, the gate's evidence, and who committed it.
-- **Tainted text is filtered, not trusted.** Tool output is untrusted. Edits pass a
-  deterministic filter, and guidance reaches the solver as a trailing advisory message,
-  not as system text.
-- **Scope.** A graph belongs to an owner and a domain, and the caller's identity is
-  checked on every operation.
-- **Frozen per session.** A session keeps its pin across restarts. It re-pins only when
-  its revision is revoked.
+### 3.5 Invariants the paper does not need but we do
+
+- **Advisory, never authority.** Guidance cannot grant or widen capabilities. A node
+  whose tool the session lacks is inert.
+- **The core is static between dreams.** Nothing writes it but a dream commit, a seed, a
+  merge or a revert.
+- **The overlay is monotone.** The effective graph always contains the core.
+- **Provenance on every revision.** Each revision records its parents, its edits, the
+  evidence behind them and the gates' decisions.
+- **Tainted text is filtered, not trusted.** Tool output is untrusted.
+- **Scope is configuration.** A graph id is opaque. A resolver maps sessions to graphs,
+  and a revision can have several parents, so graphs can be merged later.
