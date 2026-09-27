@@ -562,6 +562,20 @@ As built (P5). These are additions; nothing above changed meaning.
 - `SnapshotProceduralStore(storage: SnapshotStorage)` persists through the core
   `SnapshotStorage` port, which covers every host.
 - `proceduralStoreContract` lives in `@harness/testkit`, with tests `PS1.x`.
+- Semantics both implementations share (the contract checks them):
+  - a put with a known id replaces the record in place; a redacted id stays redacted;
+  - setting a head to the revision it already names succeeds and adds no history;
+  - an empty append changes nothing; `read` with a negative or fractional offset or
+    limit rejects with a `RangeError`;
+  - lease epochs only grow per graph (across releases and reopens), and a lease has no
+    expiry: its holder re-acquires under a new epoch;
+  - redaction (`redactRecord`) replaces every text with `TOMBSTONE` (descriptions,
+    non-null conditions, guidance, pitfalls, edit texts, decision reasons, diagnostic
+    messages, strings in evidence) and sets `redacted: true`.
+- Also exported: `MemoryProceduralStore.document()` and `new MemoryProceduralStore(document)`
+  (`ProceduralStoreDocument`, `STORE_FORMAT`), `ProceduralStoreDocumentSchema` and
+  `PinSchema`. The snapshot store runs operations one at a time in issue order, saves
+  after each change, and rejects a malformed saved document rather than resetting it.
 
 ## P8: core, generic (`packages/core`, `packages/protocol`)
 
@@ -663,6 +677,79 @@ As built (P9). These are additions; nothing above changed meaning.
 - Native host: `--procedural <dir>`, and a `harness-procedural` CLI with `dream`,
   `export`, `import`, `revert` and `history`.
 
+As built (P12). These refine the shapes above; no name another phase uses changed.
+
+- `proceduralExtension(options: ProceduralExtensionOptions)` takes:
+  - `store`, `settings`, `preset?` (default `harness`; import checks cycles under its
+    `dream.cycles`) and `clock: { now(): number }`;
+  - `authorize?: (action: ProceduralAction, graph: GraphId) => boolean`, the policy bound
+    by the host (P9's `authorize(policy, action, graph, context)` with its context), which
+    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
+  - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
+    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+
+  It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
+  parses its input (malformed input throws `invalid procedural.<op> input`), then checks
+  the policy for its action (a refusal throws `procedural.<op>: <action> on graph <g> is
+  not allowed`), then runs. The ops and their actions:
+
+  | Op | Input | Action | Result |
+  |---|---|---|---|
+  | `graph` | `{graph, revision?, overlay?}` | read | `{status:"ok", head, revision, origin, document, effective}` or `missing` |
+  | `history` | `{graph}` | read | `GraphHistory` |
+  | `export` | `{graph, revision?, format?: "json" \| "mermaid", overlay?}` | read | `ExportResult` |
+  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `{status:"recorded", graph}`, `missing` (no pin) or `unavailable` |
+  | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
+  | `revert` | `{graph, to?}` | revert | `RevertResult` |
+  | `import` | `{graph, document?}` | import | `ImportResult` |
+
+- `import-export.ts` holds the operations over a store, which the CLI shares:
+  - `importGraph({store, graph, document?, clock, cycles?})`: no document is `seedGraph()`.
+    Results: `{status:"head"}` for a graph with no head (the record has no parents),
+    `{status:"proposed", head}` otherwise (a `pending-approval` import record whose parent
+    is the head, for dream or an approver to take up), `{status:"known", decision}` when
+    the graph already recorded that revision (nothing is written), or
+    `{status:"invalid", diagnostics}`. When another writer sets the head between the
+    record and the compare-and-set, the import becomes a proposal on their head.
+  - `readGraph({store, graph, revision?, overlay?})` returns `GraphView`. On the head, the
+    overlay log is folded from the graph's first head and shown with probation share 1
+    (every non-retired entry, the operator's view) when its base is the head; otherwise the
+    core alone (`coreView`).
+  - `exportGraph({..., format})`: `json` is the stored document, `mermaid` is
+    `exportMermaid(effective)`; both end with a newline.
+  - `graphHistory({store, graph})`: `{head?, heads (head then history), revisions}`, the
+    revisions oldest first, as `RevisionSummary` without documents.
+  - `revertGraph({store, graph, to?, clock})`: `to` defaults to the previous head and must
+    be an earlier head (not the head itself), recorded and not redacted. A revision's id is
+    its content, so the `revert` record (parent: the head it leaves) takes the target's id
+    and replaces its record; `evidence` is `{reverted, replaces}` with the replaced record
+    minus its id, graph and document. Then a compare-and-set moves the head (on a lost race
+    the replaced record is put back and the revert is refused), and a `rebased` event onto
+    the target is appended, so the overlay follows the head and entries the target cannot
+    anchor are dropped. P9's `pinSession` sees the `revert` origin and re-pins.
+- `exportMermaid(g)` renders `flowchart TD`, a `%% core <id>, overlay <n|none>` comment,
+  nodes as `n<index>` with the name and type as the label (statuses as stadiums, reasoning
+  as rhombi, other types as boxes), edges with the relation and `when: <condition>`,
+  overlay nodes in the dashed `overlay` class and overlay edges dashed (`-.->`), labeled
+  `learned` or `learned (provisional)`, cautions as `Caution: <text>` lines on their edge's
+  label with a `linkStyle` for the cautioned edges. Notes and guidance are left out. Label
+  text escapes `# " < > | \`` as Mermaid entities and line breaks as `<br/>`.
+- Native host (`packages/platform-native`): `loadProceduralSettings(file?)`;
+  `proceduralStore(dir)` is a `SnapshotProceduralStore` over `FileStorage` at
+  `<dir>/procedural.json`; `buildNativeEnsemble({ procedural: { dir, settings?, preset?,
+  authorize?, dream?, feedback? } })` installs the extension and returns
+  `procedural: {store, settings}` for the step hook and the learner to share;
+  `pumpHookEvents(runtime, {plugin, types, onEvent})` is an in-process plugin connection
+  with a durable hook-bus cursor, acknowledging each event after its handler resolves;
+  `sessionLogReader(daemon)` reads a session's log entries in `[from, to)`. `main.ts`
+  takes `--procedural <dir>` and `--procedural-settings <file>`.
+- `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
+  operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`);
+  `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
+  file, `revert` `--to`. A result a caller handles exits 1, bad usage 2.
+- Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
+  extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
+
 ## P13: composition (`compose.ts`)
 
 - `pathCandidates(core, overlayStats, settings)`.
@@ -671,3 +758,29 @@ As built (P9). These are additions; nothing above changed meaning.
 - `StagingLibrary`, a `WorkflowLibrary` that is never the shared one.
 - `revisionTools({ base, pinnedCore, staging })` returns the base tools plus exactly the
   workflows the pinned core binds.
+
+As built (P13). The names above keep their meaning; these are the refinements.
+
+- `pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[]`.
+  The overlay's `observed` events are the statistics, because support counts distinct
+  sessions per path, which `EdgeStats` does not keep. A redelivered turn counts once.
+  - `PathCandidate = { path: NodeName[]; support: number; turns: number; meanScore: Score }`.
+  - `CompositionSettings = { support, minScore: Score, maxLength }`, parsed by
+    `parseCompositionSettings`, with `data/composition.json` and a drift-tested
+    `data/composition.schema.json` (`compositionJsonSchema()`).
+- `recordedRuns(core, trajectories: readonly ScoredTrajectory[], path, mode: MatchMode): RecordedCall[][]`
+  takes each window of consecutive tool calls that walked the path.
+  `RecordedCall = { name: string; arguments: Record<string, unknown> }`.
+- `compilePath(path, recordedCalls, toolSpecs: Record<string, ToolSpec>)` returns
+  `{ ok: true; workflow: Workflow } | { ok: false; error: string }`. `ToolSpec` is the
+  workflows one. The workflow returns `{ steps }`, every call's result in order.
+- `StagingLibrary(staged?: WorkflowLibrary)` refuses code that does not compile and
+  keeps a name's code immutable. `stage(workflow)` returns its `WorkflowBinding`
+  (`workflowBinding(workflow)`: the name and the sha256 of the code).
+- `composeCandidate(core, path, workflow)` returns
+  `{ ok: true; node; binding; edits: EditSet; document: CandidateDocument } | { ok: false; error }`.
+  An `EditSet` carries no binding, so `document` is the edited core with the binding
+  set. That document is what dream gates.
+- `revisionTools({ base: ToolSet, pinnedCore: ProceduralGraph, staging: WorkflowHost })`.
+  `staging` is a `WorkflowHost` over the staging library. The code hash is checked when
+  the tools are built and again at each call.

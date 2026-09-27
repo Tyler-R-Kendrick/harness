@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "support": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "minScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "maxLength": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "support",
+    "minScore",
+    "maxLength"
+  ],
+  "additionalProperties": false
+}

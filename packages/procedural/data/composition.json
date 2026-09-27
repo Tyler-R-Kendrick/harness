@@ -1,0 +1,6 @@
+{
+  "$schema": "./composition.schema.json",
+  "support": 3,
+  "minScore": 0.7,
+  "maxLength": 6
+}
