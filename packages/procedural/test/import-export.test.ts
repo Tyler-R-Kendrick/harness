@@ -135,7 +135,11 @@ describe("readGraph and exportGraph", () => {
     const earlier = await readGraph({ store, graph, revision: revisionId(doc()) });
     expect(earlier).toMatchObject({ status: "ok", head: revisionId(shorter()), revision: revisionId(doc()), effective: { overlay: null } });
     expect(await readGraph({ store, graph, overlay: false })).toMatchObject({ status: "ok", effective: { overlay: null } });
-    await store.overlay(graph).append([{ kind: "rebased", core: revisionId(other()), absorbed: [], dropped: [], frozenAt: 1 }]);
+    // The log starts on the first head; a head that moved on without a rebase has no overlay yet.
+    expect(await readGraph({ store, graph })).toMatchObject({ status: "ok", effective: { overlay: null, core: revisionId(shorter()) } });
+    await store.overlay(graph).append([{ kind: "rebased", core: revisionId(shorter()), absorbed: [], dropped: [], frozenAt: 1 }]);
+    expect(await readGraph({ store, graph })).toMatchObject({ status: "ok", effective: { overlay: 2, core: revisionId(shorter()) } });
+    await store.overlay(graph).append([{ kind: "rebased", core: revisionId(other()), absorbed: [], dropped: [], frozenAt: 2 }]);
     expect(await readGraph({ store, graph })).toMatchObject({ status: "ok", effective: { overlay: null, core: revisionId(shorter()) } });
   });
 

@@ -4,7 +4,7 @@ import { exportMermaid } from "./mermaid.ts";
 import { effectiveGraph, foldAll, rebaseOverlay } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveGraph, OverlayEvent } from "./overlay-types.ts";
-import type { ProceduralStore } from "./store.ts";
+import type { Head, ProceduralStore } from "./store.ts";
 
 /** Milliseconds, from the host's Clock port. */
 export interface ClockLike {
@@ -60,6 +60,9 @@ export type GraphView =
   | { status: "ok"; head: RevisionId; revision: RevisionId; record: RevisionRecord; graph: ProceduralGraph; effective: EffectiveGraph }
   | { status: "missing"; reason: string };
 
+/** The overlay log starts on the graph's first head, the oldest in its history (as P9's pinning reads it). */
+const firstHead = (head: Head): RevisionId => head.history.at(-1) ?? head.revision;
+
 async function overlayEvents(store: ProceduralStore, graph: GraphId): Promise<OverlayEvent[]> {
   return (await store.overlay(graph).read(0)).map((e) => e.event);
 }
@@ -80,7 +83,7 @@ export async function readGraph(input: { store: ProceduralStore; graph: GraphId;
   const parsed = parseGraph(found.document);
   if (!parsed.ok) return { status: "missing", reason: `revision ${revision} does not parse (it may be redacted)` };
   const core = parsed.graph;
-  const state = revision === head.revision && input.overlay !== false ? foldAll(revision, await overlayEvents(store, graph)) : undefined;
+  const state = revision === head.revision && input.overlay !== false ? foldAll(firstHead(head), await overlayEvents(store, graph)) : undefined;
   // A probation share of 1 exposes every probationary entry whatever the salt: this is the operator's view, not a session's.
   // Stryker disable next-line StringLiteral: equivalent; at a share of 1 no salt hides an entry
   const effective = state?.base === revision ? effectiveGraph(core, state, { salt: "", probationShare: 1 }) : coreView(core);
@@ -166,7 +169,7 @@ export async function revertGraph(input: { store: ProceduralStore; graph: GraphI
     return { status: "refused", reason: `the head of graph ${graph} moved; try again` };
   }
   const log = store.overlay(graph);
-  const { event } = rebaseOverlay(foldAll(from, await overlayEvents(store, graph)), parsed.graph, []);
+  const { event } = rebaseOverlay(foldAll(firstHead(head), await overlayEvents(store, graph)), parsed.graph, []);
   await log.append([event]);
   return { status: "reverted", from, to };
 }

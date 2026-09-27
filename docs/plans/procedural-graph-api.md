@@ -621,6 +621,79 @@ As built (P5). These are additions; nothing above changed meaning.
 - Native host: `--procedural <dir>`, and a `harness-procedural` CLI with `dream`,
   `export`, `import`, `revert` and `history`.
 
+As built (P12). These refine the shapes above; no name another phase uses changed.
+
+- `proceduralExtension(options: ProceduralExtensionOptions)` takes:
+  - `store`, `settings`, `preset?` (default `harness`; import checks cycles under its
+    `dream.cycles`) and `clock: { now(): number }`;
+  - `authorize?: (action: ProceduralAction, graph: GraphId) => boolean`, the policy bound
+    by the host (P9's `authorize(policy, action, graph, context)` with its context), which
+    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
+  - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
+    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+
+  It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
+  parses its input (malformed input throws `invalid procedural.<op> input`), then checks
+  the policy for its action (a refusal throws `procedural.<op>: <action> on graph <g> is
+  not allowed`), then runs. The ops and their actions:
+
+  | Op | Input | Action | Result |
+  |---|---|---|---|
+  | `graph` | `{graph, revision?, overlay?}` | read | `{status:"ok", head, revision, origin, document, effective}` or `missing` |
+  | `history` | `{graph}` | read | `GraphHistory` |
+  | `export` | `{graph, revision?, format?: "json" \| "mermaid", overlay?}` | read | `ExportResult` |
+  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `{status:"recorded", graph}`, `missing` (no pin) or `unavailable` |
+  | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
+  | `revert` | `{graph, to?}` | revert | `RevertResult` |
+  | `import` | `{graph, document?}` | import | `ImportResult` |
+
+- `import-export.ts` holds the operations over a store, which the CLI shares:
+  - `importGraph({store, graph, document?, clock, cycles?})`: no document is `seedGraph()`.
+    Results: `{status:"head"}` for a graph with no head (the record has no parents),
+    `{status:"proposed", head}` otherwise (a `pending-approval` import record whose parent
+    is the head, for dream or an approver to take up), `{status:"known", decision}` when
+    the graph already recorded that revision (nothing is written), or
+    `{status:"invalid", diagnostics}`. When another writer sets the head between the
+    record and the compare-and-set, the import becomes a proposal on their head.
+  - `readGraph({store, graph, revision?, overlay?})` returns `GraphView`. On the head, the
+    overlay log is folded from the graph's first head and shown with probation share 1
+    (every non-retired entry, the operator's view) when its base is the head; otherwise the
+    core alone (`coreView`).
+  - `exportGraph({..., format})`: `json` is the stored document, `mermaid` is
+    `exportMermaid(effective)`; both end with a newline.
+  - `graphHistory({store, graph})`: `{head?, heads (head then history), revisions}`, the
+    revisions oldest first, as `RevisionSummary` without documents.
+  - `revertGraph({store, graph, to?, clock})`: `to` defaults to the previous head and must
+    be an earlier head (not the head itself), recorded and not redacted. A revision's id is
+    its content, so the `revert` record (parent: the head it leaves) takes the target's id
+    and replaces its record; `evidence` is `{reverted, replaces}` with the replaced record
+    minus its id, graph and document. Then a compare-and-set moves the head (on a lost race
+    the replaced record is put back and the revert is refused), and a `rebased` event onto
+    the target is appended, so the overlay follows the head and entries the target cannot
+    anchor are dropped. P9's `pinSession` sees the `revert` origin and re-pins.
+- `exportMermaid(g)` renders `flowchart TD`, a `%% core <id>, overlay <n|none>` comment,
+  nodes as `n<index>` with the name and type as the label (statuses as stadiums, reasoning
+  as rhombi, other types as boxes), edges with the relation and `when: <condition>`,
+  overlay nodes in the dashed `overlay` class and overlay edges dashed (`-.->`), labeled
+  `learned` or `learned (provisional)`, cautions as `Caution: <text>` lines on their edge's
+  label with a `linkStyle` for the cautioned edges. Notes and guidance are left out. Label
+  text escapes `# " < > | \`` as Mermaid entities and line breaks as `<br/>`.
+- Native host (`packages/platform-native`): `loadProceduralSettings(file?)`;
+  `proceduralStore(dir)` is a `SnapshotProceduralStore` over `FileStorage` at
+  `<dir>/procedural.json`; `buildNativeEnsemble({ procedural: { dir, settings?, preset?,
+  authorize?, dream?, feedback? } })` installs the extension and returns
+  `procedural: {store, settings}` for the step hook and the learner to share;
+  `pumpHookEvents(runtime, {plugin, types, onEvent})` is an in-process plugin connection
+  with a durable hook-bus cursor, acknowledging each event after its handler resolves;
+  `sessionLogReader(daemon)` reads a session's log entries in `[from, to)`. `main.ts`
+  takes `--procedural <dir>` and `--procedural-settings <file>`.
+- `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
+  operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`);
+  `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
+  file, `revert` `--to`. A result a caller handles exits 1, bad usage 2.
+- Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
+  extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
+
 ## P13: composition (`compose.ts`)
 
 - `pathCandidates(core, overlayStats, settings)`.
