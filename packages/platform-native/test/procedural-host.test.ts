@@ -8,12 +8,14 @@ import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
 import { GraphIdSchema, importGraph, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, seedGraph } from "@harness/procedural";
+import type { RevisionId } from "@harness/procedural";
 import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
   harnessWorker,
   hostAuthorizer,
   hostPorts,
+  nativeLiveLearner,
   loadProceduralPolicy,
   loadProceduralResolver,
   loadProceduralSettings,
@@ -209,6 +211,46 @@ describe("procedural guidance and access on the native host", () => {
     writeFileSync(file, JSON.stringify({ rules: "none" }));
     expect(() => loadProceduralResolver(file)).toThrow(/invalid procedural resolver/);
     expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
+  });
+});
+
+describe("the live learner on the native host", () => {
+  it("PX2.56 the learner observes each ended turn of a pinned session from the daemon's log, once, into the graph's overlay", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    const { revision } = (await importGraph({ store, graph, clock: hostPorts.clock })) as { revision: RevisionId };
+    await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
+    const live = nativeLiveLearner({ runtime: host.runtime, store, settings: loadProceduralSettings(), intervalMs: 60_000 });
+    await prompt("one");
+    await live.drain();
+    await live.drain();
+    const events = (await store.overlay(graph).read(0)).map((e) => e.event);
+    expect(events.filter((e) => e.kind === "observed").map((e) => (e as { turnKey: string }).turnKey)).toEqual([expect.stringMatching(new RegExp(`^${sessionId}/`))]);
+    expect(await live.learner.feedback(sessionId, "absent-turn", 2)).toMatchObject({ kind: "skipped" });
+    live.close();
+    await host.close();
+  });
+
+  it("PX2.57 a learner failure is logged and the turn is observed on a later drain", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    const { revision } = (await importGraph({ store, graph, clock: hostPorts.clock })) as { revision: RevisionId };
+    await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
+    const read = store.overlay.bind(store);
+    let broken = true;
+    store.overlay = (g) => (broken ? { ...read(g), append: async () => Promise.reject(new Error("disk full")) } : read(g));
+    const logged: string[] = [];
+    const live = nativeLiveLearner({ runtime: host.runtime, store, settings: loadProceduralSettings(), preset: "harness", log: (m) => logged.push(m) });
+    await prompt("one");
+    await live.drain();
+    expect(logged).toEqual(["procedural-learner: disk full"]);
+    broken = false;
+    await live.drain();
+    expect((await store.overlay(graph).read(0)).some((e) => e.event.kind === "observed")).toBe(true);
+    live.close();
+    await host.close();
   });
 });
 
