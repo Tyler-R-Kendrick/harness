@@ -477,6 +477,40 @@ provider options `harness` (`@harness/cognitive` `constrain`).
 - `reflect({ model, template, graphContext, trajectory, maxOutputTokens? }): Promise<OverlayEntry[]>`.
   It is constrained to an entries schema, and never includes a binding.
 
+As built (P5). These are additions; nothing above changed meaning.
+
+- `type Decoding` is `{ temperature?, topK?, maxOutputTokens?, abortSignal? }`, the AI SDK's
+  own settings. `guide`, `refine` and `reflect` each accept all four and pass them through
+  to `generateText`; an omitted one is not sent.
+- `renderPrompt` fills `{identifier}` slots in one pass: a value is inserted verbatim and
+  never filled again, and a slot with no value (or any other braces) stays as it is.
+- `readJsonBlock(text): { ok: true; value: unknown } | { ok: false; error: string }` reads
+  the whole answer as JSON, or else its block from the first `{` to the last `}`.
+- `guide` returns `usage` as the AI SDK's `LanguageModelUsage`, and sends no constraint.
+- `GuidanceCache.key` takes `GuidanceKeyParts`:
+  `{ core: RevisionId; overlay: number | null; node: NodeName | undefined; query: string; window: string; model: LanguageModel }`.
+  `node` is undefined for the full-graph fallback. `model` is a model or its id; a model
+  counts as `"<provider>:<modelId>"`. The key is canonical JSON of
+  `[core, overlay, node ?? null, sha256(query), sha256(window), model]`, so it holds no
+  query or window text. `get` returns `string | undefined` and counts a hit or a miss.
+- `refine` takes these, beside `model`, `template` and the decoding settings:
+  - `task`, `mode`, `attempts`, `graphJson` and `rejected`, all strings, filling
+    `{task_description}`, `{mode}`, `{attempts_block}`, `{current_graph_json}` and
+    `{rejected_block}`;
+  - `tools: readonly string[]`, joined with `", "` into `{available_tools_list}`;
+  - `consolidation?: { overlayEntries: string; cautionedEdges: string; rejectionReasons: string }`,
+    filling dream's three blocks.
+
+  Its constraint is `{type: "json-schema", schema: editSetJsonSchema()}` through
+  `constrain`. An answer that is not JSON, or not an edit set, is `{error, raw}`, with the
+  error naming where. A failing model call still rejects.
+- `reflect` takes `graphContext` and `trajectory` (strings). Its constraint is
+  `reflectionJsonSchema()`, `{entries: (note | edge)[]}`: reflection proposes only notes
+  and edges. Each entry is parsed on its own, and one that is malformed, of another kind or
+  carries a binding is dropped. A malformed answer yields `[]`.
+- Exported types: `GuideRequest`, `GuidanceKeyParts`, `RefineRequest`, `RefineResult`,
+  `ReflectRequest`.
+
 ## P6: dream (`dream.ts`, `gates.ts`, `dream-runner.ts`)
 
 - The reducer:
