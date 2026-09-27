@@ -908,3 +908,12 @@ As built (P13). The names above keep their meaning; these are the refinements.
 - `revisionTools({ base: ToolSet, pinnedCore: ProceduralGraph, staging: WorkflowHost })`.
   `staging` is a `WorkflowHost` over the staging library. The code hash is checked when
   the tools are built and again at each call.
+
+## Open issues
+
+Cross-phase wiring that no single phase owned; the finalizer resolves these test-first:
+
+- **Dream uses composition (P6 × P13).** Dream calls `pathCandidates`, `recordedRuns`, `compilePath`, `StagingLibrary.stage` and `composeCandidate` for promotion, and gates the composed `document` (an `EditSet` cannot carry a binding) through the same gates as any candidate.
+- **Live reflection (plan §6.2.4).** `live.reflection` set to `turn` or `batch` must call `reflect` (P5). Every entry runs through `editFilter` before it is `proposed` with `source.by = "reflection"`. The setting stays off in the harness preset.
+- **Host wiring for the live learner (P11 × P12).** The native host creates a `LiveLearner` and subscribes it to the daemon's hook events (`turn.ended`). `readLog` reads the session log, and `learner.feedback` goes to the extension's `feedback` op. Consumers that count turns must skip `observed` events that carry `rescore`.
+- **Dream from the host.** `procedural.dream` and the `harness-procedural dream` CLI run `runDream` with real ports: the refiner is `refine` on the ensemble's generator, and the evaluator and approver are optional. The permission flow is the approver when one is configured.
