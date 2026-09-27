@@ -14,7 +14,7 @@ import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hostAuthorizer, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
+import { hostAuthorizer, nativeLiveLearner, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -88,6 +88,8 @@ const learned = await learningFile?.load();
 const principal = userInfo().username;
 const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
 const proceduralPolicy = values["procedural-policy"] === undefined ? undefined : loadProceduralPolicy(values["procedural-policy"]);
+// The live learner starts with the daemon (it reads the daemon's hook events and logs); `procedural.feedback` reaches it then.
+const live: { learner?: ReturnType<typeof nativeLiveLearner> } = {};
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
@@ -97,7 +99,14 @@ const cognitive =
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
         ...(values.workflows === undefined ? {} : { workflows: { dir: values.workflows } }),
-        ...(values.procedural === undefined ? {} : { procedural: { dir: values.procedural, settings: proceduralSettings!, authorize: hostAuthorizer(proceduralPolicy, principal) } }),
+        ...(values.procedural === undefined ? {} : {
+              procedural: {
+                dir: values.procedural,
+                settings: proceduralSettings!,
+                authorize: hostAuthorizer(proceduralPolicy, principal),
+                feedback: async (session: string, turn: string, score: number) => live.learner?.learner.feedback(session, turn, score),
+              },
+            }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
@@ -166,7 +175,10 @@ const host = await NodeHost.start({
   ...(values.state === undefined ? {} : { statePath: values.state }),
 });
 
+if (procedural) live.learner = nativeLiveLearner({ runtime: host.runtime, ...procedural, log: (message) => void process.stderr.write(`${message}\n`) });
+
 const shutdown = async () => {
+  live.learner?.close();
   await host.close();
   await harness?.close();
   await cognitive?.close();

@@ -1,7 +1,7 @@
 import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import type { Daemon, HookEvent, LogEntry } from "@harness/core";
-import { authorize, proceduralStep, SnapshotProceduralStore } from "@harness/procedural";
+import { authorize, LiveLearner, presetOf, proceduralStep, SnapshotProceduralStore } from "@harness/procedural";
 import type { AccessPolicy, Action, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
@@ -118,12 +118,37 @@ export function pumpHookEvents(
 }
 
 /**
+ * The live learner (P11) on this host: subscribed in process to the daemon's `turn.ended`
+ * events (plugin `procedural-learner`, with its durable cursor), reading each session's log
+ * from the daemon. A failure is logged and the event redelivered on the next drain.
+ */
+export function nativeLiveLearner(options: {
+  readonly runtime: Pick<DaemonRuntime, "connect" | "daemon">;
+  readonly store: ProceduralStore;
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly intervalMs?: number;
+  readonly log?: (message: string) => void;
+}): { learner: LiveLearner; drain(): Promise<void>; close(): void } {
+  const { runtime, store, settings, log } = options;
+  const learner = new LiveLearner({ store, settings: presetOf(settings, options.preset ?? "harness"), readLog: sessionLogReader(runtime.daemon), clock: hostPorts.clock });
+  const pump = pumpHookEvents(runtime, {
+    plugin: "procedural-learner",
+    types: ["turn.ended"],
+    onEvent: async (event) => void (await learner.onHookEvent(event)),
+    ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+    ...(log === undefined ? {} : { log }),
+  });
+  return { learner, drain: pump.drain, close: pump.close };
+}
+
+/**
  * A session's log entries in `[from, to)`, read from the daemon's snapshot: the daemon has
  * no host-side log read yet, so this copies every session's log (plan §6.5). Entries
  * compacted into the log's snapshot are gone; an unknown session has none.
  */
-export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to: number) => Promise<LogEntry<unknown>[]> {
-  return async (sessionId, from, to) => {
+export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to?: number) => Promise<LogEntry<unknown>[]> {
+  return async (sessionId, from, to = Number.POSITIVE_INFINITY) => {
     const session = daemon.snapshot().sessions.find((s) => s.id === sessionId);
     const entries = (session?.log as { entries?: LogEntry<unknown>[] } | undefined)?.entries ?? [];
     return entries.filter((e) => e.offset >= from && e.offset < to);
