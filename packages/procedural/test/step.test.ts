@@ -5,6 +5,7 @@ import { ManualClock, promptText, SeededEntropy } from "@harness/testkit";
 import {
   ADVISORY,
   canonicalJson,
+  GraphIdSchema,
   GUIDANCE_LABEL,
   MemoryProceduralStore,
   parseGraph,
@@ -102,6 +103,12 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     const { cwd: _, ...noCwd } = input(s, [user("q")], { sessionId: "s4", sessionMeta: { team: "team" } });
     await hook.prepare(noCwd);
     expect(s.records).toHaveLength(1);
+    const byOwner = parseResolver({ rules: [{ when: { principal: "me" }, graph: "${principal}/retrieval" }, { when: {}, graph: null }] });
+    const mine = await setup("paper", { resolver: byOwner });
+    await seed(mine.store, hotpotGraph(), GraphIdSchema.parse("me/retrieval"));
+    await proceduralStep({ ...mine.deps, principal: "me" }).prepare(input(mine, [user("q")]));
+    await proceduralStep(mine.deps).prepare(input(mine, [user("q")], { sessionId: "s2" }));
+    expect(mine.records.map((r) => r.graph)).toEqual(["me/retrieval"]);
   });
 
   it("PW1.32 the first step is at Start: its two-hop neighborhood, the query and the local context words go to the guidance model", async () => {

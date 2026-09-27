@@ -95,8 +95,10 @@ export interface ProceduralStepHook {
 
 export interface ProceduralStepDeps {
   readonly store: ProceduralStore;
-  /** Maps a session's meta and cwd to its graph, or to none. */
+  /** Maps a session's meta and cwd (and the principal) to its graph, or to none. */
   readonly resolver: Resolver;
+  /** The owner principal the resolver sees for every session (the host's). */
+  readonly principal?: string;
   readonly settings: Settings;
   /** Stamps pins (the core's `Clock`). */
   readonly clock: { now(): number };
@@ -204,8 +206,8 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   const sessions = new Map<string, Session>();
 
   const load = async (scope: StepScope): Promise<View | undefined> => {
-    // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta or cwd as an absent one
-    const graph = resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }) });
+    // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
+    const graph = resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) });
     if (graph === undefined) return undefined;
     const pin = await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
     const record = await deps.store.revisions.get(pin.core);

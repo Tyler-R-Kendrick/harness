@@ -680,7 +680,8 @@ changed.
 - Procedural (`step.ts`):
   - `proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook`, structurally a workers
     `StepHook` (procedural does not depend on workers). `ProceduralStepDeps` is
-    `{ store; resolver: Resolver; settings; preset? /* "harness" */; model? /* the step's own */; clock; entropy }`.
+    `{ store; resolver: Resolver; principal?; settings; preset? /* "harness" */; model? /* the step's own */; clock; entropy }`;
+    `principal` is the owner the resolver sees for every session (the host's).
     The turn variant needs `model`, since a harness turn has none.
   - A turn boundary is a new `turnId` (or, without one, step 0). At a boundary the session
     re-resolves (`resolveGraph` over its meta and cwd), re-pins (`pinSession` with the
