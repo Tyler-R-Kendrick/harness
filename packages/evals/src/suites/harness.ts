@@ -30,14 +30,13 @@ export const harnessSuite: readonly EvalCase[] = [
       const turns = await runSession(new EchoWorker(), ["first: open the file", "second: edit line 3", "third: save"]);
       return { turns: turns.map((t) => ({ user: t.prompt, assistant: t.reply, stopReason: t.stopReason ?? "none" })) };
     },
+    // One property per question: a judge weighs a single claim more reliably than a conjunction.
     questions: {
-      ordered: {
-        type: "boolean",
-        instructions:
-          "Does `turns` have exactly one entry per user prompt, in the order first, second, third, where each assistant reply repeats only its own user prompt (no text from another turn) and every stopReason is end_turn?",
-      },
+      ordered: { type: "boolean", instructions: "Does `turns` have exactly three entries, whose \"user\" texts begin with first, second and third, in that order?" },
+      separate: { type: "boolean", instructions: "Does each entry of `turns` have an \"assistant\" text that contains that entry's own \"user\" text and no text from any other entry's \"user\"?" },
+      ended: { type: "boolean", instructions: "Is the \"stopReason\" of every entry of `turns` equal to end_turn?" },
     },
-    expect: { ordered: { type: "boolean", expect: true } },
+    expect: { ordered: { type: "boolean", expect: true }, separate: { type: "boolean", expect: true }, ended: { type: "boolean", expect: true } },
   },
   {
     id: "harness.permission-denied",
