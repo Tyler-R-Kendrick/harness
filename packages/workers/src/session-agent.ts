@@ -1,8 +1,85 @@
+import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { streamText, ToolLoopAgent } from "ai";
 import { HARNESS } from "@harness/cognitive";
-import type { LanguageModel, ModelMessage, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
+import type { Instructions, LanguageModel, ModelMessage, PrepareStepFunction, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
+
+/** What a step hook is told about the session and turn a step belongs to. */
+export interface TurnScope {
+  readonly sessionId: string;
+  readonly turnId?: string;
+  readonly cwd?: string;
+  readonly sessionMeta?: Readonly<Record<string, unknown>>;
+  /** Sends a session update to the client as part of the turn. */
+  readonly report: (update: SessionUpdate) => void;
+}
+
+/** One step of an agent's loop, as AI SDK `prepareStep` sees it. */
+export interface StepContext extends TurnScope {
+  /** Everything the step's model call would get: the conversation so far, this turn's tool calls and results included. */
+  readonly messages: readonly ModelMessage[];
+  /** The turn's instructions before any step changed them. */
+  readonly initialInstructions: Instructions | undefined;
+  /** The AI SDK step number, which restarts when the worker restarts the stream (after an approval round). */
+  readonly stepNumber: number;
+  /** The step's model. */
+  readonly model: LanguageModel;
+  /** The names of the tools the turn offers. */
+  readonly tools: readonly string[];
+}
+
+/** A turn of an opaque harness, which has no steps to prepare: only its prompt can carry guidance. */
+export interface TurnContext extends TurnScope {
+  /** The conversation the worker holds, ending with the turn's prompt. */
+  readonly messages: readonly ModelMessage[];
+  /** The last tool the harness called in an earlier turn of the session. */
+  readonly lastAction: string | undefined;
+  /** The names of the tools the harness offers. */
+  readonly tools: readonly string[];
+}
+
+/**
+ * Per-step guidance (e.g. procedural graphs): `prepare` may replace a step's
+ * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
+ * messages. `turn`, when given, guides an opaque harness's turn: its text is prepended
+ * to the prompt.
+ */
+export interface StepHook {
+  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[] } | undefined>;
+  turn?(context: TurnContext): Promise<string | undefined>;
+}
+
+/** A thrown value's message. */
+export const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The turn's scope for a hook: a turn without a report function reports nowhere. */
+export function scopeOf(turn: TurnOptions): TurnScope {
+  const { report = () => undefined, ...rest } = turn;
+  return { ...rest, report };
+}
+
+/** A step's preparation by the hook; a failing hook leaves the step as it was and says why. */
+function preparing(hook: StepHook, turn: TurnOptions, tools: readonly string[]): PrepareStepFunction<ToolSet> {
+  const scope = scopeOf(turn);
+  return async ({ messages, initialInstructions, stepNumber, model }) => {
+    try {
+      const prepared = await hook.prepare({ ...scope, messages, initialInstructions, stepNumber, model, tools });
+      return { ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }), ...(prepared?.messages ? { messages: [...prepared.messages] } : {}) };
+    } catch (e) {
+      scope.report({ sessionUpdate: "notice", severity: "warning", title: "Step guidance failed", description: messageOf(e) });
+      return {};
+    }
+  };
+}
+
+const TurnOptionsSchema = z.object({
+  sessionId: z.string(),
+  turnId: z.string().exactOptional(),
+  cwd: z.string().exactOptional(),
+  sessionMeta: z.record(z.string(), z.unknown()).exactOptional(),
+  report: z.custom<(update: SessionUpdate) => void>((v) => typeof v === "function").exactOptional(),
+});
 
 /** Session memory (see @harness/memory): related items are recalled into a turn, and turns are remembered. */
 export interface SessionMemory {
@@ -41,6 +118,8 @@ export function sessionAgent(options: {
    * go into the instructions as reference, retrieval for a small local model. Best effort.
    */
   readonly consult?: LanguageModel;
+  /** Prepares each step (see StepHook), e.g. with procedural graph guidance. */
+  readonly step?: StepHook;
 }): ToolLoopAgent<TurnOptions, ToolSet> {
   return new ToolLoopAgent<TurnOptions, ToolSet>({
     model: options.model,
@@ -48,7 +127,7 @@ export function sessionAgent(options: {
     ...(options.toolApproval ? { toolApproval: options.toolApproval } : {}),
     ...(options.stopWhen ? { stopWhen: options.stopWhen } : {}),
     maxRetries: 0,
-    callOptionsSchema: z.object({ sessionId: z.string() }),
+    callOptionsSchema: TurnOptionsSchema,
     prepareCall: async ({ options: turn, ...call }) => {
       const user = lastUser(call.messages ?? []);
       const said = textOf(user);
@@ -66,7 +145,14 @@ export function sessionAgent(options: {
       const tools = typeof options.tools === "function" ? await options.tools() : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
-      return { ...call, providerOptions, ...(instructions ? { instructions } : {}), ...(options.vision && hasImage(user) ? { model: options.vision } : {}), ...(tools ? { tools } : {}) };
+      return {
+        ...call,
+        providerOptions,
+        ...(instructions ? { instructions } : {}),
+        ...(options.vision && hasImage(user) ? { model: options.vision } : {}),
+        ...(tools ? { tools } : {}),
+        ...(options.step ? { prepareStep: preparing(options.step, turn, Object.keys(tools ?? call.tools ?? {})) } : {}),
+      };
     },
   });
 }

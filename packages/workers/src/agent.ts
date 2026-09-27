@@ -6,9 +6,17 @@ import type { BehaviorChange, CallbackOutcome, StopReason } from "@harness/core"
 import { textChunk } from "./worker.ts";
 import type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } from "./worker.ts";
 
-/** What each turn tells the agent: which session it belongs to (see sessionAgent). */
+/** What each turn tells the agent: which session and turn it belongs to, and where its updates go (see sessionAgent). */
 export interface TurnOptions {
   readonly sessionId: string;
+  /** The daemon turn: an approval round restarts the agent's stream within the same turn. */
+  readonly turnId?: string;
+  /** The session's working directory. */
+  readonly cwd?: string;
+  /** The session's opaque `_meta.harness.session` from `session/new`, when it had one. */
+  readonly sessionMeta?: Readonly<Record<string, unknown>>;
+  /** Sends a session update to the client as part of this turn (the worker's own). */
+  readonly report?: (update: SessionUpdate) => void;
 }
 
 /** A finished turn: what the person said and what the agent replied, e.g. to remember it. */
@@ -73,13 +81,14 @@ export class AgentWorker implements Worker {
     this.#running.set(key, running);
     const base = { sessionId: command.sessionId, turnId: command.turnId };
     const update = (u: SessionUpdate) => emit({ type: "update", ...base, update: u });
+    const turn: TurnOptions = { sessionId: command.sessionId, turnId: command.turnId, cwd: command.cwd, ...(command.sessionMeta ? { sessionMeta: command.sessionMeta } : {}), report: update };
     const { content, said } = userContent(command.prompt);
     const messages: ModelMessage[] = [...(this.#history.get(command.sessionId) ?? []), { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
     try {
       for (;;) {
-        const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
+        const result = await this.#agent.stream({ messages, options: turn, abortSignal: running.abort.signal });
         const approvals: { approvalId: string; toolCallId: string; toolName: string; input: unknown }[] = [];
         for await (const part of result.fullStream) {
           const state = stateOf(part as { type: string });

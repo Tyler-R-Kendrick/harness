@@ -13,5 +13,6 @@ export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { reflect, reflectionJsonSchema, type ReflectRequest } from "./reflect.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
+export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepPorts, type StepRecord, type StepResolveContext, type StepScope, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";
