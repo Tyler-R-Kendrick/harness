@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { experimental_evaluate } from "ai";
 import { Experimental_EvaluationMockModelV4 } from "ai/test";
 import type { Experimental_EvaluationModelV4CallOptions } from "@ai-sdk/provider";
-import { gatewayEvaluationModel, serviceAvailable, typesafeApiEvaluationModel } from "@harness/models";
+import { gatewayEvaluationModel, generatorJudge, serviceAvailable, typesafeApiEvaluationModel } from "@harness/models";
+import { MockLanguageModelV4 } from "ai/test";
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
+import { constraintOf, logprobsOf } from "@harness/cognitive";
 import { JudgeAnswerSchema } from "@harness/cognitive";
 import { judgeContract } from "@harness/testkit";
 
@@ -109,3 +112,99 @@ describe("judges on a TypeSafe-API server", () => {
 });
 
 judgeContract("TypeSafe-API evaluation model over a fake server", () => typesafeApiEvaluationModel({ baseUrl: "http://x", model: "local-judge", fetch: typesafeServer().f }));
+
+/**
+ * A generator standing in for a local model: it answers each question with the option
+ * letter it is scripted to prefer, and reports token log-probabilities (or not).
+ */
+function generator(pick: (prompt: string) => Record<string, number>, options: { readonly logprobs?: boolean; readonly answer?: (letters: string[]) => string } = {}) {
+  const calls: LanguageModelV4CallOptions[] = [];
+  const model = new MockLanguageModelV4({
+    modelId: "local-generator",
+    doGenerate: async (call) => {
+      calls.push(call);
+      const prompt = JSON.stringify(call.prompt);
+      const usage = { inputTokens: { total: 20, noCache: 20, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: 3, text: 3, reasoning: undefined } };
+      const constraint = constraintOf(call) as unknown as { schema: { enum: string[] } } | undefined;
+      // Asked to reason first (unconstrained), it reasons.
+      if (!constraint) return { content: [{ type: "text", text: "The reply matches, so it is right." }], finishReason: { unified: "stop", raw: "stop" }, usage, warnings: [] };
+      const probs = pick(prompt);
+      const letters = constraint.schema.enum;
+      const best = letters.reduce((a, b) => ((probs[b] ?? 0) > (probs[a] ?? 0) ? b : a));
+      const text = options.answer ? options.answer(letters) : JSON.stringify(best);
+      const top = Object.entries(probs).map(([token, p]) => ({ token, logprob: Math.log(p) }));
+      return {
+        content: [{ type: "text", text }],
+        finishReason: { unified: "stop", raw: "stop" },
+        usage,
+        warnings: [],
+        ...(options.logprobs === false ? {} : { providerMetadata: { harness: { logprobs: [{ token: '"', logprob: 0, top: [{ token: '"', logprob: 0 }] }, { token: best, logprob: Math.log(probs[best] ?? 1), top: [...top, { token: " The", logprob: -3 }] }] } } }),
+      };
+    },
+  });
+  return { model, calls };
+}
+
+describe("a generator as a judge (LLM-as-judge)", () => {
+  it("GJ1.1 each question is put to the generator with the state, its options as letters, an answer constrained to one letter, and token probabilities asked for", async () => {
+    const { model, calls } = generator(() => ({ A: 0.9, B: 0.1 }));
+    const { answers } = await experimental_evaluate({ model: generatorJudge(model), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "42" }, questions: { correct: { type: "boolean", instructions: "Does `reply` correctly answer `question`?" } } });
+    expect(answers.correct).toEqual({ type: "boolean", probability: expect.closeTo(0.9, 6) });
+    const call = calls[1]!;
+    expect(constraintOf(call)).toEqual({ type: "json-schema", schema: { type: "string", enum: ["A", "B"] } });
+    expect(logprobsOf(call.providerOptions)).toBe(20);
+    expect(call.temperature).toBe(0);
+    const text = JSON.stringify(call.prompt);
+    for (const part of ["What is 17 + 25?", "Does `reply` correctly answer `question`?", "A. true", "B. false"]) expect(text).toContain(part);
+  });
+
+  it("GJ1.2 choices and scores get a distribution over their options from the letters' probabilities; a score is its expected level", async () => {
+    const { model } = generator((prompt) => (prompt.includes("How complete") ? { A: 0.1, B: 0.2, C: 0.7 } : { A: 0.2, B: 0.6, C: 0.2 }));
+    const { answers } = await experimental_evaluate({
+      model: generatorJudge(model),
+      maxRetries: 0,
+      state: "a ticket",
+      questions: {
+        team: { type: "choice", instructions: "Which team?", criteria: { billing: "Charges and refunds", technical: null, sales: null } },
+        quality: { type: "score", instructions: "How complete is it?", criteria: ["poor", "fair", "good"] },
+      },
+    });
+    expect(answers.team).toEqual({ type: "choice", choice: "technical", probabilities: { billing: expect.closeTo(0.2, 6), technical: expect.closeTo(0.6, 6), sales: expect.closeTo(0.2, 6) } });
+    expect(answers.quality).toEqual({ type: "score", score: expect.closeTo(1.6, 6), probabilities: { "0": expect.closeTo(0.1, 6), "1": expect.closeTo(0.2, 6), "2": expect.closeTo(0.7, 6) } });
+  });
+
+  it("GJ1.3 a generator that reports no token probabilities is taken at its word, and says so; an answer that is not an option is an error", async () => {
+    const { model } = generator(() => ({ A: 0.3, B: 0.7 }), { logprobs: false });
+    const result = await generatorJudge(model).doEvaluate({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } });
+    expect(result.answers).toEqual({ ok: { type: "boolean", probability: 0 } });
+    expect(result.warnings).toEqual([{ type: "other", message: "local-generator reported no token probabilities; its answers count as certain" }]);
+    const { model: rambling } = generator(() => ({ A: 1 }), { logprobs: false, answer: () => "maybe" });
+    await expect(generatorJudge(rambling).doEvaluate({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } })).rejects.toThrow('local-generator answered "maybe", not one of A, B');
+  });
+
+  it("GJ1.5 the generator reasons before it answers: a bounded, unconstrained call first, whose reasoning precedes the letter it is then asked for", async () => {
+    const { model, calls } = generator(() => ({ A: 0.9, B: 0.1 }));
+    await generatorJudge(model, { reasoningTokens: 64 }).doEvaluate({ state: { reply: "42" }, questions: { correct: { type: "boolean", instructions: "Is it right?" } } });
+    expect(calls).toHaveLength(2);
+    const [reason, answer] = calls as [LanguageModelV4CallOptions, LanguageModelV4CallOptions];
+    expect({ constraint: constraintOf(reason), logprobs: logprobsOf(reason.providerOptions), max: reason.maxOutputTokens, temperature: reason.temperature }).toEqual({ constraint: undefined, logprobs: undefined, max: 64, temperature: 0 });
+    expect(JSON.stringify(reason.prompt)).toContain("reason briefly");
+    expect(JSON.stringify(reason.prompt)).toContain("A. true");
+    // the letter is asked for after the question, the reasoning (as the generator's own turn) and a request for the letter alone
+    expect(answer.prompt.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(JSON.stringify(answer.prompt[1])).not.toContain("reason briefly");
+    expect(JSON.stringify(answer.prompt[2])).toContain("The reply matches, so it is right.");
+    expect(JSON.stringify(answer.prompt[3])).toContain("letter only");
+    expect(answer.maxOutputTokens).toBe(8);
+    const { model: plain, calls: byDefault } = generator(() => ({ A: 1 }));
+    await generatorJudge(plain).doEvaluate({ state: "s", questions: { ok: { type: "boolean", instructions: "?" } } });
+    expect(byDefault[0]!.maxOutputTokens).toBe(192);
+  });
+
+  it("GJ1.4 it names the generator it runs on and takes every question type", () => {
+    const judge = generatorJudge(generator(() => ({})).model);
+    expect({ provider: judge.provider, modelId: judge.modelId, types: judge.supportedQuestionTypes }).toEqual({ provider: "harness.generator-judge", modelId: "local-generator", types: ["boolean", "choice", "score"] });
+  });
+});
+
+judgeContract("a generator as a judge", () => generatorJudge(generator(() => ({ A: 0.7, B: 0.2, C: 0.1 })).model));

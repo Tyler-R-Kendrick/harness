@@ -1,6 +1,6 @@
 export { ArtifactIntegrityError, ArtifactStore, MemoryByteCache, sha256Hex } from "./artifacts.ts";
 export type { ByteCache } from "./artifacts.ts";
-export { gatewayEvaluationModel, serviceAvailable, typesafeApiEvaluationModel } from "./judge.ts";
+export { gatewayEvaluationModel, generatorJudge, serviceAvailable, typesafeApiEvaluationModel } from "./judge.ts";
 export type { TypeSafeApiOptions } from "./judge.ts";
 export { CactusWasmEngine } from "./cactus-wasm.ts";
 export type { CactusModule } from "./cactus-wasm.ts";

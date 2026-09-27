@@ -4,6 +4,8 @@ import { defineConfig } from "vitest/config";
 // node_modules symlinks. Stryker runs tests in a sandbox copy; symlinks would point
 // back at the unmutated originals and every mutant would falsely "survive".
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
+// Subpath entries resolve before their package (aliases match by prefix, in order).
+const SUBPATHS = { "@harness/workflows/node": new URL("./packages/workflows/src/node.ts", import.meta.url).pathname };
 const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser"];
 
 // Test taxonomy (by filename suffix):
@@ -16,7 +18,7 @@ const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native",
 // Evals (LLM-as-judge) are not vitest tests; see packages/evals and `npm run eval`.
 export default defineConfig({
   resolve: {
-    alias: Object.fromEntries(PACKAGES.map((name) => [`@harness/${name}`, pkg(name)])),
+    alias: { ...SUBPATHS, ...Object.fromEntries(PACKAGES.map((name) => [`@harness/${name}`, pkg(name)])) },
   },
   test: {
     include: ["packages/*/test/**/*.test.ts"],

@@ -6,6 +6,7 @@ import { WorkflowFiles } from "@harness/platform-native";
 import { tool } from "ai";
 import { z } from "zod";
 import { parseWorkflow, WorkflowHost } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -34,7 +35,7 @@ describe("workflow files", () => {
     const files = new WorkflowFiles(dir);
     await files.put(count);
     let calls = 0;
-    const host = () => new WorkflowHost({ library: new WorkflowFiles(dir), journal: (r) => files.journal(r), ask: async () => "", tools: { next: tool({ inputSchema: z.object({}).loose(), execute: async () => ++calls }) } });
+    const host = () => new WorkflowHost({ codeMode: aiCodeMode, library: new WorkflowFiles(dir), journal: (r) => files.journal(r), ask: async () => "", tools: { next: tool({ inputSchema: z.object({}).loose(), execute: async () => ++calls }) } });
     expect(await host().run("count", { base: 10 }, "../../escape")).toMatchObject({ status: "completed", output: 11 });
     expect(await host().run("count", { base: 10 }, "../../escape")).toMatchObject({ status: "completed", output: 11, replayed: 1, performed: 0 });
     expect(calls).toBe(1);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrain, constraintOf, dimensions, inSession, jsonResponseFormat, sessionOf, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf } from "@harness/cognitive";
+import { constrain, constraintOf, dimensions, inSession, jsonResponseFormat, logprobsIn, logprobsOf, sessionOf, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf, withLogprobs } from "@harness/cognitive";
 
 describe("our settings on AI SDK calls", () => {
   it("OP1.1 a constraint travels as harness provider options and reads back parsed; a JSON response format is a JSON Schema constraint", () => {
@@ -61,5 +61,16 @@ describe("our settings on AI SDK calls", () => {
     expect(stateOf({ ...part, type: "file" })).toBeUndefined();
     expect(stateOf({ type: "custom", kind: STATE_KIND, providerMetadata: { [HARNESS]: { state: 3 } } })).toBeUndefined();
     expect(stateOf({ type: "custom", kind: STATE_KIND })).toBeUndefined();
+  });
+
+  it("OP1.7 a call asks for the top tokens at each position; a model reports them back as harness provider metadata, read only when well formed", () => {
+    expect(withLogprobs(5)).toEqual({ providerOptions: { harness: { logprobs: 5 } } });
+    expect(logprobsOf(withLogprobs(5).providerOptions)).toBe(5);
+    for (const bad of [0, -1, 2.5, "5", undefined]) expect(logprobsOf({ harness: { logprobs: bad } })).toBeUndefined();
+    expect(logprobsOf(undefined)).toBeUndefined();
+    const reported = [{ token: "A", logprob: -0.1, top: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.4 }] }];
+    expect(logprobsIn({ harness: { logprobs: reported } })).toEqual(reported);
+    expect(logprobsIn({ harness: { logprobs: [{ token: "A" }] } })).toBeUndefined();
+    expect(logprobsIn({ other: { logprobs: reported } })).toBeUndefined();
   });
 });

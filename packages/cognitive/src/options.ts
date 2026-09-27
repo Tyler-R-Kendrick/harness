@@ -112,3 +112,29 @@ export function stateOf(part: { readonly type: string; readonly kind?: string; r
   const parsed = StateSchema.safeParse(harness(part.providerMetadata));
   return parsed.success ? parsed.data : undefined;
 }
+
+/** One generated token and the most likely tokens at its position, as natural-log probabilities. */
+export interface TokenLogprob {
+  readonly token: string;
+  readonly logprob: number;
+  readonly top: readonly { readonly token: string; readonly logprob: number }[];
+}
+
+const TokenLogprobs = z.array(z.object({ token: z.string(), logprob: z.number(), top: z.array(z.object({ token: z.string(), logprob: z.number() })) }));
+
+/** Call settings asking a model that can for the `top` most likely tokens at each generated position. */
+export function withLogprobs(top: number): { providerOptions: { harness: JSONObject } } {
+  return { providerOptions: { [HARNESS]: { logprobs: top } } };
+}
+
+/** How many top tokens a call asks for, if it asks. */
+export function logprobsOf(providerOptions: ProviderOptions): number | undefined {
+  const top = z.int().positive().safeParse(harness(providerOptions)["logprobs"]);
+  return top.success ? top.data : undefined;
+}
+
+/** The token probabilities a model reported (provider metadata `harness.logprobs`), if it did. */
+export function logprobsIn(providerMetadata: ProviderOptions): TokenLogprob[] | undefined {
+  const parsed = TokenLogprobs.safeParse(harness(providerMetadata)["logprobs"]);
+  return parsed.success ? parsed.data : undefined;
+}

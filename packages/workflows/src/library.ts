@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { generateText, jsonSchema, Output, tool } from "ai";
+import { asSchema, generateText, jsonSchema, Output, tool } from "ai";
 import type { LanguageModel, ToolSet } from "ai";
 import { constrain } from "@harness/cognitive";
 import type { CognitiveExtension, Constraint } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { ASK, runWorkflow } from "./run.ts";
 import type { Effects, RunResult, ToolSpec } from "./run.ts";
+import type { CodeMode } from "./code-mode.ts";
 
 /** A workflow as kept: named, described, its input's JSON Schema, and its code. */
 export const WorkflowSchema = z.strictObject({
@@ -46,8 +47,19 @@ export class MemoryLibrary implements WorkflowLibrary {
     this.#workflows.set(workflow.name, parseWorkflow(workflow));
   }
   async list(): Promise<Workflow[]> {
+    // Stryker disable next-line EqualityOperator: equivalent; names are unique, so < and <= order them alike
     return [...this.#workflows.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
   }
+}
+
+export interface WorkflowHostOptions {
+  readonly library: WorkflowLibrary;
+  /** Each run's journal, by run id. */
+  readonly journal: (run: string) => SnapshotStorage;
+  readonly ask: Effects["ask"];
+  /** Where workflow code runs (`aiCodeMode` natively, `quickjsCodeMode()` anywhere). */
+  readonly codeMode: CodeMode;
+  readonly tools?: ToolSet;
 }
 
 /**
@@ -56,9 +68,9 @@ export class MemoryLibrary implements WorkflowLibrary {
  * the host's AI SDK tools; `tools.ask` puts a question to a model.
  */
 export class WorkflowHost {
-  readonly #options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet };
+  readonly #options: WorkflowHostOptions;
 
-  constructor(options: { readonly library: WorkflowLibrary; readonly journal: (run: string) => SnapshotStorage; readonly ask: Effects["ask"]; readonly tools?: ToolSet }) {
+  constructor(options: WorkflowHostOptions) {
     this.#options = options;
   }
 
@@ -70,9 +82,11 @@ export class WorkflowHost {
     const { library, tools = {} } = this.#options;
     const workflow = await library.get(name);
     if (!workflow) throw new Error(`no workflow ${name}`);
+    // The code may call the host's tools and the library's other workflows, each call
+    // checked against the tool's own input schema or the workflow's inputs; not itself.
     const specs: Record<string, ToolSpec> = {};
-    for (const [n, t] of Object.entries(tools)) specs[n] = typeof t.description === "string" ? { description: t.description } : {};
-    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { description: w.description, inputSchema: w.inputs };
+    for (const [n, t] of Object.entries(tools)) specs[n] = { inputSchema: (await asSchema(t.inputSchema).jsonSchema) as Record<string, unknown> };
+    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { inputSchema: w.inputs };
     let calls = 0;
     return runWorkflow({
       name,
@@ -80,6 +94,7 @@ export class WorkflowHost {
       input,
       tools: specs,
       journal: this.#options.journal(run),
+      codeMode: this.#options.codeMode,
       effects: {
         ask: this.#options.ask,
         tool: async (name, args) => {
@@ -89,6 +104,7 @@ export class WorkflowHost {
             if (nested.status === "failed") throw new Error(`workflow ${name} failed: ${nested.error}`);
             return nested.output;
           }
+          // Stryker disable next-line OptionalChaining: equivalent; a name that reaches here is a tool's (the code may call no other)
           const execute = tools[name]?.execute;
           if (!execute) throw new Error(`no tool ${name} is available to workflows`);
           return execute(args, { toolCallId: `${run}/${calls}:${name}`, messages: [], context: undefined });

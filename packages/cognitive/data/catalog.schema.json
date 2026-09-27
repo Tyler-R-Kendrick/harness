@@ -1313,6 +1313,13 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "template": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
                   }
                 },
                 "required": [

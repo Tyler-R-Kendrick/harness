@@ -244,10 +244,12 @@
         "chat",
         "reasoning",
         "coding",
-        "tool-calling"
+        "tool-calling",
+        "judgment"
       ],
       "ports": [
-        "generator"
+        "generator",
+        "judge"
       ],
       "locality": "local",
       "runtime": "llama.cpp-server",
@@ -256,14 +258,17 @@
         "args": [
           "--reasoning-budget",
           "0"
-        ]
+        ],
+        "template": {
+          "enable_thinking": false
+        }
       },
       "platforms": [
         "native"
       ],
       "license": "MIT",
       "downloadBytes": 5780090816,
-      "notes": "Agentic coding and tool use; ChatML with <think> and qwen3_xml tool calls. Served by llama-server (--jinja). Benchmarks are for bf16; we run Q4_K_M.",
+      "notes": "Agentic coding and tool use; ChatML with <think> and qwen3_xml tool calls. Served by llama-server (--jinja). Benchmarks are for bf16; we run Q4_K_M. Judges as a generator (LLM-as-judge: options as letters, one chosen after brief reasoning, probabilities from the letters' tokens), the fallback when neither Jev nor CLM is reachable; no judgment benchmark is published for it.",
       "artifact": {
         "repo": "ornith-ai/Ornith-1.5-9B-GGUF",
         "revision": "abdd624b12ebf020b767fff532ff44fe552b28c3",
@@ -450,7 +455,8 @@
   "preferences": {
     "judgment": [
       "typesafe-ai/jev",
-      "Contrastive-LM/CLM-v0.1-8B"
+      "Contrastive-LM/CLM-v0.1-8B",
+      "ornith-ai/Ornith-1.5-9B"
     ],
     "classification": [
       "typesafe-ai/jev",

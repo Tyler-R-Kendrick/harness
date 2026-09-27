@@ -10,3 +10,6 @@ export type { BrowserEnsembleOptions } from "./browser-ensemble.ts";
 export { CacheStorageByteCache } from "./byte-cache.ts";
 export type { CacheStorageLike } from "./byte-cache.ts";
 export { xgrammarFromSource } from "./xgrammar.ts";
+export { browserWorkflows, IndexedDbWorkflows } from "./workflows.ts";
+export { packagedEmscripten, xgrammarFromFactory } from "./packaged.ts";
+export type { PackagedModule } from "./packaged.ts";

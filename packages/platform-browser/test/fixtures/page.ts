@@ -3,7 +3,10 @@ import { ClientSideConnection, PROTOCOL_VERSION } from "@agentclientprotocol/sdk
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { ConstraintEngine } from "@harness/constrained";
-import { BrowserHost, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, portStream, xgrammarFromSource } from "@harness/platform-browser";
+import { BrowserHost, browserWorkflows, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, IndexedDbWorkflows, portStream, xgrammarFromSource } from "@harness/platform-browser";
+import { Ensemble, invokeCognitive } from "@harness/cognitive";
+import { parseWorkflow } from "@harness/workflows";
+import { jsonSchema, tool } from "ai";
 // The XGrammar web binding's source, bundled as text (Vite's ?raw), as an app would ship it.
 import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
 import type { AcpPort } from "@harness/platform-browser";
@@ -123,5 +126,32 @@ async function cognitive(model: ModelDescriptor, hub: string) {
   return routed;
 }
 
-Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver, cacheRoundTrip, xgrammar, cognitive } });
+/**
+ * A durable workflow on QuickJS, journaled in IndexedDB. The first phase's run stops on a
+ * failing tool; after the page reloads, the second phase resumes it by replay.
+ */
+async function workflows(phase: "first" | "resume") {
+  const library = new IndexedDbWorkflows({ name: "smoke-workflows" });
+  await library.put(parseWorkflow({ name: "count", description: "Counts.", inputs: { type: "object" }, code: "const a: number = await tools.next({}); const b = await tools.next({}); return [a, b];" }));
+  let calls = 0;
+  const next = tool({
+    inputSchema: jsonSchema({}),
+    execute: async () => {
+      calls++;
+      if (phase === "first" && calls === 2) throw new Error("next is down");
+      return phase === "first" ? 1 : 2;
+    },
+  });
+  const ensemble = new Ensemble({ platform: "browser" });
+  browserWorkflows(ensemble, { library, tools: { next } });
+  try {
+    return await invokeCognitive(ensemble, "workflows.run", { name: "count", run: "smoke" });
+  } catch (e) {
+    return { error: (e as Error).message };
+  } finally {
+    await library.close();
+  }
+}
+
+Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver, cacheRoundTrip, xgrammar, cognitive, workflows } });
 document.title = "ready";

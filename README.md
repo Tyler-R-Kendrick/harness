@@ -51,7 +51,7 @@ The shipped catalog currently lists:
 | LLMLingua-2 | compressor | transformers.js |
 | Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
 | LightOnOCR-2 1B | document parser | transformers.js |
-| Ornith 1.5 9B | generator (coding, reasoning, tools) | llama.cpp-server |
+| Ornith 1.5 9B | generator (coding, reasoning, tools); the judge of last resort | llama.cpp-server |
 | OvisOCR2 | document parser | llama.cpp-server |
 | Qwen3 1.7B | steered generator: the local kernel | onnxruntime (steerable) |
 
@@ -99,9 +99,9 @@ With `--workflows`, learning ships four plugins. The workflow builder compiles l
 procedures into deterministic workflow code. The skill builder writes an agent skill that
 runs such a workflow. The tool builder has a model write a tool as workflow code (code mode),
 checked before it is kept. The recording teacher turns transcripts, input events and screen
-frames into demonstrations. Workflows run durably in AI SDK code mode: every tool call and
-model question is journaled, so an interrupted run resumes where it stopped. Session agents
-get the library's workflows as tools.
+frames into demonstrations. Workflows run durably in a code mode (AI SDK code mode natively,
+QuickJS on WebAssembly in browsers): every tool call and model question is journaled, so an
+interrupted run resumes where it stopped. Session agents get the library's workflows as tools.
 
 ```sh
 harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env":"staging"}'
@@ -187,9 +187,32 @@ import { buildBrowserEnsemble, xgrammarFromSource } from "@harness/platform-brow
 const cognitive = buildBrowserEnsemble({ catalog: parseCatalog(catalog, benchmarks), device: "webgpu", xgrammar: xgrammarFromSource(xgrammar) });
 ```
 
+And durable workflows, on QuickJS (WebAssembly), with the library and run journals in
+IndexedDB, so a run resumes after the page reloads:
+
+```ts
+import { browserWorkflows, IndexedDbWorkflows } from "@harness/platform-browser";
+import { workflowTools } from "@harness/workflows";
+
+const workflows = browserWorkflows(cognitive, { library: new IndexedDbWorkflows(), tools });
+const agentTools = await workflowTools(workflows); // the library's workflows, for the page's agents
+```
+
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:
 `BrowserHost.serveExtension(chrome.runtime.onConnect, options)` there, and
-`portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page.
+`portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page. An
+extension may not evaluate code, so it packages what the ensemble would otherwise evaluate,
+with the `factoryImports()` build plugin from `@harness/platform-browser/vite` (and
+`'wasm-unsafe-eval'` in its manifest's `content_security_policy`):
+
+```ts
+import xgrammarBinding from "@mlc-ai/web-xgrammar?factory";
+import engineSource from "./vendor/cactus-engine.js?raw"; // the catalog's pinned loader, vendored
+import engine from "./vendor/cactus-engine.js?factory";
+import { buildBrowserEnsemble, packagedEmscripten, xgrammarFromFactory } from "@harness/platform-browser";
+
+const cognitive = buildBrowserEnsemble({ catalog, xgrammar: xgrammarFromFactory(xgrammarBinding), emscripten: packagedEmscripten([{ source: engineSource, factory: engine }]) });
+```
 
 Workers:
 
@@ -216,13 +239,16 @@ LLM-as-judge evals use the best judge the host can reach: the catalog's judgment
 in preference order, each tried until one loads. With the shipped catalog that is
 [Jev](https://docs.typesafe.ai) through the Vercel AI Gateway when there is a gateway
 credential, else [CLM](https://github.com/Contrastive-LM/CLM) when its `clm-serve` answers
-(it speaks TypeSafe's API, so the same AI SDK provider talks to both). The report names
-the judge that answered.
+(it speaks TypeSafe's API, so the same AI SDK provider talks to both), else a local
+generator judging (Ornith on llama-server: each option a letter, chosen after brief
+reasoning, with probabilities from the letters' token probabilities). The report names the judge that answered.
 
 ```sh
 AI_GATEWAY_API_KEY=... npm run eval -- --out eval-results/results.json
 # or, with clm-serve running (CLM_BASE_URL, default http://127.0.0.1:8700):
 npm run eval -- --out eval-results/results.json
+# or, with a llama-server binary (the generator's weights download on first use):
+LLAMA_SERVER=/path/to/llama-server npm run eval -- --out eval-results/results.json
 ```
 
 There are two suites:
@@ -249,9 +275,9 @@ reported as `blocked`, never as a pass.
 | `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
 | `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
-| `packages/platform-browser` | Browser host: MessagePort binding with Web Lock liveness, IndexedDB storage, shared-worker serving |
+| `packages/platform-browser` | Browser host: MessagePort and extension-port bindings, IndexedDB storage, shared-worker serving, the ensemble with a Cache API byte cache, durable workflows on QuickJS |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
-| `packages/workflows` | Durable workflows as code: AI SDK code mode, journaled tool calls, library, extension (Node) |
+| `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |

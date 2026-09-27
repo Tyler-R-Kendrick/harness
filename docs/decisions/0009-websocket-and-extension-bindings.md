@@ -32,13 +32,29 @@ In an extension, pages reach the service worker through `chrome.runtime.Port`s. 
 - **Extension ports adapt to the MessagePort binding** (`extensionPort`): messages are
   message events, a disconnect is a close. `BrowserHost.serveExtension` listens on
   `chrome.runtime.onConnect` as the service worker's script runs (a worker's listeners
-  must be added then) and accepts ports named `acp`.
+  must be added then) and accepts ports named `acp`. Chrome drops a runtime port's
+  messages while nothing listens, so `extensionPort` listens from the start and holds
+  what arrives until the daemon starts reading, as a `MessagePort` does: a page may speak
+  while a slow service worker is still starting.
+- **Code in an extension is packaged, never evaluated.** Manifest V3 forbids `eval` and
+  `new Function` (only `'wasm-unsafe-eval'` may be declared, and must be, for WebAssembly).
+  The ensemble's Emscripten loaders and XGrammar's binding are normally evaluated from
+  their verified source, so an extension packages them instead: a build plugin
+  (`factoryImports` from `@harness/platform-browser/vite`) turns `import x from
+  "file.js?factory"` into a function that runs the module again on each call.
+  `packagedEmscripten` runs the packaged loader whose source has the same sha256 as the
+  verified one (the WebAssembly is still fetched and verified), and `xgrammarFromFactory`
+  gets a fresh XGrammar instance by calling the factory again.
 
 ## Consequences
 
 - Clients use the ACP SDK's WebSocket stream unchanged (WS1.x run it against the host).
 - A closed extension page frees its connection and input lease through its port's
   disconnect; no Web Lock is needed there (BI2.2 in Chromium).
+- In an unpacked extension in Chromium, XGrammar and a Cactus WASM router run from
+  packaged code while evaluating their source is refused (BI2.3).
+- An extension must declare `"content_security_policy": { "extension_pages": "script-src
+  'self' 'wasm-unsafe-eval'; object-src 'self'" }`: MV3's default refuses WebAssembly.
 
 ## Revisit when
 

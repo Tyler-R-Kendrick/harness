@@ -1,10 +1,11 @@
-import { experimental_runCodeMode as runCodeMode } from "@ai-sdk/code-mode";
 import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
 import { ConstraintSchema, validatedSchema } from "@harness/cognitive";
 import type { Constraint } from "@harness/cognitive";
+import type { CodeMode } from "./code-mode.ts";
+import { stripTypes } from "./typescript.ts";
 
 /** What a workflow can do outside its sandbox. The host decides what a tool call reaches. */
 export interface Effects {
@@ -52,12 +53,12 @@ function canonical(value: unknown): string {
 
 const Ask = z.strictObject({ prompt: z.string(), constraint: z.unknown().optional() });
 const json = (value: unknown): unknown => JSON.parse(JSON.stringify(value ?? null)) as unknown;
-// Code mode rejects with an Error whatever the code throws; its text is "name: message".
+// A code mode rejects with an Error whatever the code throws; its text is "name: message".
 const message = (e: unknown) => String(e);
 
 /**
- * Run a workflow durably. The code runs in AI SDK code mode (an isolated QuickJS
- * worker with time, memory and stack limits); its only way out is `tools`, and every
+ * Run a workflow durably. The code runs in a code mode (an isolated interpreter with
+ * time, memory and stack limits); its only way out is `tools`, and every
  * call's result is journaled before the code sees it. A run that stops (a failing
  * effect, a crash, a restart) resumes by running the code again: calls already in the
  * journal are replayed, not performed, and the run continues from the first that is
@@ -76,7 +77,9 @@ export async function runWorkflow(options: {
   readonly tools?: Readonly<Record<string, ToolSpec>>;
   /** Where this run's journal is kept; one journal per run. */
   readonly journal: SnapshotStorage;
-  /** Wall-clock limit for the code between effects (code mode's timeout), in milliseconds. */
+  /** Where the code runs: `aiCodeMode` natively, `quickjsCodeMode()` anywhere. */
+  readonly codeMode: CodeMode;
+  /** Wall-clock limit for the run (the code mode's timeout), in milliseconds. */
   readonly timeoutMs?: number;
 }): Promise<RunResult> {
   const { code, effects } = options;
@@ -99,8 +102,8 @@ export async function runWorkflow(options: {
   let performed = 0;
   const abort = new AbortController();
   let failure: { error: unknown } | undefined;
-  // Code mode reports a host tool's error without its message; the last one is kept to say why a run failed.
-  // (Once the run is aborted, code mode performs no further calls.)
+  // A code mode reports a host tool's error without its message; the last one is kept to say why a run failed.
+  // (Once the run is aborted, a code mode performs no further calls.)
   let toolError: string | undefined;
   /** Stop the run on a failed effect: the abort ends the code, and this call never settles, so the code cannot catch it. */
   const stop = (error: unknown): Promise<never> => {
@@ -110,6 +113,8 @@ export async function runWorkflow(options: {
   };
   // Journal writes are serialized: entries are saved in the order they complete.
   let saving: Promise<void> = Promise.resolve();
+  // Once the code has ended its outcome is the run's: a call it did not wait for records nothing after that.
+  let ended = false;
 
   const effect = async (op: EffectOp, request: unknown): Promise<unknown> => {
     const n = seq++;
@@ -124,6 +129,7 @@ export async function runWorkflow(options: {
     try {
       const r = request as { name: string; args: Record<string, unknown> } & { prompt: string; constraint?: Constraint };
       const result = json(op === "tool" ? await effects.tool(r.name, r.args) : await effects.ask(r.prompt, r.constraint));
+      if (ended) return result;
       journal = { ...journal, entries: [...journal.entries, { seq: n, op, request, result }] };
       const snapshot = journal;
       await (saving = saving.then(() => options.journal.save(snapshot)));
@@ -157,18 +163,19 @@ export async function runWorkflow(options: {
 
   let outcome: { ok: true; value: unknown } | { ok: false; error: string };
   try {
-    const value = await runCodeMode({
-      js: `const input = ${JSON.stringify(input)};\n${code}`,
+    const value = await options.codeMode({
+      js: `const input = ${JSON.stringify(input)};\n${stripTypes(code)}`,
       tools,
-      toolExecutionOptions: { abortSignal: abort.signal },
-      // Stryker disable next-line ConditionalExpression: equivalent; code mode reads an undefined limit as its default
-      ...(options.timeoutMs === undefined ? {} : { options: { executionPolicy: { timeoutMs: options.timeoutMs } } }),
+      abortSignal: abort.signal,
+      // Stryker disable next-line ConditionalExpression: equivalent; a code mode reads an undefined limit as its default
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     });
     outcome = { ok: true, value: json(value) };
   } catch (e) {
     const error = message(e);
     outcome = { ok: false, error: toolError && /Host tool failed/.test(error) ? `${error} ${toolError}` : error };
   }
+  ended = true;
   await saving;
   // A failed effect leaves the run resumable: nothing is recorded as its outcome.
   if (failure) throw failure.error;

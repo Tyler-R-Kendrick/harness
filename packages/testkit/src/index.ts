@@ -19,3 +19,5 @@ export {
 } from "./cognitive.ts";
 export { nullSandbox, scriptedHarness } from "./harness.ts";
 export type { HarnessLog, ScriptedTurn } from "./harness.ts";
+export { codeModeContract } from "./code-mode-contract.ts";
+export type { CodeModeContractHost, CodeModeUnderTest } from "./code-mode-contract.ts";
