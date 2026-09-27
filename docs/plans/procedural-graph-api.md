@@ -336,6 +336,42 @@ As built (P2). These are additions; nothing above changed meaning.
 - `serializeGraph(g: EffectiveGraph): string` renders the full-graph variant.
 - `serializeWindow(steps, w)` renders the last `w` trajectory steps as text.
 
+As built (P3). These refine the shapes above; no name or meaning another phase uses
+changed.
+
+- `type MatchMode = "exact" | "case-insensitive"` and `type Neighborhood` are exported.
+- `match` tries, in order, an exact id, an exact binding name, then (case-insensitive
+  only) the id and the binding name ignoring case; within a rule the first node in
+  document order wins. It reads every node of the effective graph, overlay nodes
+  included.
+- `neighborhood` always returns exactly `hops` hops; hops past the horizon are empty.
+  Hop k holds the outgoing edges, in document order, of the nodes first reached in
+  k − 1 steps. It throws a `RangeError` for a node outside the graph or a `hops` that
+  is not a whole number.
+- `serializeNeighborhood`:
+  - A hop with no edges prints nothing, heading included. Hop k ≥ 2 is headed
+    "Subsequent Horizon (Hop k):".
+  - A null condition prints `(Condition: )`. An empty guidance or pitfalls keeps its line.
+  - Bullets are indented by two spaces under their transition.
+  - The label follows the list bullet: `- Learned (provisional): Transition: …` on
+    probation, `- Learned: Transition: …` once active. An overlay node that is the active
+    node prefixes its header the same way: `Learned (provisional): Active Cognitive Node: …`.
+  - Notes follow the pitfalls, then cautions:
+    `  * Learned note (provisional): …` on probation, `  * Learned note: …` once active,
+    and `  * Caution: …` whatever the status.
+  - It throws a `RangeError` when the active node is not in the graph.
+- `serializeGraph` prints "Procedural Graph Nodes:" with one
+  `- Node: [X] (Type: T)` / `  * Description: …` pair per node, then
+  "Procedural Graph Transitions:" with every edge in the local format, in document order.
+  Labels are as above.
+- `serializeWindow(steps: readonly Step[], w: number)` takes learning's steps. `w`
+  counts decisions, as the paper's `T_{t-w:t}` counts actions: a decision is a run of
+  assistant steps with the steps that follow it. Steps before the first decision (the
+  query) are never in the window. A step renders as `User: `, `Thought: ` (assistant) or
+  `Observation: ` (tool, observation) and its content, omitted when empty, then
+  `Action: name(k=v, …)` when it has a call, each value as canonical JSON. It throws a
+  `RangeError` when `w` is not a whole number.
+
 ## P4: overlay (`overlay.ts`, `overlay-policy.ts`)
 
 - `entryId(entry: OverlayEntry): EntryId` is the sha256 of the entry's canonical JSON.
