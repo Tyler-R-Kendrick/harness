@@ -562,6 +562,20 @@ As built (P5). These are additions; nothing above changed meaning.
 - `SnapshotProceduralStore(storage: SnapshotStorage)` persists through the core
   `SnapshotStorage` port, which covers every host.
 - `proceduralStoreContract` lives in `@harness/testkit`, with tests `PS1.x`.
+- Semantics both implementations share (the contract checks them):
+  - a put with a known id replaces the record in place; a redacted id stays redacted;
+  - setting a head to the revision it already names succeeds and adds no history;
+  - an empty append changes nothing; `read` with a negative or fractional offset or
+    limit rejects with a `RangeError`;
+  - lease epochs only grow per graph (across releases and reopens), and a lease has no
+    expiry: its holder re-acquires under a new epoch;
+  - redaction (`redactRecord`) replaces every text with `TOMBSTONE` (descriptions,
+    non-null conditions, guidance, pitfalls, edit texts, decision reasons, diagnostic
+    messages, strings in evidence) and sets `redacted: true`.
+- Also exported: `MemoryProceduralStore.document()` and `new MemoryProceduralStore(document)`
+  (`ProceduralStoreDocument`, `STORE_FORMAT`), `ProceduralStoreDocumentSchema` and
+  `PinSchema`. The snapshot store runs operations one at a time in issue order, saves
+  after each change, and rejects a malformed saved document rather than resetting it.
 
 ## P8: core, generic (`packages/core`, `packages/protocol`)
 
