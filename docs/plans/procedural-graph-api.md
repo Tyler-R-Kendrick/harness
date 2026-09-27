@@ -402,6 +402,60 @@ changed.
     entry when they are inferior, when it has gone stale (half-life measured in overlay
     versions), or when it is displaced beyond `maxEntries`.
 
+As built (P4). These refine the above; every name keeps its meaning.
+
+- `version` counts the events that changed the state. A redelivered `observed` (a turn
+  key seen) or `proposed` (no new support) event, and a `status` event naming an unknown
+  entry or its current status, leave the state, `version` included, as it was (I4). So
+  `version` is not the log offset when the log holds redeliveries.
+- The fold cannot see the core, so `stats` and `transitions` hold every observed pair of
+  consecutive path nodes, edge or not. `proposals` treats the pairs the effective
+  structure lacks as missing transitions. Each entry's support and each transition's
+  sessions keep at most `MAX_SESSIONS` (64); `turns` keeps `MAX_TURNS` (10,000).
+- An `observed` turn is evidence for each entry that is not retired when its path
+  reaches the entry's anchor node: an edge's `from`, a node's `id`, a note's or caution's
+  `on.from`. It goes to the `exposed` arm when `exposure` names the entry, and to the
+  `unexposed` arm otherwise. It also sets the entry's `lastSeen`.
+- `rebased` folds by setting `base`, retiring `absorbed` and removing `dropped`.
+  `rebaseOverlay` returns exactly that fold, so a replay reproduces it. Only live overlay
+  entries (neither retired nor absorbed) anchor others. Statistics carry over unchanged,
+  and those of vanished edges stay dormant.
+- `effectiveGraph` lists core items first, then overlay nodes, then overlay edges, in
+  proposal order. It skips an overlay node that names an existing node, and an overlay
+  edge that repeats a `(from, relation, to)` already shown. Notes and cautions attach to
+  every edge between their endpoints.
+- `exposed(salt, id: string, share)` takes any string id.
+- Also exported:
+  - `edgeKey(from, to)`, the `"from→to"` key;
+  - `MAX_TURNS` and `MAX_SESSIONS`;
+  - `differenceBounds(a: Arm, b: Arm, confidence)`, which returns
+    `{difference, lower, upper}`;
+  - `decayedSupport(evidence, version, halfLife)`.
+- The statistic is one-sided Hoeffding bounds on the difference of two means of scores
+  in [0, 1]. The margin is `t = sqrt(ln(1/(1−c)) · (1/n_a + 1/n_b) / 2)`. It is valid at
+  every sample size for fractional scores, and conservative.
+- `statusChanges(state, live, options?: { margin?: number })` works on entries that are
+  not retired, once both arms have `minSupport` scored turns:
+  - It retires an entry as inferior when the upper bound of `exposed − unexposed` is
+    below `−margin`.
+  - Otherwise it retires an entry as stale when its decayed support is below 0.5
+    sessions. Support halves every `halfLifeDays` overlay versions without evidence.
+  - Otherwise it promotes a probationary entry as non-inferior when the lower bound is
+    above `−margin`. All bounds are at `promote.confidence`.
+  - Beyond `maxEntries` live entries, it displaces the lowest-ranked: probation before
+    active, then by decayed support, then by `lastSeen`, then by id.
+
+  `margin` defaults to 0, where promotion needs confidently better outcomes, because
+  `LiveSettings` has no margin yet.
+- `proposals` works as follows:
+  - A missing transition becomes an edge entry. Its relation is `LEADS_TO` when the
+    core's vocabulary has it, and the core's first relation otherwise. It has condition
+    `null`, guidance `"Observed after <from> in <N> sessions[, mean score <m>]."` and
+    empty pitfalls.
+  - A caution requires `minSupport` scored traversals on the edge and elsewhere, and a
+    Hoeffding upper bound below 0 against the rest of the graph.
+  - Any existing entry for the pair, in any status, blocks a re-proposal.
+
 ## P5: model calls (`guide.ts`, `refine.ts`, `reflect.ts`)
 
 All of these use AI SDK `generateText` on a `LanguageModel`. Our settings go under
