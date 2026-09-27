@@ -183,6 +183,77 @@ handle are values (`Diagnostic[]`, result unions), not exceptions.
 - `Preset` type. `presetOf(settings, name): Preset`.
 - Constants `HOPS = 2` and `WINDOW = 3`.
 
+As built (P1). These are additions; nothing above changed meaning.
+
+- `parseSettings` throws on invalid input, naming where, as learning's does.
+  `presetOf` throws a `RangeError` for an unknown name.
+- A `Preset` has these fields:
+  - `overlay: boolean`;
+  - `match: "exact" | "case-insensitive"`;
+  - `turnBoundary: "start" | "carry"`;
+  - `delivery: "system" | "trailing-message"`;
+  - `guidancePrompt: "paper" | "harness"`;
+  - `guidanceCache: boolean`;
+  - `overlayRefresh: "turn" | "session"`, which defaults to `"turn"` (plan §5.1);
+  - `repinOnDream: "turn" | "never"`, which defaults to `"turn"` (plan §5.1);
+  - `live?: LiveSettings`, which is required when `overlay` is true;
+  - `dream: DreamSettings`.
+- `LiveSettings` has these fields:
+  - `reflection: "off" | "turn" | "batch"`;
+  - `probationShare: Probability`;
+  - `minSupport: int ≥ 1`;
+  - `promote: {confidence: Probability}`;
+  - `halfLifeDays: number > 0`, named as in plan §4.6;
+  - `maxEntries: int > 0`.
+- `DreamSettings` has these fields:
+  - `mode: "incremental" | "onetime"`;
+  - `rounds` (K);
+  - `cycles: CyclePolicy` (c);
+  - `contextTokens` (L_max);
+  - `context: "tail-concatenated" | "tail-per-trajectory"`;
+  - `gate: Gate[]`, at least one;
+  - `rejections: {dedupe, show: "all" | "recent-and-similar", limit?}`, where `limit`
+    is required for `recent-and-similar`;
+  - `enforceToolCatalog: boolean`;
+  - `editFilter: boolean`;
+  - `noninferiority?: {totalLoss, confidence, power}`, all `Probability`. It is required
+    when the anchored non-inferiority gate is listed.
+- `GATES` lists `structure`, `evidence`, `evaluator-at-least-retained`,
+  `evaluator-anchored-noninferiority`, `approval` and `approval-for-side-effects`. A
+  `Gate` is one of them, or an evaluator gate with a trailing `?`.
+- `decoding` holds `temperature`, `topK`, `solverMaxTokens` and `refinerMaxTokens`.
+- `graphContext: {local: {desc, source}, full: {desc, source}}` fills
+  `{graph_context_desc}` and `{graph_source}`. `full` is App. B.5's wording.
+- `prompts` holds `solver`, `guidance`, `guidanceHarness`, `refiner`, `dream` and
+  `reflection`. `PLACEHOLDERS` names the `{slots}` each must keep, and parsing checks
+  them:
+
+  | Prompt | Slots |
+  |---|---|
+  | `solver` | `system_prompt`, `procedural_graph_guidance`, `trajectory` |
+  | `guidance`, `guidanceHarness` | `task_description`, `graph_context_desc`, `subgraph_summary`, `query`, `recent_context`, `graph_source` |
+  | `refiner` | `task_description`, `mode`, `available_tools_list`, `attempts_block`, `current_graph_json`, `rejected_block` |
+  | `dream` | the refiner's, plus `overlay_entries_block`, `cautioned_edges_block`, `rejection_reasons_block` |
+  | `reflection` | `graph_context`, `trajectory` |
+
+  The refiner prompt also contains literal JSON braces, so a renderer fills only
+  `{identifier}` slots.
+- `guidancePromptOf(settings, preset): string` returns the guidance template the
+  preset names.
+- Also exported:
+  - `FORMAT`;
+  - `DIAGNOSTIC_CODES` and `DiagnosticSchema`;
+  - `BindingSchema`, `GraphNodeSchema`, `GraphEdgeSchema` and `DecisionSchema`;
+  - `type ParsedGraph`;
+  - `OverlayEntrySchema`, `OverlayEventSchema` and `EntryStatusSchema`;
+  - `type Arm` (`{n, scored, scoreSum}`).
+- `NodeTypeName` and `RelationName` are checked strings without a brand. The other ids
+  are branded, and a lint rule forbids casting to them.
+- A parsed document or graph is deeply frozen. Build a new one rather than mutating it.
+- `RevisionRecordSchema` also checks that `id` is `revisionId(document)`, unless the
+  record is `redacted`.
+- A turn key must match `^[^/]+/.+$`.
+
 ## P2: edits (`edits.ts`, `filter.ts`)
 
 - `applyEdits(base: CandidateDocument, edits: EditSet): CandidateDocument` works on a

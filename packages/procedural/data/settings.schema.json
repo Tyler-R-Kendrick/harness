@@ -1,0 +1,884 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "presets": {
+      "type": "object",
+      "properties": {
+        "paper": {
+          "type": "object",
+          "properties": {
+            "overlay": {
+              "type": "boolean"
+            },
+            "match": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "case-insensitive"
+              ]
+            },
+            "turnBoundary": {
+              "type": "string",
+              "enum": [
+                "start",
+                "carry"
+              ]
+            },
+            "delivery": {
+              "type": "string",
+              "enum": [
+                "system",
+                "trailing-message"
+              ]
+            },
+            "guidancePrompt": {
+              "type": "string",
+              "enum": [
+                "paper",
+                "harness"
+              ]
+            },
+            "guidanceCache": {
+              "type": "boolean"
+            },
+            "overlayRefresh": {
+              "default": "turn",
+              "type": "string",
+              "enum": [
+                "turn",
+                "session"
+              ]
+            },
+            "repinOnDream": {
+              "default": "turn",
+              "type": "string",
+              "enum": [
+                "turn",
+                "never"
+              ]
+            },
+            "live": {
+              "type": "object",
+              "properties": {
+                "reflection": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "turn",
+                    "batch"
+                  ]
+                },
+                "probationShare": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "minSupport": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "promote": {
+                  "type": "object",
+                  "properties": {
+                    "confidence": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "confidence"
+                  ],
+                  "additionalProperties": false
+                },
+                "halfLifeDays": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "maxEntries": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "reflection",
+                "probationShare",
+                "minSupport",
+                "promote",
+                "halfLifeDays",
+                "maxEntries"
+              ],
+              "additionalProperties": false
+            },
+            "dream": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "incremental",
+                    "onetime"
+                  ]
+                },
+                "rounds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cycles": {
+                  "type": "string",
+                  "enum": [
+                    "allowed",
+                    "forbidden"
+                  ]
+                },
+                "contextTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "context": {
+                  "type": "string",
+                  "enum": [
+                    "tail-concatenated",
+                    "tail-per-trajectory"
+                  ]
+                },
+                "gate": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "structure",
+                          "evidence",
+                          "evaluator-at-least-retained",
+                          "evaluator-anchored-noninferiority",
+                          "approval",
+                          "approval-for-side-effects"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^(evaluator-at-least-retained|evaluator-anchored-noninferiority)\\?$"
+                      }
+                    ]
+                  }
+                },
+                "rejections": {
+                  "type": "object",
+                  "properties": {
+                    "dedupe": {
+                      "type": "boolean"
+                    },
+                    "show": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "recent-and-similar"
+                      ]
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "dedupe",
+                    "show"
+                  ],
+                  "additionalProperties": false
+                },
+                "enforceToolCatalog": {
+                  "type": "boolean"
+                },
+                "editFilter": {
+                  "type": "boolean"
+                },
+                "noninferiority": {
+                  "type": "object",
+                  "properties": {
+                    "totalLoss": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidence": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "power": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "totalLoss",
+                    "confidence",
+                    "power"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "mode",
+                "rounds",
+                "cycles",
+                "contextTokens",
+                "context",
+                "gate",
+                "rejections",
+                "enforceToolCatalog",
+                "editFilter"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "overlay",
+            "match",
+            "turnBoundary",
+            "delivery",
+            "guidancePrompt",
+            "guidanceCache",
+            "dream"
+          ],
+          "additionalProperties": false
+        },
+        "harness": {
+          "type": "object",
+          "properties": {
+            "overlay": {
+              "type": "boolean"
+            },
+            "match": {
+              "type": "string",
+              "enum": [
+                "exact",
+                "case-insensitive"
+              ]
+            },
+            "turnBoundary": {
+              "type": "string",
+              "enum": [
+                "start",
+                "carry"
+              ]
+            },
+            "delivery": {
+              "type": "string",
+              "enum": [
+                "system",
+                "trailing-message"
+              ]
+            },
+            "guidancePrompt": {
+              "type": "string",
+              "enum": [
+                "paper",
+                "harness"
+              ]
+            },
+            "guidanceCache": {
+              "type": "boolean"
+            },
+            "overlayRefresh": {
+              "default": "turn",
+              "type": "string",
+              "enum": [
+                "turn",
+                "session"
+              ]
+            },
+            "repinOnDream": {
+              "default": "turn",
+              "type": "string",
+              "enum": [
+                "turn",
+                "never"
+              ]
+            },
+            "live": {
+              "type": "object",
+              "properties": {
+                "reflection": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "turn",
+                    "batch"
+                  ]
+                },
+                "probationShare": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "minSupport": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "promote": {
+                  "type": "object",
+                  "properties": {
+                    "confidence": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "confidence"
+                  ],
+                  "additionalProperties": false
+                },
+                "halfLifeDays": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "maxEntries": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "reflection",
+                "probationShare",
+                "minSupport",
+                "promote",
+                "halfLifeDays",
+                "maxEntries"
+              ],
+              "additionalProperties": false
+            },
+            "dream": {
+              "type": "object",
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "incremental",
+                    "onetime"
+                  ]
+                },
+                "rounds": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "cycles": {
+                  "type": "string",
+                  "enum": [
+                    "allowed",
+                    "forbidden"
+                  ]
+                },
+                "contextTokens": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "context": {
+                  "type": "string",
+                  "enum": [
+                    "tail-concatenated",
+                    "tail-per-trajectory"
+                  ]
+                },
+                "gate": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "structure",
+                          "evidence",
+                          "evaluator-at-least-retained",
+                          "evaluator-anchored-noninferiority",
+                          "approval",
+                          "approval-for-side-effects"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^(evaluator-at-least-retained|evaluator-anchored-noninferiority)\\?$"
+                      }
+                    ]
+                  }
+                },
+                "rejections": {
+                  "type": "object",
+                  "properties": {
+                    "dedupe": {
+                      "type": "boolean"
+                    },
+                    "show": {
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "recent-and-similar"
+                      ]
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "dedupe",
+                    "show"
+                  ],
+                  "additionalProperties": false
+                },
+                "enforceToolCatalog": {
+                  "type": "boolean"
+                },
+                "editFilter": {
+                  "type": "boolean"
+                },
+                "noninferiority": {
+                  "type": "object",
+                  "properties": {
+                    "totalLoss": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "confidence": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "power": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    }
+                  },
+                  "required": [
+                    "totalLoss",
+                    "confidence",
+                    "power"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "mode",
+                "rounds",
+                "cycles",
+                "contextTokens",
+                "context",
+                "gate",
+                "rejections",
+                "enforceToolCatalog",
+                "editFilter"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "overlay",
+            "match",
+            "turnBoundary",
+            "delivery",
+            "guidancePrompt",
+            "guidanceCache",
+            "dream"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "paper",
+        "harness"
+      ],
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "overlay": {
+            "type": "boolean"
+          },
+          "match": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "case-insensitive"
+            ]
+          },
+          "turnBoundary": {
+            "type": "string",
+            "enum": [
+              "start",
+              "carry"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "system",
+              "trailing-message"
+            ]
+          },
+          "guidancePrompt": {
+            "type": "string",
+            "enum": [
+              "paper",
+              "harness"
+            ]
+          },
+          "guidanceCache": {
+            "type": "boolean"
+          },
+          "overlayRefresh": {
+            "default": "turn",
+            "type": "string",
+            "enum": [
+              "turn",
+              "session"
+            ]
+          },
+          "repinOnDream": {
+            "default": "turn",
+            "type": "string",
+            "enum": [
+              "turn",
+              "never"
+            ]
+          },
+          "live": {
+            "type": "object",
+            "properties": {
+              "reflection": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "turn",
+                  "batch"
+                ]
+              },
+              "probationShare": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "minSupport": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "promote": {
+                "type": "object",
+                "properties": {
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "confidence"
+                ],
+                "additionalProperties": false
+              },
+              "halfLifeDays": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "maxEntries": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "reflection",
+              "probationShare",
+              "minSupport",
+              "promote",
+              "halfLifeDays",
+              "maxEntries"
+            ],
+            "additionalProperties": false
+          },
+          "dream": {
+            "type": "object",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "incremental",
+                  "onetime"
+                ]
+              },
+              "rounds": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "cycles": {
+                "type": "string",
+                "enum": [
+                  "allowed",
+                  "forbidden"
+                ]
+              },
+              "contextTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "context": {
+                "type": "string",
+                "enum": [
+                  "tail-concatenated",
+                  "tail-per-trajectory"
+                ]
+              },
+              "gate": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "structure",
+                        "evidence",
+                        "evaluator-at-least-retained",
+                        "evaluator-anchored-noninferiority",
+                        "approval",
+                        "approval-for-side-effects"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(evaluator-at-least-retained|evaluator-anchored-noninferiority)\\?$"
+                    }
+                  ]
+                }
+              },
+              "rejections": {
+                "type": "object",
+                "properties": {
+                  "dedupe": {
+                    "type": "boolean"
+                  },
+                  "show": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "recent-and-similar"
+                    ]
+                  },
+                  "limit": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "dedupe",
+                  "show"
+                ],
+                "additionalProperties": false
+              },
+              "enforceToolCatalog": {
+                "type": "boolean"
+              },
+              "editFilter": {
+                "type": "boolean"
+              },
+              "noninferiority": {
+                "type": "object",
+                "properties": {
+                  "totalLoss": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "power": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "totalLoss",
+                  "confidence",
+                  "power"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "mode",
+              "rounds",
+              "cycles",
+              "contextTokens",
+              "context",
+              "gate",
+              "rejections",
+              "enforceToolCatalog",
+              "editFilter"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "overlay",
+          "match",
+          "turnBoundary",
+          "delivery",
+          "guidancePrompt",
+          "guidanceCache",
+          "dream"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "decoding": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "minimum": 0
+        },
+        "topK": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "solverMaxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "refinerMaxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "temperature",
+        "topK",
+        "solverMaxTokens",
+        "refinerMaxTokens"
+      ],
+      "additionalProperties": false
+    },
+    "graphContext": {
+      "type": "object",
+      "properties": {
+        "local": {
+          "type": "object",
+          "properties": {
+            "desc": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "desc",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        "full": {
+          "type": "object",
+          "properties": {
+            "desc": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "desc",
+            "source"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "local",
+        "full"
+      ],
+      "additionalProperties": false
+    },
+    "prompts": {
+      "type": "object",
+      "properties": {
+        "solver": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guidance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guidanceHarness": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refiner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dream": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reflection": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "solver",
+        "guidance",
+        "guidanceHarness",
+        "refiner",
+        "dream",
+        "reflection"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "presets",
+    "decoding",
+    "graphContext",
+    "prompts"
+  ],
+  "additionalProperties": false
+}
