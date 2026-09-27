@@ -152,6 +152,7 @@ harness approve [policy]  ask before commands and writes, or run them on auto
 harness trace [n]         the newest trace events (default 20)
 harness status            what the daemon holds
 harness snapshot          the daemon's snapshot as JSON
+harness reset             forget the sessions, conversations and files this browser keeps
 `;
 
 export interface ShellContext {
@@ -166,6 +167,8 @@ export interface ShellContext {
   readonly onChange?: () => void;
   /** Called with every turn `ask` ran and its report. */
   readonly onTurn?: (prompt: string, report: TurnReport) => void;
+  /** Forget what the page keeps across reloads (and reload); absent when it keeps nothing. */
+  readonly onReset?: () => Promise<void>;
 }
 
 const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
@@ -254,6 +257,10 @@ export function harnessCommands(ctx: ShellContext): Command[] {
       }
       case "snapshot":
         return ok(`${JSON.stringify(playground.snapshot(), null, 2)}\n`);
+      case "reset":
+        if (!ctx.onReset) return fail("this page keeps nothing to reset\n", 1);
+        await ctx.onReset();
+        return ok("cleared the saved sessions, conversations and files; reloading\n");
       default:
         return fail(`unknown command ${sub}; try: harness help\n`);
     }

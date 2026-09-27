@@ -36,11 +36,15 @@ async function open(init?: () => void): Promise<{ page: Page; errors: string[] }
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
   if (init) await page.addInitScript(init);
   await page.goto(origin);
-  // The first turn (typed at boot) has finished when it is listed.
-  await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "1", undefined, { timeout: 30_000 }).catch(() => {
+  await booted(page, errors);
+  return { page, errors };
+}
+
+/** Wait until the page has started: fresh (after its first turn) or restored from this browser. */
+async function booted(page: Page, errors: string[] = []) {
+  await page.waitForFunction(() => document.documentElement.dataset["booted"] !== undefined, undefined, { timeout: 30_000 }).catch(() => {
     throw new Error(`the playground did not boot: ${errors.join("; ")}`);
   });
-  return { page, errors };
 }
 
 const terminalText = (page: Page) => page.locator("#terminal").innerText();
@@ -80,6 +84,44 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#viewer-text").textContent()).toBe("typed\n");
     await type(page, "cat typed.txt");
     await page.waitForFunction(() => (document.getElementById("terminal")?.innerText.match(/typed/g) ?? []).length >= 3);
+    await page.close();
+  });
+
+  it("PI1.4 a reload keeps the files, the sessions, the current session's log, the turns and the settings; harness reset starts over", async () => {
+    const { page } = await open();
+    expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
+    await page.locator("#approval").uncheck();
+    await type(page, "echo kept > kept.txt && mkdir -p empty/dir");
+    await type(page, "ask '$ echo from the agent >> kept.txt'");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    await type(page, "harness sessions");
+    await page.waitForFunction(() => /\* ses_/.test(document.getElementById("terminal")?.innerText ?? ""));
+    const session = /\* (ses_\S+)/.exec(await terminalText(page))![1]!;
+    await page.waitForTimeout(500);
+
+    await page.reload();
+    await booted(page);
+    expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("restored");
+    const restored = await terminalText(page);
+    expect(restored).toMatch(/restored from this browser: 1 session, \d+ files, 2 turns/);
+    expect(restored).toContain("exit 0");
+    expect(await page.locator("#count-turns").textContent()).toBe("2");
+    expect(await page.locator("#approval").isChecked()).toBe(false);
+    await type(page, "cat kept.txt; ls -d empty/dir; harness sessions");
+    // Terminal rows are padded to the terminal's width.
+    await page.waitForFunction(() => /empty\/dir\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
+    const after = await terminalText(page);
+    expect(after).toMatch(/kept\s*\nfrom the agent/);
+    expect(after).toContain(`* ${session}`);
+
+    const reloaded = page.waitForEvent("load");
+    await type(page, "harness reset");
+    await reloaded;
+    await booted(page);
+    expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
+    expect(await page.locator("#count-turns").textContent()).toBe("1");
+    await type(page, "ls kept.txt");
+    await page.waitForFunction(() => /No such file/i.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.close();
   });
 

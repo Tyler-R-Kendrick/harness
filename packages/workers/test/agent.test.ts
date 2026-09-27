@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { tool } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { sessionOf, stateContent, usage } from "@harness/cognitive";
@@ -59,6 +59,26 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     const prompts = model.doStreamCalls.map((c) => c.prompt.map((m) => `${m.role}:${typeof m.content === "string" ? m.content : m.content.map((p) => ("text" in p ? p.text : p.type)).join("")}`));
     expect(prompts[1]).toEqual(["system:Be brief.", "user:one", "assistant:first", "user:two"]);
     expect(prompts[2]).toEqual(["system:Be brief.", "user:three"]);
+  });
+
+  it("AW1.14 with a conversation store, a new worker (after a restart) continues a session's conversation from it, and each turn's conversation is saved", async () => {
+    const saved = new Map<string, readonly ModelMessage[]>();
+    const conversations = { load: async (id: string) => saved.get(id), save: async (id: string, messages: readonly ModelMessage[]) => void saved.set(id, messages) };
+    await run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("first"), finish()]) }), conversations }), [{ type: "text", text: "one" }]).done;
+    expect(saved.get("s1")?.map((m) => m.role)).toEqual(["user", "assistant"]);
+    const model = scripted([...text("second"), finish()]);
+    const restarted = new AgentWorker({ agent: sessionAgent({ model }), conversations });
+    await run(restarted, [{ type: "text", text: "two" }], "s1", "t2").done;
+    const prompt = model.doStreamCalls[0]!.prompt.map((m) => `${m.role}:${typeof m.content === "string" ? m.content : m.content.map((p) => ("text" in p ? p.text : p.type)).join("")}`);
+    expect(prompt).toEqual(["user:one", "assistant:first", "user:two"]);
+    expect(saved.get("s1")).toHaveLength(4);
+  });
+
+  it("AW1.15 a conversation store that fails to load or save does not fail the turn", async () => {
+    const conversations = { load: () => Promise.reject(new Error("no disk")), save: () => Promise.reject(new Error("no disk")) };
+    const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations }), [{ type: "text", text: "hi" }]);
+    await done;
+    expect(end(events)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });
 
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {

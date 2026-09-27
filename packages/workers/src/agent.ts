@@ -31,6 +31,16 @@ export function userContent(prompt: readonly unknown[]): { content: UserContent;
   return { content, said: content.map((p) => (p.type === "text" ? p.text : "")).join("\n") };
 }
 
+/**
+ * Where a worker keeps each session's conversation beyond its own memory, so a restarted
+ * host continues a session where it stopped. Best effort: a failed load starts the
+ * conversation afresh and a failed save loses only that.
+ */
+export interface ConversationStore {
+  load(sessionId: string): Promise<readonly ModelMessage[] | undefined>;
+  save(sessionId: string, messages: readonly ModelMessage[]): Promise<void>;
+}
+
 interface Running {
   readonly abort: AbortController;
   readonly decisions: Map<string, (outcome: CallbackOutcome) => void>;
@@ -48,6 +58,7 @@ export class AgentWorker implements Worker {
   readonly #agent: Agent<TurnOptions, ToolSet>;
   readonly #onTurn: ((turn: Turn) => Promise<unknown>) | undefined;
   readonly #onEvent: ((sessionId: string, name: string) => BehaviorChange | undefined) | undefined;
+  readonly #conversations: ConversationStore | undefined;
   readonly #history = new Map<string, ModelMessage[]>();
   readonly #running = new Map<string, Running>();
 
@@ -56,10 +67,13 @@ export class AgentWorker implements Worker {
     readonly onTurn?: (turn: Turn) => Promise<unknown>;
     /** A session's behavior (a steered model's): takes host events and returns the change each caused. */
     readonly onEvent?: (sessionId: string, name: string) => BehaviorChange | undefined;
+    /** Keeps each session's conversation across restarts. */
+    readonly conversations?: ConversationStore;
   }) {
     this.#agent = options.agent;
     this.#onTurn = options.onTurn;
     this.#onEvent = options.onEvent;
+    this.#conversations = options.conversations;
   }
 
   event(command: EventCommand, emit: Emit): void {
@@ -74,7 +88,8 @@ export class AgentWorker implements Worker {
     const base = { sessionId: command.sessionId, turnId: command.turnId };
     const update = (u: SessionUpdate) => emit({ type: "update", ...base, update: u });
     const { content, said } = userContent(command.prompt);
-    const messages: ModelMessage[] = [...(this.#history.get(command.sessionId) ?? []), { role: "user", content }];
+    const past = this.#history.get(command.sessionId) ?? (await this.#conversations?.load(command.sessionId).catch(() => undefined)) ?? [];
+    const messages: ModelMessage[] = [...past, { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
     try {
@@ -151,6 +166,7 @@ export class AgentWorker implements Worker {
         messages.push({ role: "tool", content: responses });
       }
       this.#history.set(command.sessionId, messages);
+      await this.#conversations?.save(command.sessionId, messages).catch(() => undefined);
       // Remembering is best effort: a turn never fails because of it.
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {

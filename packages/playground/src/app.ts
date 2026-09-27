@@ -6,12 +6,14 @@
 import wtermCss from "@wterm/dom/css?inline";
 import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
-import type { DaemonSnapshot } from "@harness/core";
+import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
+import { IndexedDbStorage } from "@harness/platform-browser";
+import { Coalesced, conversationStore, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "./persist.ts";
 import { Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
 import type { ModelTier, Sample } from "./sample-model.ts";
-import { harnessCommands, Prompter } from "./shell.ts";
+import { harnessCommands, Prompter, TurnRenderer } from "./shell.ts";
 import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
 import { Tracer } from "./trace.ts";
@@ -89,6 +91,8 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   sample = typeof s === "function" ? (s as Sample) : undefined;
   claudeState = sample ? "ready" : "off";
   if (sample && !workerChosen) settings.worker = "claude";
+  // A worker restored from a visit where Claude was reachable, on a page where it is not.
+  if (!sample && settings.worker === "claude") settings.worker = "shell";
   sync();
 });
 
@@ -118,14 +122,17 @@ $("worker").addEventListener("click", (e) => {
   settings.worker = worker;
   workerChosen = true;
   sync();
+  pageSaver?.request();
 });
 $<HTMLSelectElement>("tier").addEventListener("change", (e) => {
   settings.tier = (e.target as HTMLSelectElement).value as ModelTier;
   sync();
+  pageSaver?.request();
 });
 $<HTMLInputElement>("approval").addEventListener("change", (e) => {
   settings.approval = (e.target as HTMLInputElement).checked ? "ask" : "auto";
   sync();
+  pageSaver?.request();
 });
 
 // ---- tabs -------------------------------------------------------------------------------
@@ -420,6 +427,37 @@ function onSnapshot(s: DaemonSnapshot) {
   requestAnimationFrame(renderDaemon);
 }
 
+// ---- what this browser keeps across reloads ----------------------------------------------
+
+let resetting = false;
+const storageProblem = (error: string) => tracer.record({ kind: "host", name: "storage", detail: error });
+/** One record of the playground's IndexedDB database. Once a reset begins, only clearing writes. */
+const kept = (key: string) => {
+  const storage = resilient(() => new IndexedDbStorage({ name: "harness-playground", key }), storageProblem);
+  return { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.save(undefined) } satisfies SnapshotStorage & { clear(): Promise<void> };
+};
+const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page") };
+let pageSaver: Coalesced | undefined;
+let vfsSaver: Coalesced | undefined;
+const saveAll = () => {
+  vfsSaver?.request();
+  pageSaver?.request();
+};
+tracer.subscribe((e) => {
+  // A tool that ran may have changed files; keep them even if the page closes mid-turn.
+  if (e.kind === "tool" && e.phase === "end") vfsSaver?.request();
+});
+addEventListener("pagehide", saveAll);
+
+/** Forget everything this browser keeps: stop saving, let running work and saves land, clear, reload. */
+async function reset() {
+  resetting = true;
+  await playground?.close();
+  await Promise.all([vfsSaver?.flush(), pageSaver?.flush()]);
+  await Promise.all(Object.values(stores).map((s) => s.clear()));
+  location.reload();
+}
+
 // ---- boot -------------------------------------------------------------------------------
 
 let playground: Playground | undefined;
@@ -434,17 +472,32 @@ async function boot() {
   const input = (data: string) => {
     if (late.prompter?.handleKey(data)) return;
     const done = late.shell?.handleInput(data);
-    if (data === "\r") void done?.then(refreshFiles);
+    if (data === "\r")
+      void done?.then(() => {
+        saveAll();
+        return refreshFiles();
+      });
   };
   const term = new WTerm($("terminal"), { onData: input });
   await term.init();
   const write = (s: string) => term.write(s);
   const prompter = (late.prompter = new Prompter(write));
   prompter.onAsk = () => term.focus();
-  const shell = (late.shell = new BashShell({ files: SAMPLE_FILES, cwd: HOME, greeting: GREETING, prompt: (cwd) => `\x1b[36mharness\x1b[0m:\x1b[34m${cwd.replace(HOME, "~") || "/"}\x1b[0m$ ` }));
+  const [savedVfs, savedPage] = await Promise.all([stores.vfs.load().then(parseVfsSnapshot), stores.page.load().then(parsePageState)]);
+  const restored = savedVfs !== undefined || savedPage !== undefined;
+  if (savedPage) {
+    Object.assign(settings, savedPage.settings);
+    workerChosen = true;
+    turns.push(...savedPage.turns);
+    lastDiff = savedPage.turns.at(-1)?.report.diff ?? lastDiff;
+    renderTurns();
+  }
+  const promptFor = (cwd: string) => `\x1b[36mharness\x1b[0m:\x1b[34m${cwd.replace(HOME, "~") || "/"}\x1b[0m$ `;
+  const shell = (late.shell = new BashShell({ files: savedVfs ? {} : SAMPLE_FILES, cwd: HOME, greeting: GREETING, prompt: promptFor }));
   await shell.attach(write);
   const bash = shell.bash!;
   bashRef = bash;
+  if (savedVfs) await restoreVfs(bash.fs, HOME, savedVfs);
 
   playground = await Playground.start({
     bash,
@@ -453,8 +506,12 @@ async function boot() {
     worker: () => settings.worker,
     approval: () => settings.approval,
     onSnapshot,
+    storage: stores.daemon,
+    conversations: conversationStore(stores.conversations),
   });
   const p = playground;
+  vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));
+  pageSaver = new Coalesced(() => stores.page.save({ version: 1, sessionId: p.sessionId, settings: { ...settings }, turns }), (e) => storageProblem(`page: ${e}`));
   for (const command of harnessCommands({
     playground: p,
     tracer,
@@ -462,17 +519,41 @@ async function boot() {
     prompter,
     write,
     workers: ["echo", "shell", "claude"],
-    onChange: sync,
+    onChange: () => {
+      sync();
+      pageSaver?.request();
+    },
     onTurn: (prompt, report) => {
       turns.push({ prompt, report });
       lastDiff = report.diff;
       renderTurns();
       void refreshFiles();
+      saveAll();
     },
+    onReset: reset,
   }))
     bash.registerCommand(command);
   await refreshFiles();
   sync();
+
+  if (restored) {
+    // Replace the first prompt with what was restored, then the session's log, then a new prompt.
+    const sessions = await p.sessions();
+    write(`\r\x1b[K\x1b[2mrestored from this browser: ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${files.size} file${files.size === 1 ? "" : "s"}, ${turns.length} turn${turns.length === 1 ? "" : "s"} (harness reset starts over)\x1b[0m\r\n`);
+    const current = savedPage?.sessionId;
+    if (current !== undefined && sessions.includes(current)) {
+      write(`\x1b[2m── session ${current}\x1b[0m\r\n`);
+      const renderer = new TurnRenderer();
+      await p.use(current, (u) => write(renderer.update(u)));
+      write(renderer.end());
+    }
+    write(promptFor(shell.cwd));
+    sync();
+    term.focus();
+    document.documentElement.dataset["booted"] = "restored";
+    await claudeReady;
+    return;
+  }
 
   // A first turn through the whole path (the shell worker, so no model usage), typed as a person would.
   const was = { worker: settings.worker, approval: settings.approval };
@@ -482,7 +563,9 @@ async function boot() {
   await shell.handleInput("\r");
   Object.assign(settings, was, workerChosen || claudeState !== "ready" ? {} : { worker: "claude" });
   sync();
+  saveAll();
   term.focus();
+  document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }
 

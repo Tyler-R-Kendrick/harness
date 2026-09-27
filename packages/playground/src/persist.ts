@@ -1,0 +1,137 @@
+/**
+ * What the playground keeps across reloads, in the viewer's browser: the daemon's
+ * snapshot (its sessions and logs), each session's agent conversation, the shared
+ * filesystem, and the page's own state (the current session, the settings, the turns).
+ * Every store is a `SnapshotStorage` (IndexedDB in the page), read back through a parser,
+ * and allowed to fail: without storage the playground simply starts fresh.
+ */
+import type { ModelMessage } from "ai";
+import type { IFileSystem } from "just-bash";
+import { z } from "zod";
+import type { SnapshotStorage } from "@harness/core";
+import type { ConversationStore } from "@harness/workers";
+
+const vfsSnapshot = z.object({
+  version: z.literal(1),
+  files: z.record(z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)),
+  dirs: z.array(z.string()),
+});
+
+/** The filesystem under a root: every file's bytes, and every directory (empty ones too). */
+export type VfsSnapshot = z.infer<typeof vfsSnapshot>;
+
+export function parseVfsSnapshot(value: unknown): VfsSnapshot | undefined {
+  const parsed = vfsSnapshot.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+export async function snapshotVfs(fs: IFileSystem, root: string): Promise<VfsSnapshot> {
+  const files: Record<string, Uint8Array> = {};
+  const dirs: string[] = [];
+  const visit = async (dir: string): Promise<void> => {
+    for (const name of [...(await fs.readdir(dir))].sort()) {
+      const path = `${dir}/${name}`;
+      if ((await fs.stat(path)).isDirectory) {
+        dirs.push(path);
+        await visit(path);
+      } else files[path] = await fs.readFileBuffer(path);
+    }
+  };
+  await visit(root);
+  return { version: 1, files, dirs };
+}
+
+/** Make the filesystem under `root` exactly the snapshot's. */
+export async function restoreVfs(fs: IFileSystem, root: string, snapshot: VfsSnapshot): Promise<void> {
+  await fs.mkdir(root, { recursive: true });
+  for (const name of await fs.readdir(root)) await fs.rm(`${root}/${name}`, { recursive: true, force: true });
+  for (const dir of snapshot.dirs) await fs.mkdir(dir, { recursive: true });
+  for (const [path, bytes] of Object.entries(snapshot.files)) {
+    await fs.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    await fs.writeFile(path, bytes);
+  }
+}
+
+const turnReport = z.object({
+  stopReason: z.enum(["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"]),
+  diff: z.object({ added: z.array(z.string()), modified: z.array(z.string()), removed: z.array(z.string()) }),
+  toolCalls: z.number(),
+  modelCalls: z.number(),
+  ms: z.number(),
+});
+
+const pageState = z.object({
+  version: z.literal(1),
+  sessionId: z.string().optional(),
+  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]) }),
+  turns: z.array(z.object({ prompt: z.string(), report: turnReport })),
+});
+
+/** The page's own state: the session it was on, its settings, and the turns it ran. */
+export type PageState = z.infer<typeof pageState>;
+
+export function parsePageState(value: unknown): PageState | undefined {
+  const parsed = pageState.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Each session's conversation, all in one stored record (a map from session to messages). */
+export function conversationStore(storage: SnapshotStorage): ConversationStore {
+  let all: Promise<Map<string, readonly ModelMessage[]>> | undefined;
+  const loaded = () =>
+    (all ??= storage.load().then((value) => new Map(value instanceof Map ? (value as Map<string, readonly ModelMessage[]>) : [])));
+  let saving = Promise.resolve();
+  return {
+    load: async (sessionId) => (await loaded()).get(sessionId),
+    save: async (sessionId, messages) => {
+      const map = await loaded();
+      map.set(sessionId, messages);
+      // Saves run one after another, each storing the whole map as it is then.
+      saving = saving.then(() => storage.save(map));
+      await saving;
+    },
+  };
+}
+
+const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Storage whose failures (none at all, a failed load or save) are reported rather than thrown: a failed load is no state. */
+export function resilient(storage: SnapshotStorage | (() => SnapshotStorage), report: (error: string) => void): SnapshotStorage {
+  let inner: SnapshotStorage | undefined;
+  try {
+    inner = typeof storage === "function" ? storage() : storage;
+  } catch (e) {
+    report(`storage unavailable: ${message(e)}`);
+  }
+  return {
+    load: async () => inner?.load().catch((e: unknown) => void report(`load failed: ${message(e)}`)),
+    save: async (value) => inner?.save(value).catch((e: unknown) => report(`save failed: ${message(e)}`)),
+  };
+}
+
+/** One save at a time: requests while one runs become a single save after it, which sees the latest state. */
+export class Coalesced {
+  readonly #save: () => Promise<void>;
+  readonly #report: (error: string) => void;
+  #running: Promise<void> = Promise.resolve();
+  #pending = false;
+
+  constructor(save: () => Promise<void>, report: (error: string) => void = () => {}) {
+    this.#save = save;
+    this.#report = report;
+  }
+
+  request(): void {
+    if (this.#pending) return;
+    this.#pending = true;
+    this.#running = this.#running.then(() => {
+      this.#pending = false;
+      return this.#save().catch((e: unknown) => this.#report(`save failed: ${message(e)}`));
+    });
+  }
+
+  /** Wait for the saves requested so far. */
+  flush(): Promise<void> {
+    return this.#running;
+  }
+}

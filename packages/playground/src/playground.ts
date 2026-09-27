@@ -13,7 +13,7 @@ import type { Bash } from "just-bash";
 import type { DaemonSnapshot, Identity, SnapshotStorage } from "@harness/core";
 import { BrowserHost, portStream } from "@harness/platform-browser";
 import { AgentWorker, EchoWorker, sessionAgent } from "@harness/workers";
-import type { Worker } from "@harness/workers";
+import type { ConversationStore, Worker } from "@harness/workers";
 import { hookEvents, hookTrace, tracedPort, tracedTools, tracedWorker, tracingMiddleware } from "./trace.ts";
 import type { Tracer } from "./trace.ts";
 import { diffVfs, HOME, vfsApproval, vfsTools, walk } from "./vfs.ts";
@@ -36,6 +36,8 @@ export interface PlaygroundOptions {
   readonly approval: () => ApprovalPolicy;
   /** Where the daemon's snapshots persist (IndexedDB); without one they are only observed. */
   readonly storage?: SnapshotStorage;
+  /** Where the agent workers keep each session's conversation, so it continues after a reload. */
+  readonly conversations?: ConversationStore;
   readonly instructions?: string;
   /** Every snapshot the daemon saves (after each change). */
   readonly onSnapshot?: (snapshot: DaemonSnapshot) => void;
@@ -113,12 +115,18 @@ export class Playground {
           toolApproval: vfsApproval(options.approval),
           stopWhen: isStepCount(12),
         }),
+        ...(options.conversations ? { conversations: options.conversations } : {}),
       });
     const workers: Record<string, Worker> = { echo: new EchoWorker() };
     for (const [name, model] of Object.entries(options.models)) workers[name] = agentWorker(model);
     let hooks = 0;
     const storage: SnapshotStorage = {
-      load: async () => options.storage?.load(),
+      load: async () => {
+        const snapshot = await options.storage?.load();
+        // Hook events the restored daemon already had were traced before the reload.
+        hooks = hookEvents(snapshot, 0).length;
+        return snapshot;
+      },
       save: async (snapshot) => {
         await options.storage?.save(snapshot);
         for (const e of hookEvents(snapshot, hooks)) {

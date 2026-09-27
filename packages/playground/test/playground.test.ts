@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
+import type { ModelMessage } from "ai";
+import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { Worker } from "@harness/workers";
 import { Playground, switchWorker } from "../src/playground.ts";
@@ -124,6 +126,44 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     await playground.prompt("hi", turn().handlers);
     await playground.close();
     expect(tracer.events().find((e) => e.kind === "host")).toMatchObject({ name: "log", detail: expect.stringContaining("disk full") });
+  });
+});
+
+describe("the playground across a reload", () => {
+  it("PG3.1 with the same stores, a restarted playground has the sessions, and the agent continues the conversation; old hook events are not traced again", async () => {
+    const daemon = new Map<string, unknown>();
+    const storage = { load: async () => structuredClone(daemon.get("d")), save: async (v: unknown) => void daemon.set("d", structuredClone(v)) };
+    const kept = new Map<string, readonly ModelMessage[]>();
+    const conversations = { load: async (id: string) => kept.get(id), save: async (id: string, m: readonly ModelMessage[]) => void kept.set(id, m) };
+    const model = () =>
+      new MockLanguageModelV4({
+        doStream: async ({ prompt }) => ({
+          stream: convertArrayToReadableStream([
+            { type: "stream-start", warnings: [] },
+            { type: "text-start", id: "0" },
+            { type: "text-delta", id: "0", delta: `heard ${prompt.filter((m) => m.role === "user").length}` },
+            { type: "text-end", id: "0" },
+            { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: { inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: undefined, text: undefined, reasoning: undefined } } },
+          ]),
+        }),
+      });
+    const first = await start({ models: { m: model() }, worker: () => "m", storage, conversations });
+    const t1 = turn();
+    await first.playground.prompt("one", t1.handlers);
+    const sessionId = first.playground.sessionId!;
+    await first.playground.close();
+    expect(t1.said()).toBe("heard 1");
+
+    const again = await start({ models: { m: model() }, worker: () => "m", storage, conversations });
+    expect(await again.playground.sessions()).toEqual([sessionId]);
+    await again.playground.use(sessionId, () => {});
+    const t2 = turn();
+    await again.playground.prompt("two", t2.handlers);
+    expect(t2.said()).toBe("heard 2");
+    await again.playground.close();
+    const hooks = again.tracer.events().filter((e) => e.kind === "hook").map((e) => e.name);
+    expect(hooks).not.toContain("session.created");
+    expect(hooks).toContain("turn.started");
   });
 });
 

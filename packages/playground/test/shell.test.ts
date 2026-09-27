@@ -148,6 +148,16 @@ describe("the terminal's harness commands", () => {
     expect(await t.run("harness nope")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("unknown command nope") });
   });
 
+  it("TM2.6 harness reset clears what this browser keeps (when the page keeps anything) and says so", async () => {
+    const t = await terminal();
+    expect(await t.run("harness reset")).toMatchObject({ exitCode: 1, stderr: "this page keeps nothing to reset\n" });
+    const bash = new Bash({ cwd: HOME });
+    let reset = 0;
+    for (const c of harnessCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"], onReset: async () => void reset++ })) bash.registerCommand(c);
+    expect(await bash.exec("harness reset", { cwd: HOME })).toMatchObject({ exitCode: 0, stdout: "cleared the saved sessions, conversations and files; reloading\n" });
+    expect(reset).toBe(1);
+  });
+
   it("TM2.5 harness snapshot prints the daemon's snapshot as JSON", async () => {
     const t = await terminal();
     expect(JSON.parse((await t.run("harness snapshot")).stdout)).toMatchObject({ version: 1, sessions: [] });
