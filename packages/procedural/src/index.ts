@@ -8,9 +8,12 @@ export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
 export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldOverlay, MAX_SESSIONS, MAX_TURNS, rebaseOverlay } from "./overlay.ts";
+export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES, type PinRequest } from "./pinning.ts";
+export { AccessPolicySchema, ACTIONS, authorize, globMatches, parsePolicy, policyJsonSchema, type AccessPolicy, type Action } from "./policy.ts";
 export { readJsonBlock, renderPrompt, type Decoding } from "./prompt.ts";
 export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { reflect, reflectionJsonSchema, type ReflectRequest } from "./reflect.ts";
+export { explainResolve, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, WhenSchema, type Resolution, type ResolveContext, type Resolver, type When } from "./resolver.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";

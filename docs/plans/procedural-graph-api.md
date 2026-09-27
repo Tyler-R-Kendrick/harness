@@ -585,6 +585,48 @@ As built (P5). These are additions; nothing above changed meaning.
   head moved under `repinOnDream: "turn"`. With `"never"` it keeps the pin's core and the
   overlay version recorded by `rebased.frozenAt`.
 
+As built (P9). These are additions; nothing above changed meaning.
+
+- `resolver.ts`:
+  - `parseResolver(input): Resolver` (branded; throws a `RangeError` naming where) and
+    `ResolverSchema`. A template naming anything but `meta.<key>`, `principal` or `cwd`,
+    or an unterminated `${`, is refused at parse time.
+  - `explainResolve(resolver, context): Resolution`, where
+    `Resolution = { graph: GraphId | undefined; rule: number | undefined; reason: string }`.
+    `resolveGraph` is its `graph`. The first matching rule decides even when its result
+    is invalid: a missing or non-scalar template value, or a result that is not a
+    `GraphId`, resolves to no graph with that reason (no fall-through).
+  - `ResolveContext = { meta?, cwd?, principal? }`, `WhenSchema`, `type When` and
+    `matches(when, context)`. A meta key is a flat key or a dotted path into nested
+    records. A meta value matches as its string form (strings, numbers, booleans); `"*"`
+    matches any value that is not null. `cwdUnder` matches on a path boundary (`/` or
+    `\`). `principal` is exact, or `"*"` for any.
+- `policy.ts`:
+  - `ACTIONS`, `type Action`, `AccessPolicySchema`, `parsePolicy(input): AccessPolicy`
+    (branded) and `policyJsonSchema()`. A policy is
+    `{ rules: [{ when: When & { actions?: Action[]; graph?: pattern }, allow: boolean }], default: "allow" | "deny" = "allow" }`.
+    A graph pattern's `*` is any run of characters (`globMatches(pattern, text)`).
+  - `authorize(policy: AccessPolicy | undefined, …)`: no policy allows everything; else
+    the first matching rule decides, then the default.
+- `pinning.ts`:
+  - `PinRequest` also takes `overlayRefresh?: "turn" | "session"` (default `"turn"`):
+    with the core kept, `"turn"` moves the pin to the overlay's latest version on that
+    core and `"session"` keeps it. `clock` and `entropy` are structural
+    (`{ now() }`, `{ bytes(n) }`), so core's `Clock` and `Entropy` fit.
+  - The salt is `SALT_BYTES` (16) bytes from `Entropy` as hex, drawn once per session and
+    kept across graphs and re-pins. `at` is the Clock time of the last change; a pin
+    that did not change is not written.
+  - "Reverted" means the head no longer descends from the pinned core through revision
+    `parents`, or the head's record has origin `revert` (or is missing). Under `"never"`
+    the old core is kept only when the head descends from it.
+  - The overlay log starts on the graph's first head (the oldest in `Head.history`).
+    Version 0 is the empty overlay and pairs with any core, so a head whose rebase has
+    not landed is pinned with overlay 0 until it does.
+  - `pinSession` throws a `RangeError` for a graph with no head.
+  - Also exported: `overlayBases(initial, events)` (the core each version is built on),
+    `latestOn(bases, core)`, `overlayAt(core, events, version)` and
+    `readOverlay(store, pin): Promise<OverlayState>` (the state a pin reads).
+
 ## P10: worker hook (`packages/workers`, plus `procedural/src/step.ts`)
 
 - In workers:

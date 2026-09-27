@@ -1,0 +1,4 @@
+{
+  "$schema": "./resolver.schema.json",
+  "rules": [{ "when": {}, "graph": "default" }]
+}
