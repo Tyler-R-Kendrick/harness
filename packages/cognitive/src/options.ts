@@ -129,8 +129,8 @@ export function withLogprobs(top: number): { providerOptions: { harness: JSONObj
 
 /** How many top tokens a call asks for, if it asks. */
 export function logprobsOf(providerOptions: ProviderOptions): number | undefined {
-  const top = harness(providerOptions)["logprobs"];
-  return typeof top === "number" && Number.isInteger(top) && top > 0 ? top : undefined;
+  const top = z.int().positive().safeParse(harness(providerOptions)["logprobs"]);
+  return top.success ? top.data : undefined;
 }
 
 /** The token probabilities a model reported (provider metadata `harness.logprobs`), if it did. */

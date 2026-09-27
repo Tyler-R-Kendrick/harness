@@ -120,6 +120,7 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
   /** What an error the interpreter hands back means; it frees the handle. (An interrupt ends the run stopped: see finish.) */
   const failureOf = (handle: QuickJSHandle): Error => {
     const error: unknown = handle.consume((h) => vm.dump(h));
+    // Stryker disable next-line ConditionalExpression: equivalent; a primitive has no string name either, which the last check catches
     if (error === null || typeof error !== "object" || typeof (error as { name?: unknown }).name !== "string") return new HostFailure(String(error));
     const { name, message } = error as { name: string; message: string };
     return new RunFailure(name, message);
@@ -131,7 +132,7 @@ async function run(wasm: QuickJSWASMModule, program: CodeModeProgram, options: {
   };
 
   const invoke = async (name: string, inputJson: string | undefined): Promise<string> => {
-    if (abortSignal.aborted) throw new RunFailure("CodeModeAbortedError", "Code mode execution was aborted.");
+    if (abortSignal.aborted) throw stopped();
     const hostTool: Tool | undefined = Object.hasOwn(tools, name) ? tools[name] : undefined;
     if (!hostTool) throw new RunFailure("CodeModeToolError", `Unknown tool: ${name}`);
     if (!hostTool.execute) throw new RunFailure("CodeModeToolError", `Tool "${name}" does not have execute().`);
