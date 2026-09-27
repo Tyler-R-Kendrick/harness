@@ -25,10 +25,12 @@ import { askModel, WorkflowHost, workflowsExtension } from "@harness/workflows";
 import { aiCodeMode } from "@harness/workflows/node";
 import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
-import type { ToolSet } from "ai";
+import type { LanguageModel, ToolSet } from "ai";
+import { Dialogue } from "@harness/dialogue";
+import type { Settings as DialogueSettings } from "@harness/dialogue";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
-import { loadCatalog, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
+import { loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
 import { loadXGrammar } from "./xgrammar.ts";
 import { ModelFiles } from "./model-files.ts";
@@ -252,4 +254,37 @@ function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullabl
   const plugins = options.plugins ?? (workflows ? defaultPlugins(ensemble, workflows) : new Plugins());
   ensemble.install(learningExtension({ learning, reasoner, plugins }));
   return learning;
+}
+
+/**
+ * A scripted dialogue for session models (see @harness/dialogue and ADR 0011). Over an
+ * ensemble, its router picks scripts, its judge checks candidates and its reasoning model
+ * drafts them; with `embeddings` (memory installed) exemplars match by meaning. Without an
+ * ensemble it matches by pattern and clusters by shape, and drafts with `drafter` if given.
+ */
+export function buildDialogue(options: {
+  readonly ensemble?: Ensemble;
+  /** Memory is installed, so the ensemble embeds text. */
+  readonly embeddings?: boolean;
+  /** Drafts scripts; defaults to the ensemble's reasoning model. */
+  readonly drafter?: LanguageModel;
+  /** A script book or a previous save, to start from. */
+  readonly book?: unknown;
+  /** Called with the dialogue's save after every change. */
+  readonly persist?: (saved: unknown) => void;
+  /** Called with what failed when one of its models or its learning fails. */
+  readonly onError?: (error: unknown) => void;
+  readonly settings?: DialogueSettings;
+}): Dialogue {
+  const { ensemble, persist, onError } = options;
+  const drafter = options.drafter ?? ensemble?.languageModel("reasoning");
+  return new Dialogue({
+    settings: options.settings ?? loadDialogueSettings(),
+    ...(options.book === undefined ? {} : { book: options.book }),
+    ...(ensemble ? { router: ensemble.languageModel("tool-calling", "router"), judge: ensemble.evaluationModel() } : {}),
+    ...(ensemble && options.embeddings ? { embedder: ensemble.embeddingModel() } : {}),
+    ...(drafter ? { drafter } : {}),
+    ...(persist ? { onChange: (d: Dialogue) => persist(d.save()) } : {}),
+    ...(onError ? { onError } : {}),
+  });
 }

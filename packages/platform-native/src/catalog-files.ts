@@ -3,6 +3,8 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { parseCatalog } from "@harness/cognitive";
 import type { Catalog } from "@harness/cognitive";
+import { parseSettings as parseDialogueSettings } from "@harness/dialogue";
+import type { Settings as DialogueSettings } from "@harness/dialogue";
 import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
@@ -28,4 +30,9 @@ export function loadLearningSettings(file: string = require.resolve("@harness/le
 /** Read and parse the learning plugins' settings (prompts, thresholds): their own data file by default, or a tweaked copy. */
 export function loadPluginSettings(file: string = require.resolve("@harness/learning-plugins/data/settings.json")): PluginSettings {
   return parsePluginSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse the dialogue's settings (thresholds, the drafter's prompt): its own data file by default, or a tweaked copy. */
+export function loadDialogueSettings(file: string = require.resolve("@harness/dialogue/data/settings.json")): DialogueSettings {
+  return parseDialogueSettings(JSON.parse(readFileSync(file, "utf8")));
 }

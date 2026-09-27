@@ -107,6 +107,24 @@ interrupted run resumes where it stopped. Session agents get the library's workf
 harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env":"staging"}'
 ```
 
+### Scripted dialogue
+
+Call centers answer most calls from scripts and transfer the rest to a person. The
+harness does the same with its model (ADR 0011): a dialogue in front of the session's
+model answers the steps its scripts cover, with no inference or only for a script's
+holes, and passes the rest to the model. Scripts are fixed text with holes filled from
+what the user said (slots), from the tool result a step reads back, or by the model under
+a template constraint. They are matched by pattern, by meaning or by the tool router,
+fill missing slots by asking (VoiceXML-style forms, handing over to the model after the
+last prompt), and can be authored as a script book. The dialogue also builds them itself:
+steps the model answered are clustered and aligned into templates, or drafted (with
+follow-ups for the next turn), and a built script answers only after the model's own
+replies have agreed with it in shadow.
+
+```sh
+node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
+```
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
@@ -272,12 +290,13 @@ reported as `blocked`, never as a pass.
 | `packages/runtime` | The daemon runtime every host wraps: worker dispatch, cognitive work, capability mirroring, snapshot saves (pure) |
 | `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
 | `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |
-| `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
+| `packages/workers` | Echo worker, a worker that runs any AI SDK agent or harness, and the dialogue as model middleware (portable) |
 | `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
 | `packages/platform-browser` | Browser host: MessagePort and extension-port bindings, IndexedDB storage, shared-worker serving, the ensemble with a Cache API byte cache, durable workflows on QuickJS |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
+| `packages/dialogue` | Scripted dialogue: scripts answer turns without inference, IVR-style forms, scripts induced and drafted from the model's answers and verified in shadow (pure) |
 | `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |

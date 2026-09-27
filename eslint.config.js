@@ -26,7 +26,7 @@ const pureRestrictions = {
 // Refined types (see packages/cognitive/src/units.ts and the id schemas) are made only by
 // parsing. A cast would forge one without the check, so casting to them is an error
 // everywhere, tests included: construct them with their parser or schema instead.
-const REFINED = "Probability|Similarity|Bytes|Dimensions|Sha256|CommitSha|CascadePolicy|BehaviorGraph|BehaviorPack|MemoryId|LessonId";
+const REFINED = "Probability|Similarity|Bytes|Dimensions|Sha256|CommitSha|CascadePolicy|BehaviorGraph|BehaviorPack|MemoryId|LessonId|ScriptId";
 const refinedRestrictions = ["TSAsExpression", "TSTypeAssertion"].map((cast) => ({
   selector: `${cast} > TSTypeReference.typeAnnotation[typeName.name=/^(${REFINED})$/]`,
   message: "Refined types are made by parsing: use the type's constructor or schema, not a cast.",
@@ -45,7 +45,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["packages/{core,runtime,protocol,cognitive,testkit,behavior,memory,learning}/src/**/*.ts"],
+    files: ["packages/{core,runtime,protocol,cognitive,testkit,behavior,memory,learning,dialogue}/src/**/*.ts"],
     languageOptions: { globals: {} },
     rules: pureRestrictions,
   },

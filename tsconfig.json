@@ -20,6 +20,9 @@
       "path": "packages/learning"
     },
     {
+      "path": "packages/dialogue"
+    },
+    {
       "path": "packages/workflows"
     },
     {

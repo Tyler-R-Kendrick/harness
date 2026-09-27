@@ -3,7 +3,7 @@ import { embed, experimental_evaluate, generateText, streamText } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
-import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
+import { buildDialogue, buildNativeEnsemble, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
 
 const catalog = loadCatalog();
 const native = catalog.models.filter((m) => m.platforms.includes("native"));
@@ -58,7 +58,7 @@ import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
 import { compilePack, defineGraph } from "@harness/behavior";
-import { scriptedModel } from "@harness/testkit";
+import { keywordRouterModel, scriptedModel } from "@harness/testkit";
 
 const tmp: string[] = [];
 afterEach(async () => {
@@ -356,6 +356,25 @@ require("node:http").createServer((req, res) => {
     expect(second.learning!.lessons().map((l) => l.id)).toEqual(["l1"]);
     expect(() => buildNativeEnsemble({ cacheDir: "/nonexistent", learning: {} })).toThrow("learning requires memory");
     await Promise.all([first.close(), second.close()]);
+  });
+
+  it("CH3.5 a dialogue over the ensemble picks scripts with its router, and every change is saved and restored", async () => {
+    const saves: unknown[] = [];
+    const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128) } });
+    host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/router", tasks: ["tool-calling"], ports: ["router"] } as never, async () => ({ router: keywordRouterModel() }));
+    const book = { scripts: [{ id: "opening_hours", intent: "opening hours", reply: ["We open at 9."] }] };
+    const dialogue = buildDialogue({ ensemble: host.ensemble, embeddings: true, book, persist: (s) => saves.push(s) });
+    expect(await dialogue.respond({ utterance: "what are your opening hours" })).toMatchObject({ kind: "reply", text: "We open at 9.", match: { by: "router" } });
+    expect(saves).toHaveLength(1);
+    expect(buildDialogue({ book: saves[0] }).script("opening_hours")!.evidence.served).toBe(1);
+    const errors: unknown[] = [];
+    const judging = buildDialogue({ ensemble: host.ensemble, book: { scripts: [{ id: "hours", intent: "hours", status: "candidate", patterns: ["hours"], reply: ["We open at 9."] }] }, onError: (e) => void errors.push(e) });
+    const s = { utterance: "hours" };
+    judging.observe(s, await judging.respond(s), "Nine.");
+    await judging.idle();
+    expect(errors).toHaveLength(1);
+    expect(loadDialogueSettings().induce.support).toBeGreaterThanOrEqual(2);
+    await host.close();
   });
 
   it("CH3.4 with workflows, learning gets the shipped plugins: a learned procedure becomes a workflow that runs durably from the library", async () => {

@@ -1,6 +1,7 @@
 export { EchoWorker } from "./echo.ts";
 export { AgentWorker, userContent } from "./agent.ts";
 export type { Turn, TurnOptions } from "./agent.ts";
+export { dialogueMiddleware, stepOf } from "./dialogue.ts";
 export { harnessSessions } from "./harness.ts";
 export type { HarnessSessions, HarnessStore } from "./harness.ts";
 export { rememberTurns, sessionAgent } from "./session-agent.ts";

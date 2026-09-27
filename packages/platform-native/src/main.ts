@@ -4,11 +4,13 @@ import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
+import { wrapLanguageModel } from "ai";
+import type { LanguageModel } from "ai";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
-import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
+import { AgentWorker, dialogueMiddleware, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
-import { buildNativeEnsemble } from "./cognitive-host.ts";
+import { buildDialogue, buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
@@ -31,6 +33,7 @@ const { values } = parseArgs({
     memory: { type: "string" },
     learning: { type: "string" },
     workflows: { type: "string" },
+    dialogue: { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -51,7 +54,8 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
-      "                            [--consult <gateway id>]]\n",
+      "                            [--consult <gateway id>]]\n" +
+      "               [--dialogue <file>]\n",
   );
   process.exit(2);
 }
@@ -89,6 +93,26 @@ const cognitive =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
+if (values.dialogue !== undefined && values.worker !== "model" && values.worker !== "ensemble") {
+  process.stderr.write("--dialogue scripts a model's turns: it goes with --worker model or --worker ensemble\n");
+  process.exit(2);
+}
+// A scripted dialogue in front of the session model (ADR 0011): scripts answer what they
+// can, the model the rest, and scripts are built from the model's answers. Saved to its file.
+const dialogueFile = values.dialogue === undefined ? undefined : new FileStorage(values.dialogue);
+const book = await dialogueFile?.load();
+// Saves land in issue order, so shutdown waits for the last one.
+let dialogueSaved: Promise<void> = Promise.resolve();
+const dialogue =
+  dialogueFile &&
+  buildDialogue({
+    ...(cognitive ? { ensemble: cognitive.ensemble, embeddings: cognitive.memory !== undefined } : { drafter: gateway(values.model) }),
+    ...(book === undefined ? {} : { book }),
+    persist: (s: unknown) => void (dialogueSaved = dialogueFile.save(s)),
+    // A model the dialogue could not use is logged; the model answers the step instead.
+    onError: (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`),
+  });
+const scripted = (model: Exclude<LanguageModel, string>) => (dialogue ? wrapLanguageModel({ model, middleware: dialogueMiddleware(dialogue) }) : model);
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
   process.exit(2);
@@ -114,11 +138,11 @@ const harness =
 const worker: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions }) })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
-            model: cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat"),
+            model: scripted(cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat")),
             vision: cognitive!.ensemble.languageModel("vision-qa"),
             ...instructions,
             ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
@@ -143,6 +167,8 @@ const host = await NodeHost.start({
 
 const shutdown = async () => {
   await host.close();
+  await dialogue?.idle();
+  await dialogueSaved;
   await harness?.close();
   await cognitive?.close();
   process.exit(0);

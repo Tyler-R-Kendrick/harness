@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "similar": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "route": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "similar",
+        "route"
+      ],
+      "additionalProperties": false
+    },
+    "induce": {
+      "type": "object",
+      "properties": {
+        "support": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "cluster": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "determined": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "holes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "keep": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "support",
+        "cluster",
+        "determined",
+        "holes",
+        "keep"
+      ],
+      "additionalProperties": false
+    },
+    "promote": {
+      "type": "object",
+      "properties": {
+        "fits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "retireMargin": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "judge": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "fits",
+        "retireMargin",
+        "judge",
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "draft": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "followUps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "system",
+        "maxTokens",
+        "followUps"
+      ],
+      "additionalProperties": false
+    },
+    "sessions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "match",
+    "induce",
+    "promote",
+    "draft",
+    "sessions"
+  ],
+  "additionalProperties": false
+}

@@ -19,6 +19,7 @@
     "@harness/cognitive": "0.0.0",
     "@harness/constrained": "0.0.0",
     "@harness/core": "0.0.0",
+    "@harness/dialogue": "0.0.0",
     "@harness/learning": "0.0.0",
     "@harness/learning-plugins": "0.0.0",
     "@harness/memory": "0.0.0",
