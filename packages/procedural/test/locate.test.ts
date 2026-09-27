@@ -1,0 +1,157 @@
+import { describe, expect, it } from "vitest";
+import { coreView, match, neighborhood, NodeNameSchema, parseGraph } from "@harness/procedural";
+import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "@harness/procedural";
+import { edge, hotpot } from "./fixtures.ts";
+import type { DocInput } from "./fixtures.ts";
+
+const view = (doc: DocInput): EffectiveGraph => {
+  const parsed = parseGraph(doc);
+  if (!parsed.ok) throw new Error(`fixture: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
+  return coreView(parsed.graph);
+};
+
+const graphOf = (nodes: DocInput["nodes"], edges: DocInput["edges"]): DocInput => ({ ...hotpot(), nodes, edges });
+const node = (id: string, binding?: { kind: string; name: string; code?: string; content?: string }): DocInput["nodes"][number] =>
+  binding === undefined ? { id, type: "ACTION", description: `${id}.` } : { id, type: "ACTION", description: `${id}.`, binding };
+const hex = "a".repeat(64);
+const name = (n: string) => NodeNameSchema.parse(n);
+const pairs = (hop: readonly EffectiveEdge[] | undefined) => (hop ?? []).map((e) => `${e.from}→${e.to}`);
+
+describe("match", () => {
+  const g = view(hotpot());
+
+  it("PG3.1 no previous action locates the agent at Start (a₀ = Start)", () => {
+    expect(match(undefined, g, "exact")).toBe("Start");
+    expect(match(undefined, g, "case-insensitive")).toBe("Start");
+  });
+
+  it("PG3.2 exact matches an action equal to a node id", () => {
+    expect(match("Scan_Index", g, "exact")).toBe("Scan_Index");
+    expect(match("Bridge_Extract", g, "exact")).toBe("Bridge_Extract");
+  });
+
+  it("PG3.3 exact matches an action equal to a binding's name, whatever the binding's kind", () => {
+    const bound = view(
+      graphOf(
+        [node("Start"), node("Retrieve", { kind: "tool", name: "first_hop_retrieve" }), node("Plan", { kind: "workflow", name: "plan_trip", code: hex }), node("Style", { kind: "skill", name: "house_style", content: hex }), node("End")],
+        [edge("Start", "Retrieve"), edge("Retrieve", "Plan"), edge("Plan", "Style"), edge("Style", "End")],
+      ),
+    );
+    expect(match("first_hop_retrieve", bound, "exact")).toBe("Retrieve");
+    expect(match("plan_trip", bound, "exact")).toBe("Plan");
+    expect(match("house_style", bound, "exact")).toBe("Style");
+  });
+
+  it("PG3.4 exact is the paper's written definition: a different case, a prefix or padding does not match", () => {
+    expect(match("scan_index", g, "exact")).toBeUndefined();
+    expect(match("SCAN_INDEX", g, "exact")).toBeUndefined();
+    expect(match("Scan", g, "exact")).toBeUndefined();
+    expect(match(" Scan_Index", g, "exact")).toBeUndefined();
+    expect(match("FIRST_HOP_RETRIEVE", g, "exact")).toBeUndefined();
+  });
+
+  it("PG3.5 case-insensitive pairs First_Hop_Retrieve with first_hop_retrieve, as the paper's excerpt does, on ids and binding names", () => {
+    const unbound = view(graphOf([node("Start"), node("First_Hop_Retrieve"), node("End")], [edge("Start", "First_Hop_Retrieve"), edge("First_Hop_Retrieve", "End")]));
+    expect(match("first_hop_retrieve", unbound, "case-insensitive")).toBe("First_Hop_Retrieve");
+    expect(match("first_hop_retrieve", unbound, "exact")).toBeUndefined();
+    const bound = view(graphOf([node("Start"), node("Retrieve", { kind: "tool", name: "First_Hop" }), node("End")], [edge("Start", "Retrieve"), edge("Retrieve", "End")]));
+    expect(match("FIRST_HOP", bound, "case-insensitive")).toBe("Retrieve");
+    expect(match("FIRST_HOP", bound, "exact")).toBeUndefined();
+  });
+
+  it("PG3.6 nothing matched is undefined, in either mode (the caller falls back to the full graph)", () => {
+    expect(match("grep", g, "exact")).toBeUndefined();
+    expect(match("grep", g, "case-insensitive")).toBeUndefined();
+    expect(match("", g, "case-insensitive")).toBeUndefined();
+  });
+
+  it("PG3.7 an exact match wins over a case-insensitive one, and an id over a binding name", () => {
+    const g2 = view(
+      graphOf(
+        [node("Start"), node("scan"), node("Scan"), node("Other", { kind: "tool", name: "Fetch" }), node("Fetch"), node("Late", { kind: "tool", name: "late" }), node("LATE"), node("End")],
+        [edge("Start", "scan"), edge("scan", "Scan"), edge("Scan", "Other"), edge("Other", "Fetch"), edge("Fetch", "Late"), edge("Late", "LATE"), edge("LATE", "End")],
+      ),
+    );
+    // "Scan" is exact for the later node even though "scan" comes first case-insensitively.
+    expect(match("Scan", g2, "case-insensitive")).toBe("Scan");
+    expect(match("scan", g2, "case-insensitive")).toBe("scan");
+    // Node Other is bound to the tool "Fetch", but a node named Fetch exists.
+    expect(match("Fetch", g2, "exact")).toBe("Fetch");
+    expect(match("Fetch", g2, "case-insensitive")).toBe("Fetch");
+    // An exact binding match beats a case-insensitive id match.
+    expect(match("late", g2, "case-insensitive")).toBe("Late");
+    // With no exact candidate, a case-insensitive id beats a case-insensitive binding name; the first in document order wins.
+    expect(match("FETCH", g2, "case-insensitive")).toBe("Fetch");
+    expect(match("SCAN", g2, "case-insensitive")).toBe("scan");
+    expect(match("lAtE", g2, "case-insensitive")).toBe("Late");
+  });
+
+  it("PG3.8 match reads the effective graph, so it finds an overlay node", () => {
+    const withOverlay: EffectiveGraph = {
+      ...g,
+      overlay: 3,
+      nodes: [...g.nodes, { id: name("Verify"), type: "REASONING", description: "Check.", origin: "overlay", status: "probation" } satisfies EffectiveNode],
+    };
+    expect(match("Verify", withOverlay, "exact")).toBe("Verify");
+    expect(match("Verify", g, "exact")).toBeUndefined();
+  });
+});
+
+describe("neighborhood", () => {
+  it("PG3.9 hop 1 is the active node's outgoing edges in document order, hop 2 the edges leaving what hop 1 reaches", () => {
+    const g = view(hotpot());
+    const n = neighborhood(g, name("First_Hop_Retrieve"), 2);
+    expect(n.active).toBe("First_Hop_Retrieve");
+    expect(n.hops.map(pairs)).toEqual([["First_Hop_Retrieve→Scan_Index"], ["Scan_Index→Bridge_Extract"]]);
+    expect(n.hops[0]![0]).toBe(g.edges[1]);
+
+    const fan = view(
+      graphOf(
+        [node("Start"), node("A"), node("B"), node("C"), node("D"), node("End")],
+        [edge("Start", "B"), edge("Start", "A"), edge("A", "C"), edge("B", "D"), edge("B", "End"), edge("C", "End"), edge("D", "End")],
+      ),
+    );
+    expect(neighborhood(fan, name("Start"), 2).hops.map(pairs)).toEqual([
+      ["Start→B", "Start→A"],
+      ["B→D", "B→End", "A→C"],
+    ]);
+  });
+
+  it("PG3.10 an edge appears once, at the hop that first reaches its source: cycles and diamonds do not repeat it", () => {
+    const g = view(
+      graphOf(
+        [node("Start"), node("A"), node("B"), node("C"), node("D"), node("End")],
+        [edge("Start", "A"), edge("A", "B"), edge("A", "C"), edge("B", "D"), edge("C", "D"), edge("D", "A"), edge("D", "End")],
+      ),
+    );
+    expect(neighborhood(g, name("A"), 4).hops.map(pairs)).toEqual([["A→B", "A→C"], ["B→D", "C→D"], ["D→A", "D→End"], []]);
+    // A cycle away from the active node: A's edges are listed at hop 2, not again at hop 4.
+    const away = view(graphOf([node("Start"), node("A"), node("B"), node("End")], [edge("Start", "A"), edge("A", "B"), edge("B", "A"), edge("B", "End")]));
+    expect(neighborhood(away, name("Start"), 4).hops.map(pairs)).toEqual([["Start→A"], ["A→B"], ["B→A", "B→End"], []]);
+    const loop = view(graphOf([node("Start"), node("End")], [edge("Start", "Start"), edge("Start", "End")]));
+    expect(neighborhood(loop, name("Start"), 2).hops.map(pairs)).toEqual([["Start→Start", "Start→End"], []]);
+  });
+
+  it("PG3.11 parallel edges between the same endpoints (a multigraph) each appear once", () => {
+    const g = view(graphOf([node("Start"), node("A"), node("End")], [edge("Start", "A", "LEADS_TO"), edge("Start", "A", "TRIGGERS"), edge("A", "End")]));
+    const n = neighborhood(g, name("Start"), 2);
+    expect(n.hops.map((h) => h.map((e) => e.relation))).toEqual([["LEADS_TO", "TRIGGERS"], ["LEADS_TO"]]);
+  });
+
+  it("PG3.12 there are exactly `hops` hops, empty past the horizon, and zero hops is the node alone", () => {
+    const g = view(hotpot());
+    expect(neighborhood(g, name("Bridge_Extract"), 3).hops.map(pairs)).toEqual([["Bridge_Extract→End"], [], []]);
+    expect(neighborhood(g, name("End"), 2).hops).toEqual([[], []]);
+    expect(neighborhood(g, name("Start"), 0)).toEqual({ active: "Start", hops: [] });
+    expect(neighborhood(g, name("Start"), 1).hops.map(pairs)).toEqual([["Start→First_Hop_Retrieve"]]);
+  });
+
+  it("PG3.13 a node outside the graph or a hop count that is not a whole number is a RangeError", () => {
+    const g = view(hotpot());
+    expect(() => neighborhood(g, name("Nowhere"), 2)).toThrow(RangeError);
+    expect(() => neighborhood(g, name("Nowhere"), 2)).toThrow("Nowhere");
+    expect(() => neighborhood(g, name("Start"), -1)).toThrow(RangeError);
+    expect(() => neighborhood(g, name("Start"), 1.5)).toThrow(RangeError);
+    expect(() => neighborhood(g, name("Start"), Number.NaN)).toThrow("hops");
+  });
+});
