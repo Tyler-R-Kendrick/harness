@@ -1,0 +1,23 @@
+{
+  "name": "@harness/procedural",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Procedural graphs (arXiv:2609.09153): a static core that changes only through dream, a dynamic overlay learned from live traffic, step-level guidance, and the evolution loop. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@harness/learning": "0.0.0",
+    "@noble/hashes": "2.4.0",
+    "ai": "7.0.114",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0"
+  }
+}
