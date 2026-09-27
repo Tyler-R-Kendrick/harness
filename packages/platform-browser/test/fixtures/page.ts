@@ -82,12 +82,23 @@ async function join() {
   await joined;
 }
 
-/** Take over a session another tab left: possible once the daemon learns that tab is gone. */
+/**
+ * Take over a session another tab left: possible once the daemon learns that tab is gone.
+ * The tab's Web Lock is released when it closes, and the daemon hears of it a moment
+ * later, so until then the lease is still the old tab's: the prompt is tried again.
+ */
 async function takeOver(sessionId: string) {
   const b = await (joined ?? sharedClient());
   await b.acp.loadSession({ sessionId, cwd: "/", mcpServers: [] });
-  const turn = await b.acp.prompt({ sessionId, prompt: [{ type: "text", text: "mine now" }] });
-  return { stopReason: turn.stopReason, said: b.said() };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const turn = await b.acp.prompt({ sessionId, prompt: [{ type: "text", text: "mine now" }] });
+      return { stopReason: turn.stopReason, said: b.said() };
+    } catch (e) {
+      if (attempt >= 100 || !/input lease is held/.test((e as Error).message)) throw e;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
 }
 
 /** Model files in the real Cache API: kept, found again by another instance, a missing key is not there. */

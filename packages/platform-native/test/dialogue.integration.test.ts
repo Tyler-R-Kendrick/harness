@@ -24,9 +24,9 @@ const book = {
 };
 
 /** The daemon over stdio with a dialogue book, as an editor would launch it, with no gateway credential (a turn that reached the model would fail). */
-function launch(dir: string, file: string) {
+function launch(dir: string, file: string, worker = "model") {
   const { AI_GATEWAY_API_KEY: _, VERCEL_OIDC_TOKEN: __, ...env } = process.env;
-  const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", "model", "--dialogue", file, "--state", join(dir, "state.json")], { env: { ...env, NODE_OPTIONS: "" } });
+  const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", worker, "--dialogue", file, "--state", join(dir, "state.json")], { env: { ...env, NODE_OPTIONS: "" } });
   children.push(child);
   const updates: SessionNotification[] = [];
   const stream = ndJsonStream(Writable.toWeb(child.stdin) as WritableStream<Uint8Array>, Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>);
@@ -40,9 +40,14 @@ function launch(dir: string, file: string) {
       .map((n) => n.update)
       .flatMap((u) => (u.sessionUpdate === "agent_message_chunk" && u.content.type === "text" ? [u.content.text] : []))
       .join("");
-    return { stopReason, reply };
+    const scripted = updates
+      .slice(from)
+      .map((n) => n.update as { _meta?: { harness?: { dialogue?: { script?: string } } } })
+      .find((u) => u._meta?.harness?.dialogue)?._meta?.harness?.dialogue?.script;
+    return { stopReason, reply, ...(scripted === undefined ? {} : { scripted }) };
   };
-  return { child, client, exited, say };
+  const invoke = (op: string, input: unknown) => client.extMethod("_harness/cognitive/invoke", { op, input });
+  return { child, client, exited, say, invoke };
 }
 
 describe("a scripted dialogue in front of the daemon's model", () => {
@@ -154,5 +159,42 @@ await tools.say({ text: "Ordered a shirt in " + size + "." });`;
     expect(Object.keys(saved().documents[0]!.files).sort()).toEqual(["bot.aiml", "sets/colors.txt"]);
     expect(run("import", bot, "--book", file, "--name", "chat")).toMatchObject({ status: 0 });
     expect(saved().scripts.map((s) => s.id)).toEqual(["chat"]);
+  });
+
+  it("DI1.6 in front of the echo worker, the dialogue learns a reply the worker gives alike across sessions, and answers it itself once it fits", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-learn-"));
+    const file = join(dir, "book.json");
+    writeFileSync(file, JSON.stringify({ scripts: [] }));
+    const { child, client, exited, say } = launch(dir, file, "echo");
+    await client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const turn = async (text: string) => {
+      const { sessionId } = await client.newSession({ cwd: dir, mcpServers: [] });
+      return say(sessionId, text);
+    };
+    // Two sessions teach it; three more (from two other sessions) confirm it in shadow.
+    for (const n of [1, 2, 3, 4, 5]) expect(await turn(`where is my order number ${n}`)).toEqual({ stopReason: "end_turn", reply: `echo: where is my order number ${n}` });
+    expect(await turn("where is my order number 6")).toEqual({ stopReason: "end_turn", reply: "echo: where is my order number 6", scripted: "s1" });
+    child.stdin.end();
+    expect(await exited).toBe(0);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ scripts: [{ id: "s1", status: "active", scope: dir, evidence: { served: 1 } }] });
+  });
+
+  it("DI1.7 over ACP, a client imports an AIML bot as the entry flow (dialogue.import), sees it in dialogue.status, and chats with it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-aiml-"));
+    const file = join(dir, "book.json");
+    writeFileSync(file, JSON.stringify({ scripts: [] }));
+    const { child, client, exited, say, invoke } = launch(dir, file, "echo");
+    await client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    const bot = `<aiml><category><pattern>HELLO</pattern><template>Hi, I am Alice.</template></category><category><pattern>MY NAME IS *</pattern><template><think><set name="n"><star/></set></think>Hello <get name="n"/>.</template></category></aiml>`;
+    expect(await invoke("dialogue.import", { name: "alice", files: { "alice.aiml": bot }, entry: true })).toEqual({ name: "alice", type: "aiml", warnings: [] });
+    expect(await invoke("dialogue.status", {})).toMatchObject({ documents: ["alice"], entry: "alice" });
+    const { sessionId } = await client.newSession({ cwd: dir, mcpServers: [] });
+    expect(await say(sessionId, "hello")).toMatchObject({ reply: "Hi, I am Alice." });
+    expect(await say(sessionId, "my name is Bo")).toMatchObject({ reply: "Hello BO." });
+    // What the bot cannot answer goes to the worker.
+    expect(await say(sessionId, "what is the time")).toMatchObject({ reply: "echo: what is the time" });
+    child.stdin.end();
+    expect(await exited).toBe(0);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ entry: "alice", documents: [{ name: "alice", type: "aiml" }] });
   });
 });

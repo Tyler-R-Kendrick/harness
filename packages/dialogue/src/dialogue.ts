@@ -7,7 +7,7 @@ import { shapeSimilarity } from "./align.ts";
 import { draft, draftedScript } from "./draft.ts";
 import { induce, normalizeUtterance } from "./induce.ts";
 import { fill, findValue, fits, matchPattern, readHoles, replySlots } from "./render.ts";
-import { ClusterSchema, DocumentSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
+import { ClusterSchema, DocumentSchema, FlowNameSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
 import type { Cluster, DocumentInput, DocumentRecord, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
 
 /** A step a model is asked to answer: the user's last utterance, or the result of a tool call made for it. */
@@ -18,6 +18,8 @@ export interface Step {
   readonly utterance: string;
   /** For a result step: the tool call whose result the step follows. */
   readonly result?: ToolResult;
+  /** Where the step is (the session's project): scoped scripts answer only in their scope, and what is learned here is scoped here. */
+  readonly scope?: string;
 }
 
 /** How a script was matched (a flow's later turns: by the flow that heard them). */
@@ -44,7 +46,7 @@ export type Decision =
   | { readonly kind: "flow"; readonly flow: string; readonly script?: ScriptId; readonly text: string; readonly match: Match }
   | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly instruction: string; readonly match: Match; readonly said?: string }
   | { readonly kind: "ask"; readonly script: ScriptId; readonly slot: string; readonly text: string; readonly match: Match }
-  | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow; readonly said?: string };
+  | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow; readonly said?: string; readonly teaches?: false };
 
 export interface DialogueOptions {
   readonly settings: Settings;
@@ -68,6 +70,24 @@ export interface DialogueOptions {
   readonly interpreters?: readonly Interpreter[];
   /** The time, for documents that say it (milliseconds since 1970, UTC). */
   readonly now?: () => number;
+  /** Called with what happens to the book: a script built, put, promoted or retired; a document put (see DialogueEvent). */
+  readonly onEvent?: (event: DialogueEvent) => void;
+}
+
+/** Something that happened to a dialogue's book, e.g. for plugins on the hook bus: `dialogue.script.built`, `.put`, `.promoted`, `.retired`, `dialogue.document.put`. */
+export interface DialogueEvent {
+  readonly type: string;
+  readonly payload: Record<string, string>;
+}
+
+/** A dialogue's book in numbers (see Dialogue.status). */
+export interface DialogueStatus {
+  readonly scripts: Readonly<Record<"active" | "candidate" | "retired", number>>;
+  readonly built: number;
+  readonly clusters: number;
+  readonly sessions: number;
+  readonly documents: readonly string[];
+  readonly entry?: string;
 }
 
 /**
@@ -150,6 +170,9 @@ const shown = (template: TemplateConstraint) => template.parts.map((p) => (typeo
 /** A script's shape: what it says and when; a retired shape is not built again. */
 const shape = (s: Script) => JSON.stringify([s.reply, s.patterns, s.result, s.context]);
 
+/** Whether a script answers in a scope: one without a scope answers in every scope. */
+const inScope = (s: Script, scope: string | undefined) => s.scope === undefined || s.scope === scope;
+
 /** The most calls to missing tools one document step may make (each answered with error.badfetch). */
 const MISSED_TOOLS = 16;
 
@@ -160,15 +183,12 @@ interface Matched {
   readonly script: Script;
   readonly slots: Record<string, string>;
   readonly match: Match;
+  /** Slots the person has confirmed (see Slot.confirm). */
+  readonly confirmed?: readonly string[];
 }
 
-/** A form being filled: the script, the slots it has, the slot asked for and the prompts given so far. */
-interface Form {
-  readonly script: ScriptId;
-  readonly slots: Record<string, string>;
-  readonly slot: string;
-  readonly tries: number;
-}
+/** A form being filled (see FormSchema). */
+type Form = NonNullable<SessionSave["form"]>;
 
 /** A flow running in a session (see RunningFlowSchema). */
 type RunningFlow = NonNullable<SessionSave["flow"]>;
@@ -212,6 +232,9 @@ const pass = (reason: string, context: ScriptId | undefined, shadow?: Shadow): D
   ...(context === undefined ? {} : { context }),
   ...(shadow === undefined ? {} : { shadow }),
 });
+
+/** A form or read-back that gave up: the turn is the model's, but it is heard out of its context, so it teaches nothing. */
+const givenUp = (reason: string, context: ScriptId | undefined): Decision => ({ kind: "pass", reason, ...(context === undefined ? {} : { context }), teaches: false });
 
 function cosine(a: readonly number[], b: readonly number[]): number {
   let dot = 0;
@@ -273,7 +296,8 @@ export class Dialogue {
   readonly #onError: ((error: unknown) => void) | undefined;
   readonly #flows: FlowRunner | undefined;
   /** The flow every session starts in, if the book names one. */
-  readonly #entry: string | undefined;
+  #entry: string | undefined;
+  readonly #onEvent: ((event: DialogueEvent) => void) | undefined;
   /** Flow runs started (run ids are never reused). */
   #runs: number;
   readonly #interpreters: readonly Interpreter[];
@@ -307,6 +331,7 @@ export class Dialogue {
     this.#runs = book.runs;
     this.#interpreters = options.interpreters ?? [];
     this.#now = options.now;
+    this.#onEvent = options.onEvent;
     for (const document of book.documents) this.#imported.set(document.name, { record: document, compiled: this.#compile(document) });
     for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true, next: s.next });
   }
@@ -323,12 +348,38 @@ export class Dialogue {
     const record = DocumentSchema.parse(input);
     const compiled = this.#compile(record);
     this.#imported.set(record.name, { record, compiled });
+    this.#onEvent?.({ type: "dialogue.document.put", payload: { name: record.name, type: record.type } });
     this.#changed();
+  }
+
+  /** Whether the dialogue holds a session's state (it saw the session, and has not forgotten it). */
+  hasSession(id: string): boolean {
+    return this.#sessions.has(id);
   }
 
   /** The settings the dialogue runs with. */
   get settings(): Settings {
     return this.#settings;
+  }
+
+  /** Make a flow the one every session starts in (or none). */
+  setEntry(name: string | undefined): void {
+    this.#entry = name === undefined ? undefined : FlowNameSchema.parse(name);
+    this.#changed();
+  }
+
+  /** The book in numbers: scripts by status, how many were built, clusters, sessions kept, and the documents and entry. */
+  status(): DialogueStatus {
+    const scripts = { active: 0, candidate: 0, retired: 0 };
+    for (const s of this.scripts) scripts[s.status]++;
+    return {
+      scripts,
+      built: this.scripts.filter((s) => s.origin !== "authored").length,
+      clusters: this.#clusters.length,
+      sessions: this.#sessions.size,
+      documents: [...this.#imported.keys()],
+      ...(this.#entry === undefined ? {} : { entry: this.#entry }),
+    };
   }
 
   /** Every script, authored and built, in the order they were added. */
@@ -345,6 +396,7 @@ export class Dialogue {
     const script = parseScript(input);
     parseBook({ scripts: [...this.scripts.filter((s) => s.id !== script.id), script] });
     this.#scripts.set(script.id, script);
+    this.#onEvent?.({ type: "dialogue.script.put", payload: { id: script.id } });
     this.#changed();
   }
 
@@ -400,7 +452,8 @@ export class Dialogue {
    * happens in the background (see `idle`).
    */
   observe(step: Step, decision: Decision, outcome: Outcome): void {
-    if (decision.kind !== "pass" || outcome === undefined) return;
+    // A turn a form gave up on is heard out of its context: nothing is learned from it.
+    if (decision.kind !== "pass" || decision.teaches === false || outcome === undefined) return;
     const acted = typeof outcome !== "string";
     if (!acted && outcome.trim() === "") return;
     const observation: Observation = {
@@ -408,6 +461,7 @@ export class Dialogue {
       ...(step.result ? { result: this.#shortResult(step.result) } : {}),
       reply: acted ? "" : outcome.trim(),
       ...(step.sessionId === undefined ? {} : { session: step.sessionId }),
+      ...(step.scope === undefined ? {} : { scope: step.scope }),
       ...(acted ? { acted } : {}),
     };
     const shadow = decision.shadow;
@@ -430,7 +484,7 @@ export class Dialogue {
 
   async #onResult(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const result = step.result!;
-    const forTool = this.scripts.filter((s) => s.result?.tool === result.tool && (s.context === undefined || s.context === context));
+    const forTool = this.scripts.filter((s) => s.result?.tool === result.tool && inScope(s, step.scope) && (s.context === undefined || s.context === context));
     for (const script of [...forTool.filter((s) => s.status === "active"), ...forTool.filter((s) => s.status === "candidate")]) {
       if (fill(script, { slots: {}, result }).kind === "missing") continue;
       return this.#answer({ script, slots: {}, match: { by: "result" } }, step, session, context);
@@ -471,7 +525,7 @@ export class Dialogue {
       const decided = await this.#continueForm(step, session, form, context);
       if (decided) return decided;
     }
-    const matched = await this.#match(utterance, context);
+    const matched = await this.#match(utterance, context, step.scope);
     return matched ? this.#answer(matched, step, session, context) : pass("no script matches", context);
   }
 
@@ -487,6 +541,14 @@ export class Dialogue {
       return pass(`auditing ${script.id}`, context, { script: script.id, slots, match });
     }
     const filled = fill(script, { slots, ...(step.result ? { result: step.result } : {}) });
+    const confirmed = matched.confirmed ?? [];
+    // A slot to confirm is read back before the reply (once every slot the reply needs is in).
+    const unconfirmed = filled.kind === "missing" ? undefined : Object.keys(script.slots).find((n) => script.slots[n]!.confirm !== undefined && slots[n] !== undefined && !confirmed.includes(n));
+    if (unconfirmed !== undefined) {
+      if (!session) return pass(`slot ${unconfirmed} needs confirming, in a session`, context);
+      session.form = { script: script.id, slots, slot: unconfirmed, tries: 0, confirmed: [...confirmed], confirming: true };
+      return { kind: "ask", script: script.id, slot: unconfirmed, text: script.slots[unconfirmed]!.confirm!.split("{value}").join(slots[unconfirmed]!), match };
+    }
     if (filled.kind === "text") return { kind: "reply", script: script.id, text: filled.text, match };
     if (filled.kind === "template") return { kind: "generate", script: script.id, template: filled.template, instruction: `${this.#settings.generate.instruction}\n\n${shown(filled.template)}`, match };
     if (filled.kind === "flow") {
@@ -504,7 +566,7 @@ export class Dialogue {
     const unaskable = filled.slots.find((slot) => session === undefined || script.slots[slot]!.prompts.length === 0);
     if (unaskable !== undefined || !session) return pass(`no value for slot ${unaskable}`, context);
     const slot = filled.slots[0]!;
-    session.form = { script: script.id, slots, slot, tries: 0 };
+    session.form = { script: script.id, slots, slot, tries: 0, confirmed: [...confirmed] };
     return { kind: "ask", script: script.id, slot, text: script.slots[slot]!.prompts[0]!, match };
   }
 
@@ -513,22 +575,51 @@ export class Dialogue {
     const { utterance } = step;
     const script = this.#scripts.get(form.script);
     if (!script || script.status === "retired") return undefined;
+    if (form.confirming) return this.#confirming(step, session, script, form, context);
     const slots = { ...form.slots };
     if (this.#short(utterance)) for (const pattern of script.patterns) Object.assign(slots, matchPattern(pattern, utterance));
     const value = slots[form.slot] ?? (await this.#valueFor(script, form.slot, utterance));
-    const answered = (value: string) => this.#answer({ script, slots: { ...slots, [form.slot]: value }, match: { by: "form" } }, step, session, context);
+    // A confirmed slot the answer changed is read back again.
+    const answered = (value: string) => {
+      const next = { ...slots, [form.slot]: value };
+      return this.#answer({ script, slots: next, match: { by: "form" }, confirmed: form.confirmed.filter((n) => next[n] === form.slots[n]) }, step, session, context);
+    };
     if (value !== undefined) return answered(value);
     // Another script taking the answer comes before taking the whole answer as the value.
-    const other = await this.#match(utterance, context, script.id);
+    const other = await this.#match(utterance, context, step.scope, script.id);
     if (other) return this.#answer(other, step, session, context);
     // A long answer is not a slot's value.
     const whole = this.#router || script.slots[form.slot]!.pattern !== undefined || !this.#short(utterance) ? undefined : normalizeUtterance(utterance) || undefined;
     if (whole !== undefined) return answered(whole);
     const tries = form.tries + 1;
     const prompts = script.slots[form.slot]!.prompts;
-    if (tries >= prompts.length) return pass(`no ${form.slot} after ${tries} prompts`, context);
+    if (tries >= prompts.length) return givenUp(`no ${form.slot} after ${tries} prompts`, context);
     session.form = { ...form, tries };
     return { kind: "ask", script: script.id, slot: form.slot, text: prompts[tries]!, match: { by: "form" } };
+  }
+
+  /** The answer to a read-back: yes goes on, no asks for the slot again, a new value is read back in its turn; else once more, then the model. */
+  async #confirming(step: Step, session: SessionState, script: Script, form: Form, context: ScriptId | undefined): Promise<Decision> {
+    const said = step.utterance.toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+    const { yes, no } = this.#settings.confirm;
+    const opens = (words: readonly string[]) => words.some((w) => said === w || said.startsWith(`${w} `));
+    const confirm = script.slots[form.slot]?.confirm;
+    // A script changed meanwhile to not confirm the slot has nothing to read back.
+    if (confirm === undefined || yes.includes(said)) return this.#answer({ script, slots: form.slots, match: { by: "form" }, confirmed: [...form.confirmed, form.slot] }, step, session, context);
+    const corrected = await this.#valueFor(script, form.slot, step.utterance);
+    if (corrected !== undefined && corrected !== form.slots[form.slot]) return this.#answer({ script, slots: { ...form.slots, [form.slot]: corrected }, match: { by: "form" }, confirmed: form.confirmed }, step, session, context);
+    // "Yes, that's right" is a yes (a new value in it was taken above).
+    if (opens(yes)) return this.#answer({ script, slots: form.slots, match: { by: "form" }, confirmed: [...form.confirmed, form.slot] }, step, session, context);
+    if (opens(no)) {
+      const { [form.slot]: _denied, ...slots } = form.slots;
+      const prompt = script.slots[form.slot]!.prompts[0];
+      if (prompt === undefined) return givenUp(`no ${form.slot} after it was denied`, context);
+      session.form = { script: script.id, slots, slot: form.slot, tries: 0, confirmed: form.confirmed };
+      return { kind: "ask", script: script.id, slot: form.slot, text: prompt, match: { by: "form" } };
+    }
+    if (form.tries >= 1) return givenUp(`${form.slot} not confirmed`, context);
+    session.form = { ...form, tries: form.tries + 1 };
+    return { kind: "ask", script: script.id, slot: form.slot, text: confirm.split("{value}").join(form.slots[form.slot]!), match: { by: "form" } };
   }
 
   /** A new flow run for a session: its run id is never reused. */
@@ -637,9 +728,9 @@ export class Dialogue {
    * router (active scripts only: a candidate is not worth a model call). Scripts in
    * context come before those without, and active ones before candidates.
    */
-  async #match(utterance: string, context: ScriptId | undefined, exclude?: ScriptId): Promise<Matched | undefined> {
+  async #match(utterance: string, context: ScriptId | undefined, scope: string | undefined, exclude?: ScriptId): Promise<Matched | undefined> {
     const eligible = this.scripts
-      .filter((s) => s.result === undefined && s.status !== "retired" && s.id !== exclude && (s.context === undefined || s.context === context))
+      .filter((s) => s.result === undefined && s.status !== "retired" && s.id !== exclude && inScope(s, scope) && (s.context === undefined || s.context === context))
       .sort((a, b) => rank(a) - rank(b));
     for (const script of this.#short(utterance) ? eligible : [])
       for (const pattern of script.patterns) {
@@ -777,9 +868,11 @@ export class Dialogue {
   /** The cluster an observation belongs to: its tool's, or the nearest in its context at the threshold; else a new one. */
   async #clusterFor(observation: Observation, context: ScriptId | undefined): Promise<Cluster> {
     const tool = observation.result?.tool;
-    if (tool !== undefined) return this.#clusters.find((c) => c.tool === tool) ?? this.#newCluster({ tool });
-    const alike = this.#clusters.filter((c) => c.tool === undefined && c.context === context);
-    if (alike.length === 0) return this.#newCluster(context === undefined ? {} : { context });
+    const { scope } = observation;
+    const fields = { ...(scope === undefined ? {} : { scope }), ...(context === undefined ? {} : { context }) };
+    if (tool !== undefined) return this.#clusters.find((c) => c.tool === tool && c.scope === scope) ?? this.#newCluster({ tool, ...(scope === undefined ? {} : { scope }) });
+    const alike = this.#clusters.filter((c) => c.tool === undefined && c.context === context && c.scope === scope);
+    if (alike.length === 0) return this.#newCluster(fields);
     const scores = await this.#similarities(
       observation.utterance,
       alike.map((c) => c.observations[0]!.utterance),
@@ -788,7 +881,7 @@ export class Dialogue {
     alike.forEach((cluster, i) => {
       if (scores[i]! >= this.#settings.induce.cluster && (best === undefined || scores[i]! > best.score)) best = { cluster, score: scores[i]! };
     });
-    return best?.cluster ?? this.#newCluster(context === undefined ? {} : { context });
+    return best?.cluster ?? this.#newCluster(fields);
   }
 
   /** How alike an utterance is to each of `heads`: by meaning with an embedder (by shape if it fails), else by shape. */
@@ -802,7 +895,7 @@ export class Dialogue {
   }
 
   /** A new cluster; it is kept once an observation is added to it (see #add). */
-  #newCluster(fields: { readonly tool?: string; readonly context?: ScriptId }): Cluster {
+  #newCluster(fields: { readonly tool?: string; readonly context?: ScriptId; readonly scope?: string }): Cluster {
     return ClusterSchema.parse({ ...fields, observations: [] });
   }
 
@@ -824,7 +917,8 @@ export class Dialogue {
 
   /** Whether a script has the shape of one retired before. */
   #retired(script: Script): boolean {
-    return this.scripts.some((s) => s.status === "retired" && shape(s) === shape(script));
+    // A retired script without a scope retires its shape everywhere; a scoped one, in its scope.
+    return this.scripts.some((s) => s.status === "retired" && (s.scope === undefined || s.scope === script.scope) && shape(s) === shape(script));
   }
 
   /**
@@ -855,7 +949,7 @@ export class Dialogue {
    */
   async #draft(cluster: Cluster, drafter: LanguageModel): Promise<void> {
     const drafted = await draft(drafter, this.#settings.draft, cluster.observations);
-    const main = draftedScript(drafted, this.#nextId(), cluster.context);
+    const main = draftedScript(drafted, this.#nextId(), cluster.context, cluster.scope);
     const { determined, holes } = this.#settings.induce;
     const reproduced = cluster.observations.some((o) => {
       const read = readHoles(main, o.reply, { slots: {}, utterance: o.utterance });
@@ -870,7 +964,7 @@ export class Dialogue {
     for (const followUp of drafted.followUps) {
       if (kept === this.#settings.draft.followUps) break;
       try {
-        this.#set(draftedScript(followUp, this.#nextId(), main.id));
+        this.#set(draftedScript(followUp, this.#nextId(), main.id, cluster.scope));
         this.#next++;
         kept++;
       } catch {
@@ -909,6 +1003,9 @@ export class Dialogue {
 
   /** Keep a script; a cluster is dropped once its script is no longer a candidate (its observations are no longer needed). */
   #set(script: Script): void {
+    const before = this.#scripts.get(script.id);
+    if (!before && script.origin !== "authored") this.#onEvent?.({ type: "dialogue.script.built", payload: { id: script.id, origin: script.origin, ...(script.scope === undefined ? {} : { scope: script.scope }) } });
+    else if (before && before.status !== script.status && script.status !== "candidate") this.#onEvent?.({ type: `dialogue.script.${script.status === "active" ? "promoted" : "retired"}`, payload: { id: script.id } });
     this.#scripts.set(script.id, script);
     if (script.status !== "candidate") this.#clusters = this.#clusters.filter((c) => c.script !== script.id);
     this.#changed();

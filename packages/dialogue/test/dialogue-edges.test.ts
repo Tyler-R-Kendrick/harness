@@ -179,7 +179,7 @@ describe("forms, exactly", () => {
     const router = routerModel(() => undefined);
     const d = new Dialogue({ settings: settings(), book: book(table), router });
     await d.respond(step("book a table for 2"));
-    expect(await d.respond(step("whenever"))).toEqual({ kind: "pass", reason: "no time after 1 prompts", context: "table" });
+    expect(await d.respond(step("whenever"))).toEqual({ kind: "pass", reason: "no time after 1 prompts", context: "table", teaches: false });
   });
 });
 

@@ -27,7 +27,7 @@ import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
 import type { LanguageModel, ToolSet } from "ai";
 import { Dialogue } from "@harness/dialogue";
-import type { FlowRunner, Settings as DialogueSettings } from "@harness/dialogue";
+import type { DialogueEvent, FlowRunner, Settings as DialogueSettings } from "@harness/dialogue";
 import { STANDARD_INTERPRETERS } from "@harness/dialogue-standards";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
@@ -278,8 +278,10 @@ export function buildDialogue(options: {
   /** Runs its flows durably (see dialogueFlows). */
   readonly flows?: FlowRunner;
   readonly settings?: DialogueSettings;
+  /** Called with what happens to the book (see DialogueEvent), e.g. to publish it on the hook bus. */
+  readonly onEvent?: (event: DialogueEvent) => void;
 }): Dialogue {
-  const { ensemble, persist, onError, flows } = options;
+  const { ensemble, persist, onError, flows, onEvent } = options;
   const drafter = options.drafter ?? ensemble?.languageModel("reasoning");
   return new Dialogue({
     settings: options.settings ?? loadDialogueSettings(),
@@ -293,31 +295,8 @@ export function buildDialogue(options: {
     // Books may hold documents in a dialogue standard (VoiceXML, AIML); a document can say the time.
     interpreters: STANDARD_INTERPRETERS,
     now: () => Date.now(),
+    ...(onEvent ? { onEvent } : {}),
   });
-}
-
-/**
- * Saves of a dialogue's book to storage, one at a time, each made when it starts (so it
- * holds the latest state): changes while a save is under way make one more save, not one
- * each. A failed save is reported to `onError`; the next change saves again.
- */
-export function dialogueSaves(storage: { save(saved: unknown): Promise<void> }, onError: (error: unknown) => void) {
-  let saving = Promise.resolve();
-  let next: (() => unknown) | undefined;
-  return {
-    persist(snapshot: () => unknown): void {
-      const queued = next !== undefined;
-      next = snapshot;
-      if (queued) return;
-      saving = saving.then(() => {
-        const save = next!;
-        next = undefined;
-        return storage.save(save());
-      }).catch(onError);
-    },
-    /** Resolves when every save asked for so far has been made (or has failed). */
-    settled: (): Promise<void> => saving,
-  };
 }
 
 /**

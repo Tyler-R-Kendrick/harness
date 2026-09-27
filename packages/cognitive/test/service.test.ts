@@ -196,6 +196,13 @@ describe("extension operations", () => {
     expect(await invokeCognitive(e, "memory.recall", { query: "x" })).toEqual({ got: { query: "x" } });
     expect(((await invokeCognitive(e, "status", {})) as { extensions: string[] }).extensions).toEqual(["memory"]);
   });
+
+  it("CS3.2 an operation is told who calls it, when the caller is known", async () => {
+    const e = ensemble();
+    e.install({ id: "who", models: [], operations: { ami: async (_input, caller) => ({ caller: caller ?? null }) } });
+    expect(await invokeCognitive(e, "who.ami", {}, { principal: "ann", kind: "plugin" })).toEqual({ caller: { principal: "ann", kind: "plugin" } });
+    expect(await invokeCognitive(e, "who.ami", {})).toEqual({ caller: null });
+  });
 });
 
 describe("capability mirror", () => {

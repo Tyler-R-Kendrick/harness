@@ -21,6 +21,12 @@ export interface MemberEvent {
  * A bundle the cognitive core can take on at runtime, such as memory with its
  * embedding model. Installing registers its models; uninstalling takes them away.
  */
+/** Who calls an extension's operation: the daemon connection's principal and kind (human, client, agent, plugin). */
+export interface Caller {
+  readonly principal: string;
+  readonly kind: string;
+}
+
 export interface CognitiveExtension {
   /** Also the capability the daemon offers while the extension can serve. */
   readonly id: string;
@@ -28,7 +34,8 @@ export interface CognitiveExtension {
   /** Extensions it builds on: it installs only after them, and serves only while they serve. */
   readonly requires?: readonly string[];
   /** Operations served as `<id>.<name>` through `_harness/cognitive/invoke`. */
-  readonly operations?: Readonly<Record<string, (input: unknown) => Promise<unknown>>>;
+  /** Operations by name; each is told who calls it, when the caller is known (see Caller). */
+  readonly operations?: Readonly<Record<string, (input: unknown, caller?: Caller) => Promise<unknown>>>;
 }
 
 /** AI SDK call errors carry these: a status other than a rejected request, or retryable (e.g. the connection failed). */
@@ -131,7 +138,7 @@ export class Ensemble {
   }
 
   /** An installed extension's operation, by its `<extension>.<name>` name. */
-  operation(name: string): ((input: unknown) => Promise<unknown>) | undefined {
+  operation(name: string): ((input: unknown, caller?: Caller) => Promise<unknown>) | undefined {
     const [extension = "", op = ""] = name.split(".");
     const operations = this.#extensions.get(extension)?.operations;
     return operations && Object.hasOwn(operations, op) ? operations[op] : undefined;

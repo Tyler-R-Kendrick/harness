@@ -9,6 +9,8 @@ import type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } fro
 /** What each turn tells the agent: which session it belongs to (see sessionAgent). */
 export interface TurnOptions {
   readonly sessionId: string;
+  /** The session's working directory: the scope what the turn teaches belongs to. */
+  readonly cwd?: string;
 }
 
 /** A finished turn: what the person said and what the agent replied, e.g. to remember it. */
@@ -79,7 +81,7 @@ export class AgentWorker implements Worker {
     let reply = "";
     try {
       for (;;) {
-        const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
+        const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId, cwd: command.cwd }, abortSignal: running.abort.signal });
         const approvals: { approvalId: string; toolCallId: string; toolName: string; input: unknown }[] = [];
         for await (const part of result.fullStream) {
           const state = stateOf(part as { type: string });

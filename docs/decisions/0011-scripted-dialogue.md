@@ -78,7 +78,13 @@ A script (`ScriptSchema`, data with a generated JSON Schema) answers one kind of
   through the prompts on no-match. After the last prompt, or when the caller says
   something else, the turn goes to the model: the model is the live agent the call
   transfers to, and it sees the whole exchange. A different script matching the answer
-  takes over (mixed initiative).
+  takes over (mixed initiative). A slot may be **confirmed**: once the reply has what it
+  needs, the slot's `confirm` question reads the value back ("So 8pm, right?"); a yes
+  (`confirm.yes` in the settings, alone or opening the answer) gives the reply, a no asks
+  for the slot again, an answer with a new value is read back in its turn, and an unclear
+  answer is asked again once; after a second the turn is the model's. A confirmed slot a
+  later answer changes is read back again. A turn a form or a read-back gave up on is
+  heard out of its context, so nothing is learned from it.
 - **Reply**: fixed text and holes. A hole is filled from a *slot*, from a path in the
   result step's tool *input* or *output*, or is *generated*. A reply with no generated
   holes is rendered with no inference at all. One with generated holes is one
@@ -198,8 +204,14 @@ Every decision is traced: the response header `x-harness-model` names the script
 ### Where it runs
 
 The dialogue is pure (it takes an embedding model, a router, a drafter and a judge, all
-AI SDK models, all optional, and a flow runner: a workflow host). The native host wraps the worker's model with it
-(`--dialogue <file>` with `--worker model` or `--worker ensemble`; the script book is
+AI SDK models, all optional, and a flow runner: a workflow host). The native host puts it
+in front of the worker's model (`--dialogue <file>` with `--worker model` or `--worker
+ensemble`, where it can constrain a template's holes), or in front of the worker itself
+(`DialogueWorker`, for workers whose models it cannot reach: an external harness such as
+Claude Code, the echo worker; a template's holes are then the worker's to write, told the
+template, and what a flow said before handing a turn on is said before the worker's reply;
+a worker keeping its own history is told it after the user's words, `handoff.said`).
+The script book is
 saved to that file after every change, and shutdown waits for the last save; flows and
 their journals are the workflow library's with `--workflows`, else files in
 `--dialogue-flows`, by default next to the book). Saves go one at a time, each of the
@@ -208,6 +220,32 @@ latest state, and a failed one is logged; shutdown gives learning under way
 ensemble it uses the ensemble's router, judge and reasoning model, and memory's embedder
 when memory is installed; with a gateway model alone it matches by pattern, clusters by
 shape and drafts with that model.
+
+It is managed over ACP as the `dialogue` cognitive extension (`dialogue.status`, `.list`,
+`.get`, `.put`, `.feedback`, `.import`), on the ensemble or, without one, an ensemble of its
+own. Operations are told their caller: authoring (`put`, `import`) is for people and their
+clients, not plugins or agents, and `feedback` counts evidence only from a session the
+dialogue saw, so a made-up session cannot promote a script. `import` refuses a workflow or
+script of the same name unless asked to replace it, and checks everything it can before
+it writes anything. What happens to the book (a script built, put, promoted or retired; a
+document put) is published on the hook bus as `dialogue.*` events from source `host`, so
+plugins can react. In front of a worker that keeps its own history, the dialogue tells it
+the exchanges scripts answered since its last turn (`handoff` in the settings), so it
+sees the whole exchange, and a turn cancelled while the dialogue decides never reaches it.
+The browser host has the same (`browserDialogue`: the book in IndexedDB, flows on
+QuickJS).
+
+**Scope.** A step carries its session's working directory as its scope, an absolute path
+without trailing separators (a relative one is no scope); the session agent names it in
+provider options, and `DialogueWorker` reads it from the prompt command's `cwd`. A script
+with a scope answers only there, and steps are clustered, and scripts built, within their
+scope: what the model says about one project does not answer in another. Authored scripts
+without a scope answer everywhere. (The persona is the daemon's, so one book per daemon is
+one book per persona.)
+
+Exemplars are matched by a scan of cached vectors rather than an index: Orama, which
+memory uses, searches vectors exhaustively too, so an index would add a dependency without
+changing the cost; revisit when books hold tens of thousands of exemplars.
 
 Every model is optional and fallible. A missing model matches, extracts, judges or drafts
 nothing; a failing one does the same and its error goes to `onError` (the native host

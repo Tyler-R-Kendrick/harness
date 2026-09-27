@@ -140,7 +140,7 @@ describe("forms (VoiceXML's form interpretation)", () => {
     const d = new Dialogue({ settings: settings(), book: supportBook(), embedder: embedder() });
     await d.respond(step("has my order shipped yet"));
     expect(await d.respond(step("I don't know"))).toMatchObject({ kind: "ask", slot: "order_id", text: "Sorry, I need the order number: the digits on your receipt.", match: { by: "form" } });
-    expect(await d.respond(step("no idea"))).toEqual({ kind: "pass", reason: "no order_id after 2 prompts", context: "order-status" });
+    expect(await d.respond(step("no idea"))).toEqual({ kind: "pass", reason: "no order_id after 2 prompts", context: "order-status", teaches: false });
     expect(await d.respond(step("5555"))).toEqual({ kind: "pass", reason: "no script matches" });
   });
 

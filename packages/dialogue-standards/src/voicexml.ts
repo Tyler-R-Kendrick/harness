@@ -572,10 +572,10 @@ interface VxmlState {
   readonly calling?: { readonly into?: string; readonly exit: boolean };
 }
 
-type Scope = Record<string, Value>;
+type Vars = Record<string, Value>;
 
-const load = (s: SavedScope): Scope => ({ ...Object.fromEntries(s.unset.map((n) => [n, undefined])), ...(s.vars as Scope) });
-function save(scope: Scope): SavedScope {
+const load = (s: SavedScope): Vars => ({ ...Object.fromEntries(s.unset.map((n) => [n, undefined])), ...(s.vars as Vars) });
+function save(scope: Vars): SavedScope {
   const vars: Record<string, unknown> = {};
   const unset: string[] = [];
   for (const [k, v] of Object.entries(scope)) {
@@ -591,7 +591,7 @@ type Signal =
   | { readonly kind: "goto"; readonly next?: string; readonly nextitem?: string }
   | { readonly kind: "event"; readonly event: string; readonly message?: string }
   | { readonly kind: "exit"; readonly output: unknown }
-  | { readonly kind: "return"; readonly event?: string; readonly values: Scope }
+  | { readonly kind: "return"; readonly event?: string; readonly values: Vars }
   | { readonly kind: "call"; readonly tool: string; readonly input: unknown; readonly into?: string; readonly exit: boolean; readonly path: number[] }
   | { readonly kind: "reprompt" };
 
@@ -616,8 +616,8 @@ const MAX_ACTIONS = 1000;
 /** One step of a VoiceXML application: everything up to the next utterance it waits for. */
 class Session {
   readonly say: string[] = [];
-  app: Scope;
-  frames: { file: string; dialog: Dialog; doc: Scope; vars: Scope; prompts: Record<string, number>; events: Record<string, number>; queue: Running[]; nextitem?: string; quiet?: string; caller?: string }[];
+  app: Vars;
+  frames: { file: string; dialog: Dialog; doc: Vars; vars: Vars; prompts: Record<string, number>; events: Record<string, number>; queue: Running[]; nextitem?: string; quiet?: string; caller?: string }[];
   waiting: string | undefined;
   #actions = 0;
   /** The item being visited, whose handlers take an error in visiting it. */
@@ -680,13 +680,13 @@ class Session {
   }
 
   /** Scopes for script, innermost first: a body's own, the dialog's, the document's, the application's, and the scope names. */
-  scopes(own?: Scope): Scope[] {
+  scopes(own?: Vars): Vars[] {
     const f = this.frame;
-    const named: Scope = { application: this.app, document: f.doc, dialog: f.vars, session: Object.freeze({}) as Scope };
+    const named: Vars = { application: this.app, document: f.doc, dialog: f.vars, session: Object.freeze({}) as Vars };
     return [...(own ? [own] : []), f.vars, f.doc, this.app, named];
   }
 
-  eval(expr: string, own?: Scope): Value {
+  eval(expr: string, own?: Vars): Value {
     return evaluate(expr, this.scopes(own));
   }
 
@@ -695,23 +695,23 @@ class Session {
   start(slots: Readonly<Record<string, string>>): void {
     const doc = this.document(this.c.main);
     if (doc.application !== undefined) this.initDocument(this.document(doc.application), this.app);
-    const docScope: Scope = {};
+    const docScope: Vars = {};
     this.initDocument(doc, docScope);
     // Stryker disable next-line StringLiteral: equivalent; at the start there is no frame, so replacing the top one is pushing one
     this.enter(doc.file, doc.dialogs[0]!, docScope, "replace");
     for (const item of this.frame.dialog.items) if (item.kind === "field" && Object.hasOwn(slots, item.name)) this.frame.vars[item.name] = slots[item.name]!;
   }
 
-  initDocument(doc: VxmlDocument, scope: Scope): void {
+  initDocument(doc: VxmlDocument, scope: Vars): void {
     for (const v of doc.vars) this.declare(v as Extract<Exec, { op: "var" }>, scope, [scope, this.app]);
   }
 
-  declare(v: Extract<Exec, { op: "var" }>, into: Scope, scopes: Scope[]): void {
+  declare(v: Extract<Exec, { op: "var" }>, into: Vars, scopes: Vars[]): void {
     into[v.name] = v.expr === undefined ? undefined : evaluate(v.expr, scopes);
   }
 
-  enter(file: string, dialog: Dialog, doc: Scope, how: "replace" | "push", params: Scope = {}, caller?: string): void {
-    const vars: Scope = {};
+  enter(file: string, dialog: Dialog, doc: Vars, how: "replace" | "push", params: Vars = {}, caller?: string): void {
+    const vars: Vars = {};
     const frame = { file, dialog, doc, vars, prompts: {}, events: {}, queue: [], ...(caller === undefined ? {} : { caller }) };
     if (how === "replace") this.frames[Math.max(0, this.frames.length - 1)] = frame;
     else this.frames.push(frame);
@@ -808,7 +808,7 @@ class Session {
       const target = item.src ?? String(this.eval(item.srcexpr!));
       const [path, id] = target.split("#");
       const file = path === "" ? f.file : resolvePath(f.file, path!);
-      const params: Scope = Object.fromEntries(item.params.map((p) => [p.name, this.eval(p.expr)]));
+      const params: Vars = Object.fromEntries(item.params.map((p) => [p.name, this.eval(p.expr)]));
       const doc = file === f.file ? f.doc : {};
       if (file !== f.file) this.initDocument(this.document(file), doc);
       this.enter(file, this.dialog(file, id === "" || id === undefined ? undefined : id), doc, "push", params, item.name);
@@ -848,8 +848,8 @@ class Session {
     for (const p of eligible.filter((q) => q.count === best)) this.prompt(p, item);
   }
 
-  prompt(p: Prompt, item?: Item, own?: Scope): void {
-    const render = (content: readonly Content[], extra?: Scope): string =>
+  prompt(p: Prompt, item?: Item, own?: Vars): void {
+    const render = (content: readonly Content[], extra?: Vars): string =>
       content
         .map((c) => {
           if (typeof c === "string") return c;
@@ -881,7 +881,7 @@ class Session {
     return walk(this.c.bodies[running.body]!, running.path, []);
   }
 
-  statement(e: Exec, own: Scope, resume: readonly number[], at: number[], walk: (body: readonly Exec[], path: readonly number[], at: number[]) => Signal | undefined): Signal | undefined {
+  statement(e: Exec, own: Vars, resume: readonly number[], at: number[], walk: (body: readonly Exec[], path: readonly number[], at: number[]) => Signal | undefined): Signal | undefined {
     switch (e.op) {
       case "var":
         own[e.name] = e.expr === undefined ? undefined : this.eval(e.expr, own);
@@ -927,7 +927,7 @@ class Session {
         return { kind: "exit", output: output ?? null };
       }
       case "return": {
-        const values: Scope = Object.fromEntries(e.namelist.map((n) => [n, this.eval(n, own)]));
+        const values: Vars = Object.fromEntries(e.namelist.map((n) => [n, this.eval(n, own)]));
         const event = e.eventexpr === undefined ? e.event : String(this.eval(e.eventexpr, own));
         return { kind: "return", ...(event === undefined ? {} : { event }), values };
       }

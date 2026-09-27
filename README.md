@@ -123,6 +123,13 @@ replies, in sessions other than the ones it was built from, have agreed with it 
 Steps the model acts on (it calls tools) are never scripted, and active built scripts are
 audited in shadow now and then, so one that starts to mislead is retired.
 
+The dialogue fronts any worker: with `--worker model` or `ensemble` it sits in front of the
+model; with an external harness (Claude Code, Codex) or the echo worker it sits in front
+of the worker, and learns from its replies. What it learns in a project (a session's
+working directory) answers only there. Clients manage it over ACP (`dialogue.status`,
+`.list`, `.put`, `.feedback`, `.import`), plugins get its `dialogue.*` hook events, and the
+browser host has it too (`browserDialogue`).
+
 Longer dialogues (an IVR call flow, a whole chatbot) are **flows**: workflows that talk
 through `tools.say` and `tools.hear`, run durably by the workflow host, so a flow in
 progress survives a restart. A script can start one, and a book can name an entry flow

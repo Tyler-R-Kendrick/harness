@@ -328,6 +328,7 @@ describe("stepOf", () => {
 
   it("DW2.1 a prompt ending with the user's words is an utterance step, in the session its call names", () => {
     expect(stepOf(options([{ role: "system", content: "Be brief." }, user("hi there")], session))).toEqual({ sessionId: "session-1", utterance: "hi there" });
+    expect(stepOf(options([user("hi")], { providerOptions: { [HARNESS]: { session: "s", scope: "/repo" } } }))).toEqual({ sessionId: "s", scope: "/repo", utterance: "hi" });
     expect(stepOf(options([user("hi"), { role: "assistant", content: [{ type: "text", text: "Hello." }] }, user("again")]))).toEqual({ utterance: "again" });
   });
 

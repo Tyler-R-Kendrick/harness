@@ -73,6 +73,8 @@ export const SlotSchema = z.strictObject({
   description: text.exactOptional(),
   pattern: Regex.exactOptional(),
   prompts: z.array(text).readonly().default([]),
+  /** Read back before the reply, `{value}` for the value (an IVR's "8pm, right?"); a no asks for the slot again. */
+  confirm: text.exactOptional(),
 });
 export type Slot = z.output<typeof SlotSchema>;
 
@@ -110,6 +112,8 @@ export const ScriptSchema = z
     intent: text,
     status: z.enum(SCRIPT_STATUSES).default("active"),
     origin: z.enum(["authored", "induced", "drafted"]).default("authored"),
+    /** Where the script answers: only steps in this scope (a project), when it has one; a built script has its steps' scope. */
+    scope: text.exactOptional(),
     context: ScriptIdSchema.exactOptional(),
     patterns: z.array(Regex).readonly().default([]),
     exemplars: z.array(text).readonly().default([]),
@@ -146,7 +150,15 @@ export const ResultSchema = z.strictObject({ tool: text, input: z.json(), output
 export type ToolResult = z.output<typeof ResultSchema>;
 
 /** A form being filled in a session: the script, the slots it has, the slot asked for, and the prompts given so far. */
-export const FormSchema = z.strictObject({ script: ScriptIdSchema, slots: z.record(z.string(), z.string()), slot: Name, tries: z.int().min(0) });
+/** A form being filled: the slots it has, the slot asked for (or, `confirming`, read back), the tries so far, and the slots confirmed. */
+export const FormSchema = z.strictObject({
+  script: ScriptIdSchema,
+  slots: z.record(z.string(), z.string()),
+  slot: Name,
+  tries: z.int().min(0),
+  confirmed: z.array(Name).default([]),
+  confirming: z.literal(true).exactOptional(),
+});
 
 /** A flow running in a session: which, its run (the workflow journal holds its state), the input it started with, and the script that started it. */
 export const RunningFlowSchema = z.strictObject({ name: FlowNameSchema, run: text, input: z.json(), script: ScriptIdSchema.exactOptional() });
@@ -179,6 +191,7 @@ export const ObservationSchema = z.strictObject({
   result: ResultSchema.exactOptional(),
   reply: z.string(),
   session: text.exactOptional(),
+  scope: text.exactOptional(),
   acted: z.literal(true).exactOptional(),
 });
 export type Observation = z.output<typeof ObservationSchema>;
@@ -188,6 +201,7 @@ export type Observation = z.output<typeof ObservationSchema>;
  * the same context), kept until a script is built from them and becomes active.
  */
 export const ClusterSchema = z.strictObject({
+  scope: text.exactOptional(),
   context: ScriptIdSchema.exactOptional(),
   tool: text.exactOptional(),
   /** The script built from it. */
@@ -317,6 +331,19 @@ export const SettingsSchema = z.strictObject({
      * enforce the template: the template follows, its holes written {name}.
      */
     instruction: text,
+  }),
+  handoff: z.strictObject({
+    /** Put before the turns scripts answered, when a worker that keeps its own history (an external harness) gets the next turn. */
+    heading: text,
+    /** The most such turns kept for it per session (the latest). */
+    turns: z.int().positive(),
+    /** Put after the user's words, before what a flow already said in reply this turn, when the worker answers after it. */
+    said: text,
+  }),
+  confirm: z.strictObject({
+    /** Answers to a read-back that confirm it, and that deny it (compared without case or punctuation around them). */
+    yes: z.array(text).min(1),
+    no: z.array(text).min(1),
   }),
   draft: z.strictObject({
     /** Instructions for the drafter model; it answers with a draft (see DraftSchema). */

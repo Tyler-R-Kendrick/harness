@@ -4,7 +4,7 @@ import { CascadePolicySchema, decideToolCalls, route } from "./cascade.ts";
 import { parseChatOutput } from "./chat-format.ts";
 import { EmbedInputSchema } from "./embedding.ts";
 import type { EmbedInput } from "./embedding.ts";
-import type { Ensemble } from "./ensemble.ts";
+import type { Caller, Ensemble } from "./ensemble.ts";
 import { TASK_CATEGORIES } from "./models.ts";
 import { embedding, MODEL_HEADER } from "./options.ts";
 import { CompressRequestSchema, JudgeAnswerSchema, JudgeQuestionSchema, ParseRequestSchema, ToolSpecSchema } from "./ports.ts";
@@ -71,7 +71,7 @@ async function embedAll(ensemble: Ensemble, inputs: readonly EmbedInput[], dimen
   return { model, vectors };
 }
 
-export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation, input: unknown): Promise<unknown> {
+export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation, input: unknown, caller?: Caller): Promise<unknown> {
   switch (op) {
     case "judge": {
       const request = parse(op, input);
@@ -126,7 +126,7 @@ export async function invokeCognitive(ensemble: Ensemble, op: CognitiveOperation
     default: {
       const operation = ensemble.operation(op);
       if (!operation) throw new Error(`no installed extension serves ${op}`);
-      return operation(input);
+      return operation(input, caller);
     }
   }
 }

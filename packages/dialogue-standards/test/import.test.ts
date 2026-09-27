@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { importDialogue, isDialogueFile, standardOf } from "@harness/dialogue-standards";
+import { documentImporter, importDialogue, isDialogueFile, standardOf } from "@harness/dialogue-standards";
+import { MemoryLibrary } from "@harness/workflows";
 
 const vxml = `<vxml version="2.1"><form><block>Hi.</block></form></vxml>`;
 const aiml = `<aiml><category><pattern>HI</pattern><template>Hello <b>you</b>.</template></category></aiml>`;
@@ -40,5 +41,23 @@ describe("importing a dialogue", () => {
 
   it("IM2.2 the flow takes an object as its input", () => {
     expect(importDialogue({ name: "front-desk", files: { "main.vxml": vxml } }).flow.inputs).toEqual({ type: "object" });
+  });
+
+  it("IM1.4 the dialogue's importer (dialogue.import) compiles a document and puts the flow that runs it in the flows' library", async () => {
+    const library = new MemoryLibrary();
+    const imported = await documentImporter(library)({ name: "front-desk", files: { "desk.vxml": vxml }, options: {}, replace: false });
+    expect(imported).toEqual({ document: { name: "front-desk", type: "voicexml", files: { "desk.vxml": vxml }, options: {} }, warnings: [] });
+    expect(await library.get("front-desk")).toMatchObject({ kind: "flow" });
+  });
+
+  it("IM1.5 a workflow of the same name that is not a flow is replaced only when asked; a flow is replaced", async () => {
+    const tool = { name: "summarize", description: "A tool agents use.", inputs: { type: "object" }, code: "return 1;" };
+    const library = new MemoryLibrary([tool as never]);
+    const request = { name: "summarize", files: { "desk.vxml": vxml }, options: {} };
+    await expect(documentImporter(library)({ ...request, replace: false })).rejects.toThrow("workflow summarize is in the library and is not a flow");
+    expect(await library.get("summarize")).not.toHaveProperty("kind");
+    await documentImporter(library)({ ...request, replace: true });
+    await documentImporter(library)({ ...request, replace: false });
+    expect(await library.get("summarize")).toMatchObject({ kind: "flow" });
   });
 });

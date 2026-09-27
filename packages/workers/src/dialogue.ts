@@ -7,7 +7,7 @@ import type {
   LanguageModelV4StreamPart,
   SharedV4ProviderMetadata,
 } from "@ai-sdk/provider";
-import { constrain, constraintOf, HARNESS, MODEL_HEADER, readTemplate, sessionOf, StreamParts, usage } from "@harness/cognitive";
+import { constrain, constraintOf, HARNESS, MODEL_HEADER, readTemplate, scopeOf, sessionOf, StreamParts, usage } from "@harness/cognitive";
 import type { TemplateConstraint } from "@harness/cognitive";
 import type { Decision, Dialogue, Outcome, Step, ToolResult } from "@harness/dialogue";
 
@@ -29,7 +29,8 @@ export function stepOf(options: LanguageModelV4CallOptions): Step | undefined {
   const utterance = user.content.map((p) => (p.type === "text" ? p.text : "")).join("\n");
   if (utterance.trim() === "") return undefined;
   const session = sessionOf(options.providerOptions);
-  const base = { ...(session === undefined ? {} : { sessionId: session }), utterance };
+  const scope = scopeOf(options.providerOptions);
+  const base = { ...(session === undefined ? {} : { sessionId: session }), ...(scope === undefined ? {} : { scope }), utterance };
   const last = prompt[prompt.length - 1]!;
   if (last === user) return base;
   if (last.role !== "tool" || last.content.length !== 1 || last.content[0]!.type !== "tool-result") return undefined;

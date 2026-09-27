@@ -10,3 +10,4 @@ export type { Expansion, Grammar, GrammarMatch, Grammars } from "./srgs.ts";
 export { compileVoiceXml, isVoiceXmlFile, stepVoiceXml, voiceXml } from "./voicexml.ts";
 export { DocumentError, parseXml } from "./xml.ts";
 export type { XNode } from "./xml.ts";
+export { documentImporter } from "./importer.ts";

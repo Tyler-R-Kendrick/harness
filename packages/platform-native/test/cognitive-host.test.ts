@@ -3,7 +3,7 @@ import { embed, experimental_evaluate, generateText, streamText } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
-import { buildDialogue, buildNativeEnsemble, dialogueSaves, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
+import { buildDialogue, buildNativeEnsemble, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
 
 const catalog = loadCatalog();
 const native = catalog.models.filter((m) => m.platforms.includes("native"));
@@ -377,37 +377,10 @@ require("node:http").createServer((req, res) => {
     await host.close();
   });
 
-  it("CH3.6 a dialogue's saves go one at a time, each of the latest state: changes while one is being saved make one more; a failed save is reported, and the next change saves again", async () => {
-    const written: unknown[] = [];
-    const errors: unknown[] = [];
-    let release!: () => void;
-    let fail = false;
-    const storage = {
-      save: async (v: unknown) => {
-        if (written.length === 0) await new Promise<void>((r) => (release = r));
-        if (fail) throw new Error("disk full");
-        written.push(v);
-      },
-    };
-    const saves = dialogueSaves(storage, (e) => void errors.push(e));
-    let state = 0;
-    const snapshot = () => ++state;
-    saves.persist(snapshot);
-    await Promise.resolve();
-    saves.persist(snapshot);
-    saves.persist(snapshot);
-    saves.persist(snapshot);
-    release();
-    await saves.settled();
-    expect(written).toEqual([1, 2]);
-    fail = true;
-    saves.persist(snapshot);
-    await saves.settled();
-    expect(errors.map((e) => (e as Error).message)).toEqual(["disk full"]);
-    fail = false;
-    saves.persist(snapshot);
-    await saves.settled();
-    expect(written).toEqual([1, 2, 4]);
+  it("CH3.7 a dialogue's events reach the host's callback", () => {
+    const events: unknown[] = [];
+    buildDialogue({ onEvent: (e) => void events.push(e) }).put({ id: "hi", intent: "h", patterns: ["hi"], reply: ["Hi."] });
+    expect(events).toEqual([{ type: "dialogue.script.put", payload: { id: "hi" } }]);
   });
 
   it("CH3.4 with workflows, learning gets the shipped plugins: a learned procedure becomes a workflow that runs durably from the library", async () => {

@@ -98,7 +98,7 @@ function replyParts(replies: Alignment, source: (g: number, values: readonly str
  * they have too many holes, or when too few of them fit it.
  */
 export function induce(
-  cluster: { readonly context?: ScriptId; readonly tool?: string; readonly acted?: boolean; readonly observations: readonly Observation[] },
+  cluster: { readonly scope?: string; readonly context?: ScriptId; readonly tool?: string; readonly acted?: boolean; readonly observations: readonly Observation[] },
   settings: Settings["induce"],
   id: ScriptId,
 ): { script: Script } | { problem: string } {
@@ -109,7 +109,7 @@ export function induce(
   if (sessions < settings.sessions) return { problem: `observations from ${sessions} session(s), fewer than ${settings.sessions}` };
   if (observations.every((o) => o.reply.trim() === "")) return { problem: "the replies are empty" };
   const replies = align(observations.map((o) => o.reply.trim()));
-  const base = { id, status: "candidate", origin: "induced", ...(cluster.context === undefined ? {} : { context: cluster.context }) };
+  const base = { id, status: "candidate", origin: "induced", ...(cluster.scope === undefined ? {} : { scope: cluster.scope }), ...(cluster.context === undefined ? {} : { context: cluster.context }) };
 
   let script: unknown;
   let parts: Part[];

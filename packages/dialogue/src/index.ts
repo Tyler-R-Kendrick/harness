@@ -6,6 +6,9 @@ export { exponential, fill, findValue, fits, flowOf, matchPattern, readHoles, re
 export type { Fillers } from "./render.ts";
 export { induce, maskExemplar, normalizeUtterance } from "./induce.ts";
 export { Dialogue } from "./dialogue.ts";
-export type { CompiledDocument, Decision, DialogueOptions, FlowRunner, Interpreter, Match, Outcome, Shadow, Step, StepInput, StepResult } from "./dialogue.ts";
+export type { CompiledDocument, Decision, DialogueEvent, DialogueOptions, DialogueStatus, FlowRunner, Interpreter, Match, Outcome, Shadow, Step, StepInput, StepResult } from "./dialogue.ts";
 export { draft, draftedScript, DraftSchema } from "./draft.ts";
 export type { Draft } from "./draft.ts";
+export { dialogueExtension } from "./extension.ts";
+export type { Importer, ImportRequest } from "./extension.ts";
+export { dialogueSaves } from "./saves.ts";

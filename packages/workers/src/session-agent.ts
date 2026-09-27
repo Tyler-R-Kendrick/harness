@@ -1,5 +1,5 @@
 import { streamText, ToolLoopAgent } from "ai";
-import { HARNESS } from "@harness/cognitive";
+import { HARNESS, projectScope } from "@harness/cognitive";
 import type { LanguageModel, ModelMessage, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
@@ -48,7 +48,7 @@ export function sessionAgent(options: {
     ...(options.toolApproval ? { toolApproval: options.toolApproval } : {}),
     ...(options.stopWhen ? { stopWhen: options.stopWhen } : {}),
     maxRetries: 0,
-    callOptionsSchema: z.object({ sessionId: z.string() }),
+    callOptionsSchema: z.object({ sessionId: z.string(), cwd: z.string().exactOptional() }),
     prepareCall: async ({ options: turn, ...call }) => {
       const user = lastUser(call.messages ?? []);
       const said = textOf(user);
@@ -65,7 +65,8 @@ export function sessionAgent(options: {
         .join("\n\n");
       const tools = typeof options.tools === "function" ? await options.tools() : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
-      const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
+      const scope = turn.cwd === undefined ? undefined : projectScope(turn.cwd);
+      const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId, ...(scope === undefined ? {} : { scope }) } };
       return { ...call, providerOptions, ...(instructions ? { instructions } : {}), ...(options.vision && hasImage(user) ? { model: options.vision } : {}), ...(tools ? { tools } : {}) };
     },
   });
