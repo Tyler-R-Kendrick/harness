@@ -7,14 +7,16 @@ import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GraphIdSchema, importGraph, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, seedGraph } from "@harness/procedural";
+import { GraphIdSchema, importGraph, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
 import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
+  daemonTrajectories,
   harnessWorker,
   hostAuthorizer,
   hostPorts,
+  nativeDream,
   nativeLiveLearner,
   loadProceduralPolicy,
   loadProceduralResolver,
@@ -251,6 +253,45 @@ describe("the live learner on the native host", () => {
     expect((await store.overlay(graph).read(0)).some((e) => e.event.kind === "observed")).toBe(true);
     live.close();
     await host.close();
+  });
+});
+
+describe("dream on the native host", () => {
+  it("PX2.58 trajectories for dream are the ended turns of sessions pinned to the graph, under the revision, the most recent first to go, scored from the overlay", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    const { revision } = (await importGraph({ store, graph, clock: hostPorts.clock })) as { revision: RevisionId };
+    await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
+    await prompt("one");
+    await prompt("two");
+    const source = daemonTrajectories({ daemon: host.daemon, store });
+    const all = await source.select({ graph, revision, limit: 10 });
+    expect(all.map((t) => [t.session, t.core, t.score])).toEqual([
+      [sessionId, revision, null],
+      [sessionId, revision, null],
+    ]);
+    await store.overlay(graph).append([{ kind: "observed", turnKey: `${sessionId}/${all[1]!.turn}`, path: [], unmatched: [], score: ScoreSchema.parse(0.75), exposure: [] }]);
+    expect(await source.select({ graph, revision, limit: 1 })).toMatchObject([{ turn: all[1]!.turn, score: 0.75, scoreSource: "feedback" }]);
+    expect(await source.select({ graph: GraphIdSchema.parse("other"), revision, limit: 10 })).toEqual([]);
+    expect(await source.select({ graph, revision: RevisionIdSchema.parse("a".repeat(64)), limit: 10 })).toEqual([]);
+    expect(await daemonTrajectories({ daemon: { snapshot: () => ({ version: 1, sessions: [{ id: sessionId, cwd: "/", owner: "me", log: {}, tree: {} }], hooks: {} }) }, store }).select({ graph, revision, limit: 5 })).toEqual([]);
+    await host.close();
+  });
+
+  it("PX2.59 a dream runs on the store with the refiner on the given model, under the preset's dream settings, and holds the lease as the host", async () => {
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    await importGraph({ store, graph, clock: hostPorts.clock });
+    const model = scriptedModel(() => JSON.stringify({ add_nodes: [], delete_nodes: [], add_edges: [], delete_edges: [] }));
+    const dream = nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] }, preset: "harness" });
+    const result = await dream(graph);
+    expect(result).toMatchObject({ status: "done", graph });
+    expect(model.doGenerateCalls.length).toBeGreaterThan(0);
+    expect(await store.dreams(graph).head()).toBeGreaterThan(0);
+    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] } })(GraphIdSchema.parse("none"))).toMatchObject({ status: "no-head" });
+    expect(await store.lease.acquire(graph, "someone-else")).toBeDefined();
+    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] }, holder: "mine" })(graph)).toEqual({ status: "busy", graph });
   });
 });
 

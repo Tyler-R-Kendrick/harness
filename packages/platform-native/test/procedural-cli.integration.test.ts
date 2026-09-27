@@ -68,13 +68,13 @@ describe("harness-procedural CLI", () => {
     expect(await json("history", "team/search")).toMatchObject({ head: seed, revisions: [{ id: revisionId(next) }, { id: seed, origin: "revert" }] });
   });
 
-  it("PX2.47 results a caller handles exit 1 with the result; dream without a runner is unavailable; bad usage exits 2", async () => {
+  it("PX2.47 results a caller handles exit 1 with the result; a dream that cannot run (no head) exits 1; bad usage exits 2", async () => {
     const { dir, cli } = await setup();
     await expect(cli("export", "none")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("graph none has no head") });
     await expect(cli("revert", "none")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"refused"') });
     await writeFile(join(dir, "bad.json"), JSON.stringify({ format: "other" }));
     await expect(cli("import", "g", join(dir, "bad.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"invalid"') });
-    await expect(cli("dream", "g")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("no dream runner is configured") });
+    await expect(cli("dream", "g", "--no-hosted", "--model-cache", join(dir, "models"), "--state", join(dir, "absent-state.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("no-head") });
     await expect(cli("export", "Not A Graph")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("invalid procedural.export input") });
     await expect(cli("frobnicate", "g")).rejects.toMatchObject({ code: 2 });
     await expect(cli("history")).rejects.toMatchObject({ code: 2 });

@@ -1,8 +1,8 @@
 import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import type { Daemon, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, presetOf, proceduralStep, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Settings } from "@harness/procedural";
+import { authorize, LiveLearner, modelRefiner, presetOf, proceduralStep, projectTurn, runDream, SnapshotProceduralStore } from "@harness/procedural";
+import type { AccessPolicy, Action, DreamResult, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Score, ScoredTrajectory, Settings, TrajectorySource } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
 import { FileStorage } from "./file-storage.ts";
@@ -140,6 +140,63 @@ export function nativeLiveLearner(options: {
     ...(log === undefined ? {} : { log }),
   });
   return { learner, drain: pump.drain, close: pump.close };
+}
+
+/**
+ * Recorded trajectories for dream (P6's `TrajectorySource`), from the daemon's session
+ * logs: every ended turn of a session pinned to the graph, projected (P11), kept when it
+ * ran under the revision; the most recent `limit`. A turn's score is the latest one the
+ * overlay log holds for it. This host configures no scorer, so a score there came from
+ * `procedural.feedback`. Works on a live daemon or on a saved daemon snapshot.
+ */
+export function daemonTrajectories(options: { readonly daemon: Pick<Daemon, "snapshot">; readonly store: ProceduralStore }): TrajectorySource {
+  const { daemon, store } = options;
+  return {
+    select: async ({ graph, revision, limit }) => {
+      const scores = new Map<string, Score | null>();
+      for (const { event } of await store.overlay(graph).read(0)) if (event.kind === "observed") scores.set(event.turnKey, event.score);
+      const selected: ScoredTrajectory[] = [];
+      for (const session of daemon.snapshot().sessions) {
+        const pin = await store.pins.get(session.id);
+        if (pin?.graph !== graph) continue;
+        const entries = (session.log as { entries?: LogEntry<unknown>[] }).entries ?? [];
+        for (const { payload } of entries) {
+          const ended = payload as { event?: unknown; data?: { turnId?: unknown } };
+          if (ended.event !== "turn.ended" || typeof ended.data?.turnId !== "string") continue;
+          const turnId = ended.data.turnId;
+          const score = scores.get(`${session.id}/${turnId}`) ?? null;
+          const trajectory = projectTurn(entries, {
+            sessionId: session.id,
+            turnId,
+            pin: { graph, core: pin.core, overlay: pin.overlay },
+            ...(score === null ? {} : { score: { score, source: "feedback" as const } }),
+          });
+          if (trajectory?.core === revision) selected.push(trajectory);
+        }
+      }
+      return selected.slice(-limit);
+    },
+  };
+}
+
+/**
+ * Dream on this host (P6's `runDream`): the refiner is `modelRefiner` on the given model
+ * (the ensemble's reasoning model), under the preset's dream settings, with the host's
+ * clock and entropy. There is no evaluator or approver yet, so gates that need one do
+ * what the preset says for their absence.
+ */
+export function nativeDream(options: {
+  readonly store: ProceduralStore;
+  readonly settings: Settings;
+  readonly model: LanguageModel;
+  readonly trajectories: TrajectorySource;
+  readonly preset?: string;
+  readonly holder?: string;
+}): (graph: GraphId) => Promise<DreamResult> {
+  const { store, settings, model, trajectories } = options;
+  const preset = presetOf(settings, options.preset ?? "harness");
+  const refiner = modelRefiner({ model, settings });
+  return (graph) => runDream({ store, graph, settings: preset, ports: { refiner, trajectories, ...hostPorts }, holder: options.holder ?? "native-host" });
 }
 
 /**
