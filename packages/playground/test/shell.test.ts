@@ -1,0 +1,238 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { Bash } from "just-bash";
+import { Playground } from "../src/playground.ts";
+import { harnessCommands, Prompter, question, reportLines, traceLine, TurnRenderer } from "../src/shell.ts";
+import type { Settings } from "../src/shell.ts";
+import { shellModel } from "../src/shell-model.ts";
+import { Tracer } from "../src/trace.ts";
+import { HOME } from "../src/vfs.ts";
+
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+const open: Playground[] = [];
+afterEach(async () => {
+  for (const p of open.splice(0)) await p.close();
+});
+
+async function terminal(answer?: (key: Prompter) => void) {
+  const tracer = new Tracer(() => Date.now());
+  const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask" };
+  const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
+  open.push(playground);
+  let out = "";
+  const turns: [string, string][] = [];
+  const prompter = new Prompter((s) => void (out += s));
+  if (answer) prompter.onAsk = () => answer(prompter);
+  for (const c of harnessCommands({ playground, tracer, settings, prompter, write: (s) => void (out += s), workers: ["echo", "shell", "claude"], onTurn: (p, r) => void turns.push([p, r.stopReason]) })) bash.registerCommand(c);
+  const run = async (line: string) => {
+    out = "";
+    const r = await bash.exec(line, { cwd: HOME });
+    return { ...r, out: plain(out), stdout: plain(r.stdout) };
+  };
+  return { run, settings, playground, bash, tracer, turns, prompter };
+}
+
+describe("the terminal's harness commands", () => {
+  it("TM1.1 ask streams the agent's reply to the terminal and ends with the turn's report", async () => {
+    const t = await terminal();
+    t.settings.worker = "echo";
+    const r = await t.run("ask hello there");
+    expect(r.exitCode).toBe(0);
+    expect(r.out).toContain("echo: hello there");
+    expect(r.out).toMatch(/── end_turn · 0 model calls · 0 tool calls · no file changes · \d+ms/);
+    expect(t.turns).toEqual([["hello there", "end_turn"]]);
+  });
+
+  it("TM1.2 a tool call asks y/n in the terminal; yes runs it and the report names the files it changed", async () => {
+    const t = await terminal((p) => p.handleKey("y"));
+    const r = await t.run("ask '$ echo x > made.txt'");
+    expect(r.out).toContain("Allow bash");
+    expect(r.out).toContain("allowed");
+    expect(r.out).toContain("⚙ bash");
+    expect(r.out).toContain("+ /home/user/made.txt");
+    expect(r.out).toMatch(/1 tool call · 1 added, 0 modified, 0 removed/);
+    expect(await t.bash.readFile(`${HOME}/made.txt`)).toBe("x\n");
+  });
+
+  it("TM1.3 no keeps it from running; Ctrl-C at the question cancels the turn", async () => {
+    const denied = await terminal((p) => p.handleKey("n"));
+    expect((await denied.run("ask '$ rm README.md'")).out).toContain("denied");
+    expect(await denied.bash.fs.exists(`${HOME}/README.md`)).toBe(true);
+    const dismissed = await terminal((p) => p.handleKey("\x03"));
+    expect((await dismissed.run("ask '$ rm README.md'")).out).toContain("── cancelled");
+  });
+
+  it("TM1.3b a turn that fails outright prints why and exits 1", async () => {
+    for (const [thrown, said] of [
+      [new Error("daemon gone"), "daemon gone"],
+      ["just a string", "just a string"],
+    ] as const) {
+      const bash = new Bash({ cwd: HOME });
+      const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
+      for (const c of harnessCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] })) bash.registerCommand(c);
+      expect(await bash.exec("ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
+    }
+  });
+
+  it("TM1.3c Ctrl-C while a question waits cancels the turn and withdraws the question, so keys go back to the shell", async () => {
+    const abort = new AbortController();
+    const t = await terminal(() => abort.abort());
+    const bash = t.bash;
+    const r = await bash.exec("ask '$ touch never'", { cwd: HOME, signal: abort.signal });
+    expect(r.exitCode).not.toBe(2);
+    expect(await bash.fs.exists(`${HOME}/never`)).toBe(false);
+    expect(t.prompter.waiting).toBe(false);
+  });
+
+  it("TM1.4 ask without words says how to use it", async () => {
+    const t = await terminal();
+    expect(await t.run("ask")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("usage: ask") });
+  });
+
+  it("TM2.1 harness worker, tier and approve show and change the settings, refusing unknown values", async () => {
+    const t = await terminal();
+    expect((await t.run("harness worker")).stdout).toBe("shell (one of echo, shell, claude)\n");
+    expect((await t.run("harness worker echo")).stdout).toBe("worker: echo\n");
+    expect(t.settings.worker).toBe("echo");
+    expect(await t.run("harness worker nope")).toMatchObject({ exitCode: 2, stderr: "unknown worker nope (one of echo, shell, claude)\n" });
+    expect((await t.run("harness tier quick")).stdout).toBe("tier: quick\n");
+    expect((await t.run("harness tier")).stdout).toBe("quick (one of quick, default, complex)\n");
+    expect(await t.run("harness tier huge")).toMatchObject({ exitCode: 2 });
+    expect((await t.run("harness approve")).stdout).toBe("ask (one of ask, auto)\n");
+    expect((await t.run("harness approve auto")).stdout).toBe("approve: auto\n");
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto" });
+    expect(await t.run("harness approve maybe")).toMatchObject({ exitCode: 2 });
+  });
+
+  it("TM2.2 sessions, new and use manage sessions; use takes an id prefix and replays the log", async () => {
+    const t = await terminal();
+    t.settings.worker = "echo";
+    await t.run("ask one");
+    const first = t.playground.sessionId!;
+    const made = (await t.run("harness new")).stdout.trim();
+    expect(made).not.toBe(first);
+    const listed = (await t.run("harness sessions")).stdout;
+    expect(listed).toContain(`  ${first}`);
+    expect(listed).toContain(`* ${made}`);
+    const used = await t.run(`harness use ${first.slice(0, 12)}`);
+    expect(used.out).toContain("echo: one");
+    expect(t.playground.sessionId).toBe(first);
+    expect(await t.run("harness use zzz")).toMatchObject({ exitCode: 1, stderr: "no session starts with zzz\n" });
+    expect(await t.run("harness use")).toMatchObject({ exitCode: 1, stderr: "no session starts with \n" });
+  });
+
+  it("TM2.3 trace prints the newest events, one per line, and can be piped", async () => {
+    const t = await terminal();
+    t.settings.worker = "echo";
+    await t.run("ask hi");
+    const lines = (await t.run("harness trace 3")).stdout.trim().split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines.at(-1)).toMatch(/vfs\s+changes · 0 added/);
+    expect((await t.run("harness trace 50 | grep -c acp")).stdout.trim()).not.toBe("0");
+    await t.run("ask again");
+    expect((await t.run("harness trace")).stdout.trim().split("\n")).toHaveLength(20);
+  });
+
+  it("TM2.4 status summarizes the daemon; help lists the commands; an unknown one is refused", async () => {
+    const t = await terminal();
+    t.settings.worker = "echo";
+    await t.run("ask hi");
+    const status = (await t.run("harness status")).stdout;
+    expect(status).toMatch(/sessions\s+1/);
+    expect(status).toMatch(/worker\s+echo/);
+    expect(status).toMatch(/hook events\s+\d+/);
+    t.playground.host.daemon.offerPlatformCapability({ name: "memory", version: 1, trust: "trusted" });
+    expect((await t.run("harness status")).stdout).toMatch(/capabilities\s+memory/);
+    expect((await t.run("harness")).stdout).toContain("harness trace [n]");
+    expect(await t.run("harness nope")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("unknown command nope") });
+  });
+
+  it("TM2.5 harness snapshot prints the daemon's snapshot as JSON", async () => {
+    const t = await terminal();
+    expect(JSON.parse((await t.run("harness snapshot")).stdout)).toMatchObject({ version: 1, sessions: [] });
+  });
+});
+
+describe("rendering a turn in the terminal", () => {
+  it("TM3.1 text keeps its lines; tool calls, results and notices get lines of their own", () => {
+    const r = new TurnRenderer();
+    const out = [
+      r.update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Hi\nthere" } }),
+      r.update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "" } }),
+      r.update({ sessionUpdate: "agent_message_chunk", content: { type: "image", data: "AA==", mimeType: "image/png" } }),
+      r.update({ sessionUpdate: "agent_thought_chunk", content: { type: "image", data: "AA==", mimeType: "image/png" } }),
+      r.update({ sessionUpdate: "user_message_chunk", content: { type: "image", data: "AA==", mimeType: "image/png" } }),
+      r.update({ sessionUpdate: "tool_call", toolCallId: "1", title: "bash", rawInput: { command: "ls" } }),
+      r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { stdout: "a\nb\nc\nd\n", stderr: "", exitCode: 0 } }),
+      r.update({ sessionUpdate: "tool_call_update", toolCallId: "2", status: "failed", rawOutput: { error: "boom" } }),
+      r.update({ sessionUpdate: "tool_call_update", toolCallId: "3", status: "in_progress" }),
+      r.update({ sessionUpdate: "tool_call_update", toolCallId: "4", status: "failed" }),
+      r.update({ sessionUpdate: "tool_call", toolCallId: "5", title: "readFile" }),
+      r.update({ sessionUpdate: "notice", severity: "warning", title: "Heads up" }),
+      r.update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "hmm" } }),
+      r.update({ sessionUpdate: "notice", severity: "error", title: "Model call failed", description: "down" }),
+      r.update({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "you said" } }),
+      r.update({ sessionUpdate: "available_commands_update", availableCommands: [] }),
+      r.end(),
+    ].join("");
+    expect(plain(out)).toBe(
+      "Hi\r\nthere\r\n⚙ bash {\"command\":\"ls\"}\r\n  ✓ exit 0 · a\r\n    b\r\n    c\r\n    …\r\n  ✗ boom\r\n  ✗ failed\r\n⚙ readFile {}\r\n! Heads up\r\nhmm\r\n! Model call failed: down\r\n› you said\r\n",
+    );
+  });
+
+  it("TM3.2 end adds a line break only when the cursor is mid-line", () => {
+    const r = new TurnRenderer();
+    expect(r.end()).toBe("");
+    r.update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "done\n" } });
+    expect(r.end()).toBe("");
+  });
+
+  it("TM3.3 a completed call whose output is not a command's shows it as JSON; a command with no output shows its exit code", () => {
+    const r = new TurnRenderer();
+    expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { content: "x" } }))).toBe('  ✓ {"content":"x"}\r\n');
+    expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: "text" }))).toBe('  ✓ "text"\r\n');
+    expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { stdout: "", stderr: "", exitCode: 3 } }))).toBe("  ✓ exit 3\r\n");
+  });
+
+  it("TM3.3b a turn's report lists the files it added, modified and removed", () => {
+    const lines = plain(reportLines({ stopReason: "end_turn", modelCalls: 1, toolCalls: 2, ms: 5, diff: { added: ["/a"], modified: ["/m"], removed: ["/r"] } }));
+    expect(lines).toBe("── end_turn · 1 model call · 2 tool calls · 1 added, 1 modified, 1 removed · 5ms\r\n  + /a\r\n  ~ /m\r\n  - /r\r\n");
+  });
+
+  it("TM3.4 a trace line shows the sequence, kind, direction, name and a span's duration", () => {
+    expect(traceLine({ seq: 7, at: 0, kind: "model", name: "stream", phase: "end", duration: 12 })).toBe("   7 model    stream (12ms)");
+    expect(traceLine({ seq: 8, at: 0, kind: "acp", name: "result #1", direction: "out" })).toBe("   8 acp    ← result #1");
+    expect(traceLine({ seq: 9, at: 0, kind: "acp", name: "initialize #0", direction: "in" })).toBe("   9 acp    → initialize #0");
+  });
+
+  it("TM3.5 a permission question names the tool and its command, or its input", () => {
+    const ask = (toolCall: object) => question({ sessionId: "s", toolCall: { toolCallId: "c", ...toolCall }, options: [] });
+    expect(ask({ title: "bash", rawInput: { command: "ls" } })).toBe("Allow bash: ls?");
+    expect(ask({ title: "writeFile", rawInput: { path: "a" } })).toBe('Allow writeFile {"path":"a"}?');
+    expect(ask({})).toBe("Allow this tool {}?");
+  });
+});
+
+describe("the prompter: a question the terminal answers with a key", () => {
+  it("TM4.1 y or enter allows, n denies, Ctrl-C dismisses; other keys are swallowed while it waits; nothing is taken when it is not asking", async () => {
+    let out = "";
+    const p = new Prompter((s) => void (out += s));
+    expect(p.handleKey("y")).toBe(false);
+    const answers: (string | undefined)[] = [];
+    for (const key of ["y", "\r", "n", "\x03"]) {
+      const asked = p.ask("Allow?");
+      expect(p.handleKey("x")).toBe(true);
+      expect(p.handleKey(key)).toBe(true);
+      answers.push(await asked);
+    }
+    expect(answers).toEqual(["allow", "allow", "deny", undefined]);
+    const withdrawn = p.ask("Still there?");
+    p.withdraw();
+    p.withdraw();
+    expect(await withdrawn).toBeUndefined();
+    expect(plain(out)).toContain("withdrawn");
+    expect(plain(out)).toContain("Allow? [y/n] ");
+    expect(p.waiting).toBe(false);
+  });
+});

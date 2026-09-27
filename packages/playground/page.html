@@ -1,0 +1,287 @@
+<title>Harness Playground</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root {
+  --bg: #ecf0ef;
+  --surface: #f8faf9;
+  --raised: #ffffff;
+  --ink: #15201e;
+  --muted: #56655f;
+  --faint: #86948f;
+  --line: #d3dbd8;
+  --accent: #0e6a70;
+  --accent-soft: #d5ebea;
+  --on-accent: #ffffff;
+  --good: #26734a;
+  --warn: #9a5a00;
+  --bad: #b3261e;
+  --k-acp: #0e6a70;
+  --k-worker: #4450c4;
+  --k-model: #8b3db5;
+  --k-tool: #9a5a00;
+  --k-vfs: #26734a;
+  --k-hook: #b23c68;
+  --k-host: #56655f;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0b1110;
+    --surface: #111a19;
+    --raised: #16211f;
+    --ink: #dbe5e2;
+    --muted: #93a39f;
+    --faint: #64746f;
+    --line: #22302d;
+    --accent: #5cc3c7;
+    --accent-soft: #163636;
+    --on-accent: #06201f;
+    --good: #66c78e;
+    --warn: #e2a64a;
+    --bad: #f07a6f;
+    --k-acp: #5cc3c7;
+    --k-worker: #8f98f5;
+    --k-model: #c98ae8;
+    --k-tool: #e2a64a;
+    --k-vfs: #66c78e;
+    --k-hook: #ee86ab;
+    --k-host: #93a39f;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1110;
+  --surface: #111a19;
+  --raised: #16211f;
+  --ink: #dbe5e2;
+  --muted: #93a39f;
+  --faint: #64746f;
+  --line: #22302d;
+  --accent: #5cc3c7;
+  --accent-soft: #163636;
+  --on-accent: #06201f;
+  --good: #66c78e;
+  --warn: #e2a64a;
+  --bad: #f07a6f;
+  --k-acp: #5cc3c7;
+  --k-worker: #8f98f5;
+  --k-model: #c98ae8;
+  --k-tool: #e2a64a;
+  --k-vfs: #66c78e;
+  --k-hook: #ee86ab;
+  --k-host: #93a39f;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 14px/1.45 var(--sans);
+  padding-inline: 16px;
+  padding-block: 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+*, *::before, *::after { box-sizing: border-box; }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- top bar ---- */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; }
+.brand { display: flex; align-items: baseline; gap: 8px; margin-right: auto; }
+.brand h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.brand span { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.control { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.control > .label { text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--raised); }
+.seg button { border: 0; background: none; padding: 4px 10px; font-size: 13px; cursor: pointer; color: var(--ink); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+.seg button:disabled { color: var(--faint); cursor: not-allowed; }
+select { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius); padding: 3px 6px; font-size: 13px; }
+select:disabled { color: var(--faint); }
+.switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; color: var(--ink); font-size: 13px; }
+.switch input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.pill[data-state="ready"]::before { background: var(--good); }
+.pill[data-state="off"]::before { background: var(--warn); }
+
+/* ---- deck ---- */
+.deck { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; }
+.term-pane { min-height: 0; display: flex; flex-direction: column; border-radius: 8px; overflow: hidden; background: #0f1716; border: 1px solid #1d2927; }
+.term-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #1d2927; font: 12px var(--mono); color: #7f928d; }
+.term-head b { color: #cfe0dc; font-weight: 500; }
+#terminal { flex: 1; min-height: 0; }
+#terminal.wterm {
+  --term-bg: #0f1716;
+  --term-fg: #d5e1de;
+  --term-cursor: #5cc3c7;
+  --term-selection-bg: #24504f;
+  --term-color-0: #0f1716; --term-color-8: #5d6f6b;
+  --term-color-1: #f0776d; --term-color-9: #ff9b92;
+  --term-color-2: #66c78e; --term-color-10: #8ee0ad;
+  --term-color-3: #e2a64a; --term-color-11: #f3c77f;
+  --term-color-4: #7fa6f0; --term-color-12: #a9c4f7;
+  --term-color-5: #c98ae8; --term-color-13: #dfb0f2;
+  --term-color-6: #5cc3c7; --term-color-14: #8adcdf;
+  --term-color-7: #c4d2ce; --term-color-15: #f2f7f6;
+  --term-font-family: "IBM Plex Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --term-font-size: 13px;
+  border-radius: 0;
+  box-shadow: none;
+  height: 100%;
+}
+
+.inspector { min-height: 0; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
+.tabs button { border: 0; background: none; padding: 7px 12px 8px; font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.tabs .count { font: 11px var(--mono); color: var(--faint); margin-left: 4px; font-variant-numeric: tabular-nums; }
+.panel { flex: 1; min-height: 0; overflow: auto; }
+.panel[hidden] { display: none !important; }
+.toolbar { position: sticky; top: 0; z-index: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line); background: var(--raised); border-radius: 999px; padding: 1px 9px 1px 7px; font: 12px var(--mono); cursor: pointer; color: var(--ink); }
+.chip::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--kind); }
+.chip[aria-pressed="false"] { color: var(--faint); background: none; }
+.chip[aria-pressed="false"]::before { background: none; outline: 1px solid var(--faint); }
+.chip .n { color: var(--faint); font-variant-numeric: tabular-nums; }
+.toolbar .spacer { flex: 1; }
+.linkbtn { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+.empty { padding: 20px 14px; color: var(--muted); font-size: 13px; }
+
+/* timeline */
+.events { font: 12px/1.5 var(--mono); }
+.ev { border-bottom: 1px solid color-mix(in srgb, var(--line) 60%, transparent); }
+.ev > summary { display: grid; grid-template-columns: 5.2em 4.6em 1.2em minmax(0, 1fr) auto; gap: 6px; align-items: baseline; padding: 3px 12px; cursor: pointer; list-style: none; }
+.ev > summary::-webkit-details-marker { display: none; }
+.ev > summary:hover { background: var(--raised); }
+.ev .t { color: var(--faint); font-variant-numeric: tabular-nums; text-align: right; }
+.ev .k { color: var(--kind); font-weight: 500; }
+.ev .d { color: var(--faint); }
+.ev .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev .ms { color: var(--muted); font-variant-numeric: tabular-nums; }
+.ev pre, .viewer pre, details.raw pre { margin: 0; padding: 8px 12px 10px 12px; background: var(--raised); border-top: 1px solid var(--line); overflow-x: auto; font: 12px/1.45 var(--mono); white-space: pre-wrap; word-break: break-word; max-height: 360px; }
+[data-kind="acp"] { --kind: var(--k-acp); }
+[data-kind="worker"] { --kind: var(--k-worker); }
+[data-kind="model"] { --kind: var(--k-model); }
+[data-kind="tool"] { --kind: var(--k-tool); }
+[data-kind="vfs"] { --kind: var(--k-vfs); }
+[data-kind="hook"] { --kind: var(--k-hook); }
+[data-kind="host"] { --kind: var(--k-host); }
+
+/* turns */
+.turn { padding: 10px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.turn .prompt { font: 13px var(--mono); word-break: break-word; }
+.turn .meta { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stop { font: 11px var(--mono); padding: 1px 7px; border-radius: 4px; border: 1px solid currentColor; }
+.stop[data-stop="end_turn"] { color: var(--good); }
+.stop[data-stop="cancelled"], .stop[data-stop="max_tokens"] { color: var(--warn); }
+.stop[data-stop="refusal"] { color: var(--bad); }
+.files { margin: 0; padding: 0; list-style: none; font: 12px var(--mono); display: grid; gap: 1px; }
+.mark-added { color: var(--good); }
+.mark-modified { color: var(--warn); }
+.mark-removed { color: var(--bad); text-decoration: line-through; }
+
+/* files */
+.tree { list-style: none; margin: 0; padding: 6px 0; font: 12.5px/1.6 var(--mono); }
+.tree li { display: flex; align-items: baseline; gap: 6px; padding: 0 12px; }
+.tree button { border: 0; background: none; padding: 0; cursor: pointer; text-align: left; color: var(--ink); font: inherit; }
+.tree button:hover, .tree li[aria-current="true"] button { color: var(--accent); text-decoration: underline; }
+.tree .dir { color: var(--muted); }
+.tree .size { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; }
+.tree .m { width: 1ch; }
+.viewer { border-top: 1px solid var(--line); }
+.viewer h3 { margin: 0; padding: 8px 12px; font: 500 12px var(--mono); color: var(--muted); }
+.viewer pre { max-height: none; }
+
+/* daemon */
+.section { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.section h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); }
+table.grid { width: 100%; border-collapse: collapse; font: 12px var(--mono); font-variant-numeric: tabular-nums; }
+table.grid th { text-align: left; font-weight: 500; color: var(--faint); padding: 2px 8px 2px 0; }
+table.grid td { padding: 2px 8px 2px 0; vertical-align: top; }
+.scroll-x { overflow-x: auto; }
+.node { font: 12px var(--mono); padding: 1px 0; }
+.node .kindtag { color: var(--muted); }
+.node .grants { color: var(--faint); }
+details.raw > summary { cursor: pointer; font-size: 12px; color: var(--accent); padding: 2px 0; }
+details.raw pre { max-height: 420px; border: 1px solid var(--line); border-radius: 4px; margin-top: 6px; }
+
+@media (max-width: 900px) {
+  body { overflow: auto; height: auto; min-height: 100%; }
+  .deck { grid-template-columns: minmax(0, 1fr); }
+  .term-pane { height: 62svh; min-height: 320px; }
+  .inspector { height: 70svh; min-height: 360px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<header class="bar">
+  <div class="brand"><h1>Harness Playground</h1><span id="daemon-line">daemon starting…</span></div>
+  <div class="controls">
+    <div class="control"><span class="label">Worker</span>
+      <div class="seg" id="worker" role="group" aria-label="Worker for the next turn">
+        <button type="button" data-worker="echo" aria-pressed="false">echo</button>
+        <button type="button" data-worker="shell" aria-pressed="false">shell</button>
+        <button type="button" data-worker="claude" aria-pressed="false">claude</button>
+      </div>
+    </div>
+    <label class="control"><span class="label">Tier</span>
+      <select id="tier"><option value="quick">quick</option><option value="default">default</option><option value="complex">complex</option></select>
+    </label>
+    <label class="switch"><input type="checkbox" id="approval" checked> Ask before commands</label>
+    <span class="pill" id="claude-pill" data-state="checking">Claude: checking</span>
+  </div>
+</header>
+
+<main class="deck">
+  <section class="term-pane" aria-label="Terminal">
+    <div class="term-head"><span><b>just-bash</b> · wterm</span><span id="session-line">no session</span></div>
+    <div id="terminal" aria-label="Harness terminal" aria-describedby="terminal-help"></div>
+    <p id="terminal-help" hidden>Type ask followed by a prompt to run a turn, or any bash command. harness help lists the harness commands.</p>
+  </section>
+
+  <section class="inspector" aria-label="Inspector">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-timeline" aria-controls="panel-timeline" aria-selected="true">Timeline<span class="count" id="count-timeline">0</span></button>
+      <button type="button" role="tab" id="tab-turns" aria-controls="panel-turns" aria-selected="false">Turns<span class="count" id="count-turns">0</span></button>
+      <button type="button" role="tab" id="tab-files" aria-controls="panel-files" aria-selected="false">Files<span class="count" id="count-files">0</span></button>
+      <button type="button" role="tab" id="tab-daemon" aria-controls="panel-daemon" aria-selected="false">Daemon<span class="count" id="count-daemon">0</span></button>
+    </div>
+
+    <div class="panel" id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline">
+      <div class="toolbar" id="kinds">
+        <label class="switch"><input type="checkbox" id="chunks"> chunks</label>
+        <span class="spacer"></span>
+        <button type="button" class="linkbtn" id="follow" aria-pressed="true">following</button>
+        <button type="button" class="linkbtn" id="clear-trace">clear</button>
+      </div>
+      <div class="events" id="events"></div>
+    </div>
+
+    <div class="panel" id="panel-turns" role="tabpanel" aria-labelledby="tab-turns" hidden>
+      <div id="turns"><p class="empty">Each turn you run shows up here with its stop reason, model and tool calls, time, and the files it changed.</p></div>
+    </div>
+
+    <div class="panel" id="panel-files" role="tabpanel" aria-labelledby="tab-files" hidden>
+      <ul class="tree" id="tree"></ul>
+      <div class="viewer" id="viewer" hidden><h3 id="viewer-path"></h3><pre id="viewer-text"></pre></div>
+    </div>
+
+    <div class="panel" id="panel-daemon" role="tabpanel" aria-labelledby="tab-daemon" hidden>
+      <div id="daemon"></div>
+    </div>
+  </section>
+</main>

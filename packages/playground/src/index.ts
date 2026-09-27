@@ -1,0 +1,11 @@
+export { INSTRUCTIONS, Playground, switchWorker } from "./playground.ts";
+export type { PlaygroundOptions, TurnHandlers, TurnReport } from "./playground.ts";
+export { parseReply, sampleLanguageModel, sampleTurns } from "./sample-model.ts";
+export type { ModelTier, Reply, Sample, SampleCallOptions, SampleInput, SampleMessage } from "./sample-model.ts";
+export { harnessCommands, Prompter, question, reportLines, traceLine, TurnRenderer } from "./shell.ts";
+export type { Settings, ShellContext } from "./shell.ts";
+export { shellModel } from "./shell-model.ts";
+export { acpSummary, hookEvents, hookTrace, tracedPort, tracedTools, tracedWorker, Tracer, tracingMiddleware } from "./trace.ts";
+export type { HookEventView, TraceEvent, TraceInput, TraceKind } from "./trace.ts";
+export { diffVfs, HOME, vfsApproval, vfsTools, walk } from "./vfs.ts";
+export type { ApprovalPolicy, FileEntry, VfsDiff } from "./vfs.ts";

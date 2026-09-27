@@ -221,6 +221,7 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Native background service (Node): stdio/socket, file storage, workers, on the runtime | built | NS1, NS2, NH1; tested on Linux only |
 | Native model hosting: verified artifact cache, streamed GGUF files, Emscripten loader, llama-server processes, ensemble builder with one loader per runtime | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH3.2; CLI `--cognitive` |
 | Browser host (`@harness/platform-browser`): the runtime in a tab, PWA, shared worker (`BrowserHost.serve(self)`, one daemon for every tab of an origin) or extension background; `Date.now` clock, Web Crypto entropy, timer ticks, IndexedDB snapshots, any session worker (echo, an AI SDK agent) | built | BH1.1–BH1.12, BI1.1–BI1.3 (bundled with Vite, run in Chromium via Playwright); the ensemble, extension ports and workflows are their own rows |
+| Browser playground (`@harness/playground`, ADR 0011): the browser host in one page, driven over ACP from a wterm terminal running just-bash; `ask` and `harness …` commands (sessions, workers, Claude's tier, approvals, traces, status, snapshot); the agent's `bash`/`readFile`/`writeFile` tools work in the terminal's filesystem; approvals asked in the terminal; a timeline of ACP messages, worker commands and events, model calls, tool runs, hook events and each turn's filesystem diff; builds to one HTML file (an artifact) whose model is Claude through the artifact's `sample` capability, or a deterministic shell model, or echo | built | SM1.1–SM3.3, VF1.1–VF3.3, TR1.1–TR7.1, SH1.1–SH1.4, PG1.1–PG2.2, TM1.1–TM4.1, PI1.1–PI1.3 (the built file in Chromium, including Claude's path with a stand-in `sample`); the page's daemon, files and agent history do not survive a reload |
 | Remote API, mobile | not started | Core and runtime are pure (lint + tsconfig enforced) so they can run there |
 
 ## N. Federation
@@ -238,6 +239,7 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Cognitive-core suite (tool decisions, compression, OCR, vision, memory recall on real models, judged) | built | `cognitive` suite, run by CI's `models` job; live run 2026-09-27, judged by Ornith: 5/5 |
 | Judge calibration suite | built | `calibration` suite; live runs: 5/5 judged by Jev (2026-09-24) and 5/5 by Ornith as the local judge (2026-09-27), including both known-bad cases |
 | End-to-end harness suite (daemon, judged) | built | `harness` suite, EV7.3–EV7.5; live run 2026-09-27, judged by Ornith: 4/4 (its questions state each property exactly, e.g. "appears in `reply` as a substring": the local judge read "contains the full text" as "equals"): round-trip, turn order, permission deny/allow through the daemon with the echo worker. The judge is the only model the evals call |
+| A trace of every layer of a turn in the browser playground (ACP, worker, model, tool, hook, filesystem) | built | TR1.1–TR7.1, PG1.1–PG1.9; in-page only, not exported |
 | OTel/ATIF export; outcome contracts; protected acceptance suites | not started | |
 
 ## P. Reliability, provenance and lifecycle
@@ -255,7 +257,8 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Feature | Status | Evidence / gap |
 |---|---|---|
 | Stock ACP clients work | built | Official ACP SDK client (NS1) |
-| Reference TUI, web UI, extension panel | not started | |
+| Web UI: the browser playground (section M) | built | PI1.1–PI1.3 |
+| Reference TUI, extension panel | not started | |
 
 ## R. Multiplexing outcomes
 

@@ -1,0 +1,30 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": ".types",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": []
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../cognitive"
+    },
+    {
+      "path": "../core"
+    },
+    {
+      "path": "../workers"
+    },
+    {
+      "path": "../platform-browser"
+    }
+  ]
+}

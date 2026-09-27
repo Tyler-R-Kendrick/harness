@@ -198,6 +198,16 @@ const workflows = browserWorkflows(cognitive, { library: new IndexedDbWorkflows(
 const agentTools = await workflowTools(workflows); // the library's workflows, for the page's agents
 ```
 
+To try it by hand, build the browser playground: one HTML file with the daemon, a
+terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
+of every ACP message, worker event, model call, tool run and hook event. Opened as a
+claude.ai artifact, its model is Claude; anywhere, `ask '$ <command>'` runs the whole
+tool-call path on a deterministic model.
+
+```sh
+node packages/playground/build.ts   # writes packages/playground/dist/harness-playground.html
+```
+
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:
 `BrowserHost.serveExtension(chrome.runtime.onConnect, options)` there, and
 `portStream(extensionPort(chrome.runtime.connect({ name: "acp" })))` in a page. An
