@@ -1,155 +1,157 @@
 # 0011: Procedural graphs: procedural memory that evolves under a gate
 
-Status: proposed 2026-09-27. Research: `docs/research/procedural-graphs.md`. Plan:
-`docs/plans/procedural-graph.md`.
+Status: proposed 2026-09-27; revised the same day after an adversarial review.
+Research: `docs/research/procedural-graphs.md`. Plan: `docs/plans/procedural-graph.md`.
 
 ## Context
 
-The harness learns from sessions in three ways. Memory recalls related text. Lessons
-distil insights, procedures and pitfalls (ExpeL, ReasoningBank, ACE deltas). The workflow
-builder compiles a learned procedure into linear workflow code (AWM-like). None of these
-says *what to do next from here*. Lessons are an unordered playbook put in the
-instructions once per turn. Workflows are fixed sequences with no branches. The solver
-still has to reconstruct the procedure from a flat, growing history at every step.
+The harness learns from sessions in three ways:
 
-*Procedural Graphs* (Lu, Chen, Wu, Arık; arXiv:2609.09153) addresses exactly this gap.
-The procedure is a small directed graph of `(procedure, relation, procedure)` triplets,
-and each edge carries `condition`, `guidance` and `pitfalls`. At each step, the agent's
-last tool call locates it on the graph, and a guidance model turns the 2-hop
-neighborhood into advice for the next step. Offline, a refiner contrasts failed and
-successful trajectories and proposes graph edits. An edit is kept only when validation
-does not get worse. Rejected edits are remembered.
+- **Memory** recalls related text.
+- **Lessons** distil insights, procedures and pitfalls (ExpeL, ReasoningBank, ACE
+  deltas).
+- **The workflow builder** compiles a learned procedure into linear workflow code (an
+  AWM-like approach).
 
-The paper's evidence (research note §2) supports three findings:
+None of these says *what to do next from here*. Lessons are an unordered playbook put in
+the instructions once per turn, and workflows are fixed sequences. So at every step the
+solver still has to reconstruct the procedure from a flat, growing history.
 
-1. Localized guidance beats both no graph and full-graph guidance.
-2. Ungated updates can make an agent much worse.
-3. Gated iteration repairs a bad prior.
+*Procedural Graphs* (Lu, Chen, Wu, Arık; arXiv:2609.09153) addresses that gap:
 
-The per-cell gains are mostly inside the confidence intervals, and the gate is a noise
-filter that accepts ties on 20 to 100 validation tasks.
+- **The graph.** The procedure is a small directed graph of
+  `(procedure, relation, procedure)` triplets. Each edge carries `condition`, `guidance`
+  and `pitfalls`.
+- **Guidance.** At each step, the agent's last action locates it on the graph. A guidance
+  model then turns the 2-hop neighborhood into advice for the next step.
+- **Evolution.** Offline, a refiner contrasts failed and successful trajectories and
+  proposes edits. An edit is kept only if the score on a validation set does not drop, and
+  rejected edits are remembered.
 
-The harness has most of the machinery the paper had to build:
+The research note (§2) reaches four conclusions:
 
-- An ordered session log.
-- A hook bus with sagas.
-- Judged evals.
-- An ensemble with constrained decoding.
-- Durable workflows.
-- Learning's trajectory schema and builders.
+- The evidence supports three points: localization works; ungated updates can make an
+  agent much worse; and gated iteration can repair a bad prior.
+- Per-benchmark gains are mostly inside their confidence intervals.
+- The paper's gate is a noise filter that accepts ties.
+- The paper is ambiguous in places that matter: how `Match` localizes non-tool nodes, the
+  cycle policy, and how strides wrap.
 
-It also has gaps the paper did not face:
+The harness already has most of what the paper had to build: an ordered session log, a
+hook bus with sagas, judged evals, an ensemble with constrained decoding, and learning's
+trajectory schema and builders. It also has problems the paper never faced:
 
-- Many domains in one daemon.
-- Concurrent sessions.
-- Untrusted tool output feeding a learner whose output reaches every later session.
-- A session log that is persisted *after* outputs are dispatched. It is not write-ahead.
+- many domains and owners in one daemon;
+- live sessions that cannot be re-run under a candidate graph;
+- untrusted tool output feeding a learner whose output reaches every later session;
+- model operations that do not know who called them.
 
 ## Options considered
 
-- **Extend lessons (conditional guidelines, AutoGuide-style).** Cheapest. The paper shows
-  it is the closest baseline and loses to connected transitions. Retrieval by similarity
-  omits prerequisites, for example `submit` without `check_answer`.
-- **A knowledge graph (GraphRAG, Graphiti, A-Mem).** It models entities and facts, which
-  is semantic and episodic memory, not procedure. It answers "what is", not "what to do
+- **Extend lessons with conditional guidelines (AutoGuide-style).** This is the cheapest
+  option. But it is the closest baseline in the paper, and it loses to connected
+  transitions, because retrieval by similarity omits prerequisites.
+- **A knowledge graph (GraphRAG, Graphiti, A-Mem).** These model entities and facts, which
+  is semantic and episodic memory, not procedure. They answer "what is", not "what to do
   next".
-- **The task graph (`core/task-graph.ts`) as the procedure.** It is an execution
-  structure for one plan: statuses, joins, resources. It has no attributes, no
-  serialization, and no notion of advice. A procedural graph is the *prior* that plans
-  are drawn from, so the two are different layers.
-- **Hard constraints (KnowAgent, TOOLDEC-style: allow only successor tools).** This
-  guarantees ordering, but it removes the solver's freedom. A wrong graph then blocks
-  correct actions, and the paper's expert prior was wrong on MultiChallenge. We offer it
-  only as an ablation.
-- **Adopt the independent reimplementation.** It is Python, and it has its own storage
-  and provider layers. We would still have to write the ports, the log integration and
-  the gate, so we take its departures list as input, not its code.
-- **A new pure package that reproduces the paper by default, integrated through ports.**
-  **Chosen.**
+- **The task graph (`core/task-graph.ts`).** It is an execution structure for one plan:
+  statuses, joins and resources. It has no attributes and no serialization. A procedural
+  graph is the *prior* that plans are drawn from.
+- **Hard constraints (KnowAgent- or TOOLDEC-style).** These guarantee order but remove the
+  solver's freedom. A wrong graph then blocks correct actions, and the paper's expert
+  prior was wrong. We keep this as an ablation only.
+- **Adopting the independent reimplementation.** It is written in Python and has its own
+  storage and provider layers. We read its list of departures from the paper instead.
+- **Chosen:** a new pure package that reproduces the paper by default, integrated through
+  ports and validated offline before any daemon integration.
 
 ## Decision
 
-- **`@harness/procedural`, a pure package.** It holds:
-  - the graph schema, parsed into a branded `ProceduralGraph`;
-  - the paper's edit set, and `prepareCandidate` with its structural checks;
-  - `Match`, the `h`-hop neighborhood, and the paper's serializer;
-  - the evolution loop as a pure reducer (Algorithm 1);
+- **`@harness/procedural`, a pure package.** It contains:
+  - the graph schema and the paper's edit set;
+  - `prepareCandidate`;
+  - `Match`, the neighborhood and the paper's serializer;
+  - the evolution reducer (Algorithm 1, in both one-time and incremental modes);
   - the gates;
-  - the revision model;
-  - the projection from session-log entries to learning's `Trajectory`.
+  - the revision model.
 
-  Time, randomness, storage, models and rollouts arrive through ports. Model calls go
-  through AI SDK `generateText`. The refiner answers under a JSON Schema constraint of
-  the edit set, and never as prose that we then parse.
-- **Paper fidelity is a mode, not a fork.** Settings are data
-  (`packages/procedural/data/settings.json` with a generated schema). The `paper` preset
-  reproduces the paper exactly:
-  - exact match, with full-graph fallback;
-  - `h = 2`, `w = 3`;
-  - tail of the concatenated batch;
-  - a `≥` gate that accepts ties;
-  - unbounded rejection memory.
+  Time, randomness, storage, models and rollouts arrive through ports. Revision ids are
+  the sha256 of canonical, versioned JSON, computed with `@noble/hashes` (pure JavaScript,
+  no host crypto). The refiner answers under a JSON Schema constraint of the edit set.
+- **Paper fidelity is a preset, not a fork.** The `paper` preset reproduces the paper's
+  decoding, text ReAct solver, per-benchmark strides, ungated one-time modes and `≥` gate.
+  Where the paper is ambiguous, the choice is pre-registered and ablated. The `harness`
+  preset changes what the research note found weak:
+  - a per-trajectory context tail;
+  - an **anchored, power-sized non-inferiority gate**: superiority, or non-inferiority
+    with a smaller graph, never more than a total loss from `G_0`;
+  - claims made only on a split the loop never saw;
+  - deduplicated rejections;
+  - an enforced tool catalog;
+  - a deterministic edit filter;
+  - a per-session guidance cache whose key includes the query;
+  - guidance delivered as a trailing advisory message, not system text.
+- **Reproduce before integrating.** The pure core, a minimal offline rollout in evals, and
+  the pre-registered reproduction come first. Daemon integration waits for the results.
+- **Evolution is offline, over replayable task suites.** Validation re-runs tasks under a
+  candidate, and live sessions cannot be re-run. Live sessions contribute training
+  evidence only. Online evolution, which needs an unpaired, capped canary, is a separate
+  decision.
+- **A round runs as a reducer over an event log, not as a code-mode workflow.** A
+  workflow's timeout is a terminal failure, its journal is rewritten on every call, and
+  it cannot import the reducer. A round is resumed by replaying its events, and only one
+  round runs per owner and domain, under a leased epoch.
+- **Advisory, never authority.** A graph names tools; it never grants them. Grants and
+  approvals stay in the core, and a node whose tool the session lacks is inert. Edits
+  that route into tools with side effects need an approver, through the existing
+  permission flow.
+- **Where things are recorded.**
+  - The revision store is the system of record for graphs, heads, pins and revocations.
+    It is keyed by owner.
+  - The session log records each guidance step: revision, node, match, digest and
+    guidance id.
+  - The hook bus carries three notification events: `procedural.session.pinned`,
+    `procedural.round.started` and `procedural.revision.decided`. Consumers never trust
+    an event over the store.
 
-  The `harness` preset changes the parts the research note found weak:
-  - a per-trajectory tail;
-  - a paired, non-inferiority gate with a size tie-break;
-  - deduplicated, capped rejection memory;
-  - the tool catalog enforced structurally;
-  - a guidance cache.
-
-  Each departure is listed in the plan and has an ablation.
-- **Advisory, never authority.** Guidance reaches the solver as advice in its
-  instructions. The graph never grants tools, capabilities or approvals, which stay with
-  the core. A strict "successor tools only" mode exists for ablation only.
-- **The log is the system of record.**
-  - A session pins one graph revision and records it.
-  - Each guidance step is appended to the session log with its revision, active node,
-    match result, window digest and text.
-  - Trajectories are projections of the log.
-  - Evolution publishes its saga on the hook bus (`procedural.round.*`,
-    `procedural.revision.*`).
-
-  Guidance is evidence, not a replayed effect, because turns do not resume
-  mid-step today. Inside a durable workflow it is a journaled call like any `ask`. The
-  log becomes write-ahead only when the runtime persists before it dispatches. The plan
-  makes that a prerequisite phase, not an assumption.
-- **Revisions are content-addressed and append-only.**
-  - The id is the sha256 of the canonical graph, computed with `@noble/hashes`, which is
-    pure JavaScript and needs no host crypto.
-  - Each revision records its parent, edit set, evidence, gate decision and committer.
-  - The head per domain moves only through the gate, or through an approver when one is
-    required.
-  - Rejections are revisions that never became head.
-- **Composition through the same gate.**
-  - Nodes can bind to a tool, a library workflow or a skill.
-  - A frequent, successful, unbranched path can be compiled by the workflow builder into
-    a durable workflow. A candidate revision then adds it as one node.
-  - Promotion is an edit like any other, so it is validated like any other.
-- **Domains are explicit first.** A session names its procedure domain, or has none.
-  Automatic routing comes later, through the router with a confidence and a "no graph"
-  arm.
+  Guidance is evidence, not a replayed effect. The log is not write-ahead today, but
+  nothing here requires it to be. A write-ahead runtime is its own decision.
+- **Core gains three generic things.** None of them knows about procedural graphs:
+  - opaque per-session metadata, from ACP `_meta.harness.session` to the worker;
+  - the caller's principal and grants on model work, so extension ops can authorize;
+  - a host-side publish API whose `source` the host binds.
+- **Composition through the same gate.** A new path compiler turns recorded calls into a
+  durable workflow and keeps data flow. The workflow goes into a staging library and is
+  bound to a node by its code's sha256. Sessions get only the workflows their pinned
+  revision binds. Promotion is an edit, so it is validated like any other.
 
 ## Consequences
 
-- A new pure package joins the mutation and coverage gates.
-- Workers gain a per-step hook through AI SDK `prepareStep`. It always rebuilds
-  instructions from `initialInstructions`, because an `instructions` override carries
-  forward and guidance would otherwise pile up.
-- Opaque harness workers (Claude Code, Codex, ACP agents) have no per-step hook. They get
-  turn-level guidance only, localized from their `tool_call` updates. Worker updates must
-  carry the tool's real name in `_meta.harness.tool`, because a harness's `title` is
-  prose.
-- Guidance costs a model call per step. The paper measured 33–55% more tokens. We cache
-  it, and we skip the call when only one unconditional transition is available.
-- Evolution needs scores. Judge verdicts `inconclusive` and `blocked` are excluded,
-  never scored as 0.
-- Online evolution (a canary between the head and a candidate) exposes users to
-  candidates. It is off by default, capped, and can require an approver.
+- A new pure package joins the ESLint purity glob, the coverage gate and the mutation
+  gate.
+- Evals gain several things:
+  - metric cases (no judge needed);
+  - per-task score vectors and paired or hierarchical bootstrap intervals;
+  - concurrency;
+  - dataset manifests pinned by sha256;
+  - a token budget meter as AI SDK middleware;
+  - a text ReAct solver;
+  - a synthetic treasury suite for loop and promotion tests.
+- Workers localize from `messages`, not from `prepareStep`'s `steps`. `steps` covers only
+  one `agent.stream` call, and the worker restarts that call every turn and after every
+  approval round.
+- Workers report step records through a `report` callback in `TurnOptions`.
+- Opaque harness workers get turn-level guidance only, and exact `Match` on their coarse
+  tool names localizes little.
+- A paper-scale HotpotQA loop costs about 10⁸ tokens per seed. The owner's budget decides
+  the validation size, and any reduction is a labeled departure.
 
 ## Revisit when
 
-- Ablations show relation labels matter (then serialize them), or that ACTION-hop
-  horizons beat plain hops (then change the default).
-- The runtime gains a true write-ahead log (then guidance becomes a replayed effect).
-- The task graph gains payloads and serialization (then subgraphs instantiate plans).
+- The reproduction's claims fail. Then stop before integration, and publish the negative
+  result.
+- An ablation shows that relation labels, case-insensitive matching or a state-tracker
+  mode matter. Then change the defaults.
+- Online evolution is wanted. It needs its own plan with an unpaired gate.
+- The task graph gains payloads and serialization. Then subgraphs can instantiate plans.
 - A maintained TypeScript implementation of the paper appears.
