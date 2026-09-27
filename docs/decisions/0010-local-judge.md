@@ -55,7 +55,9 @@ models (`EvaluationModelV4`) but nothing that makes one of a language model.
   (calibration and harness, nine cases) take about four minutes on CPU and all pass.
 - A weaker judge reads questions more literally, or less: Ornith took "does `reply`
   contain the full text of `prompt`" to mean "equal". Eval questions state the property
-  exactly ("appears in `reply` as a substring"), which every judge reads the same way.
+  exactly ("appears in `reply` as a substring"), which every judge reads the same way,
+  and ask one property per question: a conjunction of several scored near the threshold
+  and failed once on CI, while each part alone is judged with a wide margin.
 - A generator's letter probabilities are a model's confidence in a letter after its
   reasoning, not a calibrated judgment model's; the evals' pass and fail thresholds (0.8 and 0.5) leave a
   band for uncertainty either way.
