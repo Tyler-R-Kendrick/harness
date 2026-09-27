@@ -7,6 +7,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
+import { parseSettings as parseProceduralSettings } from "@harness/procedural";
+import type { Settings as ProceduralSettings } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -28,4 +30,9 @@ export function loadLearningSettings(file: string = require.resolve("@harness/le
 /** Read and parse the learning plugins' settings (prompts, thresholds): their own data file by default, or a tweaked copy. */
 export function loadPluginSettings(file: string = require.resolve("@harness/learning-plugins/data/settings.json")): PluginSettings {
   return parsePluginSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse procedural graphs' settings (presets, decoding, prompts) at startup: its own data file by default, or a tweaked copy. */
+export function loadProceduralSettings(file: string = require.resolve("@harness/procedural/data/settings.json")): ProceduralSettings {
+  return parseProceduralSettings(JSON.parse(readFileSync(file, "utf8")));
 }

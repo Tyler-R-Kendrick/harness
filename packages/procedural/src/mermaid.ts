@@ -1,19 +1,12 @@
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
 
-/** Characters Mermaid reads inside a quoted label, as its entity codes; `#` first, since the codes use it. */
-const ENTITIES: readonly (readonly [RegExp, string])[] = [
-  [/#/g, "#35;"],
-  [/"/g, "#quot;"],
-  [/</g, "#lt;"],
-  [/>/g, "#gt;"],
-  [/\|/g, "#124;"],
-  [/`/g, "#96;"],
-];
+/** A label line with the characters Mermaid reads inside a quoted label as its entity codes; `#` first, since the codes use it. */
+const escape = (text: string): string =>
+  text.replace(/#/g, "#35;").replace(/"/g, "#quot;").replace(/</g, "#lt;").replace(/>/g, "#gt;").replace(/\|/g, "#124;").replace(/`/g, "#96;");
 
 /** Label lines as one quoted Mermaid label: each line escaped, joined by `<br/>`. */
 function label(lines: readonly string[]): string {
-  const escaped = lines.map((line) => ENTITIES.reduce((text, [pattern, code]) => text.replace(pattern, code), line));
-  return `"${escaped.join("<br/>").replace(/\r\n|[\r\n]/g, "<br/>")}"`;
+  return `"${lines.map(escape).join("<br/>").replace(/\r\n|[\r\n]/g, "<br/>")}"`;
 }
 
 /** The learned label the serializer uses, for an overlay item. */

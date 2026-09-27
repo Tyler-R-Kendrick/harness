@@ -28,22 +28,26 @@ export interface ProceduralExtensionOptions {
   readonly feedback?: (session: string, turn: string, score: Score) => Promise<unknown>;
 }
 
-const graph = GraphIdSchema;
-const INPUTS = {
-  graph: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), overlay: z.boolean().exactOptional() }),
-  history: z.strictObject({ graph }),
-  feedback: z.strictObject({ session: z.string().min(1), turn: z.string().min(1), score: ScoreSchema }),
-  dream: z.strictObject({ graph }),
-  revert: z.strictObject({ graph, to: RevisionIdSchema.exactOptional() }),
-  import: z.strictObject({ graph, document: z.unknown().exactOptional() }),
-  export: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), format: z.enum(["json", "mermaid"]).default("json"), overlay: z.boolean().exactOptional() }),
-};
-type Op = keyof typeof INPUTS;
+/** Each operation's input. Built per extension, not at module load. */
+function inputSchemas() {
+  const graph = GraphIdSchema;
+  return {
+    graph: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), overlay: z.boolean().exactOptional() }),
+    history: z.strictObject({ graph }),
+    feedback: z.strictObject({ session: z.string().min(1), turn: z.string().min(1), score: ScoreSchema }),
+    dream: z.strictObject({ graph }),
+    revert: z.strictObject({ graph, to: RevisionIdSchema.exactOptional() }),
+    import: z.strictObject({ graph, document: z.unknown().exactOptional() }),
+    export: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), format: z.enum(["json", "mermaid"]).default("json"), overlay: z.boolean().exactOptional() }),
+  };
+}
+type Inputs = ReturnType<typeof inputSchemas>;
+type Op = keyof Inputs;
 
-function input<O extends Op>(op: O, value: unknown): z.output<(typeof INPUTS)[O]> {
-  const result = INPUTS[op].safeParse(value ?? {});
+function parseInput<O extends Op>(schemas: Inputs, op: O, value: unknown): z.output<Inputs[O]> {
+  const result = schemas[op].safeParse(value ?? {});
   if (!result.success) throw new Error(`invalid procedural.${op} input\n${z.prettifyError(result.error)}`);
-  return result.data as z.output<(typeof INPUTS)[O]>;
+  return result.data as z.output<Inputs[O]>;
 }
 
 const unavailable = (what: string) => ({ status: "unavailable" as const, reason: `no ${what} is configured` });
@@ -68,6 +72,8 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
   const { store, clock } = options;
   const cycles = presetOf(options.settings, options.preset ?? "harness").dream.cycles;
   const authorize = options.authorize ?? (() => true);
+  const schemas = inputSchemas();
+  const input = <O extends Op>(op: O, value: unknown) => parseInput(schemas, op, value);
   const check = (op: Op, action: ProceduralAction, g: GraphId) => {
     if (!authorize(action, g)) throw new Error(`procedural.${op}: ${action} on graph ${g} is not allowed`);
   };
