@@ -6,9 +6,9 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { HARNESS, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GUIDANCE_LABEL, parseGraph, parseSettings, proceduralStep, StepRecordSchema } from "@harness/procedural";
+import { GUIDANCE_LABEL, parseGraph, parseSettings, proceduralStep, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
 import type { ProceduralGraph, ProceduralStepDeps, Settings, StepRecord } from "@harness/procedural";
-import { ManualClock, nullSandbox, scriptedHarness, SeededEntropy } from "@harness/testkit";
+import { ManualClock, MemoryStorage, nullSandbox, scriptedHarness, SeededEntropy } from "@harness/testkit";
 import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
 import { hotpot } from "../../procedural/test/fixtures.ts";
 import { fakePin, fakeStore, GRAPH, hotpotGraph, seed, settingsFile } from "../../procedural/test/step-fakes.ts";
@@ -150,6 +150,24 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
     await second.done;
     expect(records(second.events)[0]!.core).toBe(records(first.events)[0]!.core);
     expect(await d.store.pins.get("s1")).toEqual(pin);
+  });
+
+  it("PW1.23 on the persistent snapshot store, a pin survives a daemon restart: a new store over the same storage keeps the session's core, and the guidance texts are there", async () => {
+    const storage = new MemoryStorage();
+    const settings = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, kept: { ...settingsFile.presets.harness, repinOnDream: "never" } } });
+    const hook = (store: SnapshotProceduralStore) => proceduralStep({ store, resolve: () => GRAPH, pin: fakePin, settings, preset: "kept", model: guidance(), clock: new ManualClock(), entropy: new SeededEntropy(5) });
+    const before = new SnapshotProceduralStore(storage);
+    await seed(before, hotpotGraph());
+    const first = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("ok"), finish()]), step: hook(before) }) }), "q");
+    await first.done;
+    await seed(before, variant("?"), GRAPH, "dream");
+    const after = new SnapshotProceduralStore(storage);
+    const second = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("ok"), finish()]), step: hook(after) }) }), "q", "t2");
+    await second.done;
+    const [a, b] = [records(first.events)[0]!, records(second.events)[0]!];
+    expect(b.core).toBe(a.core);
+    expect(await after.pins.get("s1")).toEqual(await before.pins.get("s1"));
+    expect(await after.guidance.get(a.guidanceId)).toBe("advice 0");
   });
 
   it("PW1.20 a session the resolver maps to no graph runs unguided", async () => {
