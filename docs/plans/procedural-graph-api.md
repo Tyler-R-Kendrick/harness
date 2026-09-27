@@ -719,6 +719,65 @@ changed.
     `proposals` and `statusChanges`. It is idempotent by `turnKey`.
   - `feedback(session, turn, score)`.
 
+As built (P11). These refine the above; the names keep their meaning.
+
+- `LogEntryLike = { offset: number; payload: unknown; at?; kind? }`: core's `LogEntry` of
+  the daemon's `LogPayload` (`{update}` or `{event, data}`) is one.
+- `projectTurn(entries, context)` is `turnProjection(entries, context)?.trajectory`.
+  `turnProjection` returns `TurnProjection`:
+  `{ trajectory, path: NodeName[], unmatched: string[], shown: EntryId[], gaps: LogGap[], started, ended, next }`.
+  - `ProjectionContext = { sessionId; turnId; from?; pin?: VersionPair; locate?: (action) => NodeName | undefined; score?: {score, source} | null }`,
+    with `VersionPair = { graph; core; overlay: number | null }` and
+    `ScoreSource` the trajectory's non-null `scoreSource`.
+  - The turn is the entries after its `turn.started` and before its `turn.ended` (by
+    `data.turnId`). Without its start, it runs back to the previous turn boundary
+    (`turn.started`/`turn.ended`/`turn.interrupted` of another turn), and `started` is
+    false; without its end, it runs to the next turn's start or the last entry.
+  - Steps: `user_message_chunk` text is a user step; agent message and thought chunks
+    are assistant steps (consecutive chunks merge); a `tool_call` (title = tool name,
+    re-emissions by `toolCallId` counted once) is an assistant step with
+    `call {name, arguments: rawInput, or {input: rawInput} when not an object}`; a
+    `completed`/`failed` `tool_call_update` is a tool step with its `rawOutput` as text
+    (canonical JSON unless a string). The query is the turn's user text.
+  - The step record read from `update._meta.harness.procedural.step` is
+    `{graph, core, overlay, node?, matched, inert?, exposure?, usage?: {inputTokens?, outputTokens?}}`
+    (other fields ignored; a record failing this is skipped). The first record gives the
+    version pair; with none, `context.pin` does; with neither the result is undefined.
+    `localization` counts records (`inert`, else `matched`, else `fallback`);
+    `usage.guidanceTokens` sums their usage. The log holds no turn usage, so
+    `inputTokens`/`outputTokens` are 0.
+  - `path` is the first record's node (when the turn started in view, it matched, and no
+    tool call preceded it), then `locate(title)` for each tool call in emission order;
+    `unmatched` lists the titles `locate` did not match. `shown` is the union of the
+    records' `exposure`.
+  - `gaps` are the missing offsets `[from, to)` inside the turn, and before it when its
+    start was not seen (from `context.from` when nothing bounds it). `next` is the offset
+    after `turn.ended`. It never throws.
+- `new LiveLearner({ store, settings: Preset, readLog, score?, clock? })`. `settings` is
+  the preset in force (its `overlay`, `live` and `match`). `readLog(sessionId, from, to?)`
+  reads to the head when `to` is omitted. `clock` is accepted and unused (the fold counts
+  versions). `onHookEvent(event: LearnerEvent)` and `feedback(session, turn, score: number)`
+  return `Promise<LearnerResult>`: `ignored` (not a `turn.ended` whose `source` is
+  `daemon`, or a preset without an overlay), `skipped` (turn or version pair not found,
+  a session id containing `/`, no pin for feedback, a score outside [0, 1]), `duplicate`,
+  `unchanged`, `observed {turnKey, graph, trajectory, gaps, appended}` or
+  `rescored {turnKey, graph, appended}`. Store failures reject, so the bus redelivers.
+- Localization matches in the graph the session saw: the turn's core with the overlay
+  folded to the records' version, viewed through the pin's salt (without a pin, no
+  probationary entry), in the preset's match mode. Exposure comes only from the pin's salt: the entries on probation at that version
+  that `exposed(salt, id, probationShare)` selects (none without a pin or an overlay
+  version).
+- Deliveries run one at a time. A turn whose original `observed` event is in the overlay
+  log is a duplicate. Observed, proposals (against the head core) and status changes go
+  in one `append`.
+- Feedback is a re-observation: `observed` gains an optional
+  `rescore: { seq: int ≥ 1; previous: Score | null; observedAt: int ≥ 1 }` (P1's schema,
+  changed here). The fold moves the turn's score from `previous` to `score` on the
+  pairs of its path (no new traversal or session) and in the arm of each non-retired
+  entry proposed before version `observedAt` whose anchor the path reached. It keys a
+  re-observation `"/<seq>/<turnKey>"` in `turns` (never a turn key), so a redelivered one
+  is ignored. Consumers that count turns skip events with `rescore`.
+
 ## P12: extension and CLI
 
 - `proceduralExtension({ store, settings, resolver, policy, … })` is a

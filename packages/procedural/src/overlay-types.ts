@@ -50,6 +50,14 @@ export const OverlayEventSchema = z.discriminatedUnion("kind", [
     score: ScoreSchema.nullable(),
     /** Probationary entries this turn was shown (plan §6.3). */
     exposure: z.array(EntryIdSchema),
+    /**
+     * Present on a re-observation that changes a folded turn's score (feedback): the fold
+     * moves the turn's score from `previous` to `score` without a new traversal. `seq`
+     * numbers the turn's re-observations, so a redelivered one is ignored; `observedAt` is
+     * the version the turn first folded at, so only entries that counted it change.
+     * Consumers counting turns skip these.
+     */
+    rescore: z.strictObject({ seq: z.int().min(1), previous: ScoreSchema.nullable(), observedAt: z.int().min(1) }).exactOptional(),
   }),
   z.strictObject({
     kind: z.literal("proposed"),

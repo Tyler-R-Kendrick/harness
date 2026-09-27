@@ -58,7 +58,44 @@ function addSessions(sessions: readonly string[], more: readonly string[]): stri
 const addScore = <T extends { scored: number; scoreSum: number }>(into: T, score: number | null): T =>
   score === null ? into : { ...into, scored: into.scored + 1, scoreSum: into.scoreSum + score };
 
+/** The score `previous` taken back out (nothing when it was null). */
+const withdrawScore = <T extends { scored: number; scoreSum: number }>(from: T, previous: number | null): T =>
+  previous === null ? from : { ...from, scored: from.scored - 1, scoreSum: from.scoreSum - previous };
+
+/**
+ * A re-observation (feedback): the turn's score moves from `previous` to `score` on the
+ * pairs of its path and in the arm of each entry that counted it, with no new
+ * traversal, session or exposure. Its key starts with "/", so it never equals a turn key.
+ */
+function foldRescore(state: OverlayState, event: Observed, rescore: NonNullable<Observed["rescore"]>): OverlayState {
+  const key = `/${rescore.seq}/${event.turnKey}`;
+  if (state.turns.includes(key)) return state;
+  const swap = <T extends { scored: number; scoreSum: number }>(into: T): T => addScore(withdrawScore(into, rescore.previous), event.score);
+  const stats: Record<string, EdgeStats> = { ...state.stats };
+  const transitions: Record<string, TransitionStats> = { ...state.transitions };
+  // Stryker disable next-line EqualityOperator: equivalent; a pair past the path's end names no node, so it is never in stats
+  for (let i = 1; i < event.path.length; i += 1) {
+    const pair = edgeKey(event.path[i - 1]!, event.path[i]!);
+    const edge = stats[pair];
+    // A pair the state never saw has nothing to update; a seen pair is in both records, which only grow.
+    if (edge === undefined) continue;
+    stats[pair] = swap(edge);
+    transitions[pair] = swap(transitions[pair]!);
+  }
+  const visited = new Set<string>(event.path);
+  const shown = new Set<string>(event.exposure);
+  const entries: Record<string, Recorded> = { ...state.entries };
+  for (const [id, recorded] of Object.entries(state.entries)) {
+    if (recorded.status === "retired" || recorded.evidence.firstSeen >= rescore.observedAt || !visited.has(anchorNode(recorded.entry))) continue;
+    const arm = shown.has(id) ? "exposed" : "unexposed";
+    entries[id] = { ...recorded, evidence: { ...recorded.evidence, [arm]: swap(recorded.evidence[arm]) } };
+  }
+  const turns = [...state.turns, key].slice(-MAX_TURNS);
+  return { ...state, version: state.version + 1, stats, transitions, entries, turns };
+}
+
 function foldObserved(state: OverlayState, event: Observed): OverlayState {
+  if (event.rescore !== undefined) return foldRescore(state, event, event.rescore);
   if (state.turns.includes(event.turnKey)) return state;
   const version = state.version + 1;
   const session = event.turnKey.slice(0, event.turnKey.indexOf("/"));
