@@ -18,7 +18,7 @@ export const harnessSuite: readonly EvalCase[] = [
     questions: {
       roundtrip: {
         type: "boolean",
-        instructions: "Does `reply` contain the full text of `prompt`, and is `stopReason` equal to end_turn?",
+        instructions: "Does the text of `prompt` appear in `reply` as a substring, and is `stopReason` equal to end_turn?",
       },
     },
     expect: { roundtrip: { type: "boolean", expect: true } },
@@ -68,7 +68,7 @@ export const harnessSuite: readonly EvalCase[] = [
       ran: {
         type: "boolean",
         instructions:
-          "The approver answered the tool's permission request according to `policy`. Does `reply` contain the full text of `prompt`, showing the tool ran, and is `stopReason` equal to end_turn?",
+          "The approver answered the tool's permission request according to `policy`. Does the text of `prompt` appear in `reply` as a substring, showing the tool ran, and is `stopReason` equal to end_turn?",
       },
     },
     expect: { ran: { type: "boolean", expect: true } },

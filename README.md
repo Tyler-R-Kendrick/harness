@@ -51,7 +51,7 @@ The shipped catalog currently lists:
 | LLMLingua-2 | compressor | transformers.js |
 | Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
 | LightOnOCR-2 1B | document parser | transformers.js |
-| Ornith 1.5 9B | generator (coding, reasoning, tools) | llama.cpp-server |
+| Ornith 1.5 9B | generator (coding, reasoning, tools); the judge of last resort | llama.cpp-server |
 | OvisOCR2 | document parser | llama.cpp-server |
 | Qwen3 1.7B | steered generator: the local kernel | onnxruntime (steerable) |
 
@@ -239,13 +239,16 @@ LLM-as-judge evals use the best judge the host can reach: the catalog's judgment
 in preference order, each tried until one loads. With the shipped catalog that is
 [Jev](https://docs.typesafe.ai) through the Vercel AI Gateway when there is a gateway
 credential, else [CLM](https://github.com/Contrastive-LM/CLM) when its `clm-serve` answers
-(it speaks TypeSafe's API, so the same AI SDK provider talks to both). The report names
-the judge that answered.
+(it speaks TypeSafe's API, so the same AI SDK provider talks to both), else a local
+generator judging (Ornith on llama-server: each option a letter, chosen after brief
+reasoning, with probabilities from the letters' token probabilities). The report names the judge that answered.
 
 ```sh
 AI_GATEWAY_API_KEY=... npm run eval -- --out eval-results/results.json
 # or, with clm-serve running (CLM_BASE_URL, default http://127.0.0.1:8700):
 npm run eval -- --out eval-results/results.json
+# or, with a llama-server binary (the generator's weights download on first use):
+LLAMA_SERVER=/path/to/llama-server npm run eval -- --out eval-results/results.json
 ```
 
 There are two suites:

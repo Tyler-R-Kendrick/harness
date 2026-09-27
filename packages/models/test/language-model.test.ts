@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { generateText, jsonSchema, Output, streamText, wrapLanguageModel } from "ai";
 import type { TextStreamPart, ToolSet } from "ai";
 import { llamaServer, pageInstruction } from "@harness/models";
-import { constrain, toolSet } from "@harness/cognitive";
+import { constrain, logprobsIn, toolSet, withLogprobs } from "@harness/cognitive";
 import { generatorContract } from "@harness/testkit";
 
 type Chunk = Record<string, unknown>;
@@ -154,5 +154,61 @@ describe("llama-server as a document parser", () => {
     expect(requests[0]!.body).toMatchObject({
       messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/jpeg;base64,AQ==" } }, { type: "text", text: "Convert the page to Markdown." }] }],
     });
+  });
+
+  it("LS1.8 asked for token probabilities, the server is asked for its top log-probabilities, and they come back as harness provider metadata", async () => {
+    const lp = (token: string, logprob: number, top: [string, number][]) => ({ token, logprob, bytes: [], top_logprobs: top.map(([t, l]) => ({ token: t, logprob: l, bytes: [] })) });
+    const { f, requests } = server(() => ({
+      id: "c1",
+      object: "chat.completion",
+      created: 0,
+      model: "m",
+      choices: [{ index: 0, message: { role: "assistant", content: '"A"' }, finish_reason: "stop", logprobs: { content: [lp('"', 0, [['"', 0]]), lp("A", -0.1, [["A", -0.1], ["B", -2.4]])] } }],
+      usage: { prompt_tokens: 5, completion_tokens: 2, total_tokens: 7 },
+    }));
+    const model = llamaServer({ baseUrl: "http://x", fetch: f });
+    const result = await generateText({ model, prompt: "?", ...withLogprobs(5), maxRetries: 0 });
+    expect(requests[0]!.body).toMatchObject({ logprobs: true, top_logprobs: 5 });
+    // under the provider's current options key, so the AI SDK warns of nothing
+    expect(result.warnings).toEqual([]);
+    expect(logprobsIn(result.providerMetadata)).toEqual([
+      { token: '"', logprob: 0, top: [{ token: '"', logprob: 0 }] },
+      { token: "A", logprob: -0.1, top: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.4 }] },
+    ]);
+    // not asked, not requested, and nothing reported
+    const plain = await generateText({ model, prompt: "?", maxRetries: 0 });
+    expect(requests[1]!.body["logprobs"]).toBeUndefined();
+    expect(requests[1]!.body["top_logprobs"]).toBeUndefined();
+    expect(logprobsIn(plain.providerMetadata)).toEqual([
+      { token: '"', logprob: 0, top: [{ token: '"', logprob: 0 }] },
+      { token: "A", logprob: -0.1, top: [{ token: "A", logprob: -0.1 }, { token: "B", logprob: -2.4 }] },
+    ]);
+  });
+
+  it("LS1.9 streamed, each chunk's token probabilities are gathered and reported when the stream finishes", async () => {
+    const withLp = (content: string, token: string, logprob: number, finish: string | null = null): Chunk => ({ id: "c1", choices: [{ index: 0, delta: { content }, finish_reason: finish, logprobs: { content: [{ token, logprob, top_logprobs: [{ token, logprob }] }] } }] });
+    const { f } = server(() => [withLp("Ye", "Ye", -0.5), withLp("s", "s", -0.01), delta({}, "stop")]);
+    const result = streamText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "?", ...withLogprobs(1), maxRetries: 0 });
+    expect(await result.text).toBe("Yes");
+    expect(logprobsIn(await result.providerMetadata)).toEqual([
+      { token: "Ye", logprob: -0.5, top: [{ token: "Ye", logprob: -0.5 }] },
+      { token: "s", logprob: -0.01, top: [{ token: "s", logprob: -0.01 }] },
+    ]);
+    const { f: bare } = server(() => [delta({ content: "x" }), delta({}, "stop")]);
+    const none = streamText({ model: llamaServer({ baseUrl: "http://x", fetch: bare }), prompt: "?", maxRetries: 0 });
+    await none.consumeStream();
+    expect(logprobsIn(await none.providerMetadata)).toBeUndefined();
+  });
+
+  it("LS1.10 a model's chat template options go with every request", async () => {
+    const { f, requests } = server(() => [delta({ content: "Paris" }), delta({}, "stop")]);
+    const model = llamaServer({ baseUrl: "http://x", fetch: f, template: { enable_thinking: false } });
+    expect(await streamText({ model, prompt: "?", maxRetries: 0 }).text).toBe("Paris");
+    await generateText({ model, prompt: "?", ...withLogprobs(3), maxRetries: 0 }).catch(() => undefined);
+    expect(requests.map((r) => r.body["chat_template_kwargs"])).toEqual([{ enable_thinking: false }, { enable_thinking: false }]);
+    expect(requests[1]!.body).toMatchObject({ logprobs: true, top_logprobs: 3 });
+    // without options, none is sent
+    await streamText({ model: llamaServer({ baseUrl: "http://x", fetch: f }), prompt: "?", maxRetries: 0 }).consumeStream();
+    expect(requests[2]!.body["chat_template_kwargs"]).toBeUndefined();
   });
 });

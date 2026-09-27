@@ -51,8 +51,11 @@ const RUN = {
     template: template.exactOptional(),
     vocab: vocab.exactOptional(),
   }),
-  /** llama.cpp's llama-server on a GGUF file (and its multimodal projector). */
-  "llama.cpp-server": z.strictObject({ model: id, projector: id.exactOptional(), args: z.array(z.string()).exactOptional() }),
+  /**
+   * llama.cpp's llama-server on a GGUF file (and its multimodal projector); `template` is
+   * chat template options sent with every request (llama-server's `chat_template_kwargs`).
+   */
+  "llama.cpp-server": z.strictObject({ model: id, projector: id.exactOptional(), args: z.array(z.string()).exactOptional(), template: template.exactOptional() }),
   /**
    * An ONNX decoder patched with a steering tap (see makeSteerable): the node whose summed
    * residual is read and steered, and the layer whose SAE features it carries. Its

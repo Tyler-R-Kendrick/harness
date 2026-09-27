@@ -8,6 +8,7 @@ import {
   ArtifactStore,
   behaviorHook,
   sessionHooks,
+  generatorJudge,
   llamaServer,
   loadChatTokenizer,
   OnnxSteerableSession,
@@ -155,9 +156,11 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
               ...(m.run.args ? { args: m.run.args } : {}),
             });
             servers.push(server);
-            const model = llamaServer({ baseUrl: server.baseUrl, fetch: fetchFn });
+            const model = llamaServer({ baseUrl: server.baseUrl, fetch: fetchFn, ...(m.run.template ? { template: m.run.template } : {}) });
             return {
               ...(serves(m, "generator") ? { generator: model } : {}),
+              // A generator can judge: it reasons, then picks a letter, and the letters' token probabilities are the judgment's.
+              ...(serves(m, "judge") ? { judge: generatorJudge(model) } : {}),
               // A page sent without words is read with the default instruction.
               ...(serves(m, "document-parser") ? { "document-parser": wrapLanguageModel({ model, middleware: pageInstruction("Convert this page to Markdown.") }) } : {}),
             };

@@ -141,14 +141,14 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 | Model | Tasks | Runs | Verified on real weights |
 |---|---|---|---|
 | Jev 1.13 (TypeSafe AI) | judgment, classification | hosted (AI Gateway) | evals (live run: calibration 5/5) |
-| CLM 8B v0.1 (Contrastive-LM) | judgment, classification: Jev's local fallback | clm-serve (TypeSafe's API; Qwen3-8B encoder), native | CL1.1–CL1.2 against clm-serve's wire format; CH2.2; not yet run against a live clm-serve (needs its encoder on a GPU) |
+| CLM 8B v0.1 (Contrastive-LM) | judgment, classification: Jev's local fallback | clm-serve (TypeSafe's API; Qwen3-8B encoder), native | CL1.1–CL1.2 against clm-serve's wire format; CH2.2; run live on CPU (its encoder on llama-server, Q8_0): reachable, answers match CLM's own client, but zero-shot it passes 2 of 7 conclusive calibration cases (ADR 0010) |
 | Needle 3 (Cactus Compute) | tool calling, extraction, classification | Cactus WASM, native + browser | RW1.1–RW1.3 + router contract |
 | EmbeddingGemma 300M (brought by memory, not in the core catalog) | text embeddings | transformers.js, native + browser | RW2.1 + embedder contract (768/512/256/128), MM1.1 |
 | LLMLingua-2 (mBERT) | prompt compression | transformers.js, native + browser | RW3.1 + compressor contract |
 | Qwen3.5 0.8B | chat, reasoning, tools, extraction, vision QA, OCR, documents, charts | transformers.js, native + browser (the browser LLM) | RW4.1–RW4.3 + generator contract |
 | LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | RW5.1 + document-parser contract |
-| Ornith 1.5 9B | chat, reasoning, coding, tools | llama.cpp-server, native only | RW4.1–RW4.2 + generator contract, CI `models` job only (llama.cpp releases are not reachable from this dev sandbox) |
-| OvisOCR2 | OCR, document parsing, tables | llama.cpp-server, native only | RW5.1 + document-parser contract, CI `models` job only |
+| Ornith 1.5 9B | chat, reasoning, coding, tools; judgment as the judge of last resort | llama.cpp-server, native only | RW4.1, RW4.2, RW4.4 + generator contract, RW6.1 + judge contract; CI `models` job, and run in the dev sandbox on a llama-server built from llama.cpp's source (its releases are not reachable there) |
+| OvisOCR2 | OCR, document parsing, tables | llama.cpp-server, native only | RW5.1 + document-parser contract; CI `models` job, and in the dev sandbox as above |
 | Qwen3 1.7B (steerable kernel) | steered chat | onnxruntime, native only; patched at layer 14 on first use | KS1.1–KS1.4 + generator contract |
 
 ## H. Knowledge modeling
@@ -233,9 +233,10 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Evals judged by the best reachable judgment model from the catalog, in preference order with failover (shipped: Jev via the AI Gateway, else CLM locally) | built | EV1–EV7, EV3.8–EV3.9, EV6.1; with no reachable judge cases are `blocked`, with each judge's reason |
-| Judge calibration suite | built | `calibration` suite; live run 2026-09-24: 5/5, including both known-bad cases |
-| End-to-end harness suite (daemon, judged) | built (not yet run live) | `harness` suite, EV7.3–EV7.5: round-trip, turn order, permission deny/allow through the daemon with the echo worker. The judge is the only model the evals call |
+| Evals judged by the best reachable judgment model from the catalog, in preference order with failover (shipped: Jev via the AI Gateway, else CLM locally, else a local generator judging); CI's evals job runs llama-server, so its evals are judged | built | EV1–EV7, EV3.8–EV3.9, EV6.1; with no reachable judge cases are `blocked`, with each judge's reason |
+| A generator as a judge (`generatorJudge`, ADR 0010): each question goes to the model with its options as letters; it reasons briefly, then answers with one constrained letter, and the letters' token probabilities are the distribution (llama-server reports them as `harness.logprobs`); a model that reports none is taken at its word, with a warning | built | GJ1.1–GJ1.5, judge contract, LS1.8–LS1.10, OP1.7, CH2.5, RW6.1 on Ornith's real weights ("42" right with P 0.96, "43" with 0.007, a ticket to billing with 0.997); asked for the letter without reasoning, Ornith judged both cases backwards |
+| Judge calibration suite | built | `calibration` suite; live runs: 5/5 judged by Jev (2026-09-24) and 5/5 by Ornith as the local judge (2026-09-27), including both known-bad cases |
+| End-to-end harness suite (daemon, judged) | built | `harness` suite, EV7.3–EV7.5; live run 2026-09-27, judged by Ornith: 4/4 (its questions state each property exactly, e.g. "appears in `reply` as a substring": the local judge read "contains the full text" as "equals"): round-trip, turn order, permission deny/allow through the daemon with the echo worker. The judge is the only model the evals call |
 | OTel/ATIF export; outcome contracts; protected acceptance suites | not started | |
 
 ## P. Reliability, provenance and lifecycle

@@ -1,10 +1,10 @@
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
-import { cosineSimilarity, embedMany, generateText, streamText } from "ai";
+import { cosineSimilarity, embedMany, experimental_evaluate, generateText, streamText } from "ai";
 import { constrain, embedding, readTemplate, route, toolSet } from "@harness/cognitive";
 import type { ImageInput, ModelDescriptor, PortKind, PortMap, TaskCategory, ToolSpec } from "@harness/cognitive";
 import { buildNativeEnsemble, loadCatalog } from "@harness/platform-native";
-import { compressorContract, documentParserContract, embedderContract, generatorContract, routerContract } from "@harness/testkit";
+import { compressorContract, documentParserContract, embedderContract, generatorContract, judgeContract, routerContract } from "@harness/testkit";
 import { modelCacheDir } from "./models-env.ts";
 
 // Every catalog model that runs natively, on real weights, loaded by the host exactly
@@ -12,10 +12,11 @@ import { modelCacheDir } from "./models-env.ts";
 // checked follows from the model's category, its ports and tasks, never its name, so a
 // model swapped into the catalog is held to the same bar. llama.cpp-server models need
 // LLAMA_SERVER (CI downloads the release); without it their tests fail, not pass.
-// Judges are checked by the evals, and the steerable kernel by steered.model.test.ts.
+// Dedicated judges (served apart from the host) are checked by the evals, a generator
+// that also judges here, and the steerable kernel by steered.model.test.ts.
 
 const models = [...loadCatalog().models, ...loadCatalog({ package: "@harness/memory" }).models].filter(
-  (m) => m.platforms.includes("native") && m.locality === "local" && !m.ports.includes("judge") && !m.tasks.includes("steered-chat"),
+  (m) => m.platforms.includes("native") && m.locality === "local" && m.ports.some((p) => p !== "judge") && !m.tasks.includes("steered-chat"),
 );
 const hosts: ReturnType<typeof buildNativeEnsemble>[] = [];
 afterAll(async () => {
@@ -169,5 +170,27 @@ for (const m of models) {
       });
     });
     documentParserContract(label, parser, invoice);
+  }
+
+  if (m.ports.includes("judge")) {
+    const judge = port(m, "judgment", "judge");
+    describe(`judge ${label}`, () => {
+      it("RW6.1 judges a right answer right and a wrong one wrong, with calibrated probabilities, and routes a ticket", async () => {
+        const correct = { correct: { type: "boolean" as const, instructions: "Does `reply` correctly answer `question`?" } };
+        const right = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "42" }, questions: correct });
+        const wrong = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "43" }, questions: correct });
+        expect(right.answers.correct.probability).toBeGreaterThan(0.8);
+        expect(wrong.answers.correct.probability).toBeLessThan(0.2);
+        const routed = await experimental_evaluate({
+          model: await judge(),
+          maxRetries: 0,
+          state: { ticket: "I was charged twice for my subscription this month." },
+          questions: { department: { type: "choice", instructions: "Which team should handle `ticket`?", criteria: { technical: "Bugs and outages", billing: "Charges, invoices, refunds", sales: "New purchases" } } },
+        });
+        expect(routed.answers.department.choice).toBe("billing");
+        expect(routed.answers.department.probabilities!.billing).toBeGreaterThan(0.6);
+      });
+    });
+    judgeContract(label, judge);
   }
 }

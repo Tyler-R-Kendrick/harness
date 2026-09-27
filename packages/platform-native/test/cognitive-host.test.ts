@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { embed, generateText, streamText } from "ai";
+import { embed, experimental_evaluate, generateText, streamText } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
@@ -178,6 +178,35 @@ require("node:http").createServer((req, res) => {
     expect(await read(argsFile)).toEqual(expect.arrayContaining(["--mmproj", "--flag"]));
     // a page sent without words is read with the default instruction
     expect(JSON.stringify(await read(bodyFile))).toContain("Convert this page to Markdown.");
+    await close();
+  });
+
+  it("CH2.5 a llama.cpp-server model with the judge port judges: its answer letters' token probabilities are the judgment's", async () => {
+    const dir = await tempDir("llama-judge-");
+    const binary = join(dir, "llama-server");
+    const bodyFile = join(dir, "body.json");
+    await writeFile(
+      binary,
+      `#!${process.execPath}
+const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
+const lp = (token, logprob, top) => ({ token, logprob, top_logprobs: top.map(([t, l]) => ({ token: t, logprob: l })) });
+require("node:http").createServer((req, res) => {
+  if (req.url === "/health") { res.writeHead(200); res.end("{}"); return; }
+  let body = ""; req.on("data", (c) => (body += c)); req.on("end", () => {
+    require("node:fs").writeFileSync(${JSON.stringify(bodyFile)}, body);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: '"A"' }, finish_reason: "stop", logprobs: { content: [lp('"', 0, [['"', 0]]), lp("A", Math.log(0.9), [["A", Math.log(0.9)], ["B", Math.log(0.1)]])] } }] }));
+  });
+}).listen(port, "127.0.0.1");`,
+    );
+    await chmod(binary, 0o755);
+    const files = { "model.gguf": new Uint8Array([1, 2]) };
+    const judge = withFakeFiles(catalog.models.find((m) => m.runtime === "llama.cpp-server" && m.ports.includes("judge")) as ReturnType<typeof byRuntime<"llama.cpp-server">>, files, { model: "model.gguf" });
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: only(judge), fetch: fakeHub(files), llamaServer: binary });
+    const { answers } = await experimental_evaluate({ model: ensemble.evaluationModel(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "42" }, questions: { correct: { type: "boolean", instructions: "Does `reply` correctly answer `question`?" } } });
+    expect(answers.correct.probability).toBeCloseTo(0.9, 6);
+    const body = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(bodyFile, "utf8"))) as Record<string, unknown>;
+    expect(body).toMatchObject({ logprobs: true, top_logprobs: 20, response_format: { type: "json_schema", json_schema: { schema: { type: "string", enum: ["A", "B"] } } } });
     await close();
   });
 
