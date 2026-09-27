@@ -657,6 +657,57 @@ As built (P9). These are additions; nothing above changed meaning.
   - The step record is a notice with `_meta.harness.procedural.step`.
   - A turn-level variant serves `harnessSessions`.
 
+As built (P10). These refine the shapes above; no name or meaning another phase uses
+changed.
+
+- Workers:
+  - `TurnOptions` is `{ sessionId; turnId?; cwd?; sessionMeta?; report? }`. `AgentWorker`
+    fills all of them from the prompt command; `report` is its own `update`. The agent's
+    `callOptionsSchema` keeps every field.
+  - `StepHook = { prepare(StepContext): Promise<{ instructions?; messages? } | undefined>; turn?(TurnContext): Promise<string | undefined> }`.
+    `TurnScope = { sessionId; turnId?; cwd?; sessionMeta?; report }`.
+    `StepContext = TurnScope & { messages; initialInstructions; stepNumber; model; tools }`
+    (`model` is the step's; `tools` names the tools the turn offers).
+    `TurnContext = TurnScope & { messages; lastAction: string | undefined; tools }`.
+  - `sessionAgent({ step })` returns a per-call `prepareStep` from `prepareCall`, which
+    closes over the turn's options (rather than `runtimeContext`). A hook that throws
+    leaves the step as it was and reports a `warning` notice "Step guidance failed".
+  - `harnessSessions(agent, { step })` calls `step.turn` in `stream` when the last message
+    is a user message (a continuation after an approval round ends with tool results and
+    is not guided again), and prepends the returned text, followed by a blank line, as the
+    first text part of that message. `lastAction` is the last tool call of the session's
+    earlier steps, from `onStepEnd`. A failing `turn` reports "Turn guidance failed".
+- Procedural (`step.ts`):
+  - `proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook`, structurally a workers
+    `StepHook` (procedural does not depend on workers). `ProceduralStepDeps` is
+    `{ store; resolve(context: {meta?, cwd?}): GraphId | undefined; pin(request): Promise<Pin>; settings; preset? /* "harness" */; model? /* the step's own */; clock; entropy }`.
+    `resolve` and `pin` are P9's `resolveGraph` (bound to a resolver) and `pinSession`,
+    injected. The turn variant needs `model`, since a harness turn has none.
+  - A turn boundary is a new `turnId` (or, without one, step 0). At a boundary the session
+    re-resolves and re-pins, reads the pinned core, and folds the overlay: the newest on
+    the pinned core under `overlayRefresh: "turn"`, otherwise events while the version
+    stays within `pin.overlay` (the frozen version). A fold whose base is not the pinned
+    core is replaced by an empty overlay. Every step until the next boundary reads that
+    pair (I3). A missing or unparsable pinned revision throws.
+  - Localization reads `messages` without system messages and advisories; under `start`
+    only from the last user message on. The action is the last `tool-call` of the last
+    assistant message that has one. The task is the first user message's text, the query
+    the last one's; the window is `serializeWindow` over those messages as learning steps.
+  - Delivery: `system` returns `instructions` rebuilt from `initialInstructions` plus
+    `GUIDANCE_LABEL + text` (`"Procedural Graph Guidance: "`, the paper's solver slot):
+    appended after a blank line to a string, or as one more system message.
+    `trailing-message` returns `messages` without earlier advisories plus one user message
+    `GUIDANCE_LABEL + text` with `providerOptions.harness = ADVISORY` (`{advisory: "procedural"}`).
+  - `StepRecordSchema` / `StepRecord`: `{ graph, core, overlay: int | null, node: NodeName | null, action: string | null, matched, inert, others: string[], cached, guidanceId: Sha256, digest: Sha256, exposure: EntryId[], usage: {inputTokens, outputTokens} }`.
+    The notice is `{ sessionUpdate: "notice", severity: "info", title: "Procedural step", description, _meta: { harness: { procedural: { step } } } }`
+    (`StepNotice`), reported before the step's model call. `digest` is the sha256 of the
+    text; `guidanceId` is the sha256 of canonical JSON `[cacheKey, digest]`, and the text
+    is `store.guidance.put(guidanceId, text)` when it was generated. `exposure` lists the
+    probationary entries (entry ids recomputed from the shown items) among the nodes and
+    edges the guidance model was shown: the whole graph, or the neighborhood's edges, its
+    active node and their endpoints. `inert` is true when the tools are known and the
+    active node is an `ACTION` that neither its id nor its binding's name offers.
+
 ## P11: live learner (`learner.ts`, `projection.ts`)
 
 - `projectTurn(entries: readonly LogEntryLike[], context): ScoredTrajectory | undefined`.
