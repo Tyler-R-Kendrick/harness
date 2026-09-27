@@ -18,19 +18,21 @@ import { modelCacheDir } from "./models-env.ts";
 const models = [...loadCatalog().models, ...loadCatalog({ package: "@harness/memory" }).models].filter(
   (m) => m.platforms.includes("native") && m.locality === "local" && m.ports.some((p) => p !== "judge") && !m.tasks.includes("steered-chat"),
 );
-const hosts: ReturnType<typeof buildNativeEnsemble>[] = [];
+// One host per model, so a model's ports share what it loads (one llama-server for a
+// generator that also judges): two copies of a large model can exhaust the runner's memory.
+const hosts = new Map<string, ReturnType<typeof buildNativeEnsemble>>();
 afterAll(async () => {
-  await Promise.all(hosts.map((h) => h.close()));
+  await Promise.all([...hosts.values()].map((h) => h.close()));
 });
 
-/** The model's port for a task, loaded once per model through the native host. */
+/** The model's port for a task, through the model's one native host. */
 function port<K extends PortKind>(m: ModelDescriptor, task: TaskCategory, kind: K): () => Promise<PortMap[K]> {
-  let host: ReturnType<typeof buildNativeEnsemble> | undefined;
   return async () => {
     if (m.runtime === "llama.cpp-server" && !process.env["LLAMA_SERVER"]) throw new Error("LLAMA_SERVER is not set: point it at a llama.cpp llama-server binary");
+    let host = hosts.get(m.id);
     if (!host) {
       host = buildNativeEnsemble({ cacheDir: modelCacheDir, allowHosted: false, catalog: { models: [m], preferences: {} }, ...(process.env["LLAMA_SERVER"] ? { llamaServer: process.env["LLAMA_SERVER"] } : {}) });
-      hosts.push(host);
+      hosts.set(m.id, host);
     }
     return (await host.ensemble.resolve(task, kind)).port;
   };
