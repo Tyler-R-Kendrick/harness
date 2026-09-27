@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ManualClock, SeededEntropy } from "@harness/testkit";
+import { ManualClock, MemoryStorage, SeededEntropy } from "@harness/testkit";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { GraphIdSchema, latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES } from "@harness/procedural";
+import { GraphIdSchema, importGraph, latestOn, overlayAt, overlayBases, pinSession, readOverlay, revertGraph, SALT_BYTES, SnapshotProceduralStore } from "@harness/procedural";
 import type { PinRequest } from "@harness/procedural";
 import { commit, FakeStore, GRAPH, observe, rebase, revision, turn } from "./pin-store.ts";
+import { hotpot } from "./fixtures.ts";
 
 /** Counts what it hands out. */
 class CountingEntropy extends SeededEntropy {
@@ -218,5 +219,27 @@ describe("pinning a session (plan §5.1)", () => {
     expect(latestOn(bases, b)).toBe(4);
     expect(latestOn(bases, revision(2).id)).toBe(0);
     expect(latestOn([a], a)).toBe(0);
+  });
+
+  it("PX1.45 on the snapshot store, a pin survives a reopen, and the extension's revert re-pins even under 'never'", async () => {
+    const storage = new MemoryStorage();
+    const clock = new ManualClock(50);
+    const entropy = new CountingEntropy(5);
+    const imported = await importGraph({ store: new SnapshotProceduralStore(storage), graph: GRAPH, document: hotpot(), clock });
+    if (imported.status !== "head") throw new Error("import");
+    const store = new SnapshotProceduralStore(storage);
+    await observe(store, 1);
+    const dreamt = revision(1, [imported.revision]);
+    await commit(store, dreamt);
+    await rebase(store, dreamt.id);
+    const request = { session: "s1", graph: GRAPH, entropy, clock, repinOnDream: "never" } as const;
+    const first = await pinSession({ store, ...request });
+    expect(first).toMatchObject({ core: dreamt.id, overlay: 2, at: 50 });
+    const reopened = new SnapshotProceduralStore(storage);
+    clock.advance(1);
+    expect(await pinSession({ store: reopened, ...request })).toEqual(first);
+    expect(entropy.draws).toEqual([SALT_BYTES]);
+    expect(await revertGraph({ store: reopened, graph: GRAPH, clock })).toMatchObject({ status: "reverted", to: imported.revision });
+    expect(await pinSession({ store: reopened, ...request })).toEqual({ ...first, core: imported.revision, overlay: 3, at: 51 });
   });
 });
