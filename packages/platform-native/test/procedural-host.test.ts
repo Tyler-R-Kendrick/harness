@@ -144,6 +144,7 @@ describe("procedural host plumbing", () => {
     expect(all.length).toBeGreaterThan(2);
     expect(all.map((e) => e.offset)).toEqual(all.map((_, i) => i));
     expect((await read(sessionId, 1, 3)).map((e) => e.offset)).toEqual([1, 2]);
+    expect(await read(sessionId, 2)).toEqual(all.slice(2));
     expect(await read("absent", 0, 10)).toEqual([]);
     await host.close();
   });

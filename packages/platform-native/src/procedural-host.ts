@@ -122,8 +122,8 @@ export function pumpHookEvents(
  * no host-side log read yet, so this copies every session's log (plan §6.5). Entries
  * compacted into the log's snapshot are gone; an unknown session has none.
  */
-export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to: number) => Promise<LogEntry<unknown>[]> {
-  return async (sessionId, from, to) => {
+export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to?: number) => Promise<LogEntry<unknown>[]> {
+  return async (sessionId, from, to = Number.POSITIVE_INFINITY) => {
     const session = daemon.snapshot().sessions.find((s) => s.id === sessionId);
     const entries = (session?.log as { entries?: LogEntry<unknown>[] } | undefined)?.entries ?? [];
     return entries.filter((e) => e.offset >= from && e.offset < to);
