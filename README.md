@@ -121,6 +121,12 @@ steps the model answered are clustered and aligned into templates, or drafted (w
 follow-ups for the next turn), and a built script answers only after the model's own
 replies have agreed with it in shadow.
 
+Longer dialogues (an IVR call flow, a whole chatbot) are **flows**: workflows that talk
+through `tools.say` and `tools.hear`, run durably by the workflow host, so a flow in
+progress survives a restart. A script can start one, and a book can name an entry flow
+every session starts in. Flows live in the workflow library (`--workflows`) or in
+`--dialogue-flows` (by default next to the book).
+
 ```sh
 node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
 ```

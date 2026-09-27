@@ -40,6 +40,9 @@ const Regex = z
 /** The named groups a pattern captures. */
 export const groupsOf = (source: string): string[] => [...source.matchAll(/\(\?<([^>=!]+)>/g)].map((m) => m[1]!);
 
+/** Flows are workflows (see @harness/workflows), named as workflows are: kebab-case. */
+export const FlowNameSchema = z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "a flow is named in kebab-case");
+
 /** A path into a tool's input or output: object keys and array indexes. */
 export const PathSchema = z.array(z.union([z.string(), z.int().min(0)])).readonly();
 export type Path = z.output<typeof PathSchema>;
@@ -48,7 +51,8 @@ const HoleConstraint = ConstraintSchema.refine((c) => c.type !== "template", "a 
 
 /**
  * A part of a reply: fixed text, or a hole filled from a slot, from the result step's
- * tool input or output (at a path), or generated (optionally constrained).
+ * tool input or output (at a path), or generated (optionally constrained). Or, alone, a
+ * flow: a multi-turn dialogue that runs as a durable workflow (see Dialogue).
  */
 export const PartSchema = z.union([
   text,
@@ -56,6 +60,7 @@ export const PartSchema = z.union([
   z.strictObject({ input: PathSchema }),
   z.strictObject({ output: PathSchema }),
   z.strictObject({ generate: Name, constraint: HoleConstraint.exactOptional() }),
+  z.strictObject({ flow: FlowNameSchema }),
 ]);
 export type Part = z.output<typeof PartSchema>;
 
@@ -115,6 +120,7 @@ export const ScriptSchema = z
     const generated = new Set<string>();
     s.reply.forEach((part, i) => {
       if (typeof part === "string") return;
+      if ("flow" in part && s.reply.length > 1) issue(ctx, "a flow is a reply of its own", ["reply", i]);
       if (typeof s.reply[i - 1] === "object") issue(ctx, "holes next to each other have no text between them to tell where one ends", ["reply", i]);
       if ("slot" in part && !(part.slot in s.slots)) issue(ctx, `reply names slot ${part.slot}, which is not declared`, ["reply", i]);
       if (("input" in part || "output" in part) && !s.result) issue(ctx, "only a result script reads a tool's input or output", ["reply", i]);
@@ -131,6 +137,23 @@ export const parseScript = (input: unknown): Script => parse(ScriptSchema, "scri
 /** A tool call and its result, as a result step has them. */
 export const ResultSchema = z.strictObject({ tool: text, input: z.json(), output: z.json() });
 export type ToolResult = z.output<typeof ResultSchema>;
+
+/** A form being filled in a session: the script, the slots it has, the slot asked for, and the prompts given so far. */
+export const FormSchema = z.strictObject({ script: ScriptIdSchema, slots: z.record(z.string(), z.string()), slot: Name, tries: z.int().min(0) });
+
+/** A flow running in a session: which, its run (the workflow journal holds its state), the input it started with, and the script that started it. */
+export const RunningFlowSchema = z.strictObject({ name: FlowNameSchema, run: text, input: z.json(), script: ScriptIdSchema.exactOptional() });
+
+/** A session's dialogue state: the script its last step matched (the next step's context), a form being filled, a flow running. */
+export const SessionSchema = z.strictObject({
+  id: text,
+  last: ScriptIdSchema.exactOptional(),
+  form: FormSchema.exactOptional(),
+  flow: RunningFlowSchema.exactOptional(),
+  /** The session was handed to the model (a flow transferred it): the entry flow does not take it back. */
+  transferred: z.literal(true).exactOptional(),
+});
+export type SessionSave = z.output<typeof SessionSchema>;
 
 /** A step the model answered: what the user said last, the tool result it followed (if any), and the reply. */
 export const ObservationSchema = z.strictObject({ utterance: z.string(), result: ResultSchema.exactOptional(), reply: z.string() });
@@ -157,8 +180,14 @@ export const BookSchema = z
     $schema: z.string().exactOptional(),
     /** The number of the next built script's id (`s<next>`); ids are never reused. */
     next: z.int().positive().default(1),
+    /** A flow every session starts in (an IVR's call flow, a chatbot's whole bot): it hears each utterance first. */
+    entry: FlowNameSchema.exactOptional(),
     scripts: z.array(ScriptSchema).default([]),
     clusters: z.array(ClusterSchema).default([]),
+    /** Sessions' dialogue state, so a restart loses no form, context or flow. */
+    sessions: z.array(SessionSchema).default([]),
+    /** Flow runs started, so a run id is never reused. */
+    runs: z.int().min(0).default(0),
   })
   .superRefine((book, ctx) => {
     const ids = new Set<string>();

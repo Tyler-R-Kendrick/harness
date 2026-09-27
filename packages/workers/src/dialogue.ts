@@ -29,12 +29,24 @@ export function stepOf(options: LanguageModelV4CallOptions): Step | undefined {
   return { ...base, result: { tool: result.toolName, input: call.input as ToolResult["input"], output: output as ToolResult["output"] } };
 }
 
-/** What a scripted answer says about itself, as provider metadata `harness.dialogue`. */
-const scriptMetadata = (decision: Exclude<Decision, { kind: "pass" }>): SharedV4ProviderMetadata => ({
-  [HARNESS]: { dialogue: { script: decision.script, kind: decision.kind, match: { ...decision.match } } as JSONObject },
+type Answer = Exclude<Decision, { kind: "pass" }>;
+
+/** What a scripted answer says about itself, as provider metadata `harness.dialogue`: the script, or the flow, that answered, and how. */
+const scriptMetadata = (decision: Answer): SharedV4ProviderMetadata => ({
+  [HARNESS]: {
+    dialogue: {
+      ...(decision.kind === "flow" ? { flow: decision.flow } : {}),
+      ...(decision.script === undefined ? {} : { script: decision.script }),
+      kind: decision.kind,
+      match: { ...decision.match },
+    } as JSONObject,
+  },
 });
 
-const withMetadata = (metadata: SharedV4ProviderMetadata | undefined, decision: Exclude<Decision, { kind: "pass" }>): SharedV4ProviderMetadata => ({
+/** The response header naming what answered: `dialogue/<script>`, or `dialogue/flow/<flow>`. */
+const answeredBy = (decision: Answer) => ({ [MODEL_HEADER]: decision.kind === "flow" ? `dialogue/flow/${decision.flow}` : `dialogue/${decision.script}` });
+
+const withMetadata = (metadata: SharedV4ProviderMetadata | undefined, decision: Answer): SharedV4ProviderMetadata => ({
   ...metadata,
   [HARNESS]: { ...metadata?.[HARNESS], ...scriptMetadata(decision)[HARNESS] },
 });
@@ -61,11 +73,33 @@ async function decide(dialogue: Dialogue, step: Step | undefined): Promise<Decis
 
 /**
  * A dialogue in front of a model, as AI SDK middleware (`wrapLanguageModel`): a step a
- * script answers is answered with no model call (header `x-harness-model:
- * dialogue/<script>`, metadata `harness.dialogue`); a script with generated holes has the
+ * script or a flow answers is answered with no model call (header `x-harness-model:
+ * dialogue/<script>` or `dialogue/flow/<flow>`, metadata `harness.dialogue`); a script with generated holes has the
  * model write only those, under its template; every other step goes to the model, and
  * its reply is observed, so the dialogue builds scripts from what the model says.
  */
+/** What a flow said before handing the turn to the model, first in a generated response. */
+const saidFirst = <T extends { readonly content: readonly LanguageModelV4Content[] }>(said: string | undefined, result: T): T =>
+  said === undefined ? result : { ...result, content: [{ type: "text", text: `${said}\n` }, ...result.content] };
+
+/** What a flow said before handing the turn to the model, first in a streamed response (after the stream starts). */
+function sayingFirst(said: string | undefined): TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart> {
+  let first = true;
+  return new TransformStream({
+    transform(part, controller) {
+      if (first && said !== undefined) {
+        if (part.type === "stream-start") controller.enqueue(part);
+        const id = "dialogue-said";
+        for (const p of [{ type: "text-start", id }, { type: "text-delta", id, delta: `${said}\n` }, { type: "text-end", id }] as const) controller.enqueue(p);
+        first = false;
+        if (part.type === "stream-start") return;
+      }
+      first = false;
+      controller.enqueue(part);
+    },
+  });
+}
+
 export function dialogueMiddleware(dialogue: Dialogue): LanguageModelV4Middleware {
   return {
     specificationVersion: "v4",
@@ -76,18 +110,18 @@ export function dialogueMiddleware(dialogue: Dialogue): LanguageModelV4Middlewar
       if (decision.kind === "pass") {
         const result = await doGenerate();
         dialogue.observe(step!, decision, replyOf(result.content));
-        return result;
+        return saidFirst(decision.said, result);
       }
       if (decision.kind === "generate") {
         const result = await model.doGenerate(templated(params, decision.template));
-        return { ...result, providerMetadata: withMetadata(result.providerMetadata, decision) };
+        return saidFirst(decision.said, { ...result, providerMetadata: withMetadata(result.providerMetadata, decision) });
       }
       return {
         content: [{ type: "text", text: decision.text }],
         finishReason: { unified: "stop", raw: "stop" },
         usage: usage(0, 0),
         providerMetadata: scriptMetadata(decision),
-        response: { headers: { [MODEL_HEADER]: `dialogue/${decision.script}` } },
+        response: { headers: answeredBy(decision) },
         warnings: [],
       };
     },
@@ -109,7 +143,7 @@ export function dialogueMiddleware(dialogue: Dialogue): LanguageModelV4Middlewar
             dialogue.observe(step!, decision, taught ? text : undefined);
           },
         });
-        return { ...result, stream: result.stream.pipeThrough(observing) };
+        return { ...result, stream: result.stream.pipeThrough(observing).pipeThrough(sayingFirst(decision.said)) };
       }
       if (decision.kind === "generate") {
         const result = await model.doStream(templated(params, decision.template));
@@ -118,7 +152,7 @@ export function dialogueMiddleware(dialogue: Dialogue): LanguageModelV4Middlewar
             controller.enqueue(part.type === "finish" ? { ...part, providerMetadata: withMetadata(part.providerMetadata, decision) } : part);
           },
         });
-        return { ...result, stream: result.stream.pipeThrough(naming) };
+        return { ...result, stream: result.stream.pipeThrough(naming).pipeThrough(sayingFirst(decision.said)) };
       }
       const parts = new StreamParts();
       const all: LanguageModelV4StreamPart[] = [{ type: "stream-start", warnings: [] }, ...parts.push({ type: "text", text: decision.text }), ...parts.end({ usage: usage(0, 0), providerMetadata: scriptMetadata(decision) })];
@@ -128,7 +162,7 @@ export function dialogueMiddleware(dialogue: Dialogue): LanguageModelV4Middlewar
           controller.close();
         },
       });
-      return { stream, response: { headers: { [MODEL_HEADER]: `dialogue/${decision.script}` } } };
+      return { stream, response: { headers: answeredBy(decision) } };
     },
   };
 }

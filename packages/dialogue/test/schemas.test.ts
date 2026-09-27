@@ -27,7 +27,7 @@ describe("settings and books are data", () => {
   it("SB1.3 an authored script is active, with no evidence, and a book starts numbering at 1", () => {
     const parsed = parseScript(script({}));
     expect(parsed).toMatchObject({ status: "active", origin: "authored", patterns: [], exemplars: [], slots: {}, evidence: { fits: 0, misses: 0, served: 0 } });
-    expect(parseBook({})).toEqual({ next: 1, scripts: [], clusters: [] });
+    expect(parseBook({})).toEqual({ next: 1, scripts: [], clusters: [], sessions: [], runs: 0 });
   });
 
   it("SB1.4 a pattern's named groups must be declared slots", () => {
@@ -101,6 +101,16 @@ describe("under static analysis", () => {
     expect(() => parseScript({})).toThrow(/^invalid script\n/);
     expect(() => scriptId("Order Status")).toThrow(/a script id is a lower-case name/);
     expect(() => parseScript(script({ reply: [{ generate: "Bad" }] }))).toThrow(/a slot or hole is named in snake_case/);
+  });
+
+  it("SB1.14 a flow is a reply of its own, named in kebab-case; a book's entry is a flow; sessions keep what they have", () => {
+    expect(issues(ScriptSchema, script({ reply: ["Hi ", { flow: "order-flow" }] }))).toEqual([{ message: "a flow is a reply of its own", path: ["reply", 1] }]);
+    expect(() => parseScript(script({ reply: [{ flow: "Order Flow" }] }))).toThrow(/a flow is named in kebab-case/);
+    expect(parseScript(script({ reply: [{ flow: "order-flow" }] })).reply).toEqual([{ flow: "order-flow" }]);
+    expect(() => parseBook({ entry: "Main" })).toThrow(/a flow is named in kebab-case/);
+    const sessions = [{ id: "a", last: "s1", form: { script: "s1", slots: { x: "1" }, slot: "y", tries: 1 }, flow: { name: "f", run: "dialogue/a/1", input: { utterance: "hi", slots: {} }, script: "s1" } }];
+    expect(parseBook({ scripts: [script({})], sessions, runs: 1, entry: "f" })).toMatchObject({ sessions, runs: 1, entry: "f" });
+    expect(() => parseBook({ sessions: [{ id: "a", form: { script: "s1", slots: {}, slot: "y", tries: -1 } }] })).toThrow(/invalid script book/);
   });
 
   it("SB1.12 a script id is made by parsing, never by a cast, and the dialogue is pure: no ambient time", async () => {

@@ -89,6 +89,32 @@ The matching cascade is cheapest first, as the tool-call cascade is: patterns (c
 then exemplar similarity (`match.similar`), then the router (`match.route`). A miss, or a
 router below its threshold, goes to the model.
 
+### Flows: multi-turn dialogues as durable workflows
+
+A script's reply can instead start a **flow**: a dialogue of many turns (an IVR call flow,
+a whole chatbot) that is a workflow of kind `flow` in the harness's workflow library
+(ADR 0002), run by the same `WorkflowHost` as every other workflow. A flow talks through
+tools the dialogue gives each run: `say` (its text is the turn's reply), `hear` (this
+turn's utterance, once), `pass` (let scripts, then the model, answer this turn and keep
+going) and `transfer` (hand the person to the model and end: the turn is the model's, not
+the scripts', and the entry flow does not take the session back). What a flow says before
+handing a turn on is said first; what it says after is not. Nothing else holds a
+flow's state: each turn runs the flow again from its journal, where every `say` and
+`hear` is recorded, so the flow replays to where it was and hears the new utterance.
+When it asks to hear again, the run stops (a failing effect leaves a run resumable), and
+the next turn resumes it. A daemon restart is one more such resume. Flows are not tools:
+agents, other workflows and `workflows.run` cannot call them, since they need a person.
+
+A book may name an **entry** flow that every session starts in (a call flow answering the
+call, or a whole chatbot): it hears each utterance first, and a turn it passes on goes to
+the scripts, then the model.
+
+Session state that is not a flow (the context, a form being filled) and the flow a
+session is in are saved with the book, so nothing about a session's dialogue lives only
+in memory: a restart loses no form, context or flow. Run ids come from a counter in the
+book, saved whenever a run starts, and are never reused. A run nothing will resume (it
+ended, or another flow took its place) is forgotten: the host deletes its journal.
+
 ### Building scripts ahead of need
 
 Scripts are authored (a call flow, reviewed like a call-center script) or built by the
@@ -133,9 +159,11 @@ Every decision is traced: the response header `x-harness-model` names the script
 ### Where it runs
 
 The dialogue is pure (it takes an embedding model, a router, a drafter and a judge, all
-AI SDK models, all optional). The native host wraps the worker's model with it
+AI SDK models, all optional, and a flow runner: a workflow host). The native host wraps the worker's model with it
 (`--dialogue <file>` with `--worker model` or `--worker ensemble`; the script book is
-saved to that file after every change, and shutdown waits for the last save). Over the
+saved to that file after every change, and shutdown waits for the last save; flows and
+their journals are the workflow library's with `--workflows`, else files in
+`--dialogue-flows`, by default next to the book). Over the
 ensemble it uses the ensemble's router, judge and reasoning model, and memory's embedder
 when memory is installed; with a gateway model alone it matches by pattern, clusters by
 shape and drafts with that model.

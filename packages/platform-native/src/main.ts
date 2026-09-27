@@ -8,9 +8,9 @@ import { wrapLanguageModel } from "ai";
 import type { LanguageModel } from "ai";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, dialogueMiddleware, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
-import { workflowTools } from "@harness/workflows";
+import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
-import { buildDialogue, buildNativeEnsemble } from "./cognitive-host.ts";
+import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
@@ -34,6 +34,7 @@ const { values } = parseArgs({
     learning: { type: "string" },
     workflows: { type: "string" },
     dialogue: { type: "string" },
+    "dialogue-flows": { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -55,7 +56,7 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
-      "               [--dialogue <file>]\n",
+      "               [--dialogue <file> [--dialogue-flows <dir>]]\n",
   );
   process.exit(2);
 }
@@ -99,7 +100,14 @@ if (values.dialogue !== undefined && values.worker !== "model" && values.worker 
 }
 // A scripted dialogue in front of the session model (ADR 0011): scripts answer what they
 // can, the model the rest, and scripts are built from the model's answers. Saved to its file.
+// Its flows are durable workflows: the workflow library's (--workflows), else files in
+// --dialogue-flows (by default next to the book), with their run journals.
 const dialogueFile = values.dialogue === undefined ? undefined : new FileStorage(values.dialogue);
+const flows =
+  values.dialogue === undefined
+    ? undefined
+    : (cognitive?.workflowHost ??
+      dialogueFlows({ dir: values["dialogue-flows"] ?? `${values.dialogue}.flows`, ask: askModel(cognitive ? cognitive.ensemble.languageModel() : gateway(values.model)) }));
 const book = await dialogueFile?.load();
 // Saves land in issue order, so shutdown waits for the last one.
 let dialogueSaved: Promise<void> = Promise.resolve();
@@ -108,6 +116,7 @@ const dialogue =
   buildDialogue({
     ...(cognitive ? { ensemble: cognitive.ensemble, embeddings: cognitive.memory !== undefined } : { drafter: gateway(values.model) }),
     ...(book === undefined ? {} : { book }),
+    ...(flows ? { flows } : {}),
     persist: (s: unknown) => void (dialogueSaved = dialogueFile.save(s)),
     // A model the dialogue could not use is logged; the model answers the step instead.
     onError: (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`),

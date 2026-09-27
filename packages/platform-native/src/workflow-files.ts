@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { parseWorkflow } from "@harness/workflows";
 import type { Workflow, WorkflowLibrary } from "@harness/workflows";
@@ -41,6 +41,15 @@ export class WorkflowFiles implements WorkflowLibrary {
 
   /** A run's journal; run ids are encoded into file names, so none can address a path outside. */
   journal(run: string): SnapshotStorage {
-    return new FileStorage(join(this.#dir, ".runs", `${encodeURIComponent(run).replace(/\./g, "%2E")}.json`));
+    return new FileStorage(this.#journalPath(run));
+  }
+
+  /** Delete a run's journal (none is fine). */
+  async forget(run: string): Promise<void> {
+    await rm(this.#journalPath(run), { force: true });
+  }
+
+  #journalPath(run: string): string {
+    return join(this.#dir, ".runs", `${encodeURIComponent(run).replace(/\./g, "%2E")}.json`);
   }
 }

@@ -3,7 +3,7 @@ import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { wrapLanguageModel } from "ai";
 import { Ensemble } from "@harness/cognitive";
-import type { Catalog, Dimensions, ModelDescriptor, Ports, Runtime, StateChange } from "@harness/cognitive";
+import type { Catalog, Constraint, Dimensions, ModelDescriptor, Ports, Runtime, StateChange } from "@harness/cognitive";
 import {
   ArtifactStore,
   behaviorHook,
@@ -27,7 +27,7 @@ import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
 import type { LanguageModel, ToolSet } from "ai";
 import { Dialogue } from "@harness/dialogue";
-import type { Settings as DialogueSettings } from "@harness/dialogue";
+import type { FlowRunner, Settings as DialogueSettings } from "@harness/dialogue";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
@@ -201,7 +201,7 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
   const workflows = options.workflows && new WorkflowFiles(options.workflows.dir);
   const workflowHost =
     workflows &&
-    new WorkflowHost({ codeMode: aiCodeMode, library: workflows, journal: (run) => workflows.journal(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
+    new WorkflowHost({ codeMode: aiCodeMode, library: workflows, journal: (run) => workflows.journal(run), forget: (run) => workflows.forget(run), ask: askModel(ensemble.languageModel()), ...(options.workflows!.tools ? { tools: options.workflows!.tools } : {}) });
   if (workflowHost) ensemble.install(workflowsExtension({ host: workflowHost }));
   const learning = memory && options.learning && installLearning(ensemble, memory, options.learning, workflows);
   return {
@@ -274,9 +274,11 @@ export function buildDialogue(options: {
   readonly persist?: (saved: unknown) => void;
   /** Called with what failed when one of its models or its learning fails. */
   readonly onError?: (error: unknown) => void;
+  /** Runs its flows durably (see dialogueFlows). */
+  readonly flows?: FlowRunner;
   readonly settings?: DialogueSettings;
 }): Dialogue {
-  const { ensemble, persist, onError } = options;
+  const { ensemble, persist, onError, flows } = options;
   const drafter = options.drafter ?? ensemble?.languageModel("reasoning");
   return new Dialogue({
     settings: options.settings ?? loadDialogueSettings(),
@@ -286,5 +288,16 @@ export function buildDialogue(options: {
     ...(drafter ? { drafter } : {}),
     ...(persist ? { onChange: (d: Dialogue) => persist(d.save()) } : {}),
     ...(onError ? { onError } : {}),
+    ...(flows ? { flows } : {}),
   });
+}
+
+/**
+ * A workflow host for a dialogue's flows, with the flows and their run journals kept as
+ * files in `dir` (see WorkflowFiles): flows are durable workflows, so a session's flow
+ * resumes after a restart. `ask` answers a flow's questions to a model.
+ */
+export function dialogueFlows(options: { readonly dir: string; readonly ask: (prompt: string, constraint?: Constraint) => Promise<string> }): WorkflowHost {
+  const library = new WorkflowFiles(options.dir);
+  return new WorkflowHost({ codeMode: aiCodeMode, library, journal: (run) => library.journal(run), forget: (run) => library.forget(run), ask: options.ask });
 }

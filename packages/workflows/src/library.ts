@@ -8,12 +8,17 @@ import { ASK, runWorkflow } from "./run.ts";
 import type { Effects, RunResult, ToolSpec } from "./run.ts";
 import type { CodeMode } from "./code-mode.ts";
 
-/** A workflow as kept: named, described, its input's JSON Schema, and its code. */
+/**
+ * A workflow as kept: named, described, its input's JSON Schema, and its code. A `flow`
+ * is a workflow that talks with a person through tools a dialogue gives each run (see
+ * @harness/dialogue): it is not a tool for agents or other workflows.
+ */
 export const WorkflowSchema = z.strictObject({
   name: z
     .string()
     .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "a kebab-case name")
     .refine((n) => n !== ASK, `a workflow cannot be named ${ASK}: tools.ask is the model`),
+  kind: z.literal("flow").exactOptional(),
   description: z.string(),
   inputs: z.record(z.string(), z.unknown()),
   code: z.string().min(1),
@@ -60,12 +65,15 @@ export interface WorkflowHostOptions {
   /** Where workflow code runs (`aiCodeMode` natively, `quickjsCodeMode()` anywhere). */
   readonly codeMode: CodeMode;
   readonly tools?: ToolSet;
+  /** Delete a run's journal, once nothing will resume the run (see WorkflowHost.forget). */
+  readonly forget?: (run: string) => Promise<void>;
 }
 
 /**
  * Runs library workflows durably. The code calls `tools.<name>(args)`: another library
- * workflow (run as a nested durable run, journaled under the parent's run id) or one of
- * the host's AI SDK tools; `tools.ask` puts a question to a model.
+ * workflow (run as a nested durable run, journaled under the parent's run id; not a
+ * flow), one of the host's AI SDK tools, or one of the tools given for this run (a
+ * dialogue's, for a flow); `tools.ask` puts a question to a model.
  */
 export class WorkflowHost {
   readonly #options: WorkflowHostOptions;
@@ -78,15 +86,23 @@ export class WorkflowHost {
     return this.#options.library;
   }
 
-  async run(name: string, input: unknown, run: string): Promise<RunResult> {
-    const { library, tools = {} } = this.#options;
+  /** Forget a run nothing will resume (it ended, or was given up): its journal goes, when the host can delete journals. */
+  async forget(run: string): Promise<void> {
+    await this.#options.forget?.(run);
+  }
+
+  async run(name: string, input: unknown, run: string, given: ToolSet = {}): Promise<RunResult> {
+    const { library } = this.#options;
+    const tools: ToolSet = { ...this.#options.tools, ...given };
     const workflow = await library.get(name);
     if (!workflow) throw new Error(`no workflow ${name}`);
     // The code may call the host's tools and the library's other workflows, each call
     // checked against the tool's own input schema or the workflow's inputs; not itself.
     const specs: Record<string, ToolSpec> = {};
     for (const [n, t] of Object.entries(tools)) specs[n] = { inputSchema: (await asSchema(t.inputSchema).jsonSchema) as Record<string, unknown> };
-    for (const w of await library.list()) if (w.name !== name) specs[w.name] = { inputSchema: w.inputs };
+    for (const w of await library.list()) if (w.name !== name && w.kind !== "flow") specs[w.name] = { inputSchema: w.inputs };
+    // A run's own tools come before the library's workflows of the same name.
+    for (const [n, t] of Object.entries(given)) specs[n] = { inputSchema: (await asSchema(t.inputSchema).jsonSchema) as Record<string, unknown> };
     let calls = 0;
     return runWorkflow({
       name,
@@ -99,7 +115,7 @@ export class WorkflowHost {
         ask: this.#options.ask,
         tool: async (name, args) => {
           calls++;
-          if (await library.get(name)) {
+          if (!Object.hasOwn(given, name) && (await library.get(name))) {
             const nested = await this.run(name, args, `${run}/${calls}:${name}`);
             if (nested.status === "failed") throw new Error(`workflow ${name} failed: ${nested.error}`);
             return nested.output;
@@ -121,7 +137,9 @@ export class WorkflowHost {
  */
 export async function workflowTools(host: WorkflowHost): Promise<ToolSet> {
   return Object.fromEntries(
-    (await host.library.list()).map((w) => [
+    (await host.library.list())
+      .filter((w) => w.kind !== "flow")
+      .map((w) => [
       w.name,
       tool({
         description: w.description,
@@ -163,7 +181,7 @@ export function workflowsExtension(options: { readonly host: WorkflowHost }): Co
     id: "workflows",
     models: [],
     operations: {
-      list: async () => ({ workflows: (await library.list()).map(({ name, description, inputs }) => ({ name, description, inputs })) }),
+      list: async () => ({ workflows: (await library.list()).map(({ name, kind, description, inputs }) => ({ name, ...(kind === undefined ? {} : { kind }), description, inputs })) }),
       get: async (input) => {
         const { name } = parse(GetInput, "workflows.get input", input ?? {});
         const workflow = await library.get(name);
@@ -172,6 +190,7 @@ export function workflowsExtension(options: { readonly host: WorkflowHost }): Co
       },
       run: async (input) => {
         const { name, input: value, run } = parse(RunInput, "workflows.run input", input ?? {});
+        if ((await library.get(name))?.kind === "flow") throw new Error(`${name} is a flow: it runs in a dialogue`);
         return host.run(name, value ?? {}, run);
       },
     },

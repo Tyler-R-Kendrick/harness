@@ -1,5 +1,6 @@
-import { embed, embedMany, experimental_evaluate } from "ai";
-import type { EmbeddingModel, LanguageModel } from "ai";
+import { embed, embedMany, experimental_evaluate, tool } from "ai";
+import type { EmbeddingModel, LanguageModel, ToolSet } from "ai";
+import { z } from "zod";
 import { embedding, ProbabilitySchema, route, similarity } from "@harness/cognitive";
 import type { EvaluationModelV4, Probability, Similarity, TemplateConstraint, ToolSpec } from "@harness/cognitive";
 import { shapeSimilarity } from "./align.ts";
@@ -7,7 +8,7 @@ import { draft, draftedScript } from "./draft.ts";
 import { induce, normalizeUtterance } from "./induce.ts";
 import { fill, findValue, fits, matchPattern, replySlots } from "./render.ts";
 import { ClusterSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
-import type { Cluster, Observation, Script, ScriptId, ScriptInput, Settings, ToolResult } from "./schemas.ts";
+import type { Cluster, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
 
 /** A step a model is asked to answer: the user's last utterance, or the result of a tool call made for it. */
 export interface Step {
@@ -19,9 +20,9 @@ export interface Step {
   readonly result?: ToolResult;
 }
 
-/** How a script was matched. */
+/** How a script was matched (a flow's later turns: by the flow that heard them). */
 export type Match =
-  | { readonly by: "pattern" | "result" | "form" }
+  | { readonly by: "pattern" | "result" | "form" | "flow" }
   | { readonly by: "exemplar"; readonly similarity: Similarity }
   | { readonly by: "router"; readonly confidence: Probability };
 
@@ -35,14 +36,15 @@ export interface Shadow {
 /**
  * What a dialogue does with a step: reply with a script's text (no model); have the
  * model write a script's generated holes (a template constraint); ask for a slot the
- * script needs; or pass the step to the model, saying why (and, when a candidate
- * matched, what to check its reply against).
+ * script needs; reply with what a flow said; or pass the step to the model, saying why
+ * (and, when a candidate matched, what to check its reply against).
  */
 export type Decision =
   | { readonly kind: "reply"; readonly script: ScriptId; readonly text: string; readonly match: Match }
-  | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly match: Match }
+  | { readonly kind: "flow"; readonly flow: string; readonly script?: ScriptId; readonly text: string; readonly match: Match }
+  | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly match: Match; readonly said?: string }
   | { readonly kind: "ask"; readonly script: ScriptId; readonly slot: string; readonly text: string; readonly match: Match }
-  | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow };
+  | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow; readonly said?: string };
 
 export interface DialogueOptions {
   readonly settings: Settings;
@@ -60,7 +62,29 @@ export interface DialogueOptions {
   readonly onChange?: (dialogue: Dialogue) => void;
   /** Called with what failed when a model or learning fails; the dialogue goes on without it. */
   readonly onError?: (error: unknown) => void;
+  /** Runs flows durably: a workflow host (see @harness/workflows), whose library holds them. */
+  readonly flows?: FlowRunner;
 }
+
+/**
+ * Runs a flow (a workflow of kind `flow`) as a durable run, with the dialogue's tools for
+ * this turn. A `WorkflowHost` is one: the run's journal is the flow's state, so a run
+ * that stopped (waiting for the next utterance, or a restart) resumes by replay.
+ */
+export interface FlowRunner {
+  run(name: string, input: unknown, run: string, tools: ToolSet): Promise<{ readonly status: "completed" } | { readonly status: "failed"; readonly error: string }>;
+  /** Forget a run nothing will resume (it ended, or another flow took its place): its journal can go. */
+  forget?(run: string): Promise<void>;
+}
+
+/**
+ * A flow's turn: its answer, or the turn handed on (to the scripts and the model, or, when
+ * it transferred the person, to the model), with what it said before handing it on.
+ */
+type FlowTurn = { readonly answered: Decision } | { readonly said: readonly string[]; readonly transferred: boolean };
+
+/** Thrown by `tools.hear` when this turn's utterance is heard already: the flow waits for the next turn. */
+class AwaitingUtterance extends Error {}
 
 interface Matched {
   readonly script: Script;
@@ -76,10 +100,37 @@ interface Form {
   readonly tries: number;
 }
 
+/** A flow running in a session (see RunningFlowSchema). */
+type RunningFlow = NonNullable<SessionSave["flow"]>;
+
 interface SessionState {
+  readonly id: string;
   /** The script the session's previous step matched: the next step's context. */
   last: ScriptId | undefined;
   form: Form | undefined;
+  flow: RunningFlow | undefined;
+  /** A flow handed the person to the model: the entry flow does not take them back. */
+  transferred: boolean;
+}
+
+/** A session's state as saved (without what it does not have). */
+const saved = (s: SessionState): SessionSave => ({
+  id: s.id,
+  ...(s.last === undefined ? {} : { last: s.last }),
+  ...(s.form === undefined ? {} : { form: s.form }),
+  ...(s.flow === undefined ? {} : { flow: s.flow }),
+  ...(s.transferred ? { transferred: true as const } : {}),
+});
+
+/**
+ * A decision with what a flow said before handing the turn on put first: in its text, or
+ * (for the model's turns) as `said`, which is said before the model's reply.
+ */
+function after(said: readonly string[], decision: Decision): Decision {
+  if (said.length === 0) return decision;
+  const before = said.join("\n");
+  if (decision.kind === "pass" || decision.kind === "generate") return { ...decision, said: decision.said === undefined ? before : `${before}\n${decision.said}` };
+  return { ...decision, text: `${before}\n${decision.text}` };
 }
 
 const pass = (reason: string, context: ScriptId | undefined, shadow?: Shadow): Decision => ({
@@ -144,6 +195,11 @@ export class Dialogue {
   readonly #judge: EvaluationModelV4 | undefined;
   readonly #onChange: ((dialogue: Dialogue) => void) | undefined;
   readonly #onError: ((error: unknown) => void) | undefined;
+  readonly #flows: FlowRunner | undefined;
+  /** The flow every session starts in, if the book names one. */
+  readonly #entry: string | undefined;
+  /** Flow runs started (run ids are never reused). */
+  #runs: number;
   /** Scripts by id (a cluster's script, when it has none, is simply not found). */
   readonly #scripts = new Map<string | undefined, Script>();
   #clusters: Cluster[];
@@ -162,10 +218,14 @@ export class Dialogue {
     this.#judge = options.judge;
     this.#onChange = options.onChange;
     this.#onError = options.onError;
+    this.#flows = options.flows;
     const book = parseBook(options.book ?? {});
     for (const script of book.scripts) this.#scripts.set(script.id, script);
     this.#clusters = book.clusters;
     this.#next = book.next;
+    this.#entry = book.entry;
+    this.#runs = book.runs;
+    for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true });
   }
 
   /** Every script, authored and built, in the order they were added. */
@@ -193,7 +253,14 @@ export class Dialogue {
 
   /** What was authored and built, as a script book (see BookSchema). */
   save(): unknown {
-    return { next: this.#next, scripts: this.scripts, clusters: this.#clusters.map((c) => ({ ...c, observations: [...c.observations] })) };
+    return {
+      next: this.#next,
+      ...(this.#entry === undefined ? {} : { entry: this.#entry }),
+      scripts: this.scripts,
+      clusters: this.#clusters.map((c) => ({ ...c, observations: [...c.observations] })),
+      sessions: [...this.#sessions.values()].map(saved).filter((s) => Object.keys(s).length > 1),
+      runs: this.#runs,
+    };
   }
 
   /** Resolves when every observation so far has been learned from. */
@@ -203,10 +270,15 @@ export class Dialogue {
 
   async respond(step: Step): Promise<Decision> {
     const session = step.sessionId === undefined ? undefined : this.#session(step.sessionId);
+    const before = session && JSON.stringify(saved(session));
+    const runs = this.#runs;
     const context = session?.last;
-    const decision = step.result !== undefined ? this.#onResult(step.result, context) : await this.#onUtterance(step.utterance, session, context);
+    const decision = step.result !== undefined ? await this.#onResult(step, session, context) : await this.#onUtterance(step, session, context);
     if (session) session.last = decision.kind === "pass" ? decision.shadow?.script : decision.script;
     if (decision.kind === "reply" || decision.kind === "generate") this.#count(decision.script, "served");
+    // A session's state is saved too, so a restart loses no context, form or flow.
+    // Run ids come from a counter saved with the book: a run started is saved, so its id is never reused.
+    if ((session && JSON.stringify(saved(session)) !== before) || this.#runs !== runs) this.#changed();
     return decision;
   }
 
@@ -225,8 +297,7 @@ export class Dialogue {
   // ---- responding ---------------------------------------------------------------
 
   #session(id: string): SessionState {
-    // Stryker disable next-line ObjectLiteral: equivalent; a state with nothing in it reads as one without keys
-    const state = this.#sessions.get(id) ?? { last: undefined, form: undefined };
+    const state = this.#sessions.get(id) ?? { id, last: undefined, form: undefined, flow: undefined, transferred: false };
     this.#sessions.delete(id);
     this.#sessions.set(id, state);
     for (const oldest of this.#sessions.keys()) {
@@ -236,36 +307,64 @@ export class Dialogue {
     return state;
   }
 
-  #onResult(result: ToolResult, context: ScriptId | undefined): Decision {
+  async #onResult(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
+    const result = step.result!;
     const forTool = this.scripts.filter((s) => s.result?.tool === result.tool);
     for (const script of [...forTool.filter((s) => s.status === "active"), ...forTool.filter((s) => s.status === "candidate")]) {
-      const filled = fill(script, { slots: {}, result });
-      if (filled.kind === "missing") continue;
-      const match = { by: "result" } as const;
-      if (script.status === "candidate") return pass(`${script.id} is a candidate`, context, { script: script.id, slots: {}, match });
-      return filled.kind === "text" ? { kind: "reply", script: script.id, text: filled.text, match } : { kind: "generate", script: script.id, template: filled.template, match };
+      if (fill(script, { slots: {}, result }).kind === "missing") continue;
+      return this.#answer({ script, slots: {}, match: { by: "result" } }, step, session, context);
     }
     return pass(`no script answers this ${result.tool} result`, context);
   }
 
-  async #onUtterance(utterance: string, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
+  async #onUtterance(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
+    const { utterance } = step;
+    // A flow hears first: the session's running flow, else the entry flow, started with this utterance.
+    let said: readonly string[] = [];
+    if (session && this.#flows) {
+      let heard: string | undefined = utterance;
+      if (!session.flow && this.#entry !== undefined && !session.transferred) {
+        session.flow = this.#newFlow(session, this.#entry, { utterance, slots: {} });
+        heard = undefined;
+      }
+      const turn = session.flow && (await this.#runFlow(session, heard, { by: "flow" }));
+      if (turn && "answered" in turn) return turn.answered;
+      // A transfer hands the person to the model: the scripts do not answer in its place.
+      if (turn?.transferred) return after(turn.said, pass(`the flow handed the person to the model`, context));
+      said = turn?.said ?? [];
+    }
+    return after(said, await this.#afterFlows(step, session, context));
+  }
+
+  /** A turn no flow answered: a form's, else a script's, else the model's. */
+  async #afterFlows(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
+    const { utterance } = step;
     const form = session?.form;
     if (session && form) {
       session.form = undefined;
-      const decided = await this.#continueForm(utterance, session, form, context);
+      const decided = await this.#continueForm(step, session, form, context);
       if (decided) return decided;
     }
     const matched = await this.#match(utterance, context);
-    return matched ? this.#answer(matched, session, context) : pass("no script matches", context);
+    return matched ? this.#answer(matched, step, session, context) : pass("no script matches", context);
   }
 
-  /** A matched script's answer: shadowing for a candidate, its reply, or a question for a slot it lacks. */
-  #answer(matched: Matched, session: SessionState | undefined, context: ScriptId | undefined): Decision {
+  /** A matched script's answer: shadowing for a candidate, its reply, its flow, or a question for a slot it lacks. */
+  async #answer(matched: Matched, step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const { script, slots, match } = matched;
     if (script.status === "candidate") return pass(`${script.id} is a candidate`, context, { script: script.id, slots, match });
-    const filled = fill(script, { slots });
+    const filled = fill(script, { slots, ...(step.result ? { result: step.result } : {}) });
     if (filled.kind === "text") return { kind: "reply", script: script.id, text: filled.text, match };
     if (filled.kind === "template") return { kind: "generate", script: script.id, template: filled.template, match };
+    if (filled.kind === "flow") {
+      if (!session || !this.#flows) return pass(`flow ${filled.flow} needs a session and a flow runner`, context);
+      this.#count(script.id, "served");
+      // A flow that passed a turn on and is still running gives way to this one.
+      if (session.flow) await this.#forget(session.flow.run);
+      session.flow = { ...this.#newFlow(session, filled.flow, { utterance: step.utterance, slots, ...(step.result ? { result: step.result } : {}) }), script: script.id };
+      const turn = await this.#runFlow(session, undefined, match);
+      return "answered" in turn ? turn.answered : after(turn.said, pass(turn.transferred ? "the flow handed the person to the model" : `flow ${filled.flow} handed the turn on`, context));
+    }
     const unaskable = filled.slots.find((slot) => session === undefined || script.slots[slot]!.prompts.length === 0);
     if (unaskable !== undefined || !session) return pass(`no value for slot ${unaskable}`, context);
     const slot = filled.slots[0]!;
@@ -274,20 +373,77 @@ export class Dialogue {
   }
 
   /** The answer to a form's prompt: its slot's value, another script taking over, the next prompt, or the model. */
-  async #continueForm(utterance: string, session: SessionState, form: Form, context: ScriptId | undefined): Promise<Decision | undefined> {
+  async #continueForm(step: Step, session: SessionState, form: Form, context: ScriptId | undefined): Promise<Decision | undefined> {
+    const { utterance } = step;
     const script = this.#scripts.get(form.script);
     if (!script || script.status === "retired") return undefined;
     const slots = { ...form.slots };
     for (const pattern of script.patterns) Object.assign(slots, matchPattern(pattern, utterance));
     const value = slots[form.slot] ?? (await this.#valueFor(script, form.slot, utterance));
-    if (value !== undefined) return this.#answer({ script, slots: { ...slots, [form.slot]: value }, match: { by: "form" } }, session, context);
+    if (value !== undefined) return this.#answer({ script, slots: { ...slots, [form.slot]: value }, match: { by: "form" } }, step, session, context);
     const other = await this.#match(utterance, context, script.id);
-    if (other) return this.#answer(other, session, context);
+    if (other) return this.#answer(other, step, session, context);
     const tries = form.tries + 1;
     const prompts = script.slots[form.slot]!.prompts;
     if (tries >= prompts.length) return pass(`no ${form.slot} after ${tries} prompts`, context);
     session.form = { ...form, tries };
     return { kind: "ask", script: script.id, slot: form.slot, text: prompts[tries]!, match: { by: "form" } };
+  }
+
+  /** A new flow run for a session: its run id is never reused. */
+  #newFlow(session: SessionState, name: string, input: { readonly utterance: string; readonly slots: Readonly<Record<string, string>>; readonly result?: ToolResult }): RunningFlow {
+    // The input is JSON (a tool result's input and output are).
+    return { name, run: `dialogue/${session.id}/${++this.#runs}`, input: input as RunningFlow["input"] };
+  }
+
+  /**
+   * One turn of a session's flow: it hears `utterance` (nothing, on the turn it starts)
+   * and what it says is the reply. It ends when its run completes, fails (reported) or
+   * transfers the turn; it waits for the next turn when it asks to hear again. A turn it
+   * passes on, or says nothing on, is not its to answer.
+   */
+  async #runFlow(session: SessionState, utterance: string | undefined, match: Match): Promise<FlowTurn> {
+    const flow = session.flow!;
+    const said: string[] = [];
+    let heard = utterance === undefined;
+    // What the flow said before it handed the turn on (what it says after is not said).
+    let handed: number | undefined;
+    let transferred = false;
+    let ended = true;
+    const tools: ToolSet = {
+      say: tool({ description: "Say text to the person.", inputSchema: z.object({ text: z.string() }), execute: async ({ text }) => (said.push(text), null) }),
+      hear: tool({
+        description: "Hear what the person says next: this turn's utterance once, then wait for the next turn.",
+        inputSchema: z.object({}),
+        execute: async () => {
+          if (heard) throw new AwaitingUtterance();
+          heard = true;
+          return { utterance: utterance! };
+        },
+      }),
+      pass: tool({ description: "Let the rest of the dialogue (scripts, then the model) answer this turn; keep going after it.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), null) }),
+      transfer: tool({ description: "Hand the person over to the model: this turn is the model's, and the flow ends.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), (transferred = true), null) }),
+    };
+    try {
+      const result = await this.#flows!.run(flow.name, flow.input, flow.run, tools);
+      if (result.status === "failed") this.#failed(new Error(`flow ${flow.name} failed: ${result.error}`));
+    } catch (e) {
+      if (e instanceof AwaitingUtterance) ended = false;
+      else this.#failed(e);
+    }
+    if (ended || transferred) {
+      session.flow = undefined;
+      await this.#forget(flow.run);
+    }
+    if (transferred) session.transferred = true;
+    if (handed !== undefined || transferred) return { said: said.slice(0, handed), transferred };
+    if (said.length === 0) return { said: [], transferred: false };
+    return { answered: { kind: "flow", flow: flow.name, ...(flow.script === undefined ? {} : { script: flow.script }), text: said.join("\n"), match } };
+  }
+
+  /** Forget a run nothing will resume (its journal can go); failing to is reported, never a turn lost. */
+  async #forget(run: string): Promise<void> {
+    await this.#flows?.forget?.(run).catch((e: unknown) => this.#failed(e));
   }
 
   /** A slot's value in an answer: by its value pattern, else the router's, else (with neither) the whole answer. */

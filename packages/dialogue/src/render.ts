@@ -39,6 +39,7 @@ function resolve(script: Script, fillers: Fillers): { parts: TemplatePart[]; unk
       if (value === undefined) unknown.push(part.slot);
       parts.push(value ?? { hole: part.slot });
     } else if ("generate" in part) parts.push(part.constraint ? { hole: part.generate, constraint: part.constraint } : { hole: part.generate });
+    else if ("flow" in part) return undefined;
     else {
       const value = fillers.result && ("input" in part ? valueAt(fillers.result.input, part.input) : valueAt(fillers.result.output, part.output));
       if (value === undefined) return undefined;
@@ -59,12 +60,24 @@ function templateOf(parts: readonly TemplatePart[]): TemplateConstraint {
   return { type: "template", parts: joined };
 }
 
+/** The flow a script's reply starts, if it is one. */
+export const flowOf = (script: Script): string | undefined => {
+  const [first] = script.reply;
+  return typeof first === "object" && "flow" in first ? first.flow : undefined;
+};
+
 /**
  * A script's reply for these slots and this result: its text when every hole is filled
  * from them; a template (fixed text and generated holes) when the model must write some
- * holes; or what is missing (the slots to ask for; none when a result lacks a value).
+ * holes; the flow it starts; or what is missing (the slots to ask for; none when a
+ * result lacks a value).
  */
-export function fill(script: Script, fillers: Fillers): { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint } | { kind: "missing"; slots: string[] } {
+export function fill(
+  script: Script,
+  fillers: Fillers,
+): { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint } | { kind: "flow"; flow: string } | { kind: "missing"; slots: string[] } {
+  const flow = flowOf(script);
+  if (flow !== undefined) return { kind: "flow", flow };
   const resolved = resolve(script, fillers);
   if (!resolved || resolved.unknown.length > 0) return { kind: "missing", slots: replySlots(script).filter((s) => fillers.slots[s] === undefined) };
   const { parts } = resolved;

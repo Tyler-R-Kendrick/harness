@@ -8,6 +8,9 @@ import { collectParts, constrain, HARNESS, inSession, MODEL_HEADER, usage } from
 import { Dialogue, parseSettings } from "@harness/dialogue";
 import type { Step } from "@harness/dialogue";
 import { dialogueMiddleware, stepOf } from "@harness/workers";
+import { MemoryLibrary, parseWorkflow, WorkflowHost } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
+import { MemoryStorage } from "@harness/testkit";
 
 const settingsFile = JSON.parse(readFileSync(new URL("../../dialogue/data/settings.json", import.meta.url), "utf8")) as Record<string, Record<string, unknown>>;
 const settings = parseSettings({ ...settingsFile, induce: { ...settingsFile["induce"], cluster: 0.7 } });
@@ -157,6 +160,43 @@ describe("dialogueMiddleware", () => {
       await dialogue.idle();
       expect(dialogue.save()).toMatchObject({ clusters: [] });
     }
+  });
+});
+
+describe("dialogueMiddleware with flows", () => {
+  it("DW1.9 a flow's turns are answered with no model call, named as the flow's, generated or streamed", async () => {
+    const journals = new Map<string, MemoryStorage>();
+    const flows = new WorkflowHost({
+      codeMode: aiCodeMode,
+      library: new MemoryLibrary([
+        parseWorkflow({ name: "size", kind: "flow", description: "Asks a size.", inputs: { type: "object" }, code: `await tools.say({ text: "Which size?" }); const { utterance } = await tools.hear({}); await tools.say({ text: "Size " + utterance + "." });` }),
+      ]),
+      journal: (run) => journals.get(run) ?? (journals.set(run, new MemoryStorage()), journals.get(run)!),
+      ask: async () => "",
+    });
+    const dialogue = new Dialogue({ settings, book: { scripts: [{ id: "shirt", intent: "Order a shirt", patterns: ["order a shirt"], reply: [{ flow: "size" }] }] }, flows });
+    const { inner, model } = setup(() => "the model's reply", dialogue);
+    const first = await generateText({ model, prompt: "order a shirt", ...session });
+    expect(first.text).toBe("Which size?");
+    expect(first.response.headers?.[MODEL_HEADER]).toBe("dialogue/flow/size");
+    expect(first.providerMetadata?.[HARNESS]?.["dialogue"]).toEqual({ flow: "size", script: "shirt", kind: "flow", match: { by: "pattern" } });
+    expect(await streamText({ model, prompt: "M", ...session }).text).toBe("Size M.");
+    expect(inner.calls).toHaveLength(0);
+  });
+});
+
+describe("dialogueMiddleware and what flows say", () => {
+  it("DW3.1 what a flow said before handing the turn to the model comes first in the model's response, generated or streamed", async () => {
+    const flows = new WorkflowHost({
+      codeMode: aiCodeMode,
+      library: new MemoryLibrary([parseWorkflow({ name: "desk", kind: "flow", description: "d", inputs: { type: "object" }, code: `await tools.say({ text: "Transferring." }); await tools.transfer({}); return 1;` })]),
+      journal: () => new MemoryStorage(),
+      ask: async () => "",
+    });
+    const dialogue = new Dialogue({ settings, book: { scripts: [], entry: "desk" }, flows });
+    const { model } = setup(() => "Hi, a person here.", dialogue);
+    expect((await generateText({ model, prompt: "help", ...inSession("a") })).text).toBe("Transferring.\nHi, a person here.");
+    expect(await streamText({ model, prompt: "help", ...inSession("b") }).text).toBe("Transferring.\nHi, a person here.");
   });
 });
 

@@ -15,6 +15,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "@harness/workflows": "0.0.0"
   }
 }

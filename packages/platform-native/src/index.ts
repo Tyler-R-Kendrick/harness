@@ -5,7 +5,7 @@ export { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 export { ModelFiles } from "./model-files.ts";
 export { LlamaServerProcess } from "./llama-server-process.ts";
 export type { LlamaServerStart } from "./llama-server-process.ts";
-export { buildDialogue, buildNativeEnsemble } from "./cognitive-host.ts";
+export { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
 export type { NativeEnsembleOptions } from "./cognitive-host.ts";
 export { steerableModel } from "./steerable-model.ts";
 export { loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";

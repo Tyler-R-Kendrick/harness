@@ -70,6 +70,13 @@ export class IndexedDbWorkflows implements WorkflowLibrary {
     };
   }
 
+  /** Delete a run's journal (none is fine). */
+  async forget(run: string): Promise<void> {
+    const tx = (await this.#db).transaction(RUNS, "readwrite");
+    tx.objectStore(RUNS).delete(run);
+    await committed(tx);
+  }
+
   /** Close the database connection. */
   async close(): Promise<void> {
     (await this.#db).close();
@@ -84,12 +91,13 @@ export class IndexedDbWorkflows implements WorkflowLibrary {
  */
 export function browserWorkflows(
   ensemble: Ensemble,
-  options: { readonly library: WorkflowLibrary & { journal(run: string): SnapshotStorage }; readonly tools?: ToolSet; readonly codeMode?: CodeMode },
+  options: { readonly library: WorkflowLibrary & { journal(run: string): SnapshotStorage; forget?(run: string): Promise<void> }; readonly tools?: ToolSet; readonly codeMode?: CodeMode },
 ): WorkflowHost {
   const { library } = options;
   const host = new WorkflowHost({
     library,
     journal: (run) => library.journal(run),
+    ...(library.forget ? { forget: (run: string) => library.forget!(run) } : {}),
     ask: askModel(ensemble.languageModel()),
     codeMode: options.codeMode ?? quickjsCodeMode(),
     ...(options.tools ? { tools: options.tools } : {}),
