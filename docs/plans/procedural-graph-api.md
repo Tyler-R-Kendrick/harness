@@ -541,6 +541,80 @@ As built (P5). These are additions; nothing above changed meaning.
   and holds the lease.
 - `interface Evaluator { evaluate(graph: ProceduralGraph, split: "train" | "validation", batch?: readonly string[]): Promise<{ task: string; score: number }[]> }`.
 
+As built (P6). These refine the shapes above; the names other phases use keep their meaning.
+
+- Commands carry an `id`, and every event is `{command, at, kind, …}`: the id of the
+  command it answers and the Clock's time, which stamps the records the reducer builds.
+  `DreamEventSchema` parses events (the runner parses the log on replay). The pairs are
+  `evaluate → evaluated {scores, seed}`, `rollout → rolled-out {results}`,
+  `select → selected {trajectories}`, `refine → refined {result: RefineResult}`,
+  `approve → approved {approved}`, `commit → committed {ok}`, `reject → recorded` and
+  `rebase → rebased {event}`. `done` has no event. An event for a command that is not
+  pending is ignored (a redelivery); an event of the wrong kind throws a `RangeError`.
+- `DreamState.pending` holds the commands issued and not answered: `dreamStart`'s state
+  holds the first, and after a replay it holds exactly those to re-issue.
+- There is no `prepare` command: the reducer runs `prepareCandidate` itself (pure), with
+  the tool catalog when `enforceToolCatalog` and the edit filter over the round's tool
+  observations when `editFilter`.
+- `DreamInput` has `dream`, `graph`, `head` (G₀), `settings: DreamSettings`,
+  `evaluator` and `approver` (booleans), `train` (task ids), `stride`, `task`, `tools`,
+  `sideEffectFree`, `overlay?: {state, live}` and `rejections: RevisionRecord[]`.
+- With an evaluator a round rolls out a stride of training tasks
+  (`rollout {revision, graph, batch}`), strides wrapping in order; without one it selects
+  recorded trajectories (`select {revision, limit: stride}`). `onetime` is one round over
+  every training task with no S₀ and no evaluator or evidence gate; approval gates still
+  apply. The refiner's `{mode}` is `static_…` or `scratch_…` (G₀ is the seed skeleton)
+  with the dream's mode.
+- Context: `tail-concatenated` keeps the last `contextTokens` tokens of the concatenated
+  trajectories; `tail-per-trajectory` orders them from the highest and lowest scores
+  inward (unscored last) and keeps each body's last `contextTokens / k` tokens under its
+  header. `tailTokens(text, limit)` counts whitespace-separated tokens.
+- Gates run in the order structure, evidence, evaluator gates (listed order), approval.
+  A gate listed without `?` that needs an evaluator fails without one. `evidence`
+  without an overlay fails. Approval asks the approver (`approve {candidate, tools}`)
+  under `approval`, or under `approval-for-side-effects` when an added (or re-added)
+  edge routes into an `ACTION` tool not declared free of side effects.
+- A refiner answer that is not an edit set is a structural rejection kept in memory
+  without a record. A rejected candidate whose id is G₀, the retained graph or one of
+  the dream's commits is kept in memory and never stored. With `rejections.dedupe`, a
+  candidate whose id is a known rejection is not evaluated (`known-rejection`), and one
+  equal to the retained graph is skipped (`unchanged`). Without dedupe (the paper) an
+  unchanged candidate is evaluated, and accepting it only updates the cached score.
+- `recent-and-similar` shows up to `limit` rejections, one per id, those proposed
+  against the retained graph first, then the most recent.
+- Consolidation: live entries with status, support and both arms; the retained graph's
+  edges with a live caution or `poorStatistics`; the shown rejections' reasons. Each
+  block is `None` when empty.
+- A commit issues `rebase {core, absorbed}` when the dream has an overlay;
+  `absorbedEntries(overlay, base, candidate)` names the live entries the candidate
+  absorbs: an edge (same triple) or node it has, a note whose text an edge between its
+  endpoints now carries, a caution on an edge it pruned. A failed compare-and-set ends
+  the dream (`conflict`).
+- Gates, as built:
+  - `structureGate({diagnostics})`; `atLeastRetained({candidate, retained})` (means);
+  - `anchoredNonInferiority({candidate, retained, anchor, sizes, totalLoss, confidence, power, seed, resamples?})`
+    on per-task `TaskScore = {task, score}` lists, with `pairedDifference(a, b, confidence, seed, resamples = 2000)`
+    (`newcombe` when every paired score is 0 or 1, else `bootstrap`), `graphSize(doc)`
+    (`{items: nodes + edges, chars}`) and `normalQuantile(p)`. δ is
+    `powerMargin(n, n · (w / z_c)², confidence, power)`, where w is the lower half-width
+    of the interval. It throws for a confidence not above 0.5;
+  - `evidenceGate({base, candidate, overlay, minSupport, confidence})`, with
+    `poorStatistics(overlay, from, to, {minSupport, confidence})`;
+  - `approvalGate({required, approved?})` and
+    `routesIntoSideEffects(base, candidate, sideEffectFree)`.
+- The runner: `runDream({store, graph, settings: Preset, ports, task?, tools?, sideEffectFree?, stride?, holder?, dream?})`
+  returns `DreamResult`: `{status: "done", …DreamOutcome}`, `busy`, `no-head` or
+  `lease-lost`. The dream log holds `{kind: "started", dream, head, overlay, rejections, train, stride}`
+  and `{kind: "event", dream, event}` entries. The stride defaults to the training tasks
+  once over the rounds with an evaluator, and `DEFAULT_SELECT` (20) without one. The
+  paper preset starts every dream with an empty rejection memory (`H_rejected ← []`);
+  with `dedupe` the rejection records already stored are remembered.
+- Ports: `Evaluator` also has `tasks(split)`, and `evaluate` may return each training
+  task's `query` and `steps` (`RolloutResult`); `Refiner.refine(DreamRefineRequest)`;
+  `Approver.approve({graph, candidate, tools})`; `TrajectorySource.select({graph, revision, limit})`;
+  `clock` and `entropy` are structural (`now()`, `bytes(n)`). `modelRefiner({model, settings})`
+  adapts `refine`, with the dream prompt when there is consolidation.
+
 ## P7: stores (`store.ts`, `memory-store.ts`, `snapshot-store.ts`)
 
 - `interface AppendLog<E> { append(events: readonly E[]): Promise<number>; read(from: number, limit?: number): Promise<{ offset: number; event: E }[]>; head(): Promise<number> }`.
@@ -920,3 +994,13 @@ Cross-phase wiring that no single phase owned; the finalizer resolves these test
 - **Dream uses composition (P6 × P13).** Dream calls `pathCandidates`, `recordedRuns`, `compilePath`, `StagingLibrary.stage` and `composeCandidate` for promotion, and gates the composed `document` (an `EditSet` cannot carry a binding) through the same gates as any candidate.
 - **Live reflection (plan §6.2.4).** `live.reflection` set to `turn` or `batch` must call `reflect` (P5). Every entry runs through `editFilter` before it is `proposed` with `source.by = "reflection"`. The setting stays off in the harness preset.
 - **Dream from the host.** `procedural.dream` and the `harness-procedural dream` CLI run `runDream` with real ports: the refiner is `refine` on the ensemble's generator, and the evaluator and approver are optional. The permission flow is the approver when one is configured.
+
+- P6: the stride (the paper's S) is a `runDream` option, not a `DreamSettings` field,
+  because P6 does not own `settings.ts`; the defaults are the training tasks once over
+  the rounds, and `DEFAULT_SELECT` without an evaluator. It belongs in the settings data.
+- P6: `Tail_{L_max}` counts whitespace-separated tokens; there is no tokenizer port yet.
+- P6: the Evaluator port has no testkit contract suite or scripted environment yet
+  (plan §11 lists them with P6); dream's tests use scripted evaluators.
+- P6: revisions are keyed by content id and `put` is an upsert, so a rejected candidate
+  equal to an older head outside the current dream would overwrite that head's record.
+  The reducer guards G₀, the retained graph and the dream's own commits.
