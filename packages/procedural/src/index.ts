@@ -2,10 +2,13 @@
 export { canonicalJson, sha256Hex } from "./canonical.ts";
 export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
 export { applyEdits, prepareCandidate, type PreparedCandidate, type PrepareOptions, type RepairedEdge } from "./edits.ts";
+export { proceduralExtension, type ProceduralAction, type ProceduralExtensionOptions } from "./extension.ts";
 export { editFilter, type EntropyOptions, type FilterCode, type FilterFinding, type FilterOptions } from "./filter.ts";
 export { BindingSchema, CandidateDocumentSchema, checkGraph, DecisionSchema, DEFAULT_NODE_TYPES, DEFAULT_RELATIONS, DIAGNOSTIC_CODES, DiagnosticSchema, DreamIdSchema, EditSetSchema, editSetJsonSchema, END, EntryIdSchema, FORMAT, GraphEdgeSchema, GraphIdSchema, graphJsonSchema, GraphNodeSchema, incoming, nodeById, NodeNameSchema, NodeTypeNameSchema, outgoing, parseGraph, ProceduralGraphSchema, RelationNameSchema, revisionId, RevisionIdSchema, RevisionRecordSchema, ScoreSchema, seedGraph, START, TrajectoryIdSchema, type Binding, type CandidateDocument, type CyclePolicy, type Decision, type Diagnostic, type DiagnosticCode, type DreamId, type EditSet, type EntryId, type GraphEdge, type GraphId, type GraphNode, type NodeName, type NodeTypeName, type ParsedGraph, type ProceduralGraph, type RelationName, type RevisionId, type RevisionRecord, type Score, type TrajectoryId } from "./graph.ts";
 export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "./guide.ts";
+export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
 export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate.ts";
+export { exportMermaid } from "./mermaid.ts";
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
 export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldOverlay, MAX_SESSIONS, MAX_TURNS, rebaseOverlay } from "./overlay.ts";
