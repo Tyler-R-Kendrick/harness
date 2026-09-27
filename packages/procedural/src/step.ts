@@ -13,16 +13,19 @@ import { HARNESS, Sha256Schema } from "@harness/cognitive";
 import type { ScoredTrajectory } from "./trajectory.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, RevisionIdSchema } from "./graph.ts";
-import type { GraphId, ProceduralGraph } from "./graph.ts";
+import type { GraphId } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
 import { match, neighborhood } from "./locate.ts";
-import { effectiveGraph, emptyOverlay, entryId, foldOverlay } from "./overlay.ts";
+import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
-import type { EffectiveEdge, EffectiveGraph, EffectiveNode, OverlayEvent, OverlayState } from "./overlay-types.ts";
+import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
+import { pinSession, readOverlay } from "./pinning.ts";
+import { resolveGraph } from "./resolver.ts";
+import type { Resolver } from "./resolver.ts";
 import { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 import { guidancePromptOf, HOPS, presetOf, WINDOW } from "./settings.ts";
 import type { Preset, Settings } from "./settings.ts";
-import type { Pin, ProceduralStore } from "./store.ts";
+import type { ProceduralStore } from "./store.ts";
 
 /** What one step read and was told, as `_meta.harness.procedural.step` on a notice (plan §5.2). */
 export const StepRecordSchema = z.strictObject({
@@ -90,25 +93,15 @@ export interface ProceduralStepHook {
   turn(input: TurnInput): Promise<string | undefined>;
 }
 
-/** What the resolver sees of a session (P9's `ResolveContext`). */
-export interface StepResolveContext {
-  readonly meta?: Readonly<Record<string, unknown>>;
-  readonly cwd?: string;
-}
-
-/** The ports pinning needs (the core's `Clock` and `Entropy`). */
-export interface StepPorts {
-  readonly clock: { now(): number };
-  readonly entropy: { bytes(length: number): Uint8Array };
-}
-
-export interface ProceduralStepDeps extends StepPorts {
+export interface ProceduralStepDeps {
   readonly store: ProceduralStore;
-  /** The session's graph, or none (P9's `resolveGraph` over a resolver). */
-  readonly resolve: (context: StepResolveContext) => GraphId | undefined;
-  /** Pins the session at a turn boundary (P9's `pinSession`). */
-  readonly pin: (request: { store: ProceduralStore; session: string; graph: GraphId; repinOnDream: Preset["repinOnDream"] } & StepPorts) => Promise<Pin>;
+  /** Maps a session's meta and cwd to its graph, or to none. */
+  readonly resolver: Resolver;
   readonly settings: Settings;
+  /** Stamps pins (the core's `Clock`). */
+  readonly clock: { now(): number };
+  /** Draws a session's exposure salt (the core's `Entropy`). */
+  readonly entropy: { bytes(length: number): Uint8Array };
   /** The preset by name; `harness` when not given. */
   readonly preset?: string;
   /** The guidance model; the step's own model when not given. */
@@ -188,17 +181,6 @@ function exposureOf(nodes: readonly EffectiveNode[], edges: readonly EffectiveEd
   return [...ids];
 }
 
-/** The overlay folded while its version stays within `version`. */
-function foldTo(base: Pin["core"], events: readonly OverlayEvent[], version: number): OverlayState {
-  let state = emptyOverlay(base);
-  for (const event of events) {
-    const next = foldOverlay(state, event);
-    if (next.version > version) break;
-    state = next;
-  }
-  return state;
-}
-
 /** What a session reads until its next turn boundary: one version pair (I3). */
 interface View {
   readonly graph: GraphId;
@@ -221,26 +203,20 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   const preset = presetOf(deps.settings, deps.preset ?? "harness");
   const sessions = new Map<string, Session>();
 
-  const overlayOf = async (graph: GraphId, core: ProceduralGraph, pin: Pin): Promise<EffectiveGraph> => {
-    const live = preset.live;
-    if (!preset.overlay || live === undefined) return coreView(core);
-    const events = (await deps.store.overlay(graph).read(0)).map((e) => e.event);
-    // `turn` reads the newest overlay on the pinned core; `session`, or a core the overlay has moved past, the pinned version.
-    const newest = foldTo(pin.core, events, Number.POSITIVE_INFINITY);
-    const state = preset.overlayRefresh === "turn" && newest.base === pin.core ? newest : foldTo(pin.core, events, pin.overlay);
-    // A session never pairs a core with an overlay built on another core.
-    return effectiveGraph(core, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare });
-  };
-
   const load = async (scope: StepScope): Promise<View | undefined> => {
-    const graph = deps.resolve({ ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }) });
+    // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta or cwd as an absent one
+    const graph = resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }) });
     if (graph === undefined) return undefined;
-    const pin = await deps.pin({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, clock: deps.clock, entropy: deps.entropy });
+    const pin = await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
     const record = await deps.store.revisions.get(pin.core);
     if (record === undefined) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} is missing`);
     const parsed = parseGraph(record.document);
     if (!parsed.ok) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} does not parse: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
-    return { graph, effective: await overlayOf(graph, parsed.graph, pin) };
+    const live = preset.live;
+    if (!preset.overlay || live === undefined) return { graph, effective: coreView(parsed.graph) };
+    const state = await readOverlay(deps.store, pin);
+    // A session never pairs a core with an overlay built on another core.
+    return { graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
   };
 
   /** The session's state for this step, re-resolved and re-pinned unless the step is in the turn it knows. */

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage, SystemModelMessage } from "ai";
 import { HARNESS } from "@harness/cognitive";
 import { ManualClock, promptText, SeededEntropy } from "@harness/testkit";
@@ -6,26 +6,19 @@ import {
   ADVISORY,
   canonicalJson,
   GUIDANCE_LABEL,
+  MemoryProceduralStore,
   parseGraph,
+  parseResolver,
   parseSettings,
   proceduralStep,
   RevisionIdSchema,
   sha256Hex,
   StepRecordSchema,
 } from "@harness/procedural";
-import type { ProceduralGraph, ProceduralStepDeps, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
-import { hotpot } from "./fixtures.ts";
+import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
-import { fakePin, fakeStore, GRAPH, hotpotGraph, seed, settingsFile } from "./step-fakes.ts";
-import type { FakeStore } from "./step-fakes.ts";
-
-/** The hotpot graph with every description suffixed: another core revision. */
-function variant(suffix: string): ProceduralGraph {
-  const parsed = parseGraph({ ...hotpot(), nodes: hotpot().nodes.map((n) => ({ ...n, description: `${n.description}${suffix}` })) });
-  if (!parsed.ok) throw new Error("fixture");
-  return parsed.graph;
-}
+import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
 
 /** Settings with an extra preset built from `base` (paper or harness). */
 function withPreset(base: "paper" | "harness", changes: Record<string, unknown>): Settings {
@@ -33,21 +26,20 @@ function withPreset(base: "paper" | "harness", changes: Record<string, unknown>)
 }
 
 interface Setup {
-  store: FakeStore;
+  store: MemoryProceduralStore;
   guidance: ReturnType<typeof answering>;
   deps: ProceduralStepDeps;
   records: StepRecord[];
   notices: StepNotice[];
 }
 
-async function setup(preset = "paper", options: { settings?: Settings; resolve?: ProceduralStepDeps["resolve"]; store?: FakeStore; text?: (n: number) => string; pin?: ProceduralStepDeps["pin"] } = {}): Promise<Setup> {
-  const store = options.store ?? fakeStore();
-  if (!options.store) await seed(store, hotpotGraph());
-  const guidance = answering(options.text ?? ((n) => `advice ${n}`), { input: 30, output: 5 });
+async function setup(preset = "paper", options: { settings?: Settings; resolver?: Resolver } = {}): Promise<Setup> {
+  const store = new MemoryProceduralStore();
+  await seed(store, hotpotGraph());
+  const guidance = answering((n) => `advice ${n}`, { input: 30, output: 5 });
   const deps: ProceduralStepDeps = {
     store,
-    resolve: options.resolve ?? (() => GRAPH),
-    pin: options.pin ?? fakePin,
+    resolver: options.resolver ?? resolver,
     settings: options.settings ?? settingsFile,
     preset,
     model: guidance,
@@ -78,11 +70,20 @@ function input(s: Setup, messages: readonly ModelMessage[], more: Partial<StepIn
   };
 }
 
+const append = (s: Setup, ...events: OverlayEvent[]) => s.store.overlay(GRAPH).append(events);
+/** Counts the session pins taken (each reads the session's pin once). */
+const pinCount = (s: Setup) => vi.spyOn(s.store.pins, "get");
+/** A session's pin, set before its first step. */
+async function pinned(s: Setup, session: string, pin: Partial<Pin>): Promise<void> {
+  const head = (await s.store.heads.get(GRAPH))!.revision;
+  await s.store.pins.set(session, { graph: GRAPH, core: head, overlay: 0, salt: "salt", at: 0, ...pin });
+}
+
 const prompts = (s: Setup) => s.guidance.doGenerateCalls.map((c) => promptText(c.prompt));
 
 describe("proceduralStep: the live path as a worker step hook (plan §5)", () => {
   it("PW1.30 a session the resolver maps to no graph is left unguided, with no record and no guidance call", async () => {
-    const s = await setup("paper", { resolve: () => undefined });
+    const s = await setup("paper", { resolver: parseResolver({ rules: [{ when: {}, graph: null }] }) });
     const hook = proceduralStep(s.deps);
     expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
     expect(await hook.turn({ ...input(s, [user("q")]), lastAction: undefined })).toBeUndefined();
@@ -90,14 +91,17 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(s.notices).toEqual([]);
   });
 
-  it("PW1.31 the resolver sees the session's meta and cwd, and nothing it lacks", async () => {
-    const seen: unknown[] = [];
-    const s = await setup("paper", { resolve: (c) => (seen.push(c), GRAPH) });
+  it("PW1.31 the resolver sees the session's meta and cwd", async () => {
+    const byRepo = parseResolver({ rules: [{ when: { meta: { team: "*" }, cwdUnder: "/repo" }, graph: "${meta.team}/retrieval" }, { when: {}, graph: null }] });
+    const s = await setup("paper", { resolver: byRepo });
     const hook = proceduralStep(s.deps);
-    await hook.prepare(input(s, [user("q")], { sessionMeta: { repo: "harness" } }));
-    const { cwd: _, ...noCwd } = input(s, [user("q")], { sessionId: "s2" });
+    await hook.prepare(input(s, [user("q")], { sessionMeta: { team: "team" } }));
+    expect(s.records.map((r) => r.graph)).toEqual(["team/retrieval"]);
+    await hook.prepare(input(s, [user("q")], { sessionId: "s2", sessionMeta: { team: "team" }, cwd: "/elsewhere" }));
+    await hook.prepare(input(s, [user("q")], { sessionId: "s3" }));
+    const { cwd: _, ...noCwd } = input(s, [user("q")], { sessionId: "s4", sessionMeta: { team: "team" } });
     await hook.prepare(noCwd);
-    expect(seen).toStrictEqual([{ meta: { repo: "harness" }, cwd: "/repo" }, {}]);
+    expect(s.records).toHaveLength(1);
   });
 
   it("PW1.32 the first step is at Start: its two-hop neighborhood, the query and the local context words go to the guidance model", async () => {
@@ -117,8 +121,6 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   it("PW1.33 the step record names the version pair, the node and the action, and holds a digest of the guidance, never its text", async () => {
     const s = await setup("paper");
     await proceduralStep(s.deps).prepare(input(s, [user("q")]));
-    const core = parseGraph(hotpot());
-    expect(core.ok).toBe(true);
     const [record] = s.records;
     expect(record).toMatchObject({ graph: "team/retrieval", overlay: null, node: "Start", action: null, matched: true, others: [], cached: false, exposure: [], usage: { inputTokens: 30, outputTokens: 5 } });
     expect(record!.core).toBe((await s.store.heads.get(GRAPH))!.revision);
@@ -132,7 +134,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     await proceduralStep(s.deps).prepare(input(s, [user("q")]));
     const [record] = s.records;
     expect(await s.store.guidance.get(record!.guidanceId)).toBe("advice 0");
-    expect(s.store.texts.size).toBe(1);
+    expect(s.store.document().guidance).toHaveLength(1);
   });
 
   it("PW1.35 the last action is the last tool call of the last assistant message; parallel calls record the rest in order", async () => {
@@ -277,7 +279,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   it("PW1.61 a preset without an overlay reads the core alone, even with live settings", async () => {
     const settings = withPreset("harness", { overlay: false });
     const s = await setup("custom", { settings });
-    s.store.overlayLog(GRAPH).events.push(proposed(noteOnCore, ["a"]));
+    await append(s, proposed(noteOnCore, ["a"]));
     await proceduralStep(s.deps).prepare(input(s, [user("q")]));
     expect(s.records[0]!.overlay).toBeNull();
   });
@@ -316,33 +318,33 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   });
 
   it("PW1.46 one version pair per turn: a head moved mid-turn is read at the next turn, and an approval round (same turn, steps restarted) does not re-pin", async () => {
-    let pins = 0;
-    const s = await setup("harness", { pin: async (r) => (pins++, fakePin(r)) });
+    const s = await setup("harness");
     const hook = proceduralStep(s.deps);
     const before = (await s.store.heads.get(GRAPH))!.revision;
+    const pins = pinCount(s);
     await hook.prepare(input(s, [user("q")]));
     const after = await seed(s.store, variant("?"), GRAPH, "dream");
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 1 }));
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 0 }));
     expect(s.records.map((r) => r.core)).toEqual([before, before, before]);
     expect(s.records.map((r) => r.node)).toEqual(["Start", "First_Hop_Retrieve", "First_Hop_Retrieve"]);
-    expect(pins).toBe(1);
+    expect(pins).toHaveBeenCalledTimes(1);
     await hook.prepare(input(s, [user("q")], { turnId: "t2" }));
     expect(s.records[3]!.core).toBe(after);
-    expect(pins).toBe(2);
+    expect(pins).toHaveBeenCalledTimes(2);
   });
 
   it("PW1.47 without a turn id, the first step of a stream is the turn boundary", async () => {
-    let pins = 0;
-    const s = await setup("paper", { pin: async (r) => (pins++, fakePin(r)) });
+    const s = await setup("paper");
+    const pins = pinCount(s);
     const hook = proceduralStep(s.deps);
     const { turnId: _, ...rest } = input(s, [user("q")]);
     await hook.prepare(rest);
     await hook.prepare({ ...rest, stepNumber: 1 });
     await hook.prepare({ ...rest, stepNumber: 2 });
-    expect(pins).toBe(1);
+    expect(pins).toHaveBeenCalledTimes(1);
     await hook.prepare({ ...rest, stepNumber: 0 });
-    expect(pins).toBe(2);
+    expect(pins).toHaveBeenCalledTimes(2);
   });
 
   it("PW1.48 the pinned core is read even after the head moves, with repinOnDream never; its revision must exist and parse", async () => {
@@ -354,7 +356,8 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     await seed(s.store, variant("!"), GRAPH, "dream");
     await hook.prepare(input(s, [user("q")], { turnId: "t2" }));
     expect(s.records.map((r) => r.core)).toEqual([pinned, pinned]);
-    const missing = await setup("paper", { pin: async (r) => ({ ...(await fakePin(r)), core: RevisionIdSchema.parse("a".repeat(64)) }) });
+    const missing = await setup("paper");
+    await missing.store.heads.set(GRAPH, (await missing.store.heads.get(GRAPH))!.revision, RevisionIdSchema.parse("a".repeat(64)));
     await expect(proceduralStep(missing.deps).prepare(input(missing, [user("q")]))).rejects.toThrow(/pinned core revision a{64} of graph team\/retrieval is missing/);
     const broken = await setup("paper");
     const id = (await broken.store.heads.get(GRAPH))!.revision;
@@ -392,20 +395,19 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   });
 
   it("PW1.51 the turn variant re-pins every turn", async () => {
-    let pins = 0;
-    const s = await setup("harness", { pin: async (r) => (pins++, fakePin(r)) });
+    const s = await setup("harness");
+    const pins = pinCount(s);
     const hook = proceduralStep(s.deps);
     await hook.turn({ ...input(s, [user("q")]), lastAction: undefined });
     await hook.turn({ ...input(s, [user("q")]), lastAction: undefined });
-    expect(pins).toBe(2);
+    expect(pins).toHaveBeenCalledTimes(2);
   });
 });
 
 describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
   async function overlaid(preset = "harness", settings?: Settings) {
     const s = await setup(preset, settings ? { settings } : {});
-    const log = s.store.overlayLog(GRAPH);
-    log.events.push(proposed(noteOnCore, ["a", "b", "c"]), proposed(cautionOnCore, ["a"]), proposed(verifyNode, ["a"]), proposed(toVerify, ["a"]), proposed(shortcut, ["a"]));
+    await append(s, proposed(noteOnCore, ["a", "b", "c"]), proposed(cautionOnCore, ["a"]), proposed(verifyNode, ["a"]), proposed(toVerify, ["a"]), proposed(shortcut, ["a"]));
     return s;
   }
 
@@ -413,7 +415,7 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
     const s = await overlaid();
     const share = settingsFile.presets.harness.live!.probationShare;
     const salt = saltWhere(idOf(noteOnCore), share, true);
-    s.deps = { ...s.deps, pin: async (r) => ({ ...(await fakePin(r)), salt }) };
+    await pinned(s, "s1", { overlay: 5, salt });
     const hook = proceduralStep(s.deps);
     await hook.prepare(input(s, [user("q")]));
     const prompt = prompts(s)[0]!;
@@ -426,12 +428,11 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
 
   it("PW1.53 exposure covers edges, nodes, notes and cautions shown in the whole-graph fallback, and never active entries", async () => {
     const s = await overlaid();
-    const log = s.store.overlayLog(GRAPH);
     const everything = withPreset("harness", { live: { ...settingsFile.presets.harness.live, probationShare: 1 } });
     const hook = proceduralStep({ ...s.deps, settings: everything, preset: "custom" });
     await hook.prepare(input(s, [user("q"), calls("unknown_tool")]));
     expect(new Set(s.records[0]!.exposure)).toEqual(new Set([idOf(noteOnCore), idOf(cautionOnCore), idOf(verifyNode), idOf(toVerify), idOf(shortcut)]));
-    log.events.push(status(idOf(noteOnCore), "active"), status(idOf(cautionOnCore), "active"));
+    await append(s, status(idOf(noteOnCore), "active"), status(idOf(cautionOnCore), "active"));
     await hook.prepare(input(s, [user("q"), calls("unknown_tool")], { turnId: "t2" }));
     expect(new Set(s.records[1]!.exposure)).toEqual(new Set([idOf(verifyNode), idOf(toVerify), idOf(shortcut)]));
     expect(prompts(s)[1]).toContain("  * Learned note: Retrieve before reasoning.");
@@ -459,7 +460,7 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
       const s = await overlaid("custom", settings);
       const hook = proceduralStep(s.deps);
       await hook.prepare(input(s, [user("q")]));
-      s.store.overlayLog(GRAPH).events.push(status(idOf(noteOnCore), "active"));
+      await append(s, status(idOf(noteOnCore), "active"));
       await hook.prepare(input(s, [user("q")], { turnId: "t2" }));
       expect(s.records.map((r) => r.overlay)).toEqual(versions);
     }
@@ -471,11 +472,12 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
     const hook = proceduralStep(s.deps);
     await hook.prepare(input(s, [user("q")]));
     const next = await seed(s.store, variant("."), GRAPH, "dream");
-    s.store.overlayLog(GRAPH).events.push({ kind: "rebased", core: next, absorbed: [], dropped: [], frozenAt: 5 }, status(idOf(noteOnCore), "active"));
+    await append(s, { kind: "rebased", core: next, absorbed: [], dropped: [], frozenAt: 5 }, status(idOf(noteOnCore), "active"));
     await hook.prepare(input(s, [user("q")], { turnId: "t2" }));
     expect(s.records[1]).toMatchObject({ core: s.records[0]!.core, overlay: 5 });
-    // a pin whose version already includes the rebase gets no overlay rather than one on another core
-    const late = proceduralStep({ ...s.deps, pin: async (r) => ({ ...(await fakePin(r)), core: s.records[0]!.core, overlay: 7 }) });
+    // a pin (kept by overlayRefresh session) whose version already includes the rebase gets no overlay rather than one on another core
+    await pinned(s, "s9", { core: s.records[0]!.core, overlay: 7 });
+    const late = proceduralStep({ ...s.deps, settings: withPreset("harness", { repinOnDream: "never", overlayRefresh: "session" }) });
     await late.prepare(input(s, [user("q")], { sessionId: "s9" }));
     expect(s.records[2]).toMatchObject({ core: s.records[0]!.core, overlay: 0, exposure: [] });
   });
