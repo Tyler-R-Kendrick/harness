@@ -40,15 +40,16 @@ export function pumpHookEvents(
   options: { readonly plugin: string; readonly types: readonly string[]; readonly onEvent: (event: HookEvent) => Promise<void>; readonly intervalMs?: number; readonly log?: (message: string) => void },
 ): HookPump {
   let next = 0;
-  let reply: Reply | undefined;
+  const replies = new Map<unknown, Reply>();
   // The daemon answers these methods synchronously, through `send`, while `receive` runs.
-  const connection = runtime.connect({ principal: options.plugin, kind: "plugin" }, (message) => void (reply = message as Reply));
+  const connection = runtime.connect({ principal: options.plugin, kind: "plugin" }, (message) => void replies.set((message as Reply).id, message as Reply));
   const call = (method: string, params: Record<string, unknown>): unknown => {
-    reply = undefined;
-    connection.receive({ jsonrpc: "2.0", id: (next += 1), method, params });
-    const answer = reply as Reply | undefined;
-    if (answer?.error) throw new Error(`${method}: ${answer.error.message}`);
-    return answer?.result;
+    const id = (next += 1);
+    connection.receive({ jsonrpc: "2.0", id, method, params });
+    const answer = replies.get(id)!;
+    replies.delete(id);
+    if (answer.error) throw new Error(`${method}: ${answer.error.message}`);
+    return answer.result;
   };
   call("initialize", { protocolVersion: 1 });
   call("_harness/hooks/subscribe", { types: [...options.types] });

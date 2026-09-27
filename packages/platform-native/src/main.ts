@@ -14,7 +14,6 @@ import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -81,7 +80,11 @@ const saved = await memoryFile?.load();
 const learningFile = values.learning === undefined ? undefined : new FileStorage(values.learning);
 const learned = await learningFile?.load();
 
-// Procedural graphs keep one store in their directory; with the cognitive core its operations are `procedural.*`.
+if (values.procedural !== undefined && !values.cognitive && values.worker !== "ensemble") {
+  process.stderr.write("--procedural needs the cognitive core (--cognitive or --worker ensemble): its operations are procedural.*\n");
+  process.exit(2);
+}
+// Procedural graphs keep one store in their directory; the cognitive core serves its operations as `procedural.*`.
 const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
@@ -96,7 +99,6 @@ const cognitive =
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
-const procedural = cognitive?.procedural ?? (values.procedural === undefined ? undefined : { store: proceduralStore(values.procedural), settings: proceduralSettings! });
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");

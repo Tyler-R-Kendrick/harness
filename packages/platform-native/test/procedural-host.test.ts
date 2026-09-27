@@ -94,6 +94,34 @@ describe("procedural host plumbing", () => {
     await host.close();
   });
 
+  it("PX2.52 without a log a failure is dropped quietly and retried; anything thrown is reported by its text", async () => {
+    const { host, prompt } = await withSession();
+    let throws: unknown = "a string";
+    const handled: number[] = [];
+    const quiet = pumpHookEvents(host.runtime, {
+      plugin: "quiet",
+      types: ["turn.ended"],
+      onEvent: async (e) => {
+        if (throws !== undefined) throw throws;
+        handled.push(e.offset);
+      },
+    });
+    await prompt("one");
+    await quiet.drain();
+    expect(handled).toEqual([]);
+    const logged: string[] = [];
+    const loud = pumpHookEvents(host.runtime, { plugin: "loud", types: ["turn.ended"], onEvent: async () => Promise.reject("plain"), log: (m) => logged.push(m), intervalMs: 60_000 });
+    await prompt("two");
+    await loud.drain();
+    expect(logged).toEqual(["loud: plain"]);
+    throws = undefined;
+    await quiet.drain();
+    expect(handled).toHaveLength(2);
+    quiet.close();
+    loud.close();
+    await host.close();
+  });
+
   it("PX2.43 the log reader returns a session's entries in [from, to), and none for a session it does not have", async () => {
     const { host, sessionId, prompt } = await withSession();
     await prompt("hello");
