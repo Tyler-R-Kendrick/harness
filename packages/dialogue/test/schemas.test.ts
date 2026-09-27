@@ -73,6 +73,11 @@ describe("settings and books are data", () => {
     const file = read("../data/settings.json") as { induce: Record<string, unknown> };
     expect(() => parseSettings({ ...file, induce: { ...file.induce, support: 3, keep: 2 } })).toThrow(/keep at least support/);
   });
+
+  it("SB1.15 settings keep at least as many of a script's sessions as promotion needs", () => {
+    const file = read("../data/settings.json") as { promote: Record<string, unknown> };
+    expect(() => parseSettings({ ...file, promote: { ...file.promote, sessions: 3, sessionsKept: 2 } })).toThrow(/keep at least as many sessions/);
+  });
 });
 
 describe("under static analysis", () => {
@@ -90,7 +95,7 @@ describe("under static analysis", () => {
     expect(issues(ScriptSchema, script({ reply: ["x", { slot: "a" }] }))).toEqual([{ message: "reply names slot a, which is not declared", path: ["reply", 1] }]);
     expect(issues(ScriptSchema, script({ reply: ["x", { output: ["a"] }] }))).toEqual([{ message: "only a result script reads a tool's input or output", path: ["reply", 1] }]);
     expect(issues(ScriptSchema, script({ reply: [{ generate: "a" }, ", ", { generate: "a" }] }))).toEqual([{ message: "hole a is named twice", path: ["reply", 2] }]);
-    expect(issues(ScriptSchema, script({ patterns: ["("] }))).toEqual([{ message: "not a regular expression: Invalid regular expression: /(/iu: Unterminated group", path: ["patterns", 0] }]);
+    expect(issues(ScriptSchema, script({ patterns: ["("] }))).toEqual([{ message: "not a regular expression: Invalid regular expression: /(/isu: Unterminated group", path: ["patterns", 0] }]);
     expect(issues(BookSchema, { scripts: [script({}), script({ id: "s2" }), script({})] })).toEqual([{ message: "script s1 is in the book twice", path: ["scripts", 2] }]);
     expect(issues(BookSchema, { scripts: [script({}), script({ id: "s2", context: "s9" })] })).toEqual([{ message: "context s9 is not a script in the book", path: ["scripts", 1, "context"] }]);
     expect(issues(BookSchema, { scripts: [script({})], clusters: [{ observations: [] }, { script: "s1", observations: [] }, { script: "s2", observations: [] }] })).toEqual([

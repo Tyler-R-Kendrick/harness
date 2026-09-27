@@ -6,7 +6,7 @@ import type { EvaluationModelV4, Probability, Similarity, TemplateConstraint, To
 import { shapeSimilarity } from "./align.ts";
 import { draft, draftedScript } from "./draft.ts";
 import { induce, normalizeUtterance } from "./induce.ts";
-import { fill, findValue, fits, matchPattern, replySlots } from "./render.ts";
+import { fill, findValue, fits, matchPattern, readHoles, replySlots } from "./render.ts";
 import { ClusterSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
 import type { Cluster, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
 
@@ -42,7 +42,7 @@ export interface Shadow {
 export type Decision =
   | { readonly kind: "reply"; readonly script: ScriptId; readonly text: string; readonly match: Match }
   | { readonly kind: "flow"; readonly flow: string; readonly script?: ScriptId; readonly text: string; readonly match: Match }
-  | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly match: Match; readonly said?: string }
+  | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly instruction: string; readonly match: Match; readonly said?: string }
   | { readonly kind: "ask"; readonly script: ScriptId; readonly slot: string; readonly text: string; readonly match: Match }
   | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow; readonly said?: string };
 
@@ -82,6 +82,27 @@ export interface FlowRunner {
  * it transferred the person, to the model), with what it said before handing it on.
  */
 type FlowTurn = { readonly answered: Decision } | { readonly said: readonly string[]; readonly transferred: boolean };
+
+/**
+ * How the model answered a step the dialogue passed: its reply; `{ acted: true }` when it
+ * called tools instead (a script must not answer such steps); nothing when the step
+ * teaches nothing (it failed, or was cut off).
+ */
+export type Outcome = string | { readonly acted: true } | undefined;
+
+/** A JSON value with its long strings left out (null): a result is kept for its short values, the only ones a reply repeats. */
+function short(json: unknown, max: number): unknown {
+  if (typeof json === "string") return json.length > max ? null : json;
+  if (Array.isArray(json)) return json.map((v) => short(v, max));
+  if (typeof json === "object" && json !== null) return Object.fromEntries(Object.entries(json).map(([k, v]) => [k, short(v, max)]));
+  return json;
+}
+
+/** A template as the model is shown it: its text, with each hole written {name}. */
+const shown = (template: TemplateConstraint) => template.parts.map((p) => (typeof p === "string" ? p : `{${p.hole}}`)).join("");
+
+/** A script's shape: what it says and when; a retired shape is not built again. */
+const shape = (s: Script) => JSON.stringify([s.reply, s.patterns, s.result, s.context]);
 
 /** Thrown by `tools.hear` when this turn's utterance is heard already: the flow waits for the next turn. */
 class AwaitingUtterance extends Error {}
@@ -151,6 +172,9 @@ function cosine(a: readonly number[], b: readonly number[]): number {
   });
   return na === 0 || nb === 0 ? 0 : Math.max(-1, Math.min(1, dot / Math.sqrt(na * nb)));
 }
+
+/** Which scripts come first: active before candidate, and in context before without. */
+const rank = (s: Script) => (s.status === "active" ? 0 : 2) + (s.context === undefined ? 1 : 0);
 
 /** A script as a tool for the router: named by its id, described by its intent, its slots as string parameters. */
 const toolSpec = (script: Script): ToolSpec => ({
@@ -228,6 +252,11 @@ export class Dialogue {
     for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true });
   }
 
+  /** The settings the dialogue runs with. */
+  get settings(): Settings {
+    return this.#settings;
+  }
+
   /** Every script, authored and built, in the order they were added. */
   get scripts(): readonly Script[] {
     return [...this.#scripts.values()];
@@ -245,10 +274,19 @@ export class Dialogue {
     this.#changed();
   }
 
-  /** Feedback from outside on a script's answers: counted as a fit (helpful) or a miss (harmful). */
-  feedback(id: string, kind: "helpful" | "harmful"): void {
+  /** Feedback from outside on a script's answers: counted as a fit (helpful; for the session, when named) or a miss (harmful). */
+  feedback(id: string, kind: "helpful" | "harmful", session?: string): void {
     if (!this.#scripts.has(id)) throw new Error(`no script ${id}`);
-    this.#count(id, kind === "helpful" ? "fits" : "misses");
+    this.#count(id, kind === "helpful" ? "fits" : "misses", session);
+  }
+
+  /** A turn of a session the dialogue did not see (the step was not one it answers): its form and context end there. */
+  skip(sessionId: string): void {
+    const state = this.#sessions.get(sessionId);
+    if (!state || (state.form === undefined && state.last === undefined)) return;
+    state.form = undefined;
+    state.last = undefined;
+    this.#changed();
   }
 
   /** What was authored and built, as a script book (see BookSchema). */
@@ -283,12 +321,20 @@ export class Dialogue {
   }
 
   /**
-   * The model's reply to a step (after `respond` passed it), to learn from; undefined
-   * when the model called tools instead. Learning happens in the background (see `idle`).
+   * How the model answered a step `respond` passed (see Outcome), to learn from. Learning
+   * happens in the background (see `idle`).
    */
-  observe(step: Step, decision: Decision, reply: string | undefined): void {
-    if (decision.kind !== "pass" || reply === undefined || reply.trim() === "") return;
-    const observation: Observation = { utterance: step.utterance, ...(step.result ? { result: step.result } : {}), reply: reply.trim() };
+  observe(step: Step, decision: Decision, outcome: Outcome): void {
+    if (decision.kind !== "pass" || outcome === undefined) return;
+    const acted = typeof outcome !== "string";
+    if (!acted && outcome.trim() === "") return;
+    const observation: Observation = {
+      utterance: step.utterance,
+      ...(step.result ? { result: this.#shortResult(step.result) } : {}),
+      reply: acted ? "" : outcome.trim(),
+      ...(step.sessionId === undefined ? {} : { session: step.sessionId }),
+      ...(acted ? { acted } : {}),
+    };
     const shadow = decision.shadow;
     // Learning is best effort: a failure (a model's among them) loses one observation, never a turn.
     this.#work = this.#work.then(() => (shadow ? this.#verify(shadow, observation) : this.#learn(observation, decision.context))).catch((e: unknown) => this.#failed(e));
@@ -309,7 +355,7 @@ export class Dialogue {
 
   async #onResult(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const result = step.result!;
-    const forTool = this.scripts.filter((s) => s.result?.tool === result.tool);
+    const forTool = this.scripts.filter((s) => s.result?.tool === result.tool && (s.context === undefined || s.context === context));
     for (const script of [...forTool.filter((s) => s.status === "active"), ...forTool.filter((s) => s.status === "candidate")]) {
       if (fill(script, { slots: {}, result }).kind === "missing") continue;
       return this.#answer({ script, slots: {}, match: { by: "result" } }, step, session, context);
@@ -353,15 +399,24 @@ export class Dialogue {
   async #answer(matched: Matched, step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const { script, slots, match } = matched;
     if (script.status === "candidate") return pass(`${script.id} is a candidate`, context, { script: script.id, slots, match });
+    // A built script is checked again now and then: the model answers in its place, in shadow.
+    // Every `audit` serves (an audit of 0 never: n % 0 is NaN).
+    // Audits count too, so the turn after an audit is served again.
+    if (script.origin !== "authored" && (script.evidence.served + script.evidence.audits + 1) % this.#settings.promote.audit === 0) {
+      this.#count(script.id, "audits");
+      return pass(`auditing ${script.id}`, context, { script: script.id, slots, match });
+    }
     const filled = fill(script, { slots, ...(step.result ? { result: step.result } : {}) });
     if (filled.kind === "text") return { kind: "reply", script: script.id, text: filled.text, match };
-    if (filled.kind === "template") return { kind: "generate", script: script.id, template: filled.template, match };
+    if (filled.kind === "template") return { kind: "generate", script: script.id, template: filled.template, instruction: `${this.#settings.generate.instruction}\n\n${shown(filled.template)}`, match };
     if (filled.kind === "flow") {
       if (!session || !this.#flows) return pass(`flow ${filled.flow} needs a session and a flow runner`, context);
       this.#count(script.id, "served");
       // A flow that passed a turn on and is still running gives way to this one.
       if (session.flow) await this.#forget(session.flow.run);
-      session.flow = { ...this.#newFlow(session, filled.flow, { utterance: step.utterance, slots, ...(step.result ? { result: step.result } : {}) }), script: script.id };
+      // A flow's input is saved with the session: a result's long values are left out, as in observations.
+      const result = step.result && this.#shortResult(step.result);
+      session.flow = { ...this.#newFlow(session, filled.flow, { utterance: step.utterance, slots, ...(result ? { result } : {}) }), script: script.id };
       const turn = await this.#runFlow(session, undefined, match);
       return "answered" in turn ? turn.answered : after(turn.said, pass(turn.transferred ? "the flow handed the person to the model" : `flow ${filled.flow} handed the turn on`, context));
     }
@@ -378,11 +433,16 @@ export class Dialogue {
     const script = this.#scripts.get(form.script);
     if (!script || script.status === "retired") return undefined;
     const slots = { ...form.slots };
-    for (const pattern of script.patterns) Object.assign(slots, matchPattern(pattern, utterance));
+    if (this.#short(utterance)) for (const pattern of script.patterns) Object.assign(slots, matchPattern(pattern, utterance));
     const value = slots[form.slot] ?? (await this.#valueFor(script, form.slot, utterance));
-    if (value !== undefined) return this.#answer({ script, slots: { ...slots, [form.slot]: value }, match: { by: "form" } }, step, session, context);
+    const answered = (value: string) => this.#answer({ script, slots: { ...slots, [form.slot]: value }, match: { by: "form" } }, step, session, context);
+    if (value !== undefined) return answered(value);
+    // Another script taking the answer comes before taking the whole answer as the value.
     const other = await this.#match(utterance, context, script.id);
     if (other) return this.#answer(other, step, session, context);
+    // A long answer is not a slot's value.
+    const whole = this.#router || script.slots[form.slot]!.pattern !== undefined || !this.#short(utterance) ? undefined : normalizeUtterance(utterance) || undefined;
+    if (whole !== undefined) return answered(whole);
     const tries = form.tries + 1;
     const prompts = script.slots[form.slot]!.prompts;
     if (tries >= prompts.length) return pass(`no ${form.slot} after ${tries} prompts`, context);
@@ -410,6 +470,7 @@ export class Dialogue {
     let handed: number | undefined;
     let transferred = false;
     let ended = true;
+    // Stryker disable StringLiteral: a tool's description is for code that reads it, not behavior
     const tools: ToolSet = {
       say: tool({ description: "Say text to the person.", inputSchema: z.object({ text: z.string() }), execute: async ({ text }) => (said.push(text), null) }),
       hear: tool({
@@ -424,6 +485,7 @@ export class Dialogue {
       pass: tool({ description: "Let the rest of the dialogue (scripts, then the model) answer this turn; keep going after it.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), null) }),
       transfer: tool({ description: "Hand the person over to the model: this turn is the model's, and the flow ends.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), (transferred = true), null) }),
     };
+    // Stryker restore StringLiteral
     try {
       const result = await this.#flows!.run(flow.name, flow.input, flow.run, tools);
       if (result.status === "failed") this.#failed(new Error(`flow ${flow.name} failed: ${result.error}`));
@@ -446,44 +508,61 @@ export class Dialogue {
     await this.#flows?.forget?.(run).catch((e: unknown) => this.#failed(e));
   }
 
-  /** A slot's value in an answer: by its value pattern, else the router's, else (with neither) the whole answer. */
+  /** A slot's value in an answer: by its value pattern (on an utterance short enough), else the router's. */
   async #valueFor(script: Script, slot: string, utterance: string): Promise<string | undefined> {
     const pattern = script.slots[slot]!.pattern;
-    if (pattern !== undefined) return findValue(pattern, utterance);
-    if (this.#router) return (await this.#pick(utterance, [script]))?.slots[slot];
-    return normalizeUtterance(utterance) || undefined;
+    if (pattern !== undefined) return this.#short(utterance) ? findValue(pattern, utterance) : undefined;
+    return (await this.#pick(utterance, [script]))?.slots[slot];
   }
 
-  /** The eligible scripts matching an utterance, cheapest way first: pattern, exemplar, router. */
+  /** A tool result with its long values left out, as observations and flows keep it. */
+  #shortResult(result: ToolResult): ToolResult {
+    const max = this.#settings.induce.valueLength;
+    // The short values of JSON are JSON.
+    return { tool: result.tool, input: short(result.input, max), output: short(result.output, max) } as ToolResult;
+  }
+
+  /** Whether an utterance is short enough for patterns (which bounds the time they take). */
+  #short(utterance: string): boolean {
+    return utterance.length <= this.#settings.match.maxLength;
+  }
+
+  /**
+   * The eligible scripts matching an utterance, cheapest way first: pattern, exemplar,
+   * router (active scripts only: a candidate is not worth a model call). Scripts in
+   * context come before those without, and active ones before candidates.
+   */
   async #match(utterance: string, context: ScriptId | undefined, exclude?: ScriptId): Promise<Matched | undefined> {
-    const rank = (s: Script) => (s.status === "active" ? 0 : 2) + (s.context === undefined ? 1 : 0);
     const eligible = this.scripts
       .filter((s) => s.result === undefined && s.status !== "retired" && s.id !== exclude && (s.context === undefined || s.context === context))
       .sort((a, b) => rank(a) - rank(b));
-    for (const script of eligible)
+    for (const script of this.#short(utterance) ? eligible : [])
       for (const pattern of script.patterns) {
         const slots = matchPattern(pattern, utterance);
         // A slot the pattern has a group for is where the group says, or not in the utterance at all.
         if (slots) return { script, slots: await this.#slotsFor(script, utterance, slots, { parsed: groupsOf(pattern) }), match: { by: "pattern" } };
       }
     const alike = await this.#nearestExemplar(utterance, eligible).catch((e: unknown) => this.#failed(e));
-    if (alike && alike.similarity >= this.#settings.match.similar) return { script: alike.script, slots: await this.#slotsFor(alike.script, utterance, {}), match: { by: "exemplar", similarity: alike.similarity } };
-    if (eligible.length === 0) return undefined;
-    const picked = await this.#pick(utterance, eligible);
+    if (alike) return { script: alike.script, slots: await this.#slotsFor(alike.script, utterance, {}), match: { by: "exemplar", similarity: alike.similarity } };
+    const active = eligible.filter((s) => s.status === "active");
+    if (active.length === 0) return undefined;
+    const picked = await this.#pick(utterance, active);
     return picked && { script: picked.script, slots: await this.#slotsFor(picked.script, utterance, picked.slots, { routed: true }), match: { by: "router", confidence: picked.confidence } };
   }
 
+  /** The best-ranked script with an exemplar alike enough (the most alike, among equals), and how alike. */
   async #nearestExemplar(utterance: string, scripts: readonly Script[]): Promise<{ script: Script; similarity: Similarity } | undefined> {
     const pairs = scripts.flatMap((script) => script.exemplars.map((exemplar) => ({ script, exemplar })));
     if (!this.#embedder || pairs.length === 0) return undefined;
     const { embedding: query } = await embed({ model: this.#embedder, value: utterance, maxRetries: 0, ...embedding({ kind: "query" }) });
     const documents = await this.#documents(pairs.map((p) => p.exemplar));
-    let best = { script: pairs[0]!.script, similarity: cosine(query, documents[0]!) };
+    let best: { script: Script; similarity: number } | undefined;
     pairs.forEach(({ script }, i) => {
       const s = cosine(query, documents[i]!);
-      if (s > best.similarity) best = { script, similarity: s };
+      if (s < this.#settings.match.similar) return;
+      if (best === undefined || rank(script) < rank(best.script) || (rank(script) === rank(best.script) && s > best.similarity)) best = { script, similarity: s };
     });
-    return { script: best.script, similarity: similarity(best.similarity) };
+    return best && { script: best.script, similarity: similarity(best.similarity) };
   }
 
   /** The router's one pick among scripts, at or above its threshold, with the slots it filled; nothing without a router, or when it fails. */
@@ -503,14 +582,15 @@ export class Dialogue {
    */
   async #slotsFor(script: Script, utterance: string, given: Record<string, string>, how: { readonly parsed?: readonly string[]; readonly routed?: true } = {}): Promise<Record<string, string>> {
     const needed = replySlots(script).filter((slot) => !how.parsed?.includes(slot));
-    const found = needed.flatMap((slot) => {
+    const found = (this.#short(utterance) ? needed : []).flatMap((slot) => {
       const pattern = script.slots[slot]!.pattern;
       // Stryker disable next-line ConditionalExpression: equivalent; no pattern is an empty one, which finds no value
       const value = pattern === undefined ? undefined : findValue(pattern, utterance);
       return value === undefined ? [] : [[slot, value] as const];
     });
     const slots = { ...Object.fromEntries(found), ...given };
-    if (how.routed || needed.every((slot) => slots[slot] !== undefined)) return slots;
+    // The router is asked only for an active script's slots: a candidate is not worth a model call.
+    if (how.routed || script.status !== "active" || needed.every((slot) => slots[slot] !== undefined)) return slots;
     const picked = await this.#pick(utterance, [script]);
     return { ...picked?.slots, ...slots };
   }
@@ -527,15 +607,33 @@ export class Dialogue {
 
   // ---- learning -----------------------------------------------------------------
 
+  /**
+   * Check a shadowed script (a candidate, or an active one being audited) against how the
+   * model answered: acting instead of replying is a miss; a reply that fits (or that the
+   * judge finds its own as good as) is a fit, counted only from a session the script was
+   * not built from; any other reply is a miss, and a candidate is induced again from its
+   * cluster with it.
+   */
   async #verify(shadow: Shadow, observation: Observation): Promise<void> {
     const script = this.#scripts.get(shadow.script);
-    if (!script || script.status !== "candidate") return;
-    const fillers = { slots: shadow.slots, ...(observation.result ? { result: observation.result } : {}) };
-    if (fits(script, observation.reply, { ...fillers, utterance: observation.utterance }) || (await this.#judged(script, fillers, observation))) return this.#count(script.id, "fits");
+    if (!script || script.status === "retired") return;
     const cluster = this.#clusters.find((c) => c.script === script.id);
-    if (cluster) {
+    if (observation.acted) {
+      if (cluster) cluster.acted = true;
+      this.#count(script.id, "misses");
+      // The model acts on steps like these: a candidate for them never answers.
+      if (script.status === "candidate") this.#set({ ...this.#scripts.get(script.id)!, status: "retired" });
+      return;
+    }
+    const fillers = { slots: shadow.slots, ...(observation.result ? { result: observation.result } : {}) };
+    if (fits(script, observation.reply, { ...fillers, utterance: observation.utterance }) || (await this.#judged(script, fillers, observation))) {
+      if (observation.session !== undefined && cluster?.observations.some((o) => o.session === observation.session)) return;
+      return this.#count(script.id, "fits", observation.session);
+    }
+    if (cluster && script.status === "candidate") {
       this.#add(cluster, observation);
-      this.#reinduce(cluster, script);
+      // Induced again, it is a new template, with no evidence yet: the miss was the old one's.
+      if (this.#reinduce(cluster, script)) return;
     }
     this.#count(script.id, "misses");
   }
@@ -557,6 +655,15 @@ export class Dialogue {
     const cluster = await this.#clusterFor(observation, context);
     this.#add(cluster, observation);
     const script = this.#scripts.get(cluster.script);
+    if (observation.acted) {
+      // The model acts on steps like these: nothing may answer them in its place.
+      cluster.acted = true;
+      if (script?.status === "candidate") {
+        this.#count(script.id, "misses");
+        this.#set({ ...this.#scripts.get(script.id)!, status: "retired" });
+      }
+      return this.#changed();
+    }
     if (script?.origin === "induced") this.#reinduce(cluster, script);
     else if (!script && cluster.observations.length >= this.#settings.induce.support) await this.#build(cluster);
     this.#changed();
@@ -581,19 +688,27 @@ export class Dialogue {
 
   /** How alike an utterance is to each of `heads`: by meaning with an embedder (by shape if it fails), else by shape. */
   async #similarities(utterance: string, heads: readonly string[]): Promise<number[]> {
-    const vectors = this.#embedder && (await this.#documents([utterance, ...heads]).catch((e: unknown) => this.#failed(e)));
-    return vectors ? vectors.slice(1).map((v) => cosine(vectors[0]!, v)) : heads.map((head) => shapeSimilarity(utterance, head));
+    const embedder = this.#embedder;
+    // The utterance is embedded each time (it is not kept); the heads are kept, as exemplars are.
+    const vectors =
+      embedder &&
+      (await Promise.all([embed({ model: embedder, value: utterance, maxRetries: 0, ...embedding({ kind: "document" }) }), this.#documents(heads)]).catch((e: unknown) => this.#failed(e)));
+    return vectors ? vectors[1].map((v) => cosine(vectors[0].embedding, v)) : heads.map((head) => shapeSimilarity(utterance, head));
   }
 
+  /** A new cluster; it is kept once an observation is added to it (see #add). */
   #newCluster(fields: { readonly tool?: string; readonly context?: ScriptId }): Cluster {
-    const cluster = ClusterSchema.parse({ ...fields, observations: [] });
-    this.#clusters.push(cluster);
-    return cluster;
+    return ClusterSchema.parse({ ...fields, observations: [] });
   }
 
+  /** Add an observation to a cluster, now the most recently added to; beyond the cap, the least recent cluster without a script goes. */
   #add(cluster: Cluster, observation: Observation): void {
     cluster.observations.push(observation);
     cluster.observations.splice(0, cluster.observations.length - this.#settings.induce.keep);
+    this.#clusters = [...this.#clusters.filter((c) => c !== cluster), cluster];
+    const idle = this.#clusters.filter((c) => c.script === undefined);
+    const over = new Set(idle.slice(0, Math.max(0, idle.length - this.#settings.induce.clusters)));
+    this.#clusters = this.#clusters.filter((c) => !over.has(c));
   }
 
   /** The next built script's id, skipping any an authored script took. */
@@ -602,28 +717,50 @@ export class Dialogue {
     return scriptId(`s${this.#next}`);
   }
 
-  /** A candidate from a cluster at the support: induced, else (for utterances, once) drafted. */
+  /** Whether a script has the shape of one retired before. */
+  #retired(script: Script): boolean {
+    return this.scripts.some((s) => s.status === "retired" && shape(s) === shape(script));
+  }
+
+  /**
+   * A candidate from a cluster at the support: induced, else (for utterances, once)
+   * drafted, when a draft could ever match (there is an embedder or a router). Never one
+   * shaped as a retired script.
+   */
   async #build(cluster: Cluster): Promise<void> {
     const induced = induce(cluster, this.#settings.induce, this.#nextId());
     if ("script" in induced) {
+      if (this.#retired(induced.script)) return;
       this.#next++;
       cluster.script = induced.script.id;
-      return this.#set(this.#due(induced.script));
+      return this.#set(induced.script);
     }
-    if (cluster.tool !== undefined || !this.#drafter || cluster.drafted) return;
+    // Drafts are held to the rules induction checks first: independent sessions, and no acting.
+    if (cluster.tool !== undefined || !this.#drafter || cluster.drafted || cluster.acted || (!this.#embedder && !this.#router)) return;
+    const sessions = new Set(cluster.observations.flatMap((o) => (o.session === undefined ? [] : [o.session]))).size;
+    if (sessions < this.#settings.induce.sessions) return;
     cluster.drafted = true;
     await this.#draft(cluster, this.#drafter);
   }
 
-  /** A drafted script, kept when it reproduces a reply the cluster saw, with its valid follow-ups. A failed draft builds nothing. */
+  /**
+   * A drafted script, kept when it reproduces a reply the cluster saw, as much of it
+   * determined without the model as induction requires and with no more holes; with its
+   * valid follow-ups. A failed draft builds nothing.
+   */
   async #draft(cluster: Cluster, drafter: LanguageModel): Promise<void> {
     const drafted = await draft(drafter, this.#settings.draft, cluster.observations);
     const main = draftedScript(drafted, this.#nextId(), cluster.context);
-    const fitting = cluster.observations.filter((o) => fits(main, o.reply, { slots: {}, utterance: o.utterance })).length;
-    if (fitting === 0) return;
+    const { determined, holes } = this.#settings.induce;
+    const reproduced = cluster.observations.some((o) => {
+      const read = readHoles(main, o.reply, { slots: {}, utterance: o.utterance });
+      const free = main.reply.flatMap((p) => (typeof p === "object" && "generate" in p ? [read?.[p.generate]?.length ?? 0] : [])).reduce((a, b) => a + b, 0);
+      return read !== undefined && 1 - free / o.reply.length >= determined;
+    });
+    if (!reproduced || main.reply.filter((p) => typeof p !== "string").length > holes || this.#retired(main)) return;
     this.#next++;
     cluster.script = main.id;
-    this.#set(this.#due({ ...main, evidence: { fits: fitting, misses: 0, served: 0 } }));
+    this.#set(main);
     let kept = 0;
     for (const followUp of drafted.followUps) {
       if (kept === this.#settings.draft.followUps) break;
@@ -637,24 +774,32 @@ export class Dialogue {
     }
   }
 
-  /** Induce a candidate again from its cluster, keeping its id, status and evidence (unless the cluster no longer aligns). */
-  #reinduce(cluster: Cluster, script: Script): void {
+  /** Induce a candidate again from its cluster (unless it no longer aligns): a new template, so its evidence starts again. */
+  #reinduce(cluster: Cluster, script: Script): boolean {
     const induced = induce(cluster, this.#settings.induce, script.id);
-    if ("script" in induced) this.#set({ ...induced.script, status: script.status, evidence: script.evidence });
+    if ("problem" in induced || this.#retired(induced.script)) return false;
+    this.#set({ ...induced.script, status: script.status });
+    return true;
   }
 
-  /** A script's status as its evidence has it: one misleading by the margin is retired; a candidate with enough fits is active. */
+  /**
+   * A script's status as its evidence has it: one misleading by the margin is retired; a
+   * candidate with enough fits, from enough sessions, is active.
+   */
   #due(script: Script): Script {
-    const { fits: fit, misses } = script.evidence;
+    const { fits: fit, misses, sessions } = script.evidence;
     const { fits: needed, retireMargin } = this.#settings.promote;
     if (misses - fit >= retireMargin) return { ...script, status: "retired" };
-    if (script.status === "candidate" && fit >= needed) return { ...script, status: "active" };
+    if (script.status === "candidate" && fit >= needed && sessions.length >= this.#settings.promote.sessions) return { ...script, status: "active" };
     return script;
   }
 
-  #count(id: string, field: "fits" | "misses" | "served"): void {
+  /** Count a fit (from a session, if named), a miss, or a time served, and apply what it means. */
+  #count(id: string, field: "fits" | "misses" | "served" | "audits", session?: string): void {
     const script = this.#scripts.get(id)!;
-    this.#set(this.#due({ ...script, evidence: { ...script.evidence, [field]: script.evidence[field] + 1 } }));
+    const { sessions } = script.evidence;
+    const counted = session === undefined || sessions.includes(session) || sessions.length >= this.#settings.promote.sessionsKept ? sessions : [...sessions, session];
+    this.#set(this.#due({ ...script, evidence: { ...script.evidence, [field]: script.evidence[field] + 1, sessions: counted } }));
   }
 
   /** Keep a script; a cluster is dropped once its script is no longer a candidate (its observations are no longer needed). */

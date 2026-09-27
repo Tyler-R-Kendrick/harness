@@ -25,8 +25,8 @@ const Name = z.string().regex(/^[a-z][a-z0-9_]*$/, "a slot or hole is named in s
 /** A refinement's issue: `message` at `path`. */
 const issue = (ctx: z.core.$RefinementCtx, message: string, path: (string | number)[]) => ctx.addIssue({ code: "custom", message, path });
 
-/** Patterns match whole utterances, ignoring case. */
-export const PATTERN_FLAGS = "iu";
+/** Patterns match whole utterances, ignoring case, `.` matching line breaks too. */
+export const PATTERN_FLAGS = "isu";
 const Regex = z
   .string()
   .min(1)
@@ -80,12 +80,19 @@ export const SCRIPT_STATUSES = ["active", "candidate", "retired"] as const;
 export type ScriptStatus = (typeof SCRIPT_STATUSES)[number];
 
 export const EvidenceSchema = z.strictObject({
-  /** Times the model's own reply fit the script (or a judge found it as good), and feedback that it helped. */
+  /**
+   * Times the model's own reply fit the script (or a judge found it as good), and feedback
+   * that it helped; never the steps it was built from.
+   */
   fits: z.int().min(0),
   /** Times the model said something else, and feedback that it misled. */
   misses: z.int().min(0),
   /** Times it answered. */
   served: z.int().min(0),
+  /** Times the model answered in its place, in shadow, to check it (see `promote.audit`). */
+  audits: z.int().min(0).default(0),
+  /** Sessions its fits came from (a few, distinct): promotion needs several. */
+  sessions: z.array(text).readonly().default([]),
 });
 export type Evidence = z.output<typeof EvidenceSchema>;
 
@@ -109,7 +116,7 @@ export const ScriptSchema = z
     result: z.strictObject({ tool: text }).exactOptional(),
     slots: z.record(Name, SlotSchema).default({}),
     reply: z.array(PartSchema).min(1).readonly(),
-    evidence: EvidenceSchema.default({ fits: 0, misses: 0, served: 0 }),
+    evidence: EvidenceSchema.default({ fits: 0, misses: 0, served: 0, audits: 0, sessions: [] }),
   })
   .superRefine((s, ctx) => {
     if (s.context === s.id) issue(ctx, "a script cannot be its own context", ["context"]);
@@ -155,8 +162,18 @@ export const SessionSchema = z.strictObject({
 });
 export type SessionSave = z.output<typeof SessionSchema>;
 
-/** A step the model answered: what the user said last, the tool result it followed (if any), and the reply. */
-export const ObservationSchema = z.strictObject({ utterance: z.string(), result: ResultSchema.exactOptional(), reply: z.string() });
+/**
+ * A step the model answered: what the user said last, the tool result it followed (if
+ * any, with its short values only), the reply, and the session. `acted` marks a step the
+ * model answered by calling tools, with no reply.
+ */
+export const ObservationSchema = z.strictObject({
+  utterance: z.string(),
+  result: ResultSchema.exactOptional(),
+  reply: z.string(),
+  session: text.exactOptional(),
+  acted: z.literal(true).exactOptional(),
+});
 export type Observation = z.output<typeof ObservationSchema>;
 
 /**
@@ -170,6 +187,8 @@ export const ClusterSchema = z.strictObject({
   script: ScriptIdSchema.exactOptional(),
   /** Whether the drafter was asked for a script (once per cluster). */
   drafted: z.boolean().default(false),
+  /** Whether the model ever acted (called tools) on a step like these: then no script may answer them. */
+  acted: z.boolean().default(false),
   observations: z.array(ObservationSchema),
 });
 export type Cluster = z.output<typeof ClusterSchema>;
@@ -217,6 +236,8 @@ export const SettingsSchema = z.strictObject({
     similar: SimilaritySchema,
     /** Router confidence at or above which its pick of a script is taken. */
     route: ProbabilitySchema,
+    /** Utterances longer than this (in characters) are not matched by patterns, which bounds their time. */
+    maxLength: z.int().positive(),
   }),
   induce: z
     .strictObject({
@@ -234,17 +255,40 @@ export const SettingsSchema = z.strictObject({
       holes: z.int().min(0),
       /** Observations kept per cluster (the latest). */
       keep: z.int().min(2),
+      /** Sessions a cluster's observations must come from before a script is built from it: one person's replies are not everyone's. */
+      sessions: z.int().min(1),
+      /** Clusters without a script kept; beyond it, the one least recently added to goes. */
+      clusters: z.int().positive(),
+      /** The most words an induced slot that is not digits takes. */
+      words: z.int().positive(),
+      /** A tool result's values kept with an observation are at most this long (longer ones are left out). */
+      valueLength: z.int().positive(),
     })
     .refine((i) => i.keep >= i.support, "keep at least support observations"),
-  promote: z.strictObject({
-    /** Fits at which a candidate becomes active. */
-    fits: z.int().min(1),
-    /** A script whose misses exceed its fits by this much is retired. */
-    retireMargin: z.int().min(1),
-    /** Judge probability at or above which a candidate's rendering counts as a fit. */
-    judge: ProbabilitySchema,
-    /** Asked of the judge about `request`, the model's `reply` and the script's `candidate`. */
-    question: text,
+  promote: z
+    .strictObject({
+      /** Fits at which a candidate becomes active... */
+      fits: z.int().min(1),
+      /** ...from at least this many sessions, none of those it was built from. */
+      sessions: z.int().min(0),
+      /** An active built script is audited every this many times it would answer: the model answers in its place, in shadow (0: never). */
+      audit: z.int().min(0),
+      /** Distinct sessions a script's evidence names (the first ones). */
+      sessionsKept: z.int().min(1),
+      /** A script whose misses exceed its fits by this much is retired. */
+      retireMargin: z.int().min(1),
+      /** Judge probability at or above which a candidate's rendering counts as a fit. */
+      judge: ProbabilitySchema,
+      /** Asked of the judge about `request`, the model's `reply` and the script's `candidate`. */
+      question: text,
+    })
+    .refine((p) => p.sessionsKept >= p.sessions, "keep at least as many sessions as promotion needs"),
+  generate: z.strictObject({
+    /**
+     * Put before a script's template when the model writes its holes, for models that do not
+     * enforce the template: the template follows, its holes written {name}.
+     */
+    instruction: text,
   }),
   draft: z.strictObject({
     /** Instructions for the drafter model; it answers with a draft (see DraftSchema). */

@@ -3,7 +3,7 @@ import { embed, experimental_evaluate, generateText, streamText } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
-import { buildDialogue, buildNativeEnsemble, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
+import { buildDialogue, buildNativeEnsemble, dialogueSaves, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
 
 const catalog = loadCatalog();
 const native = catalog.models.filter((m) => m.platforms.includes("native"));
@@ -363,7 +363,7 @@ require("node:http").createServer((req, res) => {
     const host = buildNativeEnsemble({ cacheDir: await tempDir("cache-"), allowHosted: false, catalog: { models: [], preferences: {} }, transformers: fakeTransformers({ embeddingWidth: 768 }).module, memory: { dimensions: dimensions(128) } });
     host.ensemble.register({ ...byRuntime("transformers.js"), id: "local/router", tasks: ["tool-calling"], ports: ["router"] } as never, async () => ({ router: keywordRouterModel() }));
     const book = { scripts: [{ id: "opening_hours", intent: "opening hours", reply: ["We open at 9."] }] };
-    const dialogue = buildDialogue({ ensemble: host.ensemble, embeddings: true, book, persist: (s) => saves.push(s) });
+    const dialogue = buildDialogue({ ensemble: host.ensemble, embeddings: true, book, persist: (s) => saves.push(s()) });
     expect(await dialogue.respond({ utterance: "what are your opening hours" })).toMatchObject({ kind: "reply", text: "We open at 9.", match: { by: "router" } });
     expect(saves).toHaveLength(1);
     expect(buildDialogue({ book: saves[0] }).script("opening_hours")!.evidence.served).toBe(1);
@@ -375,6 +375,39 @@ require("node:http").createServer((req, res) => {
     expect(errors).toHaveLength(1);
     expect(loadDialogueSettings().induce.support).toBeGreaterThanOrEqual(2);
     await host.close();
+  });
+
+  it("CH3.6 a dialogue's saves go one at a time, each of the latest state: changes while one is being saved make one more; a failed save is reported, and the next change saves again", async () => {
+    const written: unknown[] = [];
+    const errors: unknown[] = [];
+    let release!: () => void;
+    let fail = false;
+    const storage = {
+      save: async (v: unknown) => {
+        if (written.length === 0) await new Promise<void>((r) => (release = r));
+        if (fail) throw new Error("disk full");
+        written.push(v);
+      },
+    };
+    const saves = dialogueSaves(storage, (e) => void errors.push(e));
+    let state = 0;
+    const snapshot = () => ++state;
+    saves.persist(snapshot);
+    await Promise.resolve();
+    saves.persist(snapshot);
+    saves.persist(snapshot);
+    saves.persist(snapshot);
+    release();
+    await saves.settled();
+    expect(written).toEqual([1, 2]);
+    fail = true;
+    saves.persist(snapshot);
+    await saves.settled();
+    expect(errors.map((e) => (e as Error).message)).toEqual(["disk full"]);
+    fail = false;
+    saves.persist(snapshot);
+    await saves.settled();
+    expect(written).toEqual([1, 2, 4]);
   });
 
   it("CH3.4 with workflows, learning gets the shipped plugins: a learned procedure becomes a workflow that runs durably from the library", async () => {

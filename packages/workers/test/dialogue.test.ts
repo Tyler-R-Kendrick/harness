@@ -30,7 +30,7 @@ const book = {
   ],
 };
 
-type Say = string | { readonly tool: string; readonly input: Record<string, unknown> } | { readonly error: string };
+type Say = string | { readonly tool: string; readonly input: Record<string, unknown> } | { readonly error: string } | { readonly cut: string };
 
 /** A model that says `say(call)`: text, a tool call or a failure, generated or streamed. It records its calls. */
 function replyModel(say: (call: LanguageModelV4CallOptions) => Say): MockLanguageModelV4 & { readonly calls: LanguageModelV4CallOptions[] } {
@@ -39,6 +39,8 @@ function replyModel(say: (call: LanguageModelV4CallOptions) => Say): MockLanguag
     const start: LanguageModelV4StreamPart = { type: "stream-start", warnings: [] };
     if (typeof s === "string")
       return [start, { type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: s }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usage() }];
+    if ("cut" in s)
+      return [start, { type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: s.cut }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "length", raw: undefined }, usage: usage() }];
     if ("error" in s) return [start, { type: "error", error: new Error(s.error) }, { type: "finish", finishReason: { unified: "error", raw: undefined }, usage: usage() }];
     return [start, { type: "tool-call", toolCallId: "call_0", toolName: s.tool, input: JSON.stringify(s.input) }, { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: usage() }];
   };
@@ -88,8 +90,8 @@ describe("dialogueMiddleware", () => {
 
   it("DW1.3 a step no script answers goes to the model, and its reply, generated or streamed, is observed", async () => {
     const { inner, dialogue, model } = setup((call) => `Checking order ${/\d+/.exec(lastText(call.prompt))![0]}.`);
-    expect((await generateText({ model, prompt: "where are order 12" })).text).toBe("Checking order 12.");
-    expect(await streamText({ model, prompt: "where are order 34" }).text).toBe("Checking order 34.");
+    expect((await generateText({ model, prompt: "where are order 12", ...inSession("a") })).text).toBe("Checking order 12.");
+    expect(await streamText({ model, prompt: "where are order 34", ...inSession("b") }).text).toBe("Checking order 34.");
     await dialogue.idle();
     expect(inner.calls).toHaveLength(2);
     expect(dialogue.script("s1")).toMatchObject({ status: "candidate", reply: ["Checking order ", { slot: "slot_1" }, "."] });
@@ -132,7 +134,8 @@ describe("dialogueMiddleware", () => {
     expect(result.text).toBe("Order 1234 is shipped and arrives Tuesday.");
     expect(inner.calls).toHaveLength(1);
     await dialogue.idle();
-    expect(dialogue.save()).toMatchObject({ clusters: [] });
+    // The model acted on the request (it called a tool): requests like it are the model's.
+    expect(dialogue.save()).toMatchObject({ clusters: [{ acted: true }] });
   });
 
   it("DW1.7 calls that are not chat turns, and a dialogue that fails, go to the model", async () => {
@@ -150,15 +153,132 @@ describe("dialogueMiddleware", () => {
     expect((await streamText({ model: failing.model, prompt: "where is order 1234" }).text)).toBe("the model's reply");
   });
 
-  it("DW1.8 streams where the model called tools, or failed, teach nothing", async () => {
-    for (const say of [{ tool: "track_order", input: { id: 1 } }, { error: "overloaded" }] as const) {
+  it("DW1.8 a step the model acted on (it called tools), generated or streamed, marks its kind as the model's: nothing is built for it", async () => {
+    const { dialogue, model } = setup(() => ({ tool: "track_order", input: { id: 1 } }));
+    for (const n of [1, 2]) {
+      await generateText({ model, prompt: `cancel my order ${n} now`, tools: { track_order: tool({ inputSchema: z.object({ id: z.number() }) }) }, ...inSession(`s-${n}`) });
+      const { stream } = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: `cancel my order ${n + 2} now` }] }], ...inSession(`t-${n}`) });
+      for await (const _ of stream as unknown as AsyncIterable<unknown>) void _;
+    }
+    await dialogue.idle();
+    expect(dialogue.save()).toMatchObject({ clusters: [{ acted: true, observations: { length: 4 } }] });
+    expect(dialogue.scripts.filter((s) => s.origin !== "authored")).toEqual([]);
+  });
+
+  it("DW1.10 replies that failed or were cut short, generated or streamed, teach nothing", async () => {
+    for (const say of [{ error: "overloaded" }, { cut: "Checking order" }] as const) {
       const { dialogue, model } = setup(() => say);
       for (const n of [1, 2]) {
         const { stream } = await model.doStream({ prompt: [{ role: "user", content: [{ type: "text", text: `say something ${n}` }] }] });
         for await (const _ of stream as unknown as AsyncIterable<unknown>) void _;
+        if ("cut" in say) await generateText({ model, prompt: `say something else ${n}` });
       }
       await dialogue.idle();
       expect(dialogue.save()).toMatchObject({ clusters: [] });
+    }
+  });
+
+  it("DW1.11 a user turn in a session that is not a step (it has a file) ends the session's form and context", async () => {
+    const { inner, model } = setup();
+    expect((await generateText({ model, prompt: "book a table", ...session })).text).toBe("For what time?");
+    const image = { role: "user" as const, content: [{ type: "text" as const, text: "what is this" }, { type: "image" as const, image: new Uint8Array([1]), mediaType: "image/png" }] };
+    await generateText({ model, messages: [image], ...session });
+    expect((await generateText({ model, prompt: "7pm", ...session })).text).toBe("the model's reply");
+    expect(inner.calls).toHaveLength(2);
+    // A call that is not a user turn (it ends with a tool's results) leaves the session as it was.
+    await generateText({ model, prompt: "where is order 5", ...session });
+    await model.doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "x" }] }, { role: "tool", content: [] }], ...session });
+    expect((await generateText({ model, prompt: "yes please", ...session })).providerMetadata?.[HARNESS]?.["dialogue"]).toMatchObject({ script: "confirm-cancel" });
+  });
+
+  it("DW1.13 a turn the model fails and the AI SDK retries is decided once, and each reply is observed once", async () => {
+    let fail = true;
+    const { dialogue, model } = setup(() => {
+      if (!fail) return "the model's reply";
+      fail = false;
+      throw new Error("overloaded");
+    });
+    const responded: Step[] = [];
+    const respond = dialogue.respond.bind(dialogue);
+    dialogue.respond = async (s) => {
+      responded.push(s);
+      return respond(s);
+    };
+    const turn = () => ({ prompt: [{ role: "user" as const, content: [{ type: "text" as const, text: "tell me a joke" }] }], ...session });
+    await expect(model.doGenerate(turn())).rejects.toThrow("overloaded");
+    expect((await model.doGenerate(turn())).content).toEqual([{ type: "text", text: "the model's reply" }]);
+    expect(responded).toHaveLength(1);
+    // Succeeded, the next call is a new turn, streamed as well.
+    fail = true;
+    await expect(model.doStream(turn())).rejects.toThrow("overloaded");
+    const { stream } = await model.doStream(turn());
+    for await (const _ of stream as unknown as AsyncIterable<unknown>) void _;
+    expect(responded).toHaveLength(2);
+    // Another session's turn, or a call a program shaped, keeps the pending decision.
+    fail = true;
+    await expect(model.doGenerate(turn())).rejects.toThrow("overloaded");
+    await generateText({ model, prompt: "tell me a joke", ...inSession("session-2") });
+    await generateText({ model, prompt: "tell me a joke", ...session, ...constrain({ type: "regex", pattern: "[a-z ]+" }) });
+    await model.doGenerate(turn());
+    expect(responded).toHaveLength(4);
+    await dialogue.idle();
+    expect(dialogue.save()).toMatchObject({ clusters: [{ observations: { length: 4 } }] });
+  });
+
+  it("DW1.15 a call after a failure is the same turn only when its whole prompt is; pending decisions are kept for as many sessions as the dialogue keeps", async () => {
+    let fail = true;
+    const few = new Dialogue({ settings: parseSettings({ ...settingsFile, sessions: 1 }), book });
+    const { dialogue, model } = setup(() => {
+      if (fail) throw new Error("overloaded");
+      return "the model's reply";
+    }, few);
+    const responded: string[] = [];
+    const respond = dialogue.respond.bind(dialogue);
+    dialogue.respond = async (s) => (responded.push(s.sessionId ?? ""), respond(s));
+    const turn = (earlier: string, sessionId: string) => ({
+      prompt: [
+        { role: "user" as const, content: [{ type: "text" as const, text: earlier }] },
+        { role: "assistant" as const, content: [{ type: "text" as const, text: "ok" }] },
+        { role: "user" as const, content: [{ type: "text" as const, text: "tell me a joke" }] },
+      ],
+      ...inSession(sessionId),
+    });
+    await expect(model.doGenerate(turn("first", "a"))).rejects.toThrow("overloaded");
+    // An earlier message edited, the same length and the same last words: a new turn.
+    await expect(model.doGenerate(turn("fist!", "a"))).rejects.toThrow("overloaded");
+    expect(responded).toEqual(["a", "a"]);
+    // Another session's pending decision pushes out the first (the dialogue keeps one session).
+    await expect(model.doGenerate(turn("first", "b"))).rejects.toThrow("overloaded");
+    fail = false;
+    await model.doGenerate(turn("fist!", "a"));
+    // ...and the first, decided again, pushes out the second.
+    await model.doGenerate(turn("first", "b"));
+    expect(responded).toEqual(["a", "a", "b", "a", "b"]);
+  });
+
+  it("DW1.14 a call a program shaped (constrained, JSON or a forced tool), even with options it cannot read, leaves the session's form as it was", async () => {
+    const { inner, model } = setup((call) => (call.toolChoice?.type === "required" ? { tool: "t", input: {} } : "the model's reply"));
+    expect((await generateText({ model, prompt: "book a table", ...session })).text).toBe("For what time?");
+    await generateText({ model, prompt: "what time is it", ...session, ...constrain({ type: "regex", pattern: "[a-z ]+" }) });
+    await generateText({ model, prompt: "what time is it", tools: { t: tool({ inputSchema: z.object({}) }) }, toolChoice: "required", ...session });
+    await model.doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "what time is it" }] }], providerOptions: { [HARNESS]: { session: "session-1", constraint: { type: "nonsense" } } } });
+    expect(inner.calls).toHaveLength(3);
+    expect((await generateText({ model, prompt: "7pm", ...session })).text).toBe("Booked for 7pm.");
+  });
+
+  it("DW1.12 a template's holes come with an instruction showing the template, for models that do not enforce it, and the answer says whether the reply fits it", async () => {
+    for (const [said, fitted] of [["Done: order 5 is cancelled.", true], ["Sure, cancelled it.", false]] as const) {
+      const { inner, model } = setup(() => said);
+      await generateText({ model, system: "Be brief.", prompt: "where is order 5", ...session });
+      const result = await generateText({ model, system: "Be brief.", prompt: "yes please", ...session });
+      const prompt = inner.calls[0]!.prompt;
+      expect(prompt.map((m) => m.role)).toEqual(["system", "system", "user"]);
+      expect(prompt[1]).toEqual({ role: "system", content: `${settings.generate.instruction}\n\nDone: {summary}.` });
+      expect(result.providerMetadata?.[HARNESS]?.["dialogue"]).toMatchObject({ script: "confirm-cancel", fitted });
+      await generateText({ model, prompt: "where is order 5", ...session });
+      const streamed = streamText({ model, prompt: "yes please", ...session });
+      expect((await streamed.providerMetadata)?.[HARNESS]?.["dialogue"]).toMatchObject({ fitted });
+      expect(inner.calls[1]!.prompt[0]).toMatchObject({ role: "system" });
     }
   });
 });

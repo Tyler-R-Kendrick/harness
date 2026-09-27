@@ -4,8 +4,32 @@ import { fits } from "./render.ts";
 import { ScriptSchema } from "./schemas.ts";
 import type { Observation, Part, Path, Script, ScriptId, Settings } from "./schemas.ts";
 
-/** An utterance without whitespace around it and closing punctuation, as patterns match it. */
-export const normalizeUtterance = (utterance: string): string => utterance.trim().replace(/[\s.?!…]+$/u, "");
+const CLOSING = new Set([".", "?", "!", "…"]);
+
+/** An utterance without whitespace around it and closing punctuation, as patterns match it (in time linear in its length). */
+export function normalizeUtterance(utterance: string): string {
+  const text = utterance.trim();
+  let end = text.length;
+  while (end > 0 && (CLOSING.has(text[end - 1]!) || /\s/.test(text[end - 1]!))) end--;
+  return text.slice(0, end);
+}
+
+const EMAIL = /^[^@]+@[^@]+$/;
+const LINK = /^https?:\/\//i;
+
+/**
+ * What people said, as an exemplar to keep: numbers, email addresses and links masked,
+ * so a script does not carry them.
+ */
+export const maskExemplar = (utterance: string): string =>
+  // Word by word, so masking takes time linear in the utterance's length.
+  normalizeUtterance(utterance)
+    .split(/(\s+)/)
+    .map((w) => (LINK.test(w) ? "{link}" : EMAIL.test(w) ? "{email}" : w.replace(/\d+/g, "{number}")))
+    .join("");
+
+/** A gap of a pattern: a few words (`induce.words` at most), not anything (a bounded group cannot backtrack for long). */
+const wordsGroup = (words: number) => String.raw`\S+(?:\s+\S+){0,${words - 1}}?`;
 
 /** Text as a regular expression matching it, any run of whitespace matching any other. */
 const literal = (text: string) =>
@@ -67,17 +91,22 @@ function replyParts(replies: Alignment, source: (g: number, values: readonly str
  * call's input or output reads that path. In an utterance cluster, the utterances are
  * aligned too; when they share enough text they become a pattern whose gaps are slots,
  * and a hole repeating a slot in every observation is that slot. Every other hole is
- * generated. The script is a candidate, with a fit for each observation it reproduces.
- * It is refused (with the reason) when too little of the replies is determined without
- * the model, or they have too many holes.
+ * generated. The script is a candidate with no evidence: the observations it was built
+ * from are not fits. It is refused (with the reason) when the model ever acted on steps
+ * like these, when they come from too few sessions (one person's replies are not
+ * everyone's), when too little of the replies is determined without the model, when
+ * they have too many holes, or when too few of them fit it.
  */
 export function induce(
-  cluster: { readonly context?: ScriptId; readonly tool?: string; readonly observations: readonly Observation[] },
+  cluster: { readonly context?: ScriptId; readonly tool?: string; readonly acted?: boolean; readonly observations: readonly Observation[] },
   settings: Settings["induce"],
   id: ScriptId,
 ): { script: Script } | { problem: string } {
   const { observations, tool } = cluster;
+  if (cluster.acted) return { problem: "the model acted on steps like these" };
   if (observations.length < settings.support) return { problem: `${observations.length} observation(s), fewer than ${settings.support}` };
+  const sessions = new Set(observations.flatMap((o) => (o.session === undefined ? [] : [o.session]))).size;
+  if (sessions < settings.sessions) return { problem: `observations from ${sessions} session(s), fewer than ${settings.sessions}` };
   if (observations.every((o) => o.reply.trim() === "")) return { problem: "the replies are empty" };
   const replies = align(observations.map((o) => o.reply.trim()));
   const base = { id, status: "candidate", origin: "induced", ...(cluster.context === undefined ? {} : { context: cluster.context }) };
@@ -94,7 +123,8 @@ export function induce(
       { ignoreCase: true },
     );
     // Utterances are trimmed and whitespace between gaps joins them, so a segment is fixed words or nothing.
-    const patterned = utterances.segments.some((s) => s !== "") && fixedShare(utterances) >= settings.determined;
+    const gaps = utterances.segments.length - 1;
+    const patterned = utterances.segments.some((s) => s !== "") && gaps <= settings.holes && fixedShare(utterances) >= settings.determined;
     // A reply gap repeating one utterance gap in every observation is that gap's slot.
     const slotOf = (g: number): Part | undefined => {
       const i = utterances.values[0]!.findIndex((_, i) => observations.every((_, j) => replies.values[j]![g] === utterances.values[j]![i]));
@@ -102,17 +132,20 @@ export function induce(
     };
     ({ parts, determined } = replyParts(replies, slotOf));
     if (patterned) {
-      const gaps = utterances.segments.length - 1;
       const masked = utterances.segments.map((s, i) => (i < gaps ? `${s}{slot_${i + 1}}` : s)).join("");
-      // A gap some utterance leaves empty may be empty.
-      const group = (i: number) => `(?<slot_${i + 1}>${utterances.values.some((v) => v[i] === "") ? ".*?" : ".+?"})`;
+      const digits = (i: number) => observations.every((_, j) => /^\d+$/.test(utterances.values[j]![i]!));
+      // A gap is its values' kind of text (digits, or a few words); one some utterance leaves
+      // empty may be left out, with the whitespace that would follow it.
+      const group = (i: number) => {
+        const body = `(?<slot_${i + 1}>${digits(i) ? "\\d+" : wordsGroup(settings.words)})`;
+        if (!utterances.values.some((v) => v[i] === "")) return body;
+        return /^\s/.test(utterances.segments[i + 1]!) ? `${body}?` : `(?:${body}\\s+)?`;
+      };
       const pattern = utterances.segments.map((s, i) => (i < gaps ? `${literal(s)}${group(i)}` : literal(s))).join("");
-      const slots = Object.fromEntries(
-        Array.from({ length: gaps }, (_, i) => [`slot_${i + 1}`, observations.every((_, j) => /^\d+$/.test(utterances.values[j]![i]!)) ? { pattern: "\\d+" } : {}]),
-      );
+      const slots = Object.fromEntries(Array.from({ length: gaps }, (_, i) => [`slot_${i + 1}`, digits(i) ? { pattern: "\\d+" } : {}]));
       script = { ...base, intent: masked, patterns: [pattern], exemplars: [masked], slots, reply: parts };
     } else {
-      const said = [...new Set(observations.map((o) => normalizeUtterance(o.utterance)))];
+      const said = [...new Set(observations.map((o) => maskExemplar(o.utterance)))];
       script = { ...base, intent: said[0], exemplars: said, reply: parts };
     }
   }
@@ -122,5 +155,6 @@ export function induce(
 
   const induced = ScriptSchema.parse(script);
   const fitting = observations.filter((o) => fits(induced, o.reply, { slots: {}, ...(o.result ? { result: o.result } : {}), utterance: o.utterance })).length;
-  return { script: { ...induced, evidence: { fits: fitting, misses: 0, served: 0 } } };
+  if (fitting < settings.support) return { problem: `${fitting} observation(s) fit the script, fewer than ${settings.support}` };
+  return { script: induced };
 }

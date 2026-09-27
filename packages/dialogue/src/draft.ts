@@ -1,6 +1,7 @@
 import { generateText, Output } from "ai";
 import type { LanguageModel } from "ai";
 import { z } from "zod";
+import { exponential } from "./render.ts";
 import { ScriptSchema } from "./schemas.ts";
 import type { Observation, Part, Script, ScriptId, Settings } from "./schemas.ts";
 
@@ -32,8 +33,10 @@ export async function draft(model: LanguageModel, settings: Settings["draft"], o
   return output;
 }
 
-/** A drafted script as a candidate script (parsed: an invalid one throws). */
+/** A drafted script as a candidate script (parsed: an invalid one, or one with a slot pattern that could take exponential time, throws). */
 export function draftedScript(drafted: DraftedScript, id: ScriptId, context: ScriptId | undefined): Script {
+  const risky = drafted.slots.find((s) => s.pattern !== undefined && exponential(s.pattern));
+  if (risky) throw new Error(`drafted slot ${risky.name} has a pattern that can take exponential time: ${risky.pattern}`);
   const reply = drafted.reply.flatMap((p): Part[] => ("text" in p ? (p.text === "" ? [] : [p.text]) : "slot" in p ? [{ slot: p.slot }] : [{ generate: p.generate }]));
   const slots = Object.fromEntries(
     drafted.slots.map((s) => [s.name, { description: s.description, ...(s.pattern === undefined ? {} : { pattern: s.pattern }), prompts: s.prompt === undefined ? [] : [s.prompt] }]),

@@ -65,6 +65,7 @@ describe("matching", () => {
       kind: "generate",
       script: "confirm-cancel",
       template: { type: "template", parts: ["Done: ", { hole: "summary", constraint: { type: "regex", pattern: "[^\\n]{1,80}" } }, "."] },
+      instruction: `${settings().generate.instruction}\n\nDone: {summary}.`,
       match: { by: "pattern" },
     });
     await d.respond(step("where is order 5"));
@@ -187,9 +188,9 @@ describe("candidates: shadowing, promotion and retirement", () => {
       reason: "hours is a candidate",
       shadow: { script: "hours", slots: {}, match: { by: "pattern" } },
     });
-    expect(d.script("hours")).toMatchObject({ status: "candidate", evidence: { fits: 1 } });
-    await answered(d, step("when are you open"), " We open at 9.\n");
-    expect(d.script("hours")).toMatchObject({ status: "active", evidence: { fits: 2 } });
+    expect(d.script("hours")).toMatchObject({ status: "candidate", evidence: { fits: 1, sessions: [S] } });
+    await answered(d, step("when are you open", "session-2"), " We open at 9.\n");
+    expect(d.script("hours")).toMatchObject({ status: "active", evidence: { fits: 2, sessions: [S, "session-2"] } });
     expect(await d.respond(step("when are you open"))).toMatchObject({ kind: "reply", text: "We open at 9." });
   });
 
@@ -229,8 +230,8 @@ describe("candidates: shadowing, promotion and retirement", () => {
   });
 
   it("PM1.5 feedback counts like shadowing: helpful promotes a candidate, harmful retires an active script", () => {
-    const d = new Dialogue({ settings: settings({ promote: { fits: 2 } }), book: hours("candidate", 1) });
-    d.feedback("hours", "helpful");
+    const d = new Dialogue({ settings: settings({ promote: { fits: 2, sessions: 1 } }), book: hours("candidate", 1) });
+    d.feedback("hours", "helpful", S);
     expect(d.script("hours")!.status).toBe("active");
     d.feedback("hours", "harmful");
     d.feedback("hours", "harmful");
@@ -241,14 +242,15 @@ describe("candidates: shadowing, promotion and retirement", () => {
     expect(() => d.feedback("nope", "helpful")).toThrow(/no script nope/);
   });
 
-  it("PM1.6 a shadowed candidate that was promoted meanwhile is not counted again", async () => {
-    const d = new Dialogue({ settings: settings({ promote: { fits: 2 } }), book: hours("candidate", 1) });
+  it("PM1.6 a shadowed script that was retired meanwhile is not checked", async () => {
+    const d = new Dialogue({ settings: settings(), book: hours("candidate", 1) });
     const s = step("when are you open");
     const decision = await d.respond(s);
-    d.feedback("hours", "helpful");
+    for (let i = 0; i < 3; i++) d.feedback("hours", "harmful");
+    expect(d.script("hours")!.status).toBe("retired");
     d.observe(s, decision, "We open at 9.");
     await d.idle();
-    expect(d.script("hours")!.evidence.fits).toBe(2);
+    expect(d.script("hours")!.evidence.fits).toBe(1);
   });
 });
 
@@ -261,37 +263,42 @@ function failingJudge() {
 }
 
 describe("building scripts from what the model answered", () => {
-  const tracked = (id: number, status: string, reply: string): [Step, string] => [resultStep({ tool: "track_order", input: { id }, output: { status } }), reply];
+  /** A result step answered in a session of its own (scripts are built from several sessions). */
+  const tracked = (id: number, status: string, reply: string): [Step, string] => [{ ...resultStep({ tool: "track_order", input: { id }, output: { status } }), sessionId: `u${id}` }, reply];
 
-  it("DG2.1 steps the model answered after one tool's results become a candidate at the support, and it is active after enough fits", async () => {
+  it("DG2.1 steps the model answered after one tool's results become a candidate at the support, and it is active after enough fits from other sessions", async () => {
     const d = new Dialogue({ settings: settings(), onChange: vi.fn() });
     await answered(d, ...tracked(1, "shipped", "Order 1 is shipped."));
     expect(d.scripts).toHaveLength(0);
     await answered(d, ...tracked(2, "late", "Order 2 is late."));
-    expect(d.scripts).toEqual([expect.objectContaining({ id: "s1", status: "candidate", origin: "induced", reply: ["Order ", { input: ["id"] }, " is ", { output: ["status"] }, "."], evidence: { fits: 2, misses: 0, served: 0 } })]);
+    expect(d.scripts).toEqual([expect.objectContaining({ id: "s1", status: "candidate", origin: "induced", reply: ["Order ", { input: ["id"] }, " is ", { output: ["status"] }, "."], evidence: { fits: 0, misses: 0, served: 0, audits: 0, sessions: [] } })]);
     expect(await answered(d, ...tracked(3, "lost", "Order 3 is lost."))).toMatchObject({ kind: "pass", shadow: { script: "s1", match: { by: "result" } } });
-    expect(d.script("s1")!.status).toBe("active");
+    await answered(d, ...tracked(4, "late", "Order 4 is late."));
+    expect(d.script("s1")!.status).toBe("candidate");
+    await answered(d, ...tracked(5, "found", "Order 5 is found."));
+    expect(d.script("s1")).toMatchObject({ status: "active", evidence: { fits: 3, sessions: ["u3", "u4", "u5"] } });
     expect(d.save()).toMatchObject({ clusters: [] });
-    expect(await d.respond(tracked(4, "found", "")[0])).toEqual({ kind: "reply", script: "s1", text: "Order 4 is found.", match: { by: "result" } });
+    expect(await d.respond(tracked(6, "found", "")[0])).toEqual({ kind: "reply", script: "s1", text: "Order 6 is found.", match: { by: "result" } });
   });
 
   it("DG2.2 utterances cluster by meaning, in their context; induced scripts then shadow what they match", async () => {
     const d = new Dialogue({ settings: settings({ induce: { cluster: 0.7 } }), embedder: embedder() });
-    await answered(d, step("where is order 12"), "Let me check order 12.");
-    await answered(d, step("tell me a joke"), "Knock knock.");
-    await answered(d, step("Where is order 34?"), "Let me check order 34.");
-    expect(d.save()).toMatchObject({ clusters: [{ script: "s1", observations: [{ utterance: "where is order 12" }, { utterance: "Where is order 34?" }] }, { observations: [{ utterance: "tell me a joke" }] }] });
-    expect(d.script("s1")).toMatchObject({ patterns: ["where\\s+is\\s+order\\s+(?<slot_1>.+?)"], reply: ["Let me check order ", { slot: "slot_1" }, "."] });
-    expect(await d.respond(step("where is order 56"))).toMatchObject({ kind: "pass", shadow: { script: "s1", slots: { slot_1: "56" } } });
+    await answered(d, step("where is order 12", "a"), "Let me check order 12.");
+    await answered(d, step("tell me a joke", "a"), "Knock knock.");
+    await answered(d, step("Where is order 34?", "b"), "Let me check order 34.");
+    // Clusters are kept most recently added to last.
+    expect(d.save()).toMatchObject({ clusters: [{ observations: [{ utterance: "tell me a joke" }] }, { script: "s1", observations: [{ utterance: "where is order 12" }, { utterance: "Where is order 34?" }] }] });
+    expect(d.script("s1")).toMatchObject({ patterns: ["where\\s+is\\s+order\\s+(?<slot_1>\\d+)"], reply: ["Let me check order ", { slot: "slot_1" }, "."] });
+    expect(await d.respond(step("where is order 56", "c"))).toMatchObject({ kind: "pass", shadow: { script: "s1", slots: { slot_1: "56" } } });
   });
 
   it("DG2.3 without an embedder, utterances cluster by shape; a cluster in another context is another cluster", async () => {
     const d = new Dialogue({ settings: settings({ induce: { cluster: 0.7 } }), book: book({ id: "hi", intent: "hi", patterns: ["hi"], reply: ["Hi."] }) });
-    await answered(d, step("where is order 12"), "Let me check order 12.");
-    await d.respond(step("hi"));
-    await answered(d, step("where is order 34"), "Let me check order 34.");
+    await answered(d, step("where is order 12", "a"), "Let me check order 12.");
+    await d.respond(step("hi", "b"));
+    await answered(d, step("where is order 34", "b"), "Let me check order 34.");
     expect(d.save()).toMatchObject({ clusters: [{ observations: [{ utterance: "where is order 12" }] }, { context: "hi", observations: [{ utterance: "where is order 34" }] }] });
-    await answered(d, step("where is order 56"), "Let me check order 56.");
+    await answered(d, step("where is order 56", "c"), "Let me check order 56.");
     expect(d.script("s1")).toMatchObject({ status: "candidate" });
   });
 
@@ -309,15 +316,13 @@ describe("building scripts from what the model answered", () => {
     expect(d.save()).toMatchObject({ clusters: [{ observations: [{ reply: "Bravo two three." }, { reply: "Charlie." }] }] });
   });
 
-  it("DG2.6 a script induced from as many fits as promotion needs is active at once", async () => {
-    const d = new Dialogue({ settings: settings({ promote: { fits: 2 } }) });
-    await answered(d, ...tracked(1, "shipped", "Order 1 is shipped."));
-    await answered(d, ...tracked(2, "late", "Order 2 is late."));
-    expect(d.script("s1")!.status).toBe("active");
-    expect(d.save()).toMatchObject({ clusters: [] });
+  it("DG2.6 a script built from however many observations is a candidate: they are not evidence for it", async () => {
+    const d = new Dialogue({ settings: settings({ promote: { fits: 2 }, induce: { support: 3, keep: 3 } }) });
+    for (const n of [1, 2, 3]) await answered(d, ...tracked(n, "shipped", `Order ${n} is shipped.`));
+    expect(d.script("s1")).toMatchObject({ status: "candidate", evidence: { fits: 0 } });
   });
 
-  it("DG2.7 a candidate the model disagrees with is induced again from its cluster: the part that varied becomes a hole", async () => {
+  it("DG2.7 a candidate the model disagrees with is induced again from its cluster: the part that varied becomes a hole, and its evidence starts again", async () => {
     const d = new Dialogue({ settings: settings() });
     await answered(d, ...tracked(1, "shipped", "Order 1 is shipped. Thanks!"));
     await answered(d, ...tracked(2, "late", "Order 2 is late. Thanks!"));
@@ -325,17 +330,26 @@ describe("building scripts from what the model answered", () => {
     expect(d.script("s1")).toMatchObject({
       status: "candidate",
       reply: ["Order ", { input: ["id"] }, " is ", { output: ["status"] }, ". ", { generate: "hole_3" }, "!"],
-      evidence: { fits: 2, misses: 1 },
+      evidence: { fits: 0, misses: 0 },
     });
+  });
+
+  it("DG2.17 a candidate is not induced again into the shape of a retired script", async () => {
+    const retired = { id: "old", intent: "o", status: "retired" as const, origin: "induced" as const, result: { tool: "track_order" }, reply: ["Order ", { input: ["id"] }, " is ", { output: ["status"] }, ". ", { generate: "hole_3" }, "!"] };
+    const d = new Dialogue({ settings: settings(), book: { scripts: [retired] } });
+    await answered(d, ...tracked(1, "shipped", "Order 1 is shipped. Thanks!"));
+    await answered(d, ...tracked(2, "late", "Order 2 is late. Thanks!"));
+    await answered(d, ...tracked(3, "lost", "Order 3 is lost. Sorry!"));
+    expect(d.script("s1")).toMatchObject({ status: "candidate", reply: ["Order ", { input: ["id"] }, " is ", { output: ["status"] }, ". Thanks!"], evidence: { misses: 1 } });
   });
 
   it("DG2.8 an utterance like a candidate's cluster that the candidate did not match widens it", async () => {
     const d = new Dialogue({ settings: settings({ induce: { cluster: 0.5 } }), embedder: embedder() });
-    await answered(d, step("where is order 12"), "Checking order 12.");
-    await answered(d, step("where is order 34"), "Checking order 34.");
-    expect(d.script("s1")!.patterns).toEqual(["where\\s+is\\s+order\\s+(?<slot_1>.+?)"]);
-    await answered(d, step("where is my order 56"), "Checking order 56.");
-    expect(d.script("s1")!.patterns).toEqual(["where\\s+is\\s+(?<slot_1>.*?)order\\s+(?<slot_2>.+?)"]);
+    await answered(d, step("where is order 12", "a"), "Checking order 12.");
+    await answered(d, step("where is order 34", "b"), "Checking order 34.");
+    expect(d.script("s1")!.patterns).toEqual(["where\\s+is\\s+order\\s+(?<slot_1>\\d+)"]);
+    await answered(d, step("where is my order 56", "c"), "Checking order 56.");
+    expect(d.script("s1")!.patterns).toEqual(["where\\s+is\\s+(?:(?<slot_1>\\S+(?:\\s+\\S+){0,7}?)\\s+)?order\\s+(?<slot_2>\\d+)"]);
     expect(d.script("s1")!.reply).toEqual(["Checking order ", { slot: "slot_2" }, "."]);
   });
 });
@@ -344,13 +358,13 @@ describe("keeping state", () => {
   it("DG3.1 what a dialogue built is saved and restored, and ids are never reused", async () => {
     const onChange = vi.fn();
     const d = new Dialogue({ settings: settings(), onChange });
-    const tracked = (id: number, reply: string): [Step, string] => [resultStep({ tool: "track_order", input: { id }, output: {} }), reply];
+    const tracked = (id: number, reply: string): [Step, string] => [{ ...resultStep({ tool: "track_order", input: { id }, output: {} }), sessionId: `u${id}` }, reply];
     await answered(d, ...tracked(1, "Order 1 found."));
     await answered(d, ...tracked(2, "Order 2 found."));
     expect(onChange).toHaveBeenCalled();
     const restored = new Dialogue({ settings: settings(), book: JSON.parse(JSON.stringify(d.save())) });
     expect(restored.save()).toEqual(d.save());
-    const other = (id: number, reply: string): [Step, string] => [resultStep({ tool: "refund", input: { id }, output: {} }), reply];
+    const other = (id: number, reply: string): [Step, string] => [{ ...resultStep({ tool: "refund", input: { id }, output: {} }), sessionId: `v${id}` }, reply];
     await answered(restored, ...other(1, "Refund 1 done."));
     await answered(restored, ...other(2, "Refund 2 done."));
     expect(restored.scripts.map((s) => s.id)).toEqual(["s1", "s2"]);

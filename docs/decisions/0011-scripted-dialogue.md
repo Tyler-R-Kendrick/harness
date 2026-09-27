@@ -129,16 +129,35 @@ harness from the turns the model answered:
   utterance's own alignment becomes a slot hole (and the utterance alignment becomes a
   pattern with that named group); one whose value is at the same path of every tool
   input or output becomes a value hole; anything else is generated. A template is kept only
-  when enough of it is fixed (`induce.fixed`) and it has few holes (`induce.holes`).
-  Exemplars keep slot values masked (`{slot_1}`), so a script does not carry what one user
-  said.
+  when enough of it is determined without the model (`induce.determined`: fixed text and
+  slot or value holes), it has few holes (`induce.holes`), and at least `induce.support` of
+  the cluster's replies fit it. An induced slot group matches digits only when every
+  value was digits, and otherwise a few words at most (`induce.words`: `\S+(?:\s+\S+){0,7}?`
+for 8), never `.+`.
+  Exemplars keep slot values masked (`{slot_1}`), and numbers, emails and links masked too
+  (`{number}`, `{email}`, `{link}`, word by word, in time linear in the utterance), so a
+  script does not carry what one user said. A tool result is kept with its values up to
+  `induce.valueLength` characters (longer ones are left out); a reply only repeats short ones.
+- **Whose replies.** A cluster is built from only when its observations come from
+  `induce.sessions` sessions: one person repeating themselves is not everyone's answer.
+  A step the model *acted* on (it called tools instead of replying) marks its cluster as
+  the model's for good: nothing is built for it, and a candidate matching such a step gets
+  a miss and is retired (steps like it are the model's to act on). Replies cut short, failed or empty teach nothing. Clusters without a script are
+  capped (`induce.clusters`, least recently added to goes), and a retired script's shape is
+  never built again, by induction, drafting or re-induction.
 - **Drafting (one model call, off the critical path).** When a cluster's replies are too
   varied to align (the model paraphrases), the drafter model writes the script
   (JSON Schema constrained): intent, exemplars, slots, reply parts, and **follow-ups**:
   scripts for what the user is likely to say next, in the new script's context. This is
   the pre-emptive part: the next turn's script exists before the next turn. A draft is
   kept only if its reply, with the observed slots filled in, is one of the observed
-  replies with its generated holes filled (it fits); follow-ups cannot be checked yet.
+  replies with its generated holes filled (it fits) and it meets the same bar as induction
+  (`induce.determined`, `induce.holes`); a drafted slot pattern that could take
+  exponential or high-degree polynomial time (a group that may repeat, `*`, `+` or a bound
+  past one, containing a quantifier or an alternation; or three repeated atoms in a row
+  that can match the same characters, as in `\d*\d*\d*`) is refused, and the refusal
+  goes to `onError`. Nothing is drafted when nothing could match a draft (no embedder and no router),
+  and follow-ups cannot be checked yet.
 
 ### Trust: candidates, shadowing, promotion
 
@@ -147,11 +166,26 @@ A matching candidate runs in shadow: the model answers, and the dialogue checks 
 model's reply fits the candidate's template with its slots filled. A fit, or failing that
 the judge accepting the candidate's rendering as an equally good answer (`promote.judge`),
 counts for it; a disagreement counts against it and its observation is added to its
-cluster, so an induced script is re-induced (a fixed part that varied becomes a hole). At
-`promote.fits` a candidate becomes active; at `promote.retireMargin` more disagreements
-than fits it is retired. Authored scripts can be active from the start. Feedback from
-outside (`feedback`) counts the same way for active scripts, so a script that starts to
-mislead is retired.
+cluster, so an induced script is re-induced (a fixed part that varied becomes a hole), and
+a re-induced script is a new template whose evidence starts again. A built script starts
+with no evidence: what it was built from is not a fit, and neither is a fit from a session
+it was built from. At `promote.fits` fits from at least `promote.sessions` sessions a
+candidate becomes active (evidence names the first `promote.sessionsKept` sessions, at
+least `promote.sessions`); at `promote.retireMargin` more disagreements than fits it is
+retired. An active built script stays accountable: every `promote.audit`th time it would
+answer (audits counted with the times it served, so audits keep coming), the model answers
+in its place, in shadow, and a miss there counts as it would for a candidate. Authored scripts can be active from the start. Feedback from outside
+(`feedback`, naming the session when known) counts the same way for active scripts, so a
+script that starts to mislead is retired.
+
+Matching is careful where it could be wrong: patterns run only on utterances up to
+`match.maxLength` characters (with the regular expressions cached), so a hostile utterance
+is bounded (induced gaps are a few words, drafted patterns that could backtrack
+exponentially are refused, and normalizing and masking are linear); a long answer is not
+taken whole as a slot's value; a pattern's own named groups are authoritative for its slots;
+the router is offered active scripts only, so a candidate waits for a pattern or exemplar
+match; and in a form, an answer another script matches goes to that script before it can
+become the slot's value.
 
 Every decision is traced: the response header `x-harness-model` names the script
 (`dialogue/<id>`), and provider metadata `harness.dialogue` says how it matched.
@@ -163,7 +197,9 @@ AI SDK models, all optional, and a flow runner: a workflow host). The native hos
 (`--dialogue <file>` with `--worker model` or `--worker ensemble`; the script book is
 saved to that file after every change, and shutdown waits for the last save; flows and
 their journals are the workflow library's with `--workflows`, else files in
-`--dialogue-flows`, by default next to the book). Over the
+`--dialogue-flows`, by default next to the book). Saves go one at a time, each of the
+latest state, and a failed one is logged; shutdown gives learning under way
+`--dialogue-grace` milliseconds (5000 by default), then waits for the last save. Over the
 ensemble it uses the ensemble's router, judge and reasoning model, and memory's embedder
 when memory is installed; with a gateway model alone it matches by pattern, clusters by
 shape and drafts with that model.
@@ -175,7 +211,17 @@ logs it), so a model outage costs the dialogue its help, never a turn.
 Only steps a script could answer are considered: the prompt ends with the user's words
 (text only) or with one tool's result. Calls that carry a constraint, a JSON response
 format or a forced tool choice are someone else's structured call and go straight to the
-model. A dialogue that fails decides nothing, and the model answers.
+model, leaving the session as it was. A user turn that is not a step (a file among its
+parts, say) ends its session's form and context, since the dialogue did not see it. A turn
+the AI SDK retries after the model fails (the same step, its prompt built again) gets the
+decision it had (a call is the same turn when its whole prompt is), so a form or flow
+moves on once per turn; decisions still waiting are kept for as many sessions as the
+dialogue keeps. When a script's holes are the
+model's, the call carries the template both as a constraint (for generators that enforce
+it) and as an instruction showing it with its holes as `{name}` (`generate.instruction`,
+for those that do not), and `harness.dialogue.fitted` says whether the reply kept to it.
+A step the model answered is observed only when it finished its reply (`stop`) or called
+tools (it acted). A dialogue that fails decides nothing, and the model answers.
 
 ## Alternatives
 

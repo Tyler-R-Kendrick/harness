@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fill, fits, parseScript, valueAt } from "@harness/dialogue";
+import { exponential, fill, fits, parseScript, readHoles, valueAt } from "@harness/dialogue";
 
 const orderStatus = parseScript({
   id: "order-status",
@@ -82,5 +82,32 @@ describe("fits", () => {
 
   it("RN2.4 a result script whose values are not in the result does not fit", () => {
     expect(fits(tracking, "Order 1234 is shipped and arrives Tuesday.", { slots: {} })).toBe(false);
+  });
+});
+
+describe("reading a reply's holes", () => {
+  it("RN3.1 a flow's script has no template: no reply is read as it, whatever the fillers", () => {
+    const flow = parseScript({ id: "f", intent: "f", reply: [{ flow: "some-flow" }] });
+    expect(readHoles(flow, "anything", { slots: {}, result })).toBeUndefined();
+  });
+
+  it("RN3.2 a reply that does not follow the template is not read, even with a slot still unknown", () => {
+    expect(readHoles(cancel, "Something else entirely.", { slots: {}, utterance: "cancel 7" })).toBeUndefined();
+  });
+});
+
+describe("patterns that could take exponential time", () => {
+  it("RN4.1 a group that may repeat around a repetition or alternatives is refused, bounded or not; an optional group, and anything escaped or in a class, is not", () => {
+    const risky = ["(a+)+", "(a|aa)+", "(a*)*", "(\\w+\\s?)+", "((a)+)+", "(a|b)*", "(a{2,})+", "(?:a+){2,}", "([a-z]+)*", "((a){3})+", "((a){12})+", "(a+){12,}", "([)]+)+", "([\\]a]+)+", "(a+){1,10}x(b+)+", "(a+){2}", "(a+){12}", "(a+){1,3}", "(a+){0,2}", "(a|aa){30}", "(a|b){3}", "\\d+(?:\\s+\\d+){0,7}?"];
+    const safe = ["a+", "(a)+", "(ab)+", "(ab)c+", "(a+){1}", "(a+){0,1}", "(a+){0}", "(a+)?", "(a+)", "[(]+", "\\(a+\\)+", "(a|b)", "(a|b)?", "[a+]+", "(?<n>\\d+)", "\\d+(?:\\s\\d)?", "a|b+", "(ab){3}"];
+    expect(risky.filter((p) => !exponential(p))).toEqual([]);
+    expect(safe.filter((p) => exponential(p))).toEqual([]);
+  });
+
+  it("RN4.2 three repeated atoms in a row that can trade characters are refused; one the previous cannot match fixes the boundary, and group syntax is no atom", () => {
+    const risky = ["\\d*\\d*\\d*\\d*\\d*x", ".*a.*a.*x", "\\w+\\w*\\d+", "\\d+(?<n>\\d+)\\d+", "a*a*a*", "(?:ab)+(?:cd)+(?:ef)+", "\\s*\\s*\\s*$", "[^,]+\\S+\\w+"];
+    const safe = ["\\d+-\\d+-\\d+", "\\d+\\s+\\d+\\s+\\d+", "\\w+\\d+", "(?<a>\\d+)\\s(?<b>\\w+)\\s(?<c>\\d+)", "\\w+day", "a+b+c+", "[a-c]+[d-f]+[g-i]+", "\\d+(?:\\.\\d+)?", "a+|a+|a+"];
+    expect(risky.filter((p) => !exponential(p))).toEqual([]);
+    expect(safe.filter((p) => exponential(p))).toEqual([]);
   });
 });

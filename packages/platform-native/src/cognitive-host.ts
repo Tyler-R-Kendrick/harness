@@ -270,8 +270,8 @@ export function buildDialogue(options: {
   readonly drafter?: LanguageModel;
   /** A script book or a previous save, to start from. */
   readonly book?: unknown;
-  /** Called with the dialogue's save after every change. */
-  readonly persist?: (saved: unknown) => void;
+  /** Called after every change with what makes the dialogue's save, so a caller can save only the latest (see dialogueSaves). */
+  readonly persist?: (snapshot: () => unknown) => void;
   /** Called with what failed when one of its models or its learning fails. */
   readonly onError?: (error: unknown) => void;
   /** Runs its flows durably (see dialogueFlows). */
@@ -286,10 +286,34 @@ export function buildDialogue(options: {
     ...(ensemble ? { router: ensemble.languageModel("tool-calling", "router"), judge: ensemble.evaluationModel() } : {}),
     ...(ensemble && options.embeddings ? { embedder: ensemble.embeddingModel() } : {}),
     ...(drafter ? { drafter } : {}),
-    ...(persist ? { onChange: (d: Dialogue) => persist(d.save()) } : {}),
+    ...(persist ? { onChange: (d: Dialogue) => persist(() => d.save()) } : {}),
     ...(onError ? { onError } : {}),
     ...(flows ? { flows } : {}),
   });
+}
+
+/**
+ * Saves of a dialogue's book to storage, one at a time, each made when it starts (so it
+ * holds the latest state): changes while a save is under way make one more save, not one
+ * each. A failed save is reported to `onError`; the next change saves again.
+ */
+export function dialogueSaves(storage: { save(saved: unknown): Promise<void> }, onError: (error: unknown) => void) {
+  let saving = Promise.resolve();
+  let next: (() => unknown) | undefined;
+  return {
+    persist(snapshot: () => unknown): void {
+      const queued = next !== undefined;
+      next = snapshot;
+      if (queued) return;
+      saving = saving.then(() => {
+        const save = next!;
+        next = undefined;
+        return storage.save(save());
+      }).catch(onError);
+    },
+    /** Resolves when every save asked for so far has been made (or has failed). */
+    settled: (): Promise<void> => saving,
+  };
 }
 
 /**

@@ -6,7 +6,7 @@ import { routerModel, settings, supportBook, textModel, vectorEmbedder } from ".
 
 const S = "session-1";
 const step = (utterance: string, sessionId = S): Step => ({ sessionId, utterance });
-const resultStep = (result: ToolResult): Step => ({ sessionId: S, utterance: "how is my order", result });
+const resultStep = (result: ToolResult, sessionId = S): Step => ({ sessionId, utterance: "how is my order", result });
 const book = (...scripts: ScriptInput[]) => ({ scripts });
 
 async function answered(d: Dialogue, s: Step, reply: string | undefined): Promise<Decision> {
@@ -143,7 +143,7 @@ describe("matching, exactly", () => {
         { id: "live", intent: "t", result: { tool: "t" }, reply: ["Live ", { output: ["v"] }, ": ", { generate: "why" }, "."] },
       ),
     });
-    expect(await d.respond(resultStep(result))).toEqual({ kind: "generate", script: "live", template: { type: "template", parts: ["Live x: ", { hole: "why" }, "."] }, match: { by: "result" } });
+    expect(await d.respond(resultStep(result))).toEqual({ kind: "generate", script: "live", template: { type: "template", parts: ["Live x: ", { hole: "why" }, "."] }, instruction: `${settings().generate.instruction}\n\nLive x: {why}.`, match: { by: "result" } });
     expect(d.script("live")!.evidence.served).toBe(1);
     d.feedback("live", "harmful");
     d.feedback("live", "harmful");
@@ -222,16 +222,16 @@ describe("learning, exactly", () => {
     await answered(d, step("a b c d e"), "One.");
     await answered(d, step("a b x y z"), "Two.");
     await answered(d, step("a b c d z"), "Three.");
-    expect(d.save()).toMatchObject({ clusters: [{ observations: [{ reply: "One." }, { reply: "Three." }] }, { observations: [{ reply: "Two." }] }] });
+    expect(d.save()).toMatchObject({ clusters: [{ observations: [{ reply: "Two." }] }, { observations: [{ reply: "One." }, { reply: "Three." }] }] });
   });
 
   it("DG2.11 a candidate's miss is added to its own cluster, and counted even when the cluster no longer aligns", async () => {
     const d = new Dialogue({ settings: settings() });
     await answered(d, step("tell me a joke"), "No.");
-    await answered(d, resultStep({ tool: "t", input: { id: 1 }, output: {} }), "Order 1 done.");
-    await answered(d, resultStep({ tool: "t", input: { id: 2 }, output: {} }), "Order 2 done.");
-    await answered(d, resultStep({ tool: "t", input: { id: 3 }, output: {} }), "Something else entirely happened here.");
-    expect(d.script("s1")).toMatchObject({ reply: ["Order ", { input: ["id"] }, " done."], evidence: { fits: 2, misses: 1 } });
+    await answered(d, resultStep({ tool: "t", input: { id: 1 }, output: {} }, "a"), "Order 1 done.");
+    await answered(d, resultStep({ tool: "t", input: { id: 2 }, output: {} }, "b"), "Order 2 done.");
+    await answered(d, resultStep({ tool: "t", input: { id: 3 }, output: {} }, "c"), "Something else entirely happened here.");
+    expect(d.script("s1")).toMatchObject({ reply: ["Order ", { input: ["id"] }, " done."], evidence: { fits: 0, misses: 1 } });
     expect(d.scripts).toHaveLength(1);
     expect(d.save()).toMatchObject({ clusters: [{ observations: [{ reply: "No." }] }, { script: "s1", observations: [{}, {}, { reply: "Something else entirely happened here." }] }] });
   });
@@ -244,7 +244,7 @@ describe("learning, exactly", () => {
 
   it("DG2.13 built scripts' ids skip ids an authored script has", async () => {
     const d = new Dialogue({ settings: settings(), book: book({ id: "s1", intent: "x", patterns: ["x"], reply: ["X."] }) });
-    for (const id of [1, 2]) await answered(d, resultStep({ tool: "t", input: { id }, output: {} }), `Order ${id} done.`);
+    for (const id of [1, 2]) await answered(d, resultStep({ tool: "t", input: { id }, output: {} }, `u${id}`), `Order ${id} done.`);
     expect(d.scripts.map((s) => s.id)).toEqual(["s1", "s2"]);
   });
 
@@ -265,8 +265,8 @@ describe("without models, and with failing ones", () => {
   it("DG1.20 a dialogue with no models matches by pattern, clusters by shape and never fails", async () => {
     const onError = vi.fn();
     const d = new Dialogue({ settings: settings({ induce: { cluster: 0.7 } }), book: book({ id: "hours", intent: "hours", status: "candidate", exemplars: ["when do you open"], patterns: ["hours"], slots: { day: { prompts: ["Which day?"] } }, reply: ["Open ", { slot: "day" }, "."] }), onError });
-    await answered(d, step("where is order 12"), "Order 12.");
-    await answered(d, step("where is order 34"), "Order 34.");
+    await answered(d, step("where is order 12", "a"), "Order 12.");
+    await answered(d, step("where is order 34", "b"), "Order 34.");
     await answered(d, step("when do you open"), "At nine.");
     await answered(d, step("hours"), "Open daily.");
     expect(onError).not.toHaveBeenCalled();
@@ -283,8 +283,8 @@ describe("without models, and with failing ones", () => {
     const errors: unknown[] = [];
     const broken = { ...vectorEmbedder({}), doEmbed: async () => Promise.reject(new Error("embedder down")) };
     const d = new Dialogue({ settings: settings({ induce: { cluster: 0.7 } }), embedder: broken, onError: (e) => void errors.push(e) });
-    await answered(d, step("where is order 12"), "Order 12.");
-    await answered(d, step("where is order 34"), "Order 34.");
+    await answered(d, step("where is order 12", "a"), "Order 12.");
+    await answered(d, step("where is order 34", "b"), "Order 34.");
     expect(d.script("s1")).toMatchObject({ reply: ["Order ", { slot: "slot_1" }, "."] });
     expect(errors.map((e) => (e as Error).message)).toEqual(["embedder down"]);
   });

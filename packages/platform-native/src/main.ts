@@ -10,7 +10,7 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, dialogueMiddleware, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
-import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
+import { buildDialogue, buildNativeEnsemble, dialogueFlows, dialogueSaves } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
@@ -35,6 +35,7 @@ const { values } = parseArgs({
     workflows: { type: "string" },
     dialogue: { type: "string" },
     "dialogue-flows": { type: "string" },
+    "dialogue-grace": { type: "string", default: "5000" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -56,7 +57,7 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
-      "               [--dialogue <file> [--dialogue-flows <dir>]]\n",
+      "               [--dialogue <file> [--dialogue-flows <dir>] [--dialogue-grace <ms>]]\n",
   );
   process.exit(2);
 }
@@ -102,6 +103,13 @@ if (values.dialogue !== undefined && values.worker !== "model" && values.worker 
 // can, the model the rest, and scripts are built from the model's answers. Saved to its file.
 // Its flows are durable workflows: the workflow library's (--workflows), else files in
 // --dialogue-flows (by default next to the book), with their run journals.
+// At shutdown, learning under way gets --dialogue-grace milliseconds to land in the book.
+const dialogueGrace = Number(values["dialogue-grace"]);
+// setTimeout takes at most 2^31 - 1 milliseconds (and takes a longer delay as 1).
+if (!/^\d+$/.test(values["dialogue-grace"]) || dialogueGrace > 2_147_483_647) {
+  process.stderr.write("--dialogue-grace is a whole number of milliseconds, at most 2147483647\n");
+  process.exit(2);
+}
 const dialogueFile = values.dialogue === undefined ? undefined : new FileStorage(values.dialogue);
 const flows =
   values.dialogue === undefined
@@ -109,17 +117,17 @@ const flows =
     : (cognitive?.workflowHost ??
       dialogueFlows({ dir: values["dialogue-flows"] ?? `${values.dialogue}.flows`, ask: askModel(cognitive ? cognitive.ensemble.languageModel() : gateway(values.model)) }));
 const book = await dialogueFile?.load();
-// Saves land in issue order, so shutdown waits for the last one.
-let dialogueSaved: Promise<void> = Promise.resolve();
+// A model the dialogue could not use, or a save that failed, is logged; the model answers the step instead.
+const dialogueError = (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`);
+const dialogueSaved = dialogueFile && dialogueSaves(dialogueFile, dialogueError);
 const dialogue =
-  dialogueFile &&
+  dialogueSaved &&
   buildDialogue({
     ...(cognitive ? { ensemble: cognitive.ensemble, embeddings: cognitive.memory !== undefined } : { drafter: gateway(values.model) }),
     ...(book === undefined ? {} : { book }),
     ...(flows ? { flows } : {}),
-    persist: (s: unknown) => void (dialogueSaved = dialogueFile.save(s)),
-    // A model the dialogue could not use is logged; the model answers the step instead.
-    onError: (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`),
+    persist: dialogueSaved.persist,
+    onError: dialogueError,
   });
 const scripted = (model: Exclude<LanguageModel, string>) => (dialogue ? wrapLanguageModel({ model, middleware: dialogueMiddleware(dialogue) }) : model);
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
@@ -176,8 +184,9 @@ const host = await NodeHost.start({
 
 const shutdown = async () => {
   await host.close();
-  await dialogue?.idle();
-  await dialogueSaved;
+  // Learning under way (a drafter's answer among it) gets the grace to land in the book; then the last save does.
+  if (dialogue) await Promise.race([dialogue.idle(), new Promise((r) => setTimeout(r, dialogueGrace).unref())]);
+  await dialogueSaved?.settled();
   await harness?.close();
   await cognitive?.close();
   process.exit(0);

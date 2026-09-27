@@ -91,4 +91,14 @@ describe("native daemon over stdio with the official ACP SDK client", () => {
     expect(await new Promise<number | null>((resolve) => child.on("exit", resolve))).toBe(2);
     expect(stderr).toContain("--learning needs --memory");
   });
+
+  it("NS1.5 a dialogue's shutdown grace is a whole number of milliseconds a timer can wait", async () => {
+    for (const grace of ["soon", "2147483648"]) {
+      const child = spawn(process.execPath, [MAIN, "--stdio", "--dialogue-grace", grace], { env: { ...process.env, NODE_OPTIONS: "" } });
+      let stderr = "";
+      child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      expect(await new Promise<number | null>((resolve) => child.on("exit", resolve))).toBe(2);
+      expect(stderr).toContain("--dialogue-grace is a whole number of milliseconds, at most 2147483647");
+    }
+  });
 });

@@ -119,7 +119,9 @@ fill missing slots by asking (VoiceXML-style forms, handing over to the model af
 last prompt), and can be authored as a script book. The dialogue also builds them itself:
 steps the model answered are clustered and aligned into templates, or drafted (with
 follow-ups for the next turn), and a built script answers only after the model's own
-replies have agreed with it in shadow.
+replies, in sessions other than the ones it was built from, have agreed with it in shadow.
+Steps the model acts on (it calls tools) are never scripted, and active built scripts are
+audited in shadow now and then, so one that starts to mislead is retired.
 
 Longer dialogues (an IVR call flow, a whole chatbot) are **flows**: workflows that talk
 through `tools.say` and `tools.hear`, run durably by the workflow host, so a flow in

@@ -380,7 +380,9 @@
             "default": {
               "fits": 0,
               "misses": 0,
-              "served": 0
+              "served": 0,
+              "audits": 0,
+              "sessions": []
             },
             "type": "object",
             "properties": {
@@ -398,6 +400,21 @@
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 9007199254740991
+              },
+              "audits": {
+                "default": 0,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "sessions": {
+                "default": [],
+                "readOnly": true,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
             "required": [
@@ -438,6 +455,10 @@
             "default": false,
             "type": "boolean"
           },
+          "acted": {
+            "default": false,
+            "type": "boolean"
+          },
           "observations": {
             "type": "array",
             "items": {
@@ -469,6 +490,14 @@
                 },
                 "reply": {
                   "type": "string"
+                },
+                "session": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "acted": {
+                  "type": "boolean",
+                  "const": true
                 }
               },
               "required": [

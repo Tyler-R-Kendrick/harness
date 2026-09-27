@@ -86,7 +86,7 @@ describe("flows: dialogues as durable workflows", () => {
   it("FL1.3 an entry flow takes every session's first utterance as its input and keeps its state; a turn it passes on goes to scripts, then the model", async () => {
     const { host } = workflows(echoBot);
     const d = new Dialogue({ settings: settings(), book: { ...bookWith(), entry: "echo-bot" }, flows: host });
-    expect(await d.respond(step("say hi"))).toEqual({ kind: "flow", flow: "echo-bot", text: "hi (1)", match: { by: "flow" } });
+    expect(await d.respond(step("say hi"))).toStrictEqual({ kind: "flow", flow: "echo-bot", text: "hi (1)", match: { by: "flow" } });
     expect(await d.respond(step("where is order 5"))).toMatchObject({ kind: "reply", script: "order-status" });
     expect(await d.respond(step("tell me a joke"))).toMatchObject({ kind: "pass", reason: "no script matches" });
     expect(await d.respond(step("say bye"))).toMatchObject({ kind: "flow", text: "bye (2)" });
@@ -204,6 +204,26 @@ describe("flows hand turns on", () => {
     await failing.respond(step("order a hat"));
     expect(await failing.respond(step("m"))).toMatchObject({ kind: "flow", text: "Ordered hat in M." });
     expect(onError.mock.calls.map(([e]) => (e as Error).message)).toEqual(["disk"]);
+  });
+});
+
+describe("how flows end", () => {
+  it("FL1.13 a flow that completes leaves its session, with nothing reported", async () => {
+    const onError = vi.fn();
+    const d = new Dialogue({ settings: settings(), book: bookWith(ordering), flows: workflows(orderFlow).host, onError });
+    await d.respond(step("order a shirt"));
+    expect(d.save()).toMatchObject({ sessions: [{ id: "s-1", flow: { name: "order-flow" } }] });
+    await d.respond(step("s"));
+    expect((d.save() as { sessions: object[] }).sessions.map((s) => Object.keys(s))).toEqual([["id", "last"]]);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("FL1.14 a flow the runner cannot run is reported, and its session is not left in it", async () => {
+    const onError = vi.fn();
+    const d = new Dialogue({ settings: settings(), book: bookWith({ id: "ghost", intent: "g", patterns: ["ghost"], reply: [{ flow: "no-such-flow" }] }), flows: workflows().host, onError });
+    expect(await d.respond(step("ghost"))).toMatchObject({ kind: "pass" });
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect((d.save() as { sessions: { flow?: unknown }[] }).sessions.every((s) => s.flow === undefined)).toBe(true);
   });
 });
 
