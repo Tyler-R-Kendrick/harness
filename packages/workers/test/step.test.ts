@@ -146,7 +146,7 @@ describe("sessionAgent's step hook: a per-step AI SDK prepareStep for procedural
     expect(lastAssistant.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "tool-call", toolName: "deploy" })]));
   });
 
-  it("PW1.71 the active tools the hook returns are the only tools that step's model call is offered; without them every tool is", async () => {
+  it("PW1.81 the active tools the hook returns are the only tools that step's model call is offered; without them every tool is", async () => {
     const tools = { weather: tool({ inputSchema: z.object({}), execute: async () => "ok" }), deploy: tool({ inputSchema: z.object({}), execute: async () => "ok" }) };
     const offered = (o: LanguageModelV4CallOptions) => (o.tools ?? []).map((t) => t.name);
     let step = 0;
@@ -217,7 +217,7 @@ describe("harnessSessions' turn hook: turn-level guidance for opaque harness wor
     expect(seen).toEqual([undefined, "weather", "weather"]);
   });
 
-  it("PW1.67 the next turn's hook is told the previous turn's last call with its input and its result's output, for a state tracker", async () => {
+  it("PW1.77 the next turn's hook is told the previous turn's last call with its input and its result's output, for a state tracker", async () => {
     const seen: TurnContext["lastCall"][] = [];
     const { worker } = harnessSetup(
       (p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"),
@@ -233,7 +233,7 @@ describe("harnessSessions' turn hook: turn-level guidance for opaque harness wor
     expect(seen).toEqual([undefined, lagos, lagos]);
   });
 
-  it("PW1.68 a call whose result the harness never reported is told without an output", async () => {
+  it("PW1.78 a call whose result the harness never reported is told without an output", async () => {
     const seen: TurnContext["lastCall"][] = [];
     const { worker } = harnessSetup(
       (p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"),

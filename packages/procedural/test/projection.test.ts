@@ -266,7 +266,7 @@ describe("projecting a turn from the session log", () => {
     expect(NodeNameSchema.parse(turnProjection(logOf(turn()), ctx())!.path[0])).toBe("Start");
   });
 
-  it("PL1.70 a state tracker locates each call by its arguments and by the node its own result declared", () => {
+  it("PL1.76 a state tracker locates each call by its arguments and by the node its own result declared", () => {
     const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
     const parsed = parseGraph({
       ...hotpot(),

@@ -65,7 +65,7 @@ const contents = (m: LanguageModelV4CallOptions["prompt"][number]): string => (t
 const advisories = (o: LanguageModelV4CallOptions) => o.prompt.filter((m) => m.role === "user" && contents(m).startsWith(GUIDANCE_LABEL));
 
 describe("procedural guidance in a session worker (sessionAgent + proceduralStep)", () => {
-  it("PW1.75 successor-only delivery offers each step only the tools of its node's successor actions, and every tool where there are none", async () => {
+  it("PW1.85 successor-only delivery offers each step only the tools of its node's successor actions, and every tool where there are none", async () => {
     const successors = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, strict: { ...settingsFile.presets.harness, delivery: { to: "trailing-message", activeTools: "successors" } } } });
     const d = await deps("strict", successors);
     const model = scripted([call("first_hop_retrieve"), finish("tool-calls")], [call("Scan_Index", "c2"), finish("tool-calls")], [...text("Answer."), finish()]);
@@ -208,7 +208,7 @@ describe("procedural guidance for an opaque harness (harnessSessions + procedura
     ]);
   });
 
-  it("PW1.70 under a state-tracker preset a coarse harness tool is localized by its arguments, or where its result declares", async () => {
+  it("PW1.80 under a state-tracker preset a coarse harness tool is localized by its arguments, or where its result declares", async () => {
     const d = await deps("tracker", parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, tracker: { ...settingsFile.presets.harness, match: "state-tracker" } } }));
     const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
     const graph = parseGraph({

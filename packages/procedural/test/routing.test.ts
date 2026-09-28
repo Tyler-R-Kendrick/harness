@@ -35,7 +35,7 @@ function routerModel(input: unknown, confidence?: number): MockLanguageModelV4 {
 const settings = () => parseSettings(JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")));
 
 describe("the model graph router (the cognitive router's route with confidence)", () => {
-  it("PX1.53 the router gets the first prompt and one tool, carrying the route prompt with the candidates, whose schema admits only the candidates", async () => {
+  it("PX1.55 the router gets the first prompt and one tool, carrying the route prompt with the candidates, whose schema admits only the candidates", async () => {
     const model = routerModel({ graph: "team/web" }, 0.82);
     const answer = await modelGraphRouter({ model, settings: settings() })({ prompt: "Fix the header layout", candidates: [{ graph: id("repo/harness") }, { graph: id("team/web"), description: "Front-end work." }] });
     expect(answer).toEqual({ graph: "team/web", confidence: 0.82 });
@@ -49,7 +49,7 @@ describe("the model graph router (the cognitive router's route with confidence)"
     expect(tool.inputSchema).toEqual({ type: "object", properties: { graph: { type: "string", enum: ["repo/harness", "team/web"] } }, required: ["graph"], additionalProperties: false });
   });
 
-  it("PX1.54 a call outside the candidates, a malformed call, or no call chooses nothing; without calibrated confidence the confidence is 0", async () => {
+  it("PX1.56 a call outside the candidates, a malformed call, or no call chooses nothing; without calibrated confidence the confidence is 0", async () => {
     const ask = (model: MockLanguageModelV4) => modelGraphRouter({ model, settings: settings() })({ prompt: "p", candidates: [{ graph: id("a") }] });
     expect(await ask(routerModel({ graph: "b" }, 0.9))).toEqual({ graph: undefined, confidence: 0.9 });
     expect(await ask(routerModel({ graph: 7 }, 0.9))).toEqual({ graph: undefined, confidence: 0.9 });
@@ -57,7 +57,7 @@ describe("the model graph router (the cognitive router's route with confidence)"
     expect(await ask(routerModel({ graph: "a" }))).toEqual({ graph: "a", confidence: 0 });
   });
 
-  it("PX1.55 a route rule on the model router: a confident router's choice is the session's graph, a hesitant one's is not", async () => {
+  it("PX1.57 a route rule on the model router: a confident router's choice is the session's graph, a hesitant one's is not", async () => {
     const r = resolver(routeRule(["a", "b"], 0.8));
     const context = { prompt: "p" };
     expect(await routeGraph(r, context, modelGraphRouter({ model: routerModel({ graph: "b" }, 0.85), settings: settings() }))).toBe("b");
@@ -72,14 +72,14 @@ describe("the model graph router (the cognitive router's route with confidence)"
 });
 
 describe("routing sessions to graphs by the router's confidence", () => {
-  it("PX1.46 a route rule names candidate graphs (ids, or ids with what they are for) and a minimum confidence; its JSON Schema is generated from the parser", async () => {
+  it("PX1.48 a route rule names candidate graphs (ids, or ids with what they are for) and a minimum confidence; its JSON Schema is generated from the parser", async () => {
     const r = resolver(routeRule(["repo/harness", { graph: "team/web", description: "Front-end work." }], 0.7));
     expect(r.rules[0]).toEqual({ when: {}, route: { candidates: ["repo/harness", { graph: "team/web", description: "Front-end work." }], minConfidence: 0.7 } });
     await expect(`${JSON.stringify(resolverJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/resolver.schema.json");
     expect(JSON.stringify(resolverJsonSchema())).toContain('"minConfidence":{"type":"number","minimum":0,"maximum":1}');
   });
 
-  it("PX1.47 parsing refuses a route with no candidates, a repeated candidate, an invalid id, a confidence outside [0, 1], or both a graph and a route", () => {
+  it("PX1.49 parsing refuses a route with no candidates, a repeated candidate, an invalid id, a confidence outside [0, 1], or both a graph and a route", () => {
     expect(() => resolver(routeRule([], 0.5))).toThrow(/rules\[0\]|rules\.0/);
     expect(() => resolver(routeRule(["a", { graph: "a", description: "again" }], 0.5))).toThrow(/candidate a is named twice[\s\S]*rules\[0\]\.route\.candidates/);
     expect(() => resolver({ when: {}, graph: "g" }, routeRule(["b", "c", "b"], 0.5))).toThrow(/candidate b is named twice[\s\S]*rules\[1\]/);
@@ -94,7 +94,7 @@ describe("routing sessions to graphs by the router's confidence", () => {
     expect(resolver(routeRule(["a"], 0), routeRule(["b"], 1)).rules).toHaveLength(2);
   });
 
-  it("PX1.48 the router is asked with the session's first prompt and the candidates, and its choice at or above the minimum confidence is the graph", async () => {
+  it("PX1.50 the router is asked with the session's first prompt and the candidates, and its choice at or above the minimum confidence is the graph", async () => {
     const r = resolver(routeRule(["repo/harness", { graph: "team/web", description: "Front-end work." }], 0.7));
     const confident = router("team/web", 0.7);
     expect(await explainRoute(r, { prompt: "Fix the header layout" }, confident)).toEqual({ graph: "team/web", rule: 0, reason: "rule 0 routes to graph team/web at confidence 0.7" });
@@ -102,14 +102,14 @@ describe("routing sessions to graphs by the router's confidence", () => {
     expect(await routeGraph(r, { prompt: "Fix the header layout" }, router("repo/harness", 0.95))).toBe("repo/harness");
   });
 
-  it("PX1.49 a choice below the minimum confidence, no choice, or a choice outside the candidates is no graph, with the reason; the rule still decides", async () => {
+  it("PX1.51 a choice below the minimum confidence, no choice, or a choice outside the candidates is no graph, with the reason; the rule still decides", async () => {
     const r = resolver(routeRule(["a", "b"], 0.7), { when: {}, graph: "fallback" });
     expect(await explainRoute(r, { prompt: "p" }, router("a", 0.69))).toEqual({ graph: undefined, rule: 0, reason: "rule 0: the router chose graph a at confidence 0.69, below 0.7" });
     expect(await explainRoute(r, { prompt: "p" }, router(undefined, 0.9))).toEqual({ graph: undefined, rule: 0, reason: "rule 0: the router chose no graph (confidence 0.9)" });
     expect(await explainRoute(r, { prompt: "p" }, router("c", 0.99))).toEqual({ graph: undefined, rule: 0, reason: "rule 0: the router chose graph c, which is not a candidate" });
   });
 
-  it("PX1.50 without a router, or before the session has a prompt, a route rule is no graph and the router is not asked; a failing router is no graph with its error", async () => {
+  it("PX1.52 without a router, or before the session has a prompt, a route rule is no graph and the router is not asked; a failing router is no graph with its error", async () => {
     const r = resolver(routeRule(["a"], 0.5));
     expect(await explainRoute(r, { prompt: "p" })).toEqual({ graph: undefined, rule: 0, reason: "rule 0 routes among graphs, and there is no router" });
     const unasked = router("a", 1);
@@ -127,7 +127,7 @@ describe("routing sessions to graphs by the router's confidence", () => {
     expect(await explainRoute(r, { prompt: "p" }, odd)).toEqual({ graph: undefined, rule: 0, reason: "rule 0 could not route: down" });
   });
 
-  it("PX1.51 a session pinned to one of the candidates keeps that graph without asking the router, so a session is routed once", async () => {
+  it("PX1.53 a session pinned to one of the candidates keeps that graph without asking the router, so a session is routed once", async () => {
     const r = resolver(routeRule(["a", "b"], 0.9));
     const unasked = router("a", 1);
     const kept = { graph: id("b"), rule: 0, reason: "rule 0 keeps the session's routed graph b" };
@@ -139,7 +139,7 @@ describe("routing sessions to graphs by the router's confidence", () => {
     expect(asked.asked).toHaveLength(1);
   });
 
-  it("PX1.52 resolving without routing (explainResolve) gives a route rule no graph; explainRoute resolves template rules as explainResolve does", async () => {
+  it("PX1.54 resolving without routing (explainResolve) gives a route rule no graph; explainRoute resolves template rules as explainResolve does", async () => {
     const r = resolver(routeRule(["a"], 0.5, { cwdUnder: "/work" }), { when: {}, graph: "${principal}" });
     expect(explainResolve(r, { cwd: "/work/x" })).toEqual({ graph: undefined, rule: 0, reason: "rule 0 routes among graphs, which needs the router" });
     expect([routes(r, { cwd: "/work/x" }), routes(r, { cwd: "/else" }), routes(resolver(), {})]).toEqual([true, false, false]);

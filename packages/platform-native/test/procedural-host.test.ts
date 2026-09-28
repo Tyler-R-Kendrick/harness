@@ -216,7 +216,7 @@ describe("procedural guidance and access on the native host", () => {
     expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
   });
 
-  it("PX2.66 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
+  it("PX2.114 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
     const routing = parseResolver({ rules: [{ when: {}, route: { candidates: ["default", "other"], minConfidence: 0.8 } }] });
     const input = (sessionId: string) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Start by searching."), report: () => undefined });
     const router = new MockLanguageModelV4({

@@ -109,14 +109,14 @@ describe("match: state-tracker (plan §5.2)", () => {
     ),
   );
 
-  it("PG3.30 a node the tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
+  it("PG3.32 a node the tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Check_Docs");
     expect(match({ name: "grep", declared: "End" }, g, "state-tracker")).toBe("End");
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, g, "state-tracker")).toBe("Run_Tests");
     expect(match({ name: "Edit", declared: "Edit_Docs" }, g, "state-tracker")).toBe("Edit_Docs");
   });
 
-  it("PG3.31 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
+  it("PG3.33 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test -w procedural" } }, g, "state-tracker")).toBe("Run_Tests");
     expect(match({ name: "Bash", arguments: { path: "docs/features.md" } }, g, "state-tracker")).toBe("Check_Docs");
     // Nodes with a predicate that holds come before a bare binding, whatever the document order.
@@ -128,7 +128,7 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match({ name: "Bash", arguments: "npm test" }, narrow, "state-tracker")).toBeUndefined();
   });
 
-  it("PG3.32 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
+  it("PG3.34 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
     // Edit_Docs is bound to the tool Edit, and a node is named Edit: the tracker takes the binding.
     expect(match({ name: "Edit" }, g, "state-tracker")).toBe("Edit_Docs");
     expect(match("Edit", g, "exact")).toBe("Edit");
@@ -138,13 +138,13 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match({ name: "grep", arguments: {} }, g, "state-tracker")).toBeUndefined();
   });
 
-  it("PG3.34 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
+  it("PG3.36 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
     const at = (node: unknown) => ({ stdout: "ok", _meta: { harness: { procedural: { node } } } });
     expect(declaredNode(at("Review"))).toBe("Review");
     expect([at(7), at(null), at(["Review"]), { _meta: { harness: { procedural: "Review" } } }, { _meta: "Review" }, "Review", null, undefined, [at("Review")]].map(declaredNode)).toEqual(Array(9).fill(undefined));
   });
 
-  it("PG3.33 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
+  it("PG3.35 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "exact")).toBe(match("Bash", g, "exact"));
     expect(match({ name: "Bash", arguments: { command: "npm test" } }, g, "exact")).toBe("Shell");
     expect(match({ name: "grep", declared: "End" }, g, "exact")).toBeUndefined();
@@ -221,7 +221,7 @@ describe("neighborhood", () => {
       ),
     );
 
-  it("PG3.28 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
+  it("PG3.30 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
     const g = hidden();
     expect(neighborhood(g, name("Retrieve"), 2).hops.map(pairs)).toEqual([["Retrieve→Scan_Index"], ["Scan_Index→Decide_Capital"]]);
     expect(neighborhood(g, name("Retrieve"), 2, "edge")).toEqual(neighborhood(g, name("Retrieve"), 2));
@@ -231,7 +231,7 @@ describe("neighborhood", () => {
     expect(neighborhood(g, name("Verify"), 2, "action").hops.map(pairs)).toEqual([["Verify→End"], []]);
   });
 
-  it("PG3.29 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
+  it("PG3.31 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
     const g = view(
       graphOf(
         [node("Start"), reasoning("R1"), reasoning("R2"), node("A"), node("B"), { id: "End", type: "STATUS", description: "Done." }],

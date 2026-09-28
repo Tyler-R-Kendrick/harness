@@ -113,7 +113,7 @@ describe("bindings", () => {
     ).toEqual([false, false, false, false, false, false]);
   });
 
-  it("PG1.49 a tool binding may carry an argument predicate: an object JSON Schema over the call's arguments that compiles, kept in the document and its id", () => {
+  it("PG1.53 a tool binding may carry an argument predicate: an object JSON Schema over the call's arguments that compiles, kept in the document and its id", () => {
     const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
     expect(accepts(BindingSchema, [{ kind: "tool", name: "Bash", arguments: tests }, { kind: "tool", name: "Bash", arguments: { type: "object" } }])).toEqual([true, true]);
     expect(
@@ -137,7 +137,7 @@ describe("bindings", () => {
     expect(broken.error?.issues.map((i) => [i.code, i.message])).toEqual([["custom", "an argument predicate must compile: Reference not found: #/nowhere"]]);
   });
 
-  it("PG1.50 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {
+  it("PG1.54 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {
     const tests = ArgumentPredicateSchema.parse({ type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] });
     expect([{ command: "npm test -w x" }, { command: "npm test", cwd: "/" }, { command: "ls" }, {}, "npm test", null].map((a) => acceptsArguments(tests, a))).toEqual([true, true, false, false, false, false]);
     expect(acceptsArguments(tests, { command: "npm test" })).toBe(true);

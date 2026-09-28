@@ -31,7 +31,7 @@ function planned(g: EffectiveGraph, from: string, to: string, options?: Paramete
 }
 
 describe("plans from subgraphs (planFromSubgraph)", () => {
-  it("PC1.35 the paper's HotpotQA excerpt plans its two tool steps in order; the payload holds the node and its binding", () => {
+  it("PC1.41 the paper's HotpotQA excerpt plans its two tool steps in order; the payload holds the node and its binding", () => {
     const plan = planned(view(hotpot()), "Start", "End");
     expect(shape(plan)).toEqual({ tasks: ["First_Hop_Retrieve", "Scan_Index"], edges: ["First_Hop_Retrieve -control-> Scan_Index"] });
     expect(plan.payload("First_Hop_Retrieve")).toStrictEqual({
@@ -42,12 +42,12 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(plan.ready()).toEqual(["First_Hop_Retrieve"]);
   });
 
-  it("PC1.36 the scratch skeleton (Start → End) plans no tasks", () => {
+  it("PC1.42 the scratch skeleton (Start → End) plans no tasks", () => {
     const skeleton = doc([["Start", "STATUS"], ["End", "STATUS"]], [edge("Start", "End")]);
     expect(shape(planned(view(skeleton), "Start", "End"))).toEqual({ tasks: [], edges: [] });
   });
 
-  it("PC1.37 PROVIDES_INPUT_FOR is a data edge, LEADS_TO and TRIGGERS are control edges, and non-action nodes contract away", () => {
+  it("PC1.43 PROVIDES_INPUT_FOR is a data edge, LEADS_TO and TRIGGERS are control edges, and non-action nodes contract away", () => {
     // Start → plan (REASONING) -TRIGGERS→ search; search -PROVIDES_INPUT_FOR→ Fetch_Page → summarize → End, summarize → review → End.
     const plan = planned(view(chainDoc()), "Start", "End");
     expect(shape(plan)).toEqual({
@@ -61,7 +61,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(view(triggered), "Start", "End")).edges).toEqual(["a -control-> b", "b -data-> c"]);
   });
 
-  it("PC1.38 through a reasoning or status node a dependency is data only when every edge on the way is; two ways of different kinds give both, nearest first", () => {
+  it("PC1.44 through a reasoning or status node a dependency is data only when every edge on the way is; two ways of different kinds give both, nearest first", () => {
     const through = doc(
       [["Start", "STATUS"], ["a", "ACTION"], ["think", "REASONING"], ["note", "STATUS"], ["b", "ACTION"], ["c", "ACTION"], ["d", "ACTION"], ["End", "STATUS"]],
       [
@@ -80,7 +80,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(view(through), "Start", "End")).edges).toEqual(["a -data-> d", "a -control-> d", "a -data-> b", "a -control-> c"]);
   });
 
-  it("PC1.39 only the subgraph between the two nodes is planned: what `from` does not reach, or what does not reach `to`, is left out", () => {
+  it("PC1.45 only the subgraph between the two nodes is planned: what `from` does not reach, or what does not reach `to`, is left out", () => {
     const plan = planned(view(chainDoc()), "Fetch_Page", "summarize");
     expect(shape(plan)).toEqual({ tasks: ["Fetch_Page", "summarize"], edges: ["Fetch_Page -control-> summarize"] });
     const single = planned(view(chainDoc()), "search", "search");
@@ -89,7 +89,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(view(chainDoc()), "search", "summarize")).tasks).toEqual(["search", "Fetch_Page", "summarize"]);
   });
 
-  it("PC1.40 a cycle through a task is refused with a cycle diagnostic (the paper allows cycles, a plan runs each task once)", () => {
+  it("PC1.46 a cycle through a task is refused with a cycle diagnostic (the paper allows cycles, a plan runs each task once)", () => {
     const retry = doc(
       [["Start", "STATUS"], ["search", "ACTION"], ["check", "ACTION"], ["End", "STATUS"]],
       [edge("Start", "search"), edge("search", "check", "PROVIDES_INPUT_FOR"), edge("check", "search", "LEADS_TO", "when nothing was found"), edge("check", "End")],
@@ -104,7 +104,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(planFromSubgraph(view(self), "Start", "End")).toEqual({ ok: false, diagnostics: [{ code: "cycle", message: "the plan would hold a cycle between search and search: search cannot depend on itself" }] });
   });
 
-  it("PC1.41 a loop among reasoning and status nodes alone runs no task twice, so it contracts away", () => {
+  it("PC1.47 a loop among reasoning and status nodes alone runs no task twice, so it contracts away", () => {
     const loop = doc(
       [["Start", "STATUS"], ["a", "ACTION"], ["think", "REASONING"], ["doubt", "REASONING"], ["b", "ACTION"], ["End", "STATUS"]],
       [edge("Start", "a"), edge("a", "think"), edge("think", "doubt"), edge("doubt", "think", "LEADS_TO", "when unsure"), edge("doubt", "b"), edge("b", "End")],
@@ -112,7 +112,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(view(loop), "Start", "End"))).toEqual({ tasks: ["a", "b"], edges: ["a -control-> b"] });
   });
 
-  it("PC1.42 unknown endpoints, an unreachable `to` and a relation with no dependency kind are diagnostics", () => {
+  it("PC1.48 unknown endpoints, an unreachable `to` and a relation with no dependency kind are diagnostics", () => {
     const g = view(chainDoc());
     expect(planFromSubgraph(g, "Nowhere", "End")).toEqual({ ok: false, diagnostics: [{ code: "missing-endpoint", message: "node Nowhere is not in the graph", at: "from" }] });
     expect(planFromSubgraph(g, "Start", "Nowhere")).toEqual({ ok: false, diagnostics: [{ code: "missing-endpoint", message: "node Nowhere is not in the graph", at: "to" }] });
@@ -127,7 +127,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     });
   });
 
-  it("PC1.43 the relation kinds are an option: a relation mapped to null is no dependency, and another kind can be chosen", () => {
+  it("PC1.49 the relation kinds are an option: a relation mapped to null is no dependency, and another kind can be chosen", () => {
     const custom = { ...chainDoc(), relations: [...chainDoc().relations, "ALTERNATIVE_TO"], edges: [...chainDoc().edges, edge("review", "summarize", "ALTERNATIVE_TO")] };
     const relations = { ...PLAN_RELATIONS, ALTERNATIVE_TO: null, TRIGGERS: "assurance" as const };
     expect(shape(planned(view(custom), "Start", "End", { relations })).edges).toEqual(["search -data-> Fetch_Page", "Fetch_Page -control-> summarize", "summarize -control-> review"]);
@@ -136,7 +136,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(view(triggered), "Start", "b", { relations })).edges).toEqual(["a -assurance-> b"]);
   });
 
-  it("PC1.44 an effective graph's overlay nodes and edges are planned with the core's", () => {
+  it("PC1.50 an effective graph's overlay nodes and edges are planned with the core's", () => {
     const parsed = parseGraph(hotpot());
     if (!parsed.ok) throw new Error("fixture");
     const base = revisionId(parsed.graph);
@@ -150,7 +150,7 @@ describe("plans from subgraphs (planFromSubgraph)", () => {
     expect(shape(planned(g, "Start", "End"))).toEqual({ tasks: ["First_Hop_Retrieve", "Scan_Index", "Verify"], edges: ["First_Hop_Retrieve -control-> Scan_Index", "Scan_Index -control-> Verify"] });
   });
 
-  it("PC1.45 a plan survives JSON: parsePlan restores it and checks every payload", () => {
+  it("PC1.51 a plan survives JSON: parsePlan restores it and checks every payload", () => {
     const plan = planned(view(chainDoc()), "Start", "End");
     const data = JSON.parse(JSON.stringify(plan.toJSON())) as ReturnType<typeof plan.toJSON>;
     const restored = parsePlan(data);

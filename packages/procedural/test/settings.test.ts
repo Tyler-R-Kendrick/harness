@@ -149,7 +149,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
-  it("PG1.48 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
+  it("PG1.52 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
     expect(presetOf(settings(), "paper").hopUnit).toBe("edge");
     expect(presetOf(settings(), "harness").hopUnit).toBe("edge");
     expect(presetOf(edit(["presets", "harness", "hopUnit"], "action")(), "harness").hopUnit).toBe("action");
@@ -157,13 +157,13 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["presets", "paper", "hopUnit"], "node")).toThrow(/presets\.paper\.hopUnit/);
   });
 
-  it("PG1.51 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
+  it("PG1.55 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
     expect(presetOf(settings(), "paper").match).toBe("exact");
     expect(presetOf(settings(), "harness").match).toBe("exact");
     expect(presetOf(edit(["presets", "harness", "match"], "state-tracker")(), "harness").match).toBe("state-tracker");
   });
 
-  it("PG1.52 delivery names where guidance goes and which tools a step offers: every one in both presets, or only the active node's successors' as an ablation", () => {
+  it("PG1.56 delivery names where guidance goes and which tools a step offers: every one in both presets, or only the active node's successors' as an ablation", () => {
     expect(file["presets"]).toMatchObject({ paper: { delivery: { to: "system", activeTools: "all" } }, harness: { delivery: { to: "trailing-message", activeTools: "all" } } });
     expect(presetOf(edit(["presets", "harness", "delivery"], { to: "trailing-message", activeTools: "successors" })(), "harness").delivery).toEqual({ to: "trailing-message", activeTools: "successors" });
     // Unset, every tool; a placement alone is read as that placement with every tool.
@@ -189,7 +189,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(presetOf(parseSettings(bare), "harness")).toMatchObject({ overlayRefresh: "turn", repinOnDream: "turn" });
   });
 
-  it("PG1.53 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
+  it("PG1.57 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
     const { prompts } = settings();
     expect(PLACEHOLDERS.route).toEqual(["graphs"]);
     expect(prompts.route).toContain("{graphs}");
