@@ -192,8 +192,11 @@ export interface DreamInput {
   stride: number;
   /** `{task_description}`. */
   task: string;
-  /** The tool catalog. */
-  tools: readonly string[];
+  /**
+   * The tool catalog. Without one (a host that cannot list its sessions' tools) there is
+   * no catalog to enforce, whatever `enforceToolCatalog` says, and the refiner is shown no tools.
+   */
+  tools?: readonly string[];
   /** Tools declared free of side effects; every other tool needs approval under `approval-for-side-effects`. */
   sideEffectFree: readonly string[];
   /** The overlay at the dream's snapshot, with the live settings its evidence is read by. */
@@ -495,7 +498,7 @@ function gather(state: DreamState, attempts: readonly Attempt[]): DreamStep {
   const request: DreamRefineRequest = {
     task: input.task,
     mode: `${revisionId(input.head) === revisionId(seedGraph()) ? "scratch" : "static"}_${input.settings.mode}`,
-    tools: input.tools,
+    tools: input.tools ?? [],
     attempts: renderAttempts(attempts, input.settings, input.tokenizer),
     graphJson: graphJson(state.retained.graph),
     rejected: renderRejections(shown),
@@ -571,7 +574,8 @@ function prepareOptions(state: DreamState, extraTools?: readonly string[]): Prep
   const { input } = state;
   return {
     cycles: input.settings.cycles,
-    ...(input.settings.enforceToolCatalog && { tools: extraTools === undefined ? input.tools : [...input.tools, ...extraTools] }),
+    // Stryker disable next-line ConditionalExpression: equivalent; an undefined `tools` option is no catalog to prepareCandidate either
+    ...(input.settings.enforceToolCatalog && input.tools !== undefined && { tools: extraTools === undefined ? input.tools : [...input.tools, ...extraTools] }),
     ...(input.settings.editFilter && { filter: { observations: state.work.observations } }),
   };
 }

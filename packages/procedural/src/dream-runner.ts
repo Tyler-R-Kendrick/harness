@@ -104,7 +104,7 @@ export interface RunDreamOptions {
   ports: DreamPorts;
   /** `{task_description}` for the refiner. */
   task?: string;
-  /** The tool catalog. */
+  /** The tool catalog; without one, none is enforced (see `DreamInput.tools`). */
   tools?: readonly string[];
   /** Tools declared free of side effects. */
   sideEffectFree?: readonly string[];
@@ -208,7 +208,8 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
-      tools: options.tools ?? [],
+      // Stryker disable next-line ConditionalExpression: equivalent; the reducer reads an undefined `tools` as an absent one
+      ...(options.tools === undefined ? {} : { tools: options.tools }),
       // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,

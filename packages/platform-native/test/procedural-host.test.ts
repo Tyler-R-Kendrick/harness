@@ -7,7 +7,7 @@ import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
+import { GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
 import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
@@ -204,6 +204,17 @@ describe("procedural guidance and access on the native host", () => {
     expect(await other.prepare({ ...input, sessionId: "s2" })).toBeUndefined();
     expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine }).prepare({ ...input, sessionId: "s3" })).toBeUndefined();
     expect(await store.pins.get("s2")).toBeUndefined();
+  });
+
+  it("PX2.118 the host's step hook applies the access policy it is given: a session the policy denies is left unguided", async () => {
+    const store = await seeded();
+    const resolver = parseResolver({ rules: [{ when: {}, graph: "default" }] });
+    const policy = parsePolicy({ rules: [{ when: { meta: { team: "search" } }, allow: true }], default: "deny" });
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver, policy, model: scriptedModel(() => "Search first.") });
+    const input = { sessionId: "s1", turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Search first."), report: () => {} };
+    expect(await step.prepare(input)).toBeUndefined();
+    expect(await store.pins.get("s1")).toBeUndefined();
+    expect(await step.prepare({ ...input, sessionId: "s2", sessionMeta: { team: "search" } })).toBeDefined();
   });
 
   it("PX2.54 a harness worker with the step hook prepends each turn's guidance, from the hook's guidance model, to its prompt", async () => {
