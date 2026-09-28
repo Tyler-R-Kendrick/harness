@@ -6,7 +6,7 @@ import { ConstraintEngine } from "@harness/constrained";
 import { BrowserHost, browserWorkflows, buildBrowserEnsemble, CacheStorageByteCache, IndexedDbStorage, IndexedDbWorkflows, portStream, xgrammarFromSource } from "@harness/platform-browser";
 import { Ensemble, invokeCognitive } from "@harness/cognitive";
 import { parseWorkflow } from "@harness/workflows";
-import { jsonSchema, tool } from "ai";
+import { experimental_evaluate, jsonSchema, tool } from "ai";
 // The XGrammar web binding's source, bundled as text (Vite's ?raw), as an app would ship it.
 import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
 import type { AcpPort } from "@harness/platform-browser";
@@ -138,6 +138,22 @@ async function cognitive(model: ModelDescriptor, hub: string) {
 }
 
 /**
+ * A decision model in the page: its files from a hub, verified and kept in the Cache API,
+ * on onnxruntime-web (WebGPU when the page has a GPU adapter, else WebAssembly), its
+ * WebAssembly from `wasm`.
+ */
+async function decide(model: ModelDescriptor, hub: string, wasm: string) {
+  const ensemble = buildBrowserEnsemble({ catalog: { models: [model], preferences: {} }, hub, cache: new CacheStorageByteCache({ name: "smoke-decide" }), onnxWasm: wasm });
+  const { answers } = await experimental_evaluate({
+    model: ensemble.evaluationModel("classification"),
+    maxRetries: 0,
+    state: "a  b",
+    questions: { pick: { type: "choice", instructions: "which?", criteria: { first: "a", last: "b" } } },
+  });
+  return { choice: answers.pick.choice, total: Object.values(answers.pick.probabilities ?? {}).reduce((a, b) => a + b, 0) };
+}
+
+/**
  * A durable workflow on QuickJS, journaled in IndexedDB. The first phase's run stops on a
  * failing tool; after the page reloads, the second phase resumes it by replay.
  */
@@ -164,5 +180,5 @@ async function workflows(phase: "first" | "resume") {
   }
 }
 
-Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver, cacheRoundTrip, xgrammar, cognitive, workflows } });
+Object.assign(globalThis, { smoke: { inTab, inSharedWorker, openAndLeave, join, takeOver, cacheRoundTrip, xgrammar, cognitive, decide, workflows } });
 document.title = "ready";

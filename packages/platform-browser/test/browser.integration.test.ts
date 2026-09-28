@@ -8,11 +8,12 @@ import { parseCatalog } from "@harness/cognitive";
 import { chromium } from "playwright-core";
 import type { Browser, BrowserContext } from "playwright-core";
 import { build } from "vite";
+import { decisionFiles } from "../../models/test/decision-fixture.ts";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const fixtures = new URL("./fixtures/", import.meta.url).pathname;
 const packages = new URL("../../", import.meta.url).pathname;
-const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".wasm": "application/wasm" };
+const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "application/wasm" };
 
 let out: string;
 let server: Server;
@@ -40,6 +41,15 @@ beforeAll(async () => {
   server = createServer((req, res) => {
     const hubFile = (req.url ?? "").startsWith("/hub/") ? Object.entries(hubFiles).find(([path]) => (req.url ?? "").endsWith(`/${path}`)) : undefined;
     if (hubFile) return void res.writeHead(200).end(hubFile[1]);
+    // onnxruntime-web's WebAssembly, as a CDN serves it to a page bundled into one file.
+    if ((req.url ?? "").startsWith("/ort/")) {
+      const file = join(packages, "..", "node_modules", "onnxruntime-web", "dist", (req.url ?? "").slice(5).split("?")[0]!);
+      try {
+        return void res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "text/javascript" }).end(readFileSync(file));
+      } catch {
+        return void res.writeHead(404).end();
+      }
+    }
     const name = req.url === "/" ? "index.html" : (req.url ?? "").slice(1);
     try {
       const body = name === "index.html" ? readFileSync(join(fixtures, name)) : readFileSync(join(out, name));
@@ -126,6 +136,22 @@ describe("the browser host in Chromium", () => {
     await p.reload();
     await p.waitForFunction(() => document.title === "ready");
     expect(await p.evaluate(() => (globalThis as unknown as Run).smoke.workflows("resume"))).toEqual({ status: "completed", output: [1, 2], replayed: 1, performed: 1 });
+    await p.close();
+  });
+
+  it("BI3.4 a decision model runs in the page on onnxruntime-web: files verified from the hub, its weights as external data, its WebAssembly from where the page says", async () => {
+    const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
+    const data = (file: string) => JSON.parse(readFileSync(new URL(`../../cognitive/data/${file}`, import.meta.url), "utf8")) as unknown;
+    const decider = parseCatalog(data("catalog.json"), data("benchmarks.json")).models.find((m) => m.runtime === "onnxruntime-decision" && m.platforms.includes("browser"))!;
+    const run = { ...(decider.run as Record<string, unknown>), data: "weights.data" } as { model: string; tokenizer: string; tokenizerConfig: string; data: string };
+    const files: Record<string, Uint8Array> = { ...decisionFiles(run), "weights.data": new Uint8Array([1, 2, 3]) };
+    Object.assign(hubFiles, files);
+    const model = { ...decider, run, artifact: { ...decider.artifact!, files: Object.entries(files).map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: sha(bytes) })) } };
+    const p = await page();
+    const decided = await p.evaluate(([m, hub, wasm]) => (globalThis as unknown as { smoke: { decide(m: unknown, hub: string, wasm: string): Promise<unknown> } }).smoke.decide(m, hub, wasm), [model, `${origin}/hub`, `${origin}/ort/`] as const);
+    // The tiny model scores options by their markers' positions: the last one wins.
+    expect(decided).toMatchObject({ choice: "last" });
+    expect((decided as { total: number }).total).toBeCloseTo(1, 5);
     await p.close();
   });
 
