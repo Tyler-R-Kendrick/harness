@@ -1,7 +1,7 @@
 import type { HarnessAgent, HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { Agent, AgentCallParameters, AgentStreamParameters, Experimental_SandboxSession, ModelMessage, ToolSet } from "ai";
 import type { TurnOptions } from "./agent.ts";
-import { messageOf, scopeOf } from "./session-agent.ts";
+import { messageOf, scopeOf, stepEnded } from "./session-agent.ts";
 import type { StepHook } from "./session-agent.ts";
 
 /** An AI SDK agent whose turns name their daemon session, and which can end every harness session. */
@@ -34,7 +34,7 @@ export function harnessSessions(
   options: {
     readonly sandboxSession?: (sessionId: string) => Experimental_SandboxSession;
     readonly store?: HarnessStore;
-    /** Guides each turn: its `turn` variant's text is prepended to the turn's prompt. */
+    /** Guides each turn: its `turn` variant's text is prepended to the turn's prompt; its `end` is told each step's usage. */
     readonly step?: StepHook;
   } = {},
 ): HarnessSessions {
@@ -102,6 +102,7 @@ export function harnessSessions(
           const last = event.toolCalls.at(-1);
           if (last) lastActions.set(turn.sessionId, last.toolName);
           await onStepEnd?.(event);
+          if (step) await stepEnded(step, turn, event);
         },
         session: live,
       };

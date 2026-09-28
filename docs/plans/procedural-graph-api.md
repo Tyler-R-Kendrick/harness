@@ -738,11 +738,16 @@ changed.
   - `TurnOptions` is `{ sessionId; turnId?; cwd?; sessionMeta?; report? }`. `AgentWorker`
     fills all of them from the prompt command; `report` is its own `update`. The agent's
     `callOptionsSchema` keeps every field.
-  - `StepHook = { prepare(StepContext): Promise<{ instructions?; messages? } | undefined>; turn?(TurnContext): Promise<string | undefined> }`.
+  - `StepHook = { prepare(StepContext): Promise<{ instructions?; messages? } | undefined>; turn?(TurnContext): Promise<string | undefined>; end?(StepEndContext): Promise<void> }`.
     `TurnScope = { sessionId; turnId?; cwd?; sessionMeta?; report }`.
     `StepContext = TurnScope & { messages; initialInstructions; stepNumber; model; tools }`
     (`model` is the step's; `tools` names the tools the turn offers).
     `TurnContext = TurnScope & { messages; lastAction: string | undefined; tools }`.
+    `StepEndContext = TurnScope & { stepNumber; usage: LanguageModelUsage }`: a step's
+    model usage once it ended. `sessionAgent` returns a `ToolLoopAgent` whose `stream` and
+    `generate` add an AI SDK `onStepEnd` (after the caller's own, or its deprecated
+    `onStepFinish`) that calls `end`; `harnessSessions` calls it from the harness's
+    `onStepEnd`. A failing `end` reports a `warning` notice "Step usage failed".
   - `sessionAgent({ step })` returns a per-call `prepareStep` from `prepareCall`, which
     closes over the turn's options (rather than `runtimeContext`). A hook that throws
     leaves the step as it was and reports a `warning` notice "Step guidance failed".
