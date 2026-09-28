@@ -1,10 +1,10 @@
-# 0012: Dialogue authoring standards: VoiceXML with SRGS, and AIML
+# 0013: Dialogue authoring standards: VoiceXML with SRGS, and AIML
 
 Status: decided, 2026-09-27.
 
 ## Question
 
-The scripted dialogue (ADR 0011) answers turns from scripts and flows, and builds scripts
+The scripted dialogue (ADR 0012) answers turns from scripts and flows, and builds scripts
 itself. Someone who wants to shape the harness for a task should not have to learn our
 script book or write flow code to do it: they should be able to author a dialogue with
 tools they already have, or bring a bot they already run. Which standards, and how do
@@ -30,7 +30,7 @@ a tool first. The dialogue holds imported documents in its book (`documents`: th
 they were, so they stay editable with their own tools) and gives flows an `interpret` tool
 that runs a step of one.
 
-Each document runs as a **flow** (ADR 0011), the one `importDialogue` generates. A turn is
+Each document runs as a **flow** (ADR 0012), the one `importDialogue` generates. A turn is
 one flow run: it asks the interpreter for the step, says what it says, calls the tools it
 names, and returns `{ continue: state }`. The dialogue keeps that state with the session
 and starts the next run with it on the next utterance (Temporal's *continue-as-new*): the

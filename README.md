@@ -110,7 +110,7 @@ harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env"
 ### Scripted dialogue
 
 Call centers answer most calls from scripts and transfer the rest to a person. The
-harness does the same with its model (ADR 0011): a dialogue in front of the session's
+harness does the same with its model (ADR 0012): a dialogue in front of the session's
 model answers the steps its scripts cover, with no inference or only for a script's
 holes, and passes the rest to the model. Scripts are fixed text with holes filled from
 what the user said (slots), from the tool result a step reads back, or by the model under
@@ -138,7 +138,7 @@ every session starts in. Flows live in the workflow library (`--workflows`) or i
 
 Dialogues can be authored in the standards call centers and chatbots already use, with
 their own tools, or brought from a bot that exists: **VoiceXML 2.1** with SRGS grammars
-(XML or ABNF), and **AIML 2.0** with its sets, maps and properties (ADR 0012). The
+(XML or ABNF), and **AIML 2.0** with its sets, maps and properties (ADR 0013). The
 harness runs an imported document a turn at a time as a flow, so its state is durable; a
 turn it cannot answer (a nomatch, the bot's catch-all, a `<transfer>`) goes to the model,
 and `<data src="tool:...">` calls the harness's tools and workflows.
@@ -189,6 +189,11 @@ Run the daemon as a background service on a user-private socket:
 ```sh
 node packages/platform-native/src/main.ts --socket ~/.harness.sock --state ~/.harness/state.json
 ```
+
+With `--state`, sessions survive a restart, and agent workers (`--worker model` or
+`ensemble`) keep each session's conversation beside it (a file per session in
+`state.conversations/`, or in `--conversations <dir>`), so a restored session continues
+where it stopped.
 
 Or on a WebSocket on this machine's loopback, for clients that cannot use a Unix socket
 (browser pages need their origin allowed; every client presents the token kept in
@@ -241,6 +246,17 @@ import { workflowTools } from "@harness/workflows";
 
 const workflows = browserWorkflows(cognitive, { library: new IndexedDbWorkflows(), tools });
 const agentTools = await workflowTools(workflows); // the library's workflows, for the page's agents
+```
+
+To try it by hand, build the browser playground: one HTML file with the daemon, a
+terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
+of every ACP message, worker event, model call, tool run and hook event. Opened as a
+claude.ai artifact, its model is Claude; anywhere, `ask '$ <command>'` runs the whole
+tool-call path on a deterministic model. Sessions, conversations, files and the timeline
+are kept in the browser across reloads (`harness reset` forgets them).
+
+```sh
+node packages/playground/build.ts   # writes packages/playground/dist/harness-playground.html
 ```
 
 In an extension, the daemon runs in the service worker and pages connect over runtime ports:

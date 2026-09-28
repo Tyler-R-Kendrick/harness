@@ -258,7 +258,7 @@ function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullabl
 }
 
 /**
- * A scripted dialogue for session models (see @harness/dialogue and ADR 0011). Over an
+ * A scripted dialogue for session models (see @harness/dialogue and ADR 0012). Over an
  * ensemble, its router picks scripts, its judge checks candidates and its reasoning model
  * drafts them; with `embeddings` (memory installed) exemplars match by meaning. Without an
  * ensemble it matches by pattern and clusters by shape, and drafts with `drafter` if given.

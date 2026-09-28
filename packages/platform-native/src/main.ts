@@ -14,7 +14,7 @@ import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-h
 import { Ensemble } from "@harness/cognitive";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import { documentImporter } from "@harness/dialogue-standards";
-import { FileStorage } from "./file-storage.ts";
+import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
@@ -24,6 +24,7 @@ const { values } = parseArgs({
     stdio: { type: "boolean", default: false },
     socket: { type: "string" },
     state: { type: "string" },
+    conversations: { type: "string" },
     worker: { type: "string", default: "echo" },
     model: { type: "string", default: "openai/gpt-oss-20b" },
     system: { type: "string" },
@@ -54,7 +55,8 @@ const { values } = parseArgs({
 
 if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
+    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--conversations <dir>]\n" +
+      "               [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>]\n" +
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
@@ -98,7 +100,11 @@ const cognitive =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
-// A scripted dialogue in front of the session model (ADR 0011): scripts answer what they
+// Agent workers keep each session's conversation (a file each) beside the daemon's state, so
+// a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
+const conversationsPath = conversationsDir(values);
+const conversations = conversationsPath === undefined ? {} : { conversations: fileConversations(conversationsPath) };
+// A scripted dialogue in front of the session model (ADR 0012): scripts answer what they
 // can, the model the rest, and scripts are built from the model's answers. Saved to its file.
 // Its flows are durable workflows: the workflow library's (--workflows), else files in
 // --dialogue-flows (by default next to the book), with their run journals.
@@ -158,7 +164,7 @@ const harness =
 const sessions: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
@@ -175,6 +181,7 @@ const sessions: Worker = harness
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
           ...(behavior ? { onEvent: (sessionId: string, name: string) => cognitive!.raiseBehavior(sessionId, name) } : {}),
+          ...conversations,
         })
       : new EchoWorker();
 // With the model and ensemble workers the dialogue sits in front of the model (it can

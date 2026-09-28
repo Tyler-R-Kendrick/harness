@@ -6,7 +6,7 @@ import { documentImporter, STANDARD_INTERPRETERS } from "@harness/dialogue-stand
 import type { WorkflowHost } from "@harness/workflows";
 
 /**
- * The scripted dialogue in the browser host (ADR 0011), as the native host has it: its
+ * The scripted dialogue in the browser host (ADR 0012), as the native host has it: its
  * book kept in `storage` (IndexedDB) and saved after every change, one save at a time;
  * its flows run by `flows` (see browserWorkflows: QuickJS, journals in IndexedDB); the
  * ensemble's router, judge and reasoning model (and embedder, with `embeddings`); documents

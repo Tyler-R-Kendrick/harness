@@ -1,4 +1,4 @@
-# 0011: Scripted dialogue: templates in front of inference
+# 0012: Scripted dialogue: templates in front of inference
 
 Status: decided, 2026-09-27.
 
@@ -114,7 +114,7 @@ agents, other workflows and `workflows.run` cannot call them, since they need a 
 A flow may instead end each turn with `{ continue: state }`: the session keeps that state
 and the next utterance starts a new run of the flow with it (*continue-as-new*), so a
 conversation with no end keeps journals one turn long. Documents imported in a dialogue
-standard run this way (ADR 0012).
+standard run this way (ADR 0013).
 
 A book may name an **entry** flow that every session starts in (a call flow answering the
 call, or a whole chatbot): it hears each utterance first, and a turn it passes on goes to

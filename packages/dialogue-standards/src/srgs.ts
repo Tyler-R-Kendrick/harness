@@ -8,7 +8,7 @@ import type { XNode } from "./xml.ts";
  * ABNF forms, matched against text: a grammar accepts an utterance when its root rule
  * derives the utterance's words, and its SISR tags (Semantic Interpretation for Speech
  * Recognition, `semantics/1.0` or `semantics/1.0-literals`) make the interpretation.
- * No JavaScript library implements SRGS for text; see ADR 0012.
+ * No JavaScript library implements SRGS for text; see ADR 0013.
  */
 
 export type Expansion =

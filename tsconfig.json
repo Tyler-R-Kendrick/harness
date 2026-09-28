@@ -57,6 +57,9 @@
     },
     {
       "path": "packages/platform-browser"
+    },
+    {
+      "path": "packages/playground"
     }
   ]
 }
