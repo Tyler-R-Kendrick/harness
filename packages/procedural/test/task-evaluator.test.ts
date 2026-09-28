@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { tool } from "ai";
 import { z } from "zod";
 import { ManualClock, scriptedJudge, SeededEntropy } from "@harness/testkit";
-import { parseSettings, taskSuiteEvaluator } from "@harness/procedural";
+import { NodeNameSchema, parseGraph, parseSettings, taskSuiteEvaluator } from "@harness/procedural";
 import type { Settings, TaskSuiteEvaluatorOptions } from "@harness/procedural";
 import { settings } from "./dream-fixtures.ts";
 import { graphs, guidanceModel, scripted, solverModel, suiteOf } from "./task-fixtures.ts";
@@ -131,6 +131,8 @@ describe("taskSuiteEvaluator", () => {
     const judged = suiteOf({ scorer: "judge" });
     expect(() => evaluator({ suite: judged })).toThrow(/judge scorer needs a judge/);
     expect(() => evaluator({ suite: judged, judge: () => scriptedJudge(), settings: withoutTaskJudge() })).toThrow(/needs a question: the suite's judge\.instructions or the settings' taskJudge prompt/);
+    // A metric needs neither.
+    expect(await evaluator({ settings: withoutTaskJudge() }).tasks("validation")).toEqual(["v0", "v1"]);
     await expect(evaluator({ suite: suiteOf({ tools: [{ name: "lookup" }, { name: "browser" }, { name: "mail" }] }), tools: hostTools() }).evaluate(plain, "validation")).rejects.toThrow("the task suite names tools this host does not offer: browser, mail");
     await expect(evaluator({ suite: suiteOf({ tools: [{ name: "toString" }] }) }).evaluate(plain, "validation")).rejects.toThrow("does not offer: toString");
     await expect(evaluator().evaluate(plain, "validation", ["t0"])).rejects.toThrow(new RangeError("no validation task t0"));
@@ -145,9 +147,13 @@ describe("taskSuiteEvaluator", () => {
     });
     await expect(evaluator({ model: refusing }).evaluate(plain, "validation", ["v1"])).rejects.toThrow("task v1 failed: refused");
     // A candidate the preset's cycle policy refuses cannot be held.
-    const cyclic = { ...plain, edges: [...plain.edges, { ...plain.edges[0]!, from: plain.edges[0]!.to, to: plain.edges[0]!.from }] };
+    const back = { ...plain.edges[0]!, from: plain.edges[0]!.to, to: plain.edges[0]!.from };
+    const cyclic = { ...plain, edges: [...plain.edges, back, { ...back, to: NodeNameSchema.parse("Ghost") }] };
     const forbidding = parseSettings({ ...settings, presets: { ...settings.presets, harness: { ...settings.presets["harness"]!, dream: { ...settings.presets["harness"]!.dream, cycles: "forbidden" } } } });
-    await expect(evaluator({ settings: forbidding }).evaluate(cyclic, "validation")).rejects.toThrow(/^the candidate graph cannot be evaluated: /);
+    const refused = parseGraph(cyclic, "forbidden");
+    if (refused.ok) throw new Error("the fixture should have a cycle");
+    await expect(evaluator({ settings: forbidding }).evaluate(cyclic, "validation")).rejects.toThrow(`the candidate graph cannot be evaluated: ${refused.diagnostics.map((d) => d.message).join("; ")}`);
+    expect(refused.diagnostics.length).toBeGreaterThan(1);
   });
 
   it("PD3.17 each evaluation holds its candidate apart: the next one sees only its own graph, under the preset named", async () => {

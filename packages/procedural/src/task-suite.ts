@@ -52,7 +52,7 @@ export const TaskSuiteSchema = z
     });
     if (!suite.tasks.some((t) => t.split === "validation")) ctx.addIssue({ code: "custom", message: "a task suite needs at least one validation task", path: ["tasks"] });
     const names = new Set<string>();
-    (suite.tools ?? []).forEach((tool, i) => {
+    suite.tools?.forEach((tool, i) => {
       if (names.has(tool.name)) ctx.addIssue({ code: "custom", message: `tool ${tool.name} is named twice`, path: ["tools", i, "name"] });
       names.add(tool.name);
     });
@@ -68,7 +68,7 @@ export function parseTaskSuite(input: unknown): TaskSuite {
 }
 
 /** JSON Schema for task files, for editors (data/task-suite.schema.json). */
-export const taskSuiteJsonSchema = (): object => z.toJSONSchema(TaskSuiteSchema, { io: "input" });
+export const taskSuiteJsonSchema = (): object => z.toJSONSchema(TaskSuiteSchema);
 
 const ARTICLES = new Set(["a", "an", "the"]);
 
@@ -81,7 +81,7 @@ function tokensOf(answer: string): string[] {
   return answer
     .toLowerCase()
     .replace(/\p{P}/gu, "")
-    .split(/\s+/)
+    .split(/\s/)
     .filter((token) => token !== "" && !ARTICLES.has(token));
 }
 
@@ -89,7 +89,7 @@ function tokensOf(answer: string): string[] {
 export function f1Score(answer: string, expected: string): number {
   const said = tokensOf(answer);
   const wanted = tokensOf(expected);
-  if (said.length === 0 || wanted.length === 0) return Number(said.length === wanted.length);
+  if (said.length === 0 && wanted.length === 0) return 1;
   const left = new Map<string, number>();
   for (const token of wanted) left.set(token, (left.get(token) ?? 0) + 1);
   let common = 0;

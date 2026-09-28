@@ -96,12 +96,14 @@ export function taskSuiteEvaluator(options: TaskSuiteEvaluatorOptions): Evaluato
       if (held.status === "invalid") throw new Error(`the candidate graph cannot be evaluated: ${held.diagnostics.map((d) => d.message).join("; ")}`);
       const host = typeof options.tools === "function" ? await options.tools() : (options.tools ?? {});
       const tools = suiteTools(suite, host);
+      // Stryker disable next-line ConditionalExpression: equivalent; the hook guides with the step's own model when given none
       const step = proceduralStep({ store, resolver: RESOLVER, settings, clock, entropy, preset: options.preset ?? "harness", ...(options.guidance === undefined ? {} : { model: options.guidance }) });
+      // Stryker disable next-line ConditionalExpression: equivalent; the agent leaves out empty instructions
       const agent = sessionAgent({ model, step, tools, ...(suite.instructions === undefined ? {} : { instructions: suite.instructions }) });
       const judge = suite.scorer === "judge" ? await options.judge!() : undefined;
       const results: RolloutResult[] = [];
       for (const task of tasks) {
-        const run = await agent.generate({ prompt: task.prompt, options: { sessionId: `task-${task.id}` } }).catch((e: unknown) => {
+        const run = await agent.generate({ prompt: task.prompt, options: { sessionId: task.id } }).catch((e: unknown) => {
           throw new Error(`task ${task.id} failed: ${messageOf(e)}`);
         });
         const value = await score(task, run.text, judge);

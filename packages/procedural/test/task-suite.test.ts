@@ -71,7 +71,8 @@ describe("task suites (a user's replayable tasks for dream's evaluator)", () => 
     expect(f1Score("the Eiffel Tower", "Eiffel Tower")).toBe(1);
     expect(f1Score("Eiffel", "Eiffel Tower")).toBeCloseTo(2 / 3);
     expect(f1Score("Tower Eiffel Paris", "Eiffel Tower")).toBeCloseTo(0.8);
-    expect(f1Score("a a b", "a b b")).toBeCloseTo(2 / 3);
+    expect(f1Score("x x y", "x y y")).toBeCloseTo(2 / 3);
+    expect(f1Score("x x", "x")).toBeCloseTo(2 / 3);
     expect(f1Score("Rome", "Paris")).toBe(0);
     expect(f1Score("", "")).toBe(1);
     expect(f1Score("the", "Paris")).toBe(0);
@@ -80,6 +81,7 @@ describe("task suites (a user's replayable tasks for dream's evaluator)", () => 
 
   it("PD3.12 each metric scores an answer against the expected one in [0, 1]", () => {
     expect(scoreAnswer("exact", " Paris\n", "Paris")).toBe(1);
+    expect(scoreAnswer("exact", "Paris", " Paris\n")).toBe(1);
     expect(scoreAnswer("exact", "paris", "Paris")).toBe(0);
     expect(scoreAnswer("normalized-exact", "The paris.", "Paris")).toBe(1);
     expect(scoreAnswer("normalized-exact", "Paris, France", "Paris")).toBe(0);
