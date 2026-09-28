@@ -16,7 +16,7 @@ import { HOME } from "../src/vfs.ts";
 // rank, not by name) writing templates through the engine on real weights, natively. Its
 // answers are held to the bounded schema, so every one is a template; a template that
 // leaves a hole without a value, repeats one already kept, or whose script fails on a copy of the files, is refused
-// and would go to the next generator (Claude, in the page). MEASURE_OUT keeps each outcome.
+// and is answered by the local model itself (the page never sends it to Claude unless named). MEASURE_OUT keeps each outcome.
 
 const data = (file: string) => JSON.parse(readFileSync(new URL(`../../cognitive/data/${file}`, import.meta.url), "utf8")) as unknown;
 const catalog = parseCatalog(data("catalog.json"), data("benchmarks.json"));

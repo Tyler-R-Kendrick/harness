@@ -146,6 +146,13 @@ describe("transformers.js text chat backend (a causal LM with its tokenizer, no 
     expect(log.filter((l) => l.name === "step")).toEqual([]);
   });
 
+  it("TB3.4 images sent alongside text-only messages are refused too", async () => {
+    const { module, log } = fakeTransformers();
+    const b = await loadTextChatBackend({ repo: "r/small", revision: "abc", module, dtype: "q8" });
+    await expect(b.generate({ messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }], images: [{ mediaType: "image/png", data: new Uint8Array([1]) }], tools: [], maxTokens: 5 }, () => {}, () => false)).rejects.toThrow(/text only/);
+    expect(log.filter((l) => l.name === "step")).toEqual([]);
+  });
+
   it("TB3.3 a constrained request masks each step; the vocabulary is the tokenizer's, the stop tokens the model's end of sequence", async () => {
     const { module, log } = fakeTransformers({ generated: ["a", "b", "!"] });
     const vocabularies: { tokens: string[]; stopTokens: number[] }[] = [];
