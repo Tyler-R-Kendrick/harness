@@ -1,12 +1,19 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import type { SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
 import { exponential } from "@harness/dialogue";
 import { defineSurface, ScoreSchema, TokensSchema } from "@harness/evolution";
 import type { DocumentInput, Documents, EvolutionPorts, Split, Surface, TaskRun } from "@harness/evolution";
+import { HAS_GROUPS, killGroup, runInGroup } from "./process-group.ts";
 
 const text = z.string().min(1);
+
+/** The most an evaluator's stdout may be capped at (a string this long is about all a process can hold): 256 MiB. */
+const MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
+/** What an evaluator may write to stdout unless its configuration says more: 64 MiB. */
+const DEFAULT_OUTPUT_BYTES = 64 * 1024 * 1024;
 const pointer = z.string().regex(/^(\/.*)?$/, "a JSON Pointer (empty, or starting with /)");
 
 /** A regular expression that compiles and cannot take exponential time (the dialogue's guard, which refuses the patterns models write; a config's are checked the same way). */
@@ -22,6 +29,41 @@ const PatternSchema = z
     }
     if (exponential(source)) ctx.addIssue({ code: "custom", message: `can take exponential time: ${source}` });
   });
+
+/** The variables a command's environment has of the parent's unless its `env` says more: enough to find programs and behave in the locale, and none of the credentials the harness itself holds. */
+const DEFAULT_ENV: readonly string[] = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TERM"];
+/** What a Windows program cannot start without. */
+const WINDOWS_ENV: readonly string[] = ["SystemRoot", "PATHEXT", "COMSPEC"];
+
+const EnvNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "an environment variable name (letters, digits and _, not starting with a digit)");
+
+/**
+ * The environment of a command that runs model-edited documents (an evaluator, a check). It
+ * gets none of the parent's environment (AI_GATEWAY_API_KEY and the like) except PATH, HOME,
+ * LANG, LC_ALL, TMPDIR and TERM, plus the variables named in `allow`, copied from the parent
+ * when it has them; `set` gives literal values and wins over a copy.
+ */
+export const EnvSchema = z
+  .strictObject({
+    /** Names of parent variables to pass on, in addition to PATH, HOME, LANG, LC_ALL, TMPDIR and TERM. */
+    allow: z.array(EnvNameSchema).exactOptional(),
+    /** Variables given literal values. */
+    set: z.record(EnvNameSchema, z.string()).exactOptional(),
+  }).describe("The command's whole environment: never the parent's. Only PATH, HOME, LANG, LC_ALL, TMPDIR and TERM are copied from the parent (so credentials such as AI_GATEWAY_API_KEY are not visible to the command); allow names more variables to copy, set gives literal values.");
+export type CommandEnv = z.output<typeof EnvSchema>;
+
+/** The whole environment a child gets: never the parent's, only what `env` allows and sets. */
+export function childEnvironment(env: CommandEnv | undefined, parent: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const names = [...DEFAULT_ENV, ...(HAS_GROUPS ? [] : WINDOWS_ENV), ...(env?.allow ?? [])];
+  const result: Record<string, string> = {};
+  for (const name of names) {
+    // Windows names its variables without regard to case.
+    const key = HAS_GROUPS ? name : Object.keys(parent).find((k) => k.toLowerCase() === name.toLowerCase());
+    const value = key === undefined ? undefined : parent[key];
+    if (key !== undefined && value !== undefined) result[key] = value;
+  }
+  return { ...result, ...env?.set };
+}
 
 /** A JSON document: a file of JSON, the schema it must keep satisfying (a JSON Schema file), and which paths are which component (see `classify`). */
 const JsonDocumentSchema = z.strictObject({ kind: z.literal("json").exactOptional(), path: text, schema: text.exactOptional() });
@@ -46,7 +88,10 @@ const TextDocumentSchema = z.strictObject({
       cwd: text.exactOptional(),
       /** The check's time limit; a check that takes longer fails the candidate. */
       timeoutMs: z.int().positive().default(10_000),
+      /** Its environment: by default only PATH, HOME, LANG, LC_ALL, TMPDIR and TERM of the parent's (never its credentials); `allow` names more, `set` gives values. */
+      env: EnvSchema.exactOptional(),
     })
+    .describe("A liveness command run synchronously (it blocks the run for at most timeoutMs). It runs in a process group of its own, which is killed at the time limit and after every run; the direct child is killed with SIGKILL and its output is bounded to 64 KiB. Limits: a process that made its own session or process group (setsid) escapes, on Windows only the direct child is killed, and a signal to the harness-evolution process is handled only after the check returns.")
     .exactOptional(),
 });
 
@@ -95,13 +140,17 @@ export const EvolutionConfigSchema = z
     }),
     /** A command (argv) that runs the harness the documents describe: `{documents, tasks, k}` as JSON on stdin, the task runs as JSON on stdout. */
     evaluator: z.strictObject({
-      command: z.array(text).min(1),
+      command: z.array(text).min(1).describe("The evaluator's argv. It runs in a process group of its own, which is killed (SIGTERM, then SIGKILL) when it times out, overflows its output limit, or the harness-evolution process exits or is signalled; a process that made its own session escapes, and on Windows only the direct child is killed."),
       /** Where it runs; by default the configuration file's directory. */
       cwd: text.exactOptional(),
       /** One evaluation's time limit. */
       timeoutMs: z.int().positive().default(600_000),
       /** Evaluations that run at once (a round measures several harnesses in one window). */
       concurrency: z.int().positive().default(2),
+      /** The most it may write to stdout, in bytes: an evaluator that writes more is killed and the evaluation fails. Default 64 MiB. */
+      maxOutputBytes: z.int().positive().max(MAX_OUTPUT_BYTES).describe("The most the evaluator may write to stdout, in bytes (default 67108864, 64 MiB; at most 268435456). An evaluator that writes more is killed with its process group and the evaluation fails.").exactOptional(),
+      /** Its environment: by default only PATH, HOME, LANG, LC_ALL, TMPDIR and TERM of the parent's (never its credentials, such as AI_GATEWAY_API_KEY); `allow` names more, `set` gives values. */
+      env: EnvSchema.exactOptional(),
     }),
     /** The evolution settings file; by default @harness/evolution's data/settings.json. */
     settings: text.exactOptional(),
@@ -120,7 +169,7 @@ export const EvolutionConfigSchema = z
     for (const [i, s] of c.structural.entries()) if (!c.components.includes(s)) issue(["structural", i], `structural components must be components: ${s}`);
     for (const [i, r] of c.classify.rules.entries()) {
       if (!c.components.includes(r.component)) issue(["classify", "rules", i, "component"], `not one of the components: ${r.component}`);
-      if (r.document !== undefined && !(r.document in c.documents)) issue(["classify", "rules", i, "document"], `not a document: ${r.document}`);
+      if (r.document !== undefined && !Object.hasOwn(c.documents, r.document)) issue(["classify", "rules", i, "document"], `not a document: ${r.document}`);
     }
     if (c.classify.fallback !== undefined && !c.components.includes(c.classify.fallback)) issue(["classify", "fallback"], `not one of the components: ${c.classify.fallback}`);
     const seen = new Set<string>();
@@ -228,12 +277,25 @@ const CHECK_OUTPUT_LIMIT = 64 * 1024;
  * Exit 0 is fine. A nonzero exit, a time out and output past the bound are the candidate's
  * problem (a change can hang or flood a compiler). A command that cannot start is not:
  * it throws, so the round fails instead of every candidate being refused for the host's fault.
+ *
+ * The command runs in a process group of its own and only the environment `env` allows
+ * (see EnvSchema). `spawnSync` kills only the direct child (with SIGKILL, which cannot be
+ * ignored) at the time limit or the output bound; the group is then killed too, and it is
+ * killed after every run, so no process the check started is left behind. Limits: a process
+ * that made its own session or group (`setsid`) escapes; on Windows there are no groups and
+ * only the direct child is killed; and a check cannot be interrupted by a signal to this
+ * process while it runs (a synchronous call blocks the event loop), only stopped by its
+ * time limit.
  */
-export function textCheck({ command, cwd, timeoutMs }: { readonly command: readonly string[]; readonly cwd?: string; readonly timeoutMs: number }, dir: string): (text: string) => string | undefined {
+export function textCheck({ command, cwd, timeoutMs, env }: { readonly command: readonly string[]; readonly cwd?: string; readonly timeoutMs: number; readonly env?: CommandEnv }, dir: string): (text: string) => string | undefined {
   const [file, ...args] = command as [string, ...string[]];
   const where = cwd === undefined ? dir : resolve(dir, cwd);
   return (input) => {
-    const r = spawnSync(file, args, { cwd: where, input, timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: CHECK_OUTPUT_LIMIT, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    // `detached` makes the child a group leader; spawnSync honors it although its typings do not list it.
+    const options: SpawnSyncOptionsWithStringEncoding = { cwd: where, env: childEnvironment(env), input, timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: CHECK_OUTPUT_LIMIT, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], ...{ detached: HAS_GROUPS } };
+    const r = spawnSync(file, args, options);
+    // Whatever the check started and left running goes with it (the leader is gone by now; its group id is its pid).
+    if (HAS_GROUPS && r.pid) killGroup(r.pid, "SIGKILL");
     const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
     if (code === "ETIMEDOUT") return `the check took longer than ${timeoutMs} ms and was stopped`;
     if (code === "ENOBUFS") return `the check wrote more than ${CHECK_OUTPUT_LIMIT} bytes and was stopped`;
@@ -313,38 +375,31 @@ export function parseTaskRuns(output: string): readonly TaskRun[] {
 interface Command {
   readonly command: readonly string[];
   readonly cwd: string;
+  readonly env: Readonly<Record<string, string>>;
   readonly timeoutMs: number;
+  readonly maxOutputBytes: number;
   readonly input: string;
 }
 
-/** Run a command with `input` on stdin and answer its stdout; it fails with the command's stderr when it exits badly, cannot start, or takes too long. */
-function run({ command, cwd, timeoutMs, input }: Command): Promise<string> {
-  return new Promise((resolvePromise, reject) => {
-    const [file, ...args] = command as [string, ...string[]];
-    const child = spawn(file, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    let err = "";
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, timeoutMs);
-    child.stdout.on("data", (d: Buffer) => out.push(d));
-    child.stderr.on("data", (d: Buffer) => (err = (err + d.toString()).slice(-2000)));
-    // A child that exits before reading its input is reported by its exit code.
-    child.stdin.on("error", () => {});
-    child.on("error", (e) => {
-      clearTimeout(timer);
-      reject(new Error(`cannot start the evaluator ${file}: ${e.message}`));
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
-      if (timedOut) reject(new Error(`the evaluator took longer than ${timeoutMs} ms and was stopped`));
-      else if (code !== 0) reject(new Error(`the evaluator exited with ${code === null ? `signal ${signal}` : `code ${code}`}${err.trim() ? `: ${err.trim()}` : ""}`));
-      else resolvePromise(Buffer.concat(out).toString("utf8"));
-    });
-    child.stdin.end(input);
-  });
+/**
+ * Run a command with `input` on stdin and answer its stdout; it fails with the command's
+ * stderr when it exits badly, cannot start, takes too long or writes too much. It runs in
+ * its own process group, which is killed when it is stopped (see runInGroup).
+ */
+async function run({ command, ...rest }: Command): Promise<string> {
+  const file = command[0]!;
+  const r = await runInGroup({ command, ...rest });
+  switch (r.kind) {
+    case "timeout":
+      throw new Error(`the evaluator took longer than ${rest.timeoutMs} ms and was stopped`);
+    case "overflow":
+      throw new Error(`the evaluator wrote more than ${rest.maxOutputBytes} bytes on stdout and was stopped`);
+    case "spawn-error":
+      throw new Error(`cannot start the evaluator ${file}: ${r.error.message}`);
+    default:
+      if (r.code !== 0) throw new Error(`the evaluator exited with ${r.code === null ? `signal ${r.signal}` : `code ${r.code}`}${r.stderr.trim() ? `: ${r.stderr.trim()}` : ""}`);
+      return r.stdout.toString("utf8");
+  }
 }
 
 /**
@@ -353,7 +408,8 @@ function run({ command, cwd, timeoutMs, input }: Command): Promise<string> {
  * At most `concurrency` run at once.
  */
 export function commandEvaluator({ config, dir }: LoadedConfig): EvolutionPorts["evaluate"] {
-  const { command, cwd, timeoutMs, concurrency } = config.evaluator;
+  const { command, cwd, timeoutMs, concurrency, env } = config.evaluator;
+  const maxOutputBytes = config.evaluator.maxOutputBytes ?? DEFAULT_OUTPUT_BYTES;
   const where = cwd === undefined ? dir : resolve(dir, cwd);
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -370,7 +426,8 @@ export function commandEvaluator({ config, dir }: LoadedConfig): EvolutionPorts[
   return async (documents, tasks, k) => {
     await slot();
     try {
-      return parseTaskRuns(await run({ command, cwd: where, timeoutMs, input: JSON.stringify({ documents, tasks, k }) }));
+      // The environment is read now, not when the config was parsed: it is the parent's at the time of the run.
+      return parseTaskRuns(await run({ command, cwd: where, env: childEnvironment(env), timeoutMs, maxOutputBytes, input: JSON.stringify({ documents, tasks, k }) }));
     } finally {
       release();
     }

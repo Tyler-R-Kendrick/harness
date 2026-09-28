@@ -11,13 +11,15 @@ import type { Documents, EvolutionPorts, LedgerRecord, Settings } from "@harness
 import { CognitiveError } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
 import { gatewayEvaluationModel } from "@harness/models";
-import writeFileAtomic from "write-file-atomic";
 import { loadEvolutionSettings } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import type { NativeEnsembleOptions } from "./cognitive-host.ts";
 import { buildSplit, buildSurface, commandEvaluator, documentPath, isTextDocument, loadEvolutionConfig, readDocuments } from "./evolution-config.ts";
 import type { LoadedConfig } from "./evolution-config.ts";
+import { replaceFiles } from "./atomic-files.ts";
+import type { FileOps } from "./atomic-files.ts";
 import { FileStorage } from "./file-storage.ts";
+import { withStateLock } from "./state-lock.ts";
 
 export const USAGE =
   "usage: harness-evolution <command> --config <evolution.json> [--state <file>] [--settings <file>]\n" +
@@ -51,6 +53,8 @@ export interface EvolutionDeps {
   readonly ensemble?: (options: NativeEnsembleOptions) => { readonly ensemble: Ensemble; close(): Promise<void> };
   /** Runs the harness on tasks; by default the configured evaluator command. */
   readonly evaluate?: EvolutionPorts["evaluate"];
+  /** The file operations `documents --write` replaces files with; by default the file system's (tests inject failures). */
+  readonly files?: Partial<FileOps>;
   /** Randomness; by default the host's (as the daemon's). */
   readonly entropy?: Entropy;
 }
@@ -115,6 +119,11 @@ export async function evolutionCommand(argv: readonly string[], io: EvolutionIo,
     const { values, positionals } = parse(argv);
     const [command] = positionals;
     if (command === undefined || !COMMANDS.includes(command) || positionals.length > 1) throw new Usage("");
+    // An empty value is a mistake (an unset shell variable), never "not given".
+    for (const [option, { type }] of Object.entries(OPTIONS)) {
+      const value = (values as Record<string, unknown>)[option];
+      if (type === "string" && value === "") throw new Usage(`--${option} needs a value, not an empty string`);
+    }
     if (values.config === undefined) throw new Usage("--config is required");
     const needsModel = command === "round" || command === "run";
     if (needsModel && values.model === undefined) throw new Usage(`${command} needs --model: the proposer's model, a gateway id`);
@@ -124,6 +133,9 @@ export async function evolutionCommand(argv: readonly string[], io: EvolutionIo,
     if (values.critic !== undefined && values["critic-model"] !== undefined) throw new Usage("--critic and --critic-model are alternatives: give one, the ensemble's judge or a gateway model");
     for (const option of ["model-cache", "llama-server"] as const) if (values[option] !== undefined && values.critic === undefined) throw new Usage(`--${option} is for --critic ensemble`);
     if (values.write && command !== "documents") throw new Usage("--write is for documents");
+    if (values.force && !(command === "start" || (command === "documents" && values.write))) throw new Usage("--force is for start and documents --write");
+    if (values.last !== undefined && command !== "status") throw new Usage("--last is for status");
+    if (values["max-rounds"] !== undefined && command !== "run") throw new Usage("--max-rounds is for run");
     const critic: Critic | undefined =
       values.critic !== undefined
         ? {
@@ -142,21 +154,23 @@ export async function evolutionCommand(argv: readonly string[], io: EvolutionIo,
     const statePath = values.state ?? (loaded.config.state === undefined ? `${resolve(values.config).replace(/\.json$/, "")}.state.json` : resolve(loaded.dir, loaded.config.state));
     const host = new Host({ io, deps, loaded, settings, storage: new FileStorage(statePath), statePath });
 
+    // What writes the state (or the files a run's state decides) holds the state's lock; reading needs none.
+    const locked = <T>(work: () => Promise<T>) => withStateLock(statePath, work);
     switch (command) {
       case "start":
-        await host.start(values.force);
+        await locked(() => host.start(values.force));
         break;
       case "round":
-        await host.rounds(values.model!, critic, 1, "round");
+        await locked(() => host.rounds(values.model!, critic, 1, "round"));
         break;
       case "run":
-        await host.rounds(values.model!, critic, maxRounds, "run");
+        await locked(() => host.rounds(values.model!, critic, maxRounds, "run"));
         break;
       case "status":
         await host.status(last);
         break;
       default:
-        await host.documents(values.write, values.force);
+        await (values.write ? locked(() => host.documents(true, values.force)) : host.documents(false, values.force));
     }
     return 0;
   } catch (e) {
@@ -337,11 +351,12 @@ class Host {
       return;
     }
     if (diverged.length && !force) throw new Error(`nothing was written: ${diverged.map((n) => documentPath(this.#loaded, n)).join(", ")} changed since the run started; --force replaces ${diverged.length === 1 ? "it" : "them"} anyway`);
-    for (const n of pending) {
-      // JSON is written as the run's file format; text is written exactly as the run holds it.
-      await writeFileAtomic(documentPath(this.#loaded, n), isTextDocument(this.#loaded, n) ? String(incumbent[n]) : `${JSON.stringify(incumbent[n], null, 2)}\n`);
-      this.#say(`wrote ${documentPath(this.#loaded, n)}`);
-    }
+    // JSON is written as the run's file format; text is written exactly as the run holds it. All of the files or none (see replaceFiles).
+    await replaceFiles(
+      pending.map((n) => ({ path: documentPath(this.#loaded, n), content: isTextDocument(this.#loaded, n) ? String(incumbent[n]) : `${JSON.stringify(incumbent[n], null, 2)}\n` })),
+      this.#deps.files,
+    );
+    for (const n of pending) this.#say(`wrote ${documentPath(this.#loaded, n)}`);
     if (pending.length === 0) this.#say("nothing to write");
   }
 }

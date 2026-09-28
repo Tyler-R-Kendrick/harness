@@ -95,12 +95,37 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "env": {
+                    "type": "object",
+                    "properties": {
+                      "allow": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        }
+                      },
+                      "set": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        },
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "additionalProperties": false,
+                    "description": "The command's whole environment: never the parent's. Only PATH, HOME, LANG, LC_ALL, TMPDIR and TERM are copied from the parent (so credentials such as AI_GATEWAY_API_KEY are not visible to the command); allow names more variables to copy, set gives literal values."
                   }
                 },
                 "required": [
                   "command"
                 ],
-                "additionalProperties": false
+                "additionalProperties": false,
+                "description": "A liveness command run synchronously (it blocks the run for at most timeoutMs). It runs in a process group of its own, which is killed at the time limit and after every run; the direct child is killed with SIGKILL and its output is bounded to 64 KiB. Limits: a process that made its own session or process group (setsid) escapes, on Windows only the direct child is killed, and a signal to the harness-evolution process is handled only after the check returns."
               }
             },
             "required": [
@@ -244,7 +269,8 @@
           "items": {
             "type": "string",
             "minLength": 1
-          }
+          },
+          "description": "The evaluator's argv. It runs in a process group of its own, which is killed (SIGTERM, then SIGKILL) when it times out, overflows its output limit, or the harness-evolution process exits or is signalled; a process that made its own session escapes, and on Windows only the direct child is killed."
         },
         "cwd": {
           "type": "string",
@@ -261,6 +287,36 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 268435456,
+          "description": "The most the evaluator may write to stdout, in bytes (default 67108864, 64 MiB; at most 268435456). An evaluator that writes more is killed with its process group and the evaluation fails."
+        },
+        "env": {
+          "type": "object",
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              }
+            },
+            "set": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string",
+                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+              },
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "description": "The command's whole environment: never the parent's. Only PATH, HOME, LANG, LC_ALL, TMPDIR and TERM are copied from the parent (so credentials such as AI_GATEWAY_API_KEY are not visible to the command); allow names more variables to copy, set gives literal values."
         }
       },
       "required": [
