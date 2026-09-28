@@ -16,7 +16,8 @@ export const hostPorts = {
 
 /**
  * The procedural step hook for this host's sessions (plan §5): each session resolves to a
- * graph through the resolver (the host's principal as the owner) and is pinned by P9's
+ * graph through the resolver (the host's principal as the owner), is let through by the
+ * access policy when there is one, and is pinned by P9's
  * `pinSession`. It goes to `sessionAgent({ step })` and, with a guidance model,
  * `harnessSessions({ step })`.
  */
@@ -25,16 +26,19 @@ export function nativeProceduralStep(options: {
   readonly settings: Settings;
   readonly resolver: Resolver;
   readonly principal?: string;
+  /** The access policy: a session is guided only by a graph it may read and write. */
+  readonly policy?: AccessPolicy;
   readonly preset?: string;
   /** The guidance model; a step's own model when not given. Turn-level guidance (harness workers) needs one. */
   readonly model?: LanguageModel;
 }): ProceduralStepHook {
-  const { store, settings, resolver, principal, preset, model } = options;
+  const { store, settings, resolver, principal, policy, preset, model } = options;
   return proceduralStep({
     store,
     settings,
     resolver,
     ...(principal === undefined ? {} : { principal }),
+    ...(policy === undefined ? {} : { policy }),
     ...hostPorts,
     ...(preset === undefined ? {} : { preset }),
     ...(model === undefined ? {} : { model }),

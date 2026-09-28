@@ -114,6 +114,21 @@ describe("proceduralExtension", () => {
     expect(await extension({ store: t.store, feedback: async () => undefined }).op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "unavailable", graph: pinned, reason: "no live learner is running" });
   });
 
+  it("PX2.117 feedback the learner skips or ignores is not reported as recorded, and a learner that is not running is unavailable", async () => {
+    const store = new FakeStore();
+    await store.pins.set("s1", { graph, core: revisionId(core()), overlay: 0, salt: "x", at: 0 });
+    const skipping = extension({ store, feedback: async () => ({ kind: "skipped", code: "unknown-turn", reason: "the log does not hold the turn, or it names no graph" }) });
+    expect(await skipping.op("feedback", { session: "s1", turn: "typo", score: 1 })).toEqual({ status: "unknown-turn", graph, reason: "the log does not hold the turn, or it names no graph" });
+    const ignoring = extension({ store, feedback: async () => ({ kind: "ignored", reason: "the preset has no overlay" }) });
+    expect(await ignoring.op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "unavailable", graph, reason: "the preset has no overlay" });
+    const recorded: LearnerResult[] = [{ kind: "rescored", turnKey: "s1/t", graph, appended: [] }, { kind: "unchanged", turnKey: "s1/t" }, { kind: "duplicate", turnKey: "s1/t" }];
+    for (const result of recorded) {
+      expect(await extension({ store, feedback: async () => result }).op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "recorded", graph });
+    }
+    // A host whose learner has not started yet answers nothing.
+    expect(await extension({ store, feedback: async () => undefined }).op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "unavailable", graph, reason: "no live learner is running" });
+  });
+
   it("PX2.35 every operation checks the policy for its action on its graph first; a refusal throws and nothing runs", async () => {
     const asked: [ProceduralAction, string][] = [];
     const dream = vi.fn(async () => ({}));

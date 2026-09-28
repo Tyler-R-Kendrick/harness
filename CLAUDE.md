@@ -19,6 +19,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
+| `packages/procedural` | procedural graphs (arXiv:2609.09153): a static core changed only by dream, a live overlay learned from traffic, step-level guidance, gates, stores and resolver | pure |
 | `packages/workflows` | durable workflows as code: a code mode port (AI SDK code mode natively from `/node`, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension, workflows as AI SDK tools | portable (`/node`: Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
@@ -29,6 +30,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/platform-native` | Node host: stdio/socket/WebSocket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
 | `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts (Web Lock liveness) and extension runtime ports, IndexedDB snapshots, the ensemble with a Cache API byte cache (and packaged code for extensions, `/vite`), durable workflows on QuickJS | host (browser) |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
+| `packages/playground` | browser playground: the browser host in one page, driven from a wterm terminal (just-bash) with traces, the daemon's state and the filesystem's changes beside it; builds to one HTML file (`node packages/playground/build.ts`) | host (browser) |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable
 exports, SAE rows); nothing in `packages/` imports it.

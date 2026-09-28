@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,5 +26,19 @@ describe("FileStorage", () => {
     const storage = new FileStorage(join(d, "state.json"));
     await Promise.all([1, 2, 3].map((n) => storage.save({ n })));
     expect(readdirSync(d)).toEqual(["state.json"]);
+  });
+
+  it("FS1.4 bytes survive a save and a load, kept in the JSON as tagged base64; objects that only look tagged are left alone", async () => {
+    const path = join(dir(), "state.json");
+    const value = { image: new Uint8Array([0, 1, 255]), nested: [{ data: new Uint8Array([7]) }], lookalike: { "$bytes": 3 }, text: "plain" };
+    await new FileStorage(path).save(value);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ image: { "$bytes": "AAH/" }, text: "plain" });
+    expect(await new FileStorage(path).load()).toEqual(value);
+  });
+
+  it("FS1.5 a Buffer and an ArrayBuffer are bytes too (loaded as a Uint8Array); an object shaped like the tag, or like its escape, loads as itself", async () => {
+    const path = join(dir(), "state.json");
+    await new FileStorage(path).save({ buffer: Buffer.from([1, 2]), raw: new Uint8Array([3, 4]).buffer, tag: { "$bytes": "AQI=" }, escaped: { "$object": [["a", 1]] }, inner: { "$bytes": { "$bytes": "x" } } });
+    expect(await new FileStorage(path).load()).toEqual({ buffer: new Uint8Array([1, 2]), raw: new Uint8Array([3, 4]), tag: { "$bytes": "AQI=" }, escaped: { "$object": [["a", 1]] }, inner: { "$bytes": { "$bytes": "x" } } });
   });
 });

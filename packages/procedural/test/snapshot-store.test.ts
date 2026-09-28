@@ -12,6 +12,18 @@ describe("SnapshotProceduralStore", () => {
     expect(storage.loads).toBe(1);
   });
 
+  it("PS1.59 a guidance text already kept under its id (every cached step puts it again) saves nothing; another text under it saves", async () => {
+    const storage = new ProbeStorage();
+    const store = new SnapshotProceduralStore(storage);
+    await expect(store.guidance.put("g", "text")).resolves.toBeUndefined();
+    expect(storage.saves).toBe(1);
+    await expect(store.guidance.put("g", "text")).resolves.toBeUndefined();
+    expect(storage.saves).toBe(1);
+    await store.guidance.put("g", "other");
+    expect(storage.saves).toBe(2);
+    expect(await store.guidance.get("g")).toBe("other");
+  });
+
   it("PS1.29 every change saves the whole document; reads and operations that change nothing save nothing", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);

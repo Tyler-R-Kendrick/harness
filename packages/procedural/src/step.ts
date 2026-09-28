@@ -21,8 +21,10 @@ import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
 import { pinSession, readOverlay } from "./pinning.ts";
+import { authorize } from "./policy.ts";
+import type { AccessPolicy } from "./policy.ts";
 import { resolveGraph } from "./resolver.ts";
-import type { Resolver } from "./resolver.ts";
+import type { ResolveContext, Resolver } from "./resolver.ts";
 import { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 import { guidancePromptOf, HOPS, presetOf, WINDOW } from "./settings.ts";
 import type { Preset, Settings } from "./settings.ts";
@@ -123,6 +125,12 @@ export interface ProceduralStepDeps {
   readonly resolver: Resolver;
   /** The owner principal the resolver sees for every session (the host's). */
   readonly principal?: string;
+  /**
+   * The access policy (plan §8.3). A guided session is pinned and its turns feed the
+   * graph's overlay, so it is guided only when the policy allows both `read` and `write`
+   * on its graph for its context. Without one, every graph the resolver names is allowed.
+   */
+  readonly policy?: AccessPolicy;
   readonly settings: Settings;
   /** Stamps pins (the core's `Clock`). */
   readonly clock: { now(): number };
@@ -266,14 +274,20 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   };
 
   /** The graph a session resolves to now, or none. */
-  const resolve = (scope: StepScope<never>): GraphId | undefined =>
+  const resolve = (scope: StepScope<never>): GraphId | undefined => {
     // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
-    resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) });
+    const context: ResolveContext = { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) };
+    const graph = resolveGraph(deps.resolver, context);
+    // A guided session is pinned and its turns feed the graph's overlay: the policy must allow both.
+    return graph !== undefined && authorize(deps.policy, "read", graph, context) && authorize(deps.policy, "write", graph, context) ? graph : undefined;
+  };
 
   /** The session's view: pinned for a new turn, or, for a turn it continues, at the pin it has on that graph. */
   const load = async (scope: StepScope, continuing: boolean): Promise<View | undefined> => {
     const graph = resolve(scope);
     if (graph === undefined) return undefined;
+    // A graph nothing has been imported into yet has nothing to guide by.
+    if ((await deps.store.heads.get(graph)) === undefined) return undefined;
     const stored = continuing ? await deps.store.pins.get(scope.sessionId) : undefined;
     const pin = stored?.graph === graph ? stored : await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
     const record = await deps.store.revisions.get(graph, pin.core);
