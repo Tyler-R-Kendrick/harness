@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -52,6 +52,34 @@ describe("procedural graphs on the native daemon", () => {
     expect(await proceduralStore(join(dir, "procedural")).heads.get(GraphIdSchema.parse("team/search"))).toEqual({ revision: revisionId(seedGraph()), history: [] });
   });
 
+  it("PX2.129 the daemon serves procedural.plan and procedural.run, and at startup resumes the plan runs a stopped daemon left in plan-runs.json, logging each end", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const store = join(dir, "procedural");
+    mkdirSync(store, { recursive: true });
+    const done = { plan: { nodes: [], edges: [] }, outcomes: {} };
+    writeFileSync(
+      join(store, "plan-runs.json"),
+      JSON.stringify({
+        runs: [
+          { id: "00000000000000a1", graph: "team/search", state: done },
+          { id: "00000000000000a2", graph: "team/search", state: { ...done, outcomes: { ghost: { ok: true, output: 1 } } } },
+        ],
+      }),
+    );
+    const d = launch(dir);
+    await d.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    for (let i = 0; i < 400 && !d.stderr().includes("00000000000000a2"); i++) await new Promise((r) => setTimeout(r, 10));
+    expect(d.stderr()).toContain("procedural: plan run 00000000000000a1 on team/search succeeded: no tasks\n");
+    expect(d.stderr()).toContain("procedural: plan run 00000000000000a2 on team/search could not be resumed and was dropped: task ghost is not in the plan\n");
+    expect(await invoke(d.client, "procedural.import", { graph: "team/search" })).toMatchObject({ status: "head" });
+    expect(await invoke(d.client, "procedural.plan", { graph: "team/search", from: "Start", to: "End" })).toMatchObject({ status: "ok", plan: { nodes: [], edges: [] } });
+    expect(await invoke(d.client, "procedural.run", { graph: "team/search", from: "Start", to: "End" })).toMatchObject({ graph: "team/search", status: "succeeded", tasks: [] });
+    expect(await invoke(d.client, "procedural.run", { graph: "team/search", from: "End", to: "Start" })).toMatchObject({ status: "invalid", diagnostics: [{ code: "unreachable" }] });
+    d.child.stdin.end();
+    expect(await d.exited).toBe(0);
+    expect(JSON.parse(readFileSync(join(store, "plan-runs.json"), "utf8"))).toEqual({ runs: [] });
+  });
+
   it("PX2.51 without the cognitive core --procedural still starts (sessions are guided), and procedural.* is not served", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", "--procedural", join(dir, "procedural")], { env: { ...process.env, NODE_OPTIONS: "" } });
@@ -80,6 +108,43 @@ describe("procedural graphs on the native daemon", () => {
     const invalid = launch(dir, "--worker", "model", "--procedural-composition", file);
     expect(await invalid.exited).not.toBe(0);
     expect(invalid.stderr()).toContain("invalid composition settings");
+  });
+
+  it("PX2.125 a harness worker's daemon gives dream a composer too: procedural.dream runs with it; a --workflows directory that is procedural's staging library keeps it from starting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const harness = ["--worker", "harness", "--harness", "codex", "--harness-state", join(dir, "harness.json"), "--sandboxes", join(dir, "sandboxes")];
+    const daemon = launch(dir, ...harness);
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    expect(await invoke(daemon.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+    const shared = launch(dir, ...harness, "--workflows", join(dir, "procedural", "staging"));
+    expect(await shared.exited).not.toBe(0);
+    expect(shared.stderr()).toContain("cannot be procedural's staging library");
+  });
+
+  it("PX2.123 --procedural-tools gives the daemon's dream the tools a deployment declares free of side effects: a valid file starts it and procedural.dream runs; an invalid one, or one without --procedural, keeps it from starting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const file = (name: string, content: unknown) => {
+      const path = join(dir, name);
+      writeFileSync(path, JSON.stringify(content));
+      return path;
+    };
+    const daemon = launch(dir, "--procedural-tools", file("tools.json", { sideEffectFree: ["search"] }));
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    expect(await invoke(daemon.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+
+    const invalid = launch(dir, "--procedural-tools", file("bad.json", { sideEffectFree: [""] }));
+    expect(await invalid.exited).toBe(2);
+    expect(invalid.stderr()).toMatch(/^--procedural-tools .*bad\.json: invalid tool declarations/);
+    const alone = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", "--procedural-tools", join(dir, "tools.json")], { env: { ...process.env, NODE_OPTIONS: "" } });
+    children.push(alone);
+    let stderr = "";
+    alone.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    expect(await new Promise((resolve) => alone.on("exit", resolve))).toBe(2);
+    expect(stderr).toBe("--procedural-tools needs --procedural: it declares the tools that directory's graphs dream over\n");
   });
 
   it("PX2.89 the daemon dreams on the preset's schedule from its ticks, gating on the --procedural-eval task suite", async () => {

@@ -1250,7 +1250,13 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   offered, it returns none, and every tool stays offered. The step record then carries
   `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
   may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
-  step only. The turn variant cannot limit a harness's tools and ignores the setting.
+  step only. The turn variant limits a harness turn the same way, for the whole turn
+  (the harness runs its own steps): it returns `{ text, activeTools }` in place of the
+  text (PW1.99), and `harnessSessions` offers only those of the turn's own host tools
+  (`harnessSessions({ tools })`, PW1.98). The harness's builtin tools stay offered: a
+  turn cannot limit them (`HarnessAgent`'s `activeTools` is fixed when it is built, and
+  filtering builtins needs the adapter's support), nor the agent's own tools, which a
+  turn cannot tell from its builtins.
 
 ## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
 
@@ -1341,8 +1347,97 @@ As built. Plan §7.6's task-graph item and ADR 0016's "the task graph gains payl
     cycles). A loop among reasoning and status nodes alone contracts away.
   - `parsePlan(data): TaskGraph<PlanPayload>` is `TaskGraph.fromJSON` with every payload
     parsed by `PlanPayloadSchema`.
-  - Nothing runs plans yet: the task graph is a library the daemon does not drive, and
-    dream does not emit plans.
+  - Plans run from the daemon (below); dream does not emit plans.
+
+## Running plans (`plan-run.ts`, `plan-task.ts`, `plan-runner.ts`)
+
+As built. This closes the gap "nothing runs plans yet".
+
+- **Settings are data.** `Settings` gains `plans: { concurrency }` (a positive whole
+  number; 4 in the shipped file) and the prompt `planTask`, whose placeholders are
+  `{task}`, `{guidance}` and `{inputs}` (`PLACEHOLDERS.planTask`).
+- **`runPlan(options: RunPlanOptions): Promise<PlanRunResult>`** (pure) runs a plan with
+  the task graph's own scheduler: each round it starts `plan.schedule(concurrency - running)`
+  (the ready tasks, in order, within joins, exclusions and resources) and waits for one to
+  finish. `RunPlanOptions = { plan; outcomes?; task: PlanTask; settings: Pick<Settings, "plans">; save? }`.
+  - `PlanTask = (input: PlanTaskInput) => Promise<TaskOutcome>`, with
+    `PlanTaskInput = { id; payload: PlanPayload; inputs }`: `inputs` are the outputs of the
+    task's `data` predecessors by task id (control predecessors give none).
+    `TaskOutcome = { ok: true; output } | { ok: false; error }` (`TaskOutcomeSchema`). A
+    task that throws fails with the error's message; the task graph then skips what can
+    no longer run (`complete`'s rules).
+  - `save(state: PlanRunState)` is called after every change (a task started, a task
+    finished), one call at a time and in order, with
+    `PlanRunState = { plan: TaskGraphData<PlanPayload>; outcomes: Record<id, TaskOutcome> }`.
+    A save that fails stops the run: `runPlan` rejects with its error and starts nothing
+    more (tasks already running finish unsaved).
+  - A run is resumable. `parsePlanRun(data): RestoredPlanRun` (`{ plan, outcomes }`)
+    restores a saved state, checking the plan as `parsePlan` does and the outcomes against
+    its statuses (a succeeded task has a success, a failed one a failure, no other task
+    has one). `runPlan({ ...restored, ... })` continues from the statuses: finished tasks
+    are not run again and their outputs feed their dependents; a task restored as
+    `running` was interrupted and runs again, so a task runs at least once (a bound
+    workflow's journal makes its steps once). A plan restored by `parsePlan` alone also
+    runs, without the outputs of tasks it has no outcome for.
+  - `PlanRunResult = { status: "succeeded" | "failed"; tasks: PlanTaskReport[]; state }`:
+    `succeeded` when every task did; `PlanTaskReport = { id; status; output? | error? }`
+    in plan order. A run's result does not depend on where it was interrupted and resumed
+    (PC1.P5).
+- **`modelTask({ model, tools, settings, graph? }): PlanTask`** runs a task on an AI SDK
+  model. A bound task (tool, workflow or skill binding, called by its name) is one
+  `generateText` step offered only that tool, with `toolChoice: { type: "tool" }`: the
+  tool's input schema constrains the answer. The prompt is `prompts.planTask` with
+  `{task}` (`[id] (Type: type)` and the node's description), `{guidance}` (the node's
+  incoming transitions in `graph`, as `serializeTransitions` writes them, the guidance
+  serializer's lines; empty without a graph) and `{inputs}` (JSON); decoding is the
+  solver's (`temperature`, `topK`, `solverMaxTokens`). The tool's result is the output;
+  its error, arguments its schema refuses and a tool without a result are failures; a
+  bound tool not in `tools` fails without a model call; an answer with no call throws the
+  SDK's `ToolChoiceViolationError`, which `runPlan` takes as a failure. An unbound task is
+  done by the model in text, offered no tools.
+- **`planRunner(options: PlanRunnerOptions): PlanRunner`** (pure) is what a host runs
+  plans with: `{ store; runs: PlanRunStore; settings; entropy; task; notify? }`.
+  - `run(graph, plan)` keeps the run in `runs` (a `PlanRunRecord = { id: PlanRunId; graph; state }`,
+    `PlanRunId` 16 hex digits from the entropy port) before its first task starts and
+    after every change, runs it with the tasks `task(context)` gives
+    (`PlanTaskContext = { graph; view?: { core; effective } }`, the graph's head and its
+    effective graph when it has a head), drops it when it ends, announces
+    `PlanNotice = { type: "procedural.plan.completed"; payload: PlanRunOutcome }` and
+    returns `PlanRunOutcome = { run; graph; status; tasks }`.
+  - `resume()` runs every kept run to its end, one after another, from its state; a kept
+    run whose state does not parse is dropped and reported as
+    `InvalidPlanRun = { run; graph; status: "invalid"; reason }`.
+  - `SnapshotPlanRuns(storage: SnapshotStorage)` is the `PlanRunStore` over the core
+    storage port: `{ runs: PlanRunRecord[] }`, saved whole after every change, one change
+    at a time; a change whose save fails is rejected and forgotten.
+  - `modelTasks({ model, tools, settings })` is the `task` port over `modelTask`: `tools`
+    is a tool set, or a function of the run's context; the effective graph guides.
+  - `HostComposition.planTools(core)` is a plan's tools on a host with composition: the
+    base tools as they are then plus exactly the workflows `core` binds (`revisionTools`).
+- **Operations.** `procedural.plan { graph, from, to }` (action `read`) answers
+  `{ status: "ok", revision, overlay, plan }` (the plan's JSON, from the head with its
+  overlay), `{ status: "invalid", diagnostics }` or `missing`. `procedural.run { graph, plan }`
+  or `{ graph, from, to }` (never both; action `run`, and `read` too when it builds the plan)
+  runs it with `ProceduralExtensionOptions.plans` (`Pick<PlanRunner, "run">`) and answers
+  the `PlanRunOutcome`; a plan JSON that does not parse is `{ status: "invalid", reason }`,
+  and without a runner it is `unavailable`. The policy's `ACTIONS` gain `run`
+  (`data/policy.schema.json` regenerated).
+- **Native host.** `nativePlanRunner({ dir, store, settings, model, tools?, notify? })`
+  keeps runs in `plan-runs.json` in the `--procedural` directory (`planRunsStore(dir)`, a
+  `FileStorage`, under the directory's lock). With the cognitive core the daemon runs plans
+  on the ensemble's chat model, with the session tools plus the workflows the graph's head
+  binds (`composition.planTools`; the workflow library's tools without composition),
+  announces each end on the hook bus (`hookNotifier` takes `ApprovalNotice | PlanNotice`),
+  and once up resumes the runs a stopped daemon left, logging each end
+  (`describePlanRun`). `harness-procedural plan <graph> <from> <to> [--run]` prints the
+  plan or runs it, sent to a daemon that holds the store; run locally, its tasks run on
+  `--model` or else the ensemble's chat model and call only the workflows the head binds
+  (the CLI has no session tools), and a run it leaves behind is resumed by the next
+  daemon on the directory. A failed run exits 1.
+- **Browser host.** `browserProcedural` takes `plans`, and
+  `browserPlanRunner(ensemble, { store, storage, settings, model?, tools?, notify? })` is
+  the runner over a page's store, on the ensemble's chat model by default, with runs kept
+  in `storage` (an `IndexedDbStorage` under its own key); a page resumes with `resume()`.
 
 ## Scheduled dream and the task-suite evaluator
 
@@ -1539,28 +1634,46 @@ above keep their meaning.
     (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
     or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
     `staging.host(base)` running the workflows; without a graph, the base.
-  - `composition({staging, settings, step, base?}): HostComposition` is what a host whose
-    sessions share one set of base tools hands out: `{staging, tools, composer(),
-    catalog()}`, `composer` and `catalog` reading `base` anew each time (once per dream).
+  - `composition({staging, settings, step, base?, builtins?}): HostComposition` is what a
+    host whose sessions share one set of base tools hands out: `{staging, tools,
+    composer(), catalog()}`, `composer` and `catalog` reading `base` anew each time (once
+    per dream). `builtins` names tools sessions have that the host does not run (an opaque
+    harness's own): `catalog` lists them first, once each, but they are neither session
+    tools nor in the composer's specs, so a compiled path calls host tools only (PC1.55).
 - **Workers (`@harness/workers`).** `sessionAgent({ tools })` given a function calls it
   each turn with the turn's scope (`TurnScope`: session, turn, cwd, meta, report), so a
-  session gets tools of its own. Opaque harness workers keep their harness's own tools,
-  so they get no workflow tools (and their dream no composer).
+  session gets tools of its own. `harnessSessions({ tools })` does the same for opaque
+  harness workers (HS1.12–HS1.14): the turn's tools reach the harness as host-executed
+  user tools, in place of the agent's own, through the call options and the agent's
+  `prepareCall: harnessTurnTools` (the AI SDK harness freezes a turn's tools for its
+  continuations, so a turn resumed after an approval round keeps them); the harness's
+  builtin tools stay its own. The turn hook is told the harness's tools and the turn's.
 - **Native host.**
   - `loadProceduralComposition(file?)` reads `data/composition.json`, or a deployment's
     copy (`--procedural-composition`).
-  - `nativeComposition({dir, settings, step, ask, base?, shared?})` is `composition` with
-    staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow, run journals under
-    `.runs/`) on AI SDK code mode; `shared` (the `--workflows` directory) is never written
-    and may not be that directory (it throws). `base` is the host's session tools, the
-    same for every session.
+  - `nativeComposition({dir, settings, step, ask, base?, shared?, builtins?})` is
+    `composition` with staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow,
+    run journals under `.runs/`) on AI SDK code mode; `shared` (the `--workflows`
+    directory) is never written and may not be that directory (it throws). `base` is the
+    host's session tools, the same for every session; `builtins` a harness adapter's
+    builtin tool names (PX2.121).
+  - `harnessWorker({harness, …, tools?})` builds its `HarnessAgent` with
+    `prepareCall: harnessTurnTools` and gives `harnessSessions` the tools (PX2.120).
   - `nativeDream`'s `composer` and `tools` may be functions, called at the start of each
     dream.
-  - `main.ts`, for `--worker model` and `--worker ensemble` with `--procedural`: the
-    worker's tools are `composition.tools` (base: none for the model worker, the shared
-    library's `workflowTools` for the ensemble worker), `ask` is the ensemble's default
-    model or the gateway model, and the daemon's dream gets `composer` and `catalog` as
-    its tool catalog (so `enforceToolCatalog` sees the session tools).
+  - `main.ts`, for `--worker model`, `--worker ensemble` and `--worker harness` with
+    `--procedural`: the worker's tools are `composition.tools` (base: none for the model
+    worker, the shared library's `workflowTools` for the ensemble and harness workers),
+    `ask` is the ensemble's default model or the gateway model, and the daemon's dream
+    gets `composer` and `catalog` as its tool catalog (so `enforceToolCatalog` sees the
+    session tools, and for a harness worker its adapter's builtins too, PX2.125). Without
+    `--procedural`, a harness worker's turns get the shared library's workflows, as the
+    ensemble worker's do.
+  - `loadProceduralTools(file?)` reads `data/tools.json` (`{sideEffectFree: string[]}`,
+    parsed by `parseToolDeclarations`, its schema generated from zod; none by default,
+    PGR1.58–PGR1.59), or a deployment's copy (`--procedural-tools`, on the daemon and on
+    `harness-procedural dream`), whose tools dream's `approval-for-side-effects` gate lets
+    a candidate route into without approval (PX2.122–PX2.124).
   - `harness-procedural dream` runs outside the daemon and does not know which worker's
     tools its sessions had, so it refines without a composition round; the daemon's
     `procedural.dream` composes.
@@ -1579,10 +1692,21 @@ the evaluator contract and scripted environment, rejection records), and the sec
 above gave dream a schedule, a configured evaluator and an approvals inbox. A1 resolved
 the store and log plumbing (records keyed by graph and id with a v1 migration, reverts
 that write no record, `Daemon.readLog`, one owner per store directory), and
-`procedural.feedback` answers what the learner did with the score. Still open:
+`procedural.feedback` answers what the learner did with the score. The last cross-phase
+item, P6 × P12, is resolved too: the tools a deployment declares free of side effects are
+data (`data/tools.json`, `--procedural-tools`) handed to dream, and a harness worker's
+sessions get the workflow tools their pinned core binds, its dream a composer and a tool
+catalog of the harness's builtins and the host tools. None is open.
 
-- P6 × P12: dream on the daemon has no tools declared free of side effects
-  (`sideEffectFree`), so `approval-for-side-effects` treats every tool as having them;
-  with a harness worker it also has no tool catalog (the harness's tools are its own), so
-  `enforceToolCatalog` sees none there. With an agent worker the session tools are its
-  catalog. Candidates that need approval wait in the approvals inbox.
+Limits of the AI SDK harness that stay, by design rather than as open work:
+
+- A harness runs its own steps, so successor-only tools limit a harness turn as a whole,
+  and only its host tools: the harness's builtins stay offered (`HarnessAgent` fixes
+  `activeTools` when it is built, and filtering builtins needs the adapter's support).
+- A compiled workflow calls host tools only: a path of a harness's builtin calls (which
+  its runtime executes, not the host) has no input schema on the host and is not composed.
+- A turn suspended with host tools and resumed in another process continues with the
+  agent's own tools (`HarnessAgent` re-reads its settings there, not the turn's), so a
+  turn tool it had is missing. The daemon never continues a turn across a restart (it
+  marks a turn in flight interrupted, and the next is a new prompt), so this does not
+  arise there.

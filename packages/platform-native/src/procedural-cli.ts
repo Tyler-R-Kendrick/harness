@@ -5,15 +5,17 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { approvalInbox, proceduralExtension } from "@harness/procedural";
-import { loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
+import { askModel } from "@harness/workflows";
+import { loadProceduralComposition, loadProceduralSettings, loadProceduralTools, loadTaskSuite } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { invokeDaemon } from "./daemon-link.ts";
-import { nativeDream, nativeTaskEvaluator, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
+import { nativeComposition, nativeDream, nativePlanRunner, nativeTaskEvaluator, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
 import { lockStore } from "./store-lock.ts";
 
 // harness-procedural <history|export|import|revert|dream|approvals> <graph> [options]
 // harness-procedural <approve|decline> <graph> <candidate> [options]
+// harness-procedural plan <graph> <from> <to> [--run] [options]
 // Works on the procedural store in --procedural <dir> (the daemon's), through the same
 // operations the `procedural` extension serves. One process owns a store file: this CLI
 // takes the directory's lock and opens the store itself, or, when a daemon holds the
@@ -24,14 +26,19 @@ const USAGE =
   "       harness-procedural import <graph> [<graph.json>]   (without a file: the scratch skeleton)\n" +
   "       harness-procedural revert <graph> [--to <revision>]\n" +
   "       harness-procedural dream <graph> [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]] [--state <daemon state file>]\n" +
-  "                                [--procedural-eval <tasks.json>]\n" +
+  "                                [--procedural-eval <tasks.json>] [--procedural-tools <tools.json>]\n" +
   "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
   "          daemon's saved session logs; asks for approval on a terminal, and otherwise leaves the\n" +
   "          candidate in the approvals inbox; gates on the task suite, solved by the gateway model or\n" +
-  "          else the ensemble's chat model, and judged by the catalog's judge)\n" +
+  "          else the ensemble's chat model, and judged by the catalog's judge; the tools declared free of\n" +
+  "          side effects, procedural's data/tools.json by default, route candidates without approval)\n" +
   "       harness-procedural approvals <graph>                (the candidates waiting for approval)\n" +
   "       harness-procedural approve <graph> <candidate>      (commit it on the head, if its gates pass there)\n" +
   "       harness-procedural decline <graph> <candidate>\n" +
+  "       harness-procedural plan <graph> <from> <to> [--run [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]]]\n" +
+  "         (the plan between two nodes of the graph's head and overlay; with --run, runs it: each task on the gateway\n" +
+  "          model or else the ensemble's chat model, calling the workflows the head binds, as this CLI has no session\n" +
+  "          tools; the run is kept in the directory while it runs, and a daemon started there resumes one left behind)\n" +
   "  options: [--procedural <dir>] [--settings <settings.json>] [--preset <name>]\n" +
   "  (when a daemon holds <dir> and serves procedural operations with --socket and --cognitive, the command runs in that daemon, with its settings and models)\n";
 
@@ -52,13 +59,18 @@ const { values, positionals } = parseArgs({
     "llama-server": { type: "string" },
     "no-hosted": { type: "boolean", default: false },
     "procedural-eval": { type: "string" },
+    run: { type: "boolean", default: false },
+    "procedural-tools": { type: "string" },
   },
 });
-// The second positional is the graph; the third is import's file, or for approve and decline the candidate's revision id.
-const [command = "", graph, file] = positionals;
-const COMMANDS = ["history", "export", "import", "revert", "dream", "approvals", "approve", "decline"];
+// The second positional is the graph; the third is import's file, for approve and decline the candidate's revision id,
+// and for plan the node it starts from, with the node it goes to fourth.
+const [command = "", graph, file, to] = positionals;
+const COMMANDS = ["history", "export", "import", "revert", "dream", "approvals", "approve", "decline", "plan"];
 const decides = command === "approve" || command === "decline";
-if (!COMMANDS.includes(command) || graph === undefined || positionals.length > 3 || (decides ? file === undefined : file !== undefined && command !== "import")) {
+const plans = command === "plan";
+const arity = plans ? positionals.length === 4 : positionals.length <= 3 && (decides ? file !== undefined : file === undefined || command === "import");
+if (!COMMANDS.includes(command) || graph === undefined || !arity || (values.run && !plans)) {
   process.stderr.write(USAGE);
   process.exit(2);
 }
@@ -69,6 +81,14 @@ try {
   taskSuite = values["procedural-eval"] === undefined || command !== "dream" ? undefined : loadTaskSuite(values["procedural-eval"]);
 } catch (e) {
   process.stderr.write(`--procedural-eval ${values["procedural-eval"]}: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
+// The tools a deployment declares free of side effects: a candidate routing only into them needs no approval.
+let sideEffectFree: readonly string[] | undefined;
+try {
+  sideEffectFree = command !== "dream" ? undefined : loadProceduralTools(...(values["procedural-tools"] === undefined ? [] : [values["procedural-tools"]])).sideEffectFree;
+} catch (e) {
+  process.stderr.write(`--procedural-tools ${values["procedural-tools"]}: ${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(2);
 }
 if (taskSuite?.tools !== undefined && taskSuite.tools.length > 0) {
@@ -82,9 +102,13 @@ if (taskSuite?.scorer === "judge" && values.model !== undefined) {
 
 const dir = values.procedural ?? join(homedir(), ".cache", "harness", "procedural");
 const optional = (key: string, value: unknown) => (value === undefined ? {} : { [key]: value });
+// `plan --run` is the `run` operation on the plan between the two nodes.
+const operation = plans && values.run ? "run" : command;
 const input = decides
   ? { graph, candidate: file }
-  : {
+  : plans
+    ? { graph, from: file, to }
+    : {
       graph,
       ...(command === "export" ? { ...optional("format", values.format), ...optional("revision", values.revision), ...(values["no-overlay"] ? { overlay: false } : {}) } : {}),
       ...(command === "import" && file !== undefined ? { document: JSON.parse(readFileSync(file, "utf8")) as unknown } : {}),
@@ -101,8 +125,8 @@ function report(result: Result): void {
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
-  // A dream that could not run (another holds the lease, no head, the lease lost) is a result the caller handles too.
-  const handled = ["missing", "invalid", "refused", "unavailable"].includes(result.status ?? "") || (command === "dream" && result.result?.status !== "done");
+  // A dream that could not run (another holds the lease, no head, the lease lost), or a plan run that failed, is a result the caller handles too.
+  const handled = ["missing", "invalid", "refused", "unavailable"].includes(result.status ?? "") || (command === "dream" && result.result?.status !== "done") || (operation === "run" && result.status === "failed");
   process.exitCode = handled ? 1 : 0;
 }
 
@@ -123,11 +147,11 @@ if (lock.status === "held") {
     process.stderr.write(`the procedural store in ${dir} is in use by ${holder} (pid ${pid})${advice}\n`);
     process.exit(1);
   }
-  const local = ["settings", "preset", "model", "model-cache", "llama-server", "state", "procedural-eval"].filter((name) => values[name as keyof typeof values] !== undefined);
+  const local = ["settings", "preset", "model", "model-cache", "llama-server", "state", "procedural-eval", "procedural-tools"].filter((name) => values[name as keyof typeof values] !== undefined);
   if (values["no-hosted"]) local.push("no-hosted");
   if (local.length > 0) process.stderr.write(`${holder} (pid ${pid}) holds ${dir}: sending ${command} to it on ${socket}, which runs it with its own settings and models (ignoring --${local.join(", --")})\n`);
   try {
-    report((await invokeDaemon(socket, `procedural.${command}`, input)) as Result);
+    report((await invokeDaemon(socket, `procedural.${operation}`, input)) as Result);
   } catch (e) {
     fail(e);
   }
@@ -147,8 +171,9 @@ async function runHere(): Promise<void> {
   // Dream refines with the --model gateway model, or else the ensemble's reasoning model (which
   // loads only when the refiner is asked). Its trajectories come from the daemon's saved session
   // logs when --state names them, and on a terminal a candidate that needs approval is asked about.
+  // A plan run's tasks run on the --model gateway model, or else the ensemble's chat model.
   const cognitive =
-    command === "dream" && values.model === undefined
+    (command === "dream" || operation === "run") && values.model === undefined
       ? buildNativeEnsemble({
           cacheDir: values["model-cache"] ?? join(homedir(), ".cache", "harness", "models"),
           allowHosted: !values["no-hosted"],
@@ -177,15 +202,23 @@ async function runHere(): Promise<void> {
           model,
           sessions: async () => snapshotSessions(state === undefined ? undefined : await new FileStorage(state).load()),
           holder: "harness-procedural",
+          ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
           ...(evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {}),
           // Without a terminal, a candidate that needs approval waits in the inbox (`approvals`, `approve`, `decline`).
           ...(process.stdin.isTTY
             ? { approver: terminalApprover(process.stdin, process.stderr) }
             : { inbox: approvalInbox(({ payload }) => void process.stderr.write(`candidate ${payload.candidate} of graph ${payload.graph} waits for approval\n`)) }),
         });
-  const extension = proceduralExtension({ store, settings, ...preset, clock: { now: () => Date.now() }, ...(dream === undefined ? {} : { dream }) });
+  // A plan run calls the workflows the graph's head binds, staged in the directory: this CLI has no session tools.
+  // It is kept in the directory while it runs; a daemon started there resumes one this CLI left behind.
+  const runner = () => {
+    const tasks = values.model === undefined ? cognitive!.ensemble.languageModel("chat") : gateway(values.model);
+    const staged = nativeComposition({ dir, settings: loadProceduralComposition(), step: { core: async () => undefined }, ask: askModel(tasks) });
+    return nativePlanRunner({ dir, store, settings, model: tasks, tools: (context) => staged.planTools(context.view?.core) });
+  };
+  const extension = proceduralExtension({ store, settings, ...preset, clock: { now: () => Date.now() }, ...(dream === undefined ? {} : { dream }), ...(operation === "run" ? { plans: runner() } : {}) });
   try {
-    report((await extension.operations![command]!(input)) as Result);
+    report((await extension.operations![operation]!(input)) as Result);
   } catch (e) {
     fail(e);
   } finally {

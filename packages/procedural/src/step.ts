@@ -53,7 +53,7 @@ export const StepRecordSchema = z.strictObject({
   /** The probationary overlay entries the step showed (plan §6.3). */
   exposure: z.array(EntryIdSchema),
   usage: z.strictObject({ inputTokens: z.int().min(0), outputTokens: z.int().min(0) }),
-  /** The only tools the step offered, under successor-only delivery; absent when it offered every tool. */
+  /** The only tools the step offered (a harness turn: the only host tools of its own), under successor-only delivery; absent when it offered every tool. */
   activeTools: z.array(z.string()).exactOptional(),
 });
 export type StepRecord = z.output<typeof StepRecordSchema>;
@@ -117,7 +117,12 @@ export interface TurnInput extends StepScope {
 /** A step hook: structurally the workers' `StepHook`. */
 export interface ProceduralStepHook {
   prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[]; activeTools?: string[] } | undefined>;
-  turn(input: TurnInput): Promise<string | undefined>;
+  /**
+   * A harness turn's guidance text; under successor-only delivery, with the tools of the
+   * successors of its last call as the turn's active tools (the host tools of its own it
+   * can limit; the harness's builtins stay offered).
+   */
+  turn(input: TurnInput): Promise<string | { readonly text: string; readonly activeTools: string[] } | undefined>;
   /**
    * The core revision the session reads this turn, or undefined when it has no graph. It
    * resolves and pins at a turn boundary as a step does, so the turn's steps read the same
@@ -493,8 +498,9 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const call = input.lastCall;
       const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredNode(call.output));
       const last = preset.turnBoundary === "start" ? undefined : known;
-      // A harness turn cannot limit the harness's tools, so successor-only delivery guides it as usual.
-      return (await advise(input, { ...session, view: session.view }, last, [], deps.model, false)).block;
+      // A harness turn limits only the host tools of its own, for the whole turn: the harness runs its own steps.
+      const { block, activeTools } = await advise(input, { ...session, view: session.view }, last, [], deps.model, preset.delivery.activeTools === "successors");
+      return activeTools === undefined ? block : { text: block, activeTools };
     },
 
     async core(scope) {

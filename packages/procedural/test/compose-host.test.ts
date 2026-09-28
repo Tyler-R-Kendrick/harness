@@ -149,4 +149,27 @@ describe("composition on a host", () => {
     const bare = composition({ staging: s, settings: settings(), step: { core: async () => undefined } });
     expect([await bare.tools(scope("s1")), await bare.catalog()]).toEqual([{}, []]);
   });
+
+  it("PC1.72 a plan's tools are the base tools as they are then, plus exactly the workflows the plan's graph's head binds; a graph with no head gets the base alone", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const w = compiled();
+    await s.library.stage(w);
+    let base: ToolSet = { search: tool({ inputSchema: jsonSchema({ type: "object" }), execute: async () => [] }) };
+    const c = composition({ staging: s, settings: settings(), step: { core: async () => undefined }, base: () => base });
+    expect(Object.keys(await c.planTools(bound(w))).sort()).toEqual(["search", w.name].sort());
+    expect(Object.keys(await c.planTools(chain()))).toEqual(["search"]);
+    expect(await c.planTools(undefined)).toBe(base);
+    base = {};
+    expect(Object.keys(await c.planTools(bound(w)))).toEqual([w.name]);
+    expect(await composition({ staging: s, settings: settings(), step: { core: async () => undefined } }).planTools(undefined)).toEqual({});
+  });
+
+  it("PC1.55 a harness's own tools (builtins, which the host does not run) are in dream's tool catalog, once each, but neither a session's host tools nor the composer's specs", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const search = tool({ description: "Search.", inputSchema: jsonSchema({ type: "object" }), execute: async () => [] });
+    const c = composition({ staging: s, settings: settings(), step: { core: async () => undefined }, base: () => ({ search }), builtins: ["Bash", "Read", "search"] });
+    expect(await c.catalog()).toEqual(["Bash", "Read", "search"]);
+    expect(Object.keys(await c.tools(scope("s1")))).toEqual(["search"]);
+    expect(Object.keys((await c.composer()).toolSpecs)).toEqual(["search"]);
+  });
 });

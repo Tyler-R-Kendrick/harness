@@ -156,7 +156,10 @@ The decision held; these details moved.
   `--procedural` natively, an IndexedDB database in a browser; never the shared workflow
   library), and agent workers take their tools per turn from the core the step hook pins
   for the turn, so a session is offered exactly the workflows its pinned core binds.
-  Opaque harness workers keep their harness's own tools and are not offered workflows.
+  Opaque harness workers get them the same way, as host tools beside the harness's own
+  (given per turn through the AI SDK harness's `prepareCall`); their dream's tool catalog
+  also lists the harness's builtins, which a compiled workflow cannot call, since the
+  harness's runtime, not the host, runs them.
 - **Approval outside a session is an inbox.** The permission flow belongs to a session's
   turn, and dream runs outside any session, so a dream with no one to ask stores each
   candidate that needs approval as `pending-approval` and moves on without blocking. The
@@ -214,17 +217,33 @@ The decision held; these details moved.
 - **Plans come from subgraphs.** Core's task graph carries opaque payloads and
   serializes to JSON; `planFromSubgraph` turns the subgraph between two nodes into one,
   a task per action node, with the graph's relations as data and control dependencies.
-  Nothing drives plans yet.
+- **Plans run on the task graph's own scheduler, from the daemon.** `runPlan` starts the
+  ready tasks the task graph schedules, at most the settings' concurrency at once, and
+  each task runs through a port: by default one AI SDK `generateText` step offered only
+  the task's bound tool, with the tool choice forced (the tool's schema is the
+  constraint), prompted with the node's incoming transitions and its data inputs. No
+  second scheduler is written: joins, skips on failure and exclusions stay the task
+  graph's. A run's state (the plan's statuses and each finished task's outcome) is saved
+  after every change, so a run is resumable and its result does not depend on where it
+  was interrupted; a task interrupted while running runs again (at least once, as the
+  hook bus delivers). Hosts keep runs under way beside the procedural store (a file
+  natively, IndexedDB in a browser) rather than in it, since they are execution state,
+  not graph history; a restarted daemon resumes them. Running is its own policy action,
+  `run`, since it has side effects that reading a graph does not.
 - **A tool catalog is enforced only when a host gives one.** The daemon's dream has one
-  only with composition (its session tools); the CLI's dream, and the daemon's without
-  composition, have none: the harness preset's `enforceToolCatalog` then has nothing to
-  check, and the refiner is shown no tools.
+  only with composition (its session tools, and a harness worker's builtins); the CLI's
+  dream, and the daemon's without composition, have none: the harness preset's
+  `enforceToolCatalog` then has nothing to check, and the refiner is shown no tools.
+- **Tools free of side effects are deployment data.** A deployment declares them in a
+  data file (`data/tools.json`, none by default); every other tool keeps needing approval.
 - **Guidance follows the access policy.** A session's meta can name any graph the resolver
   templates, so the step hook guides (and pins) a session only when the policy allows it
   to read and write that graph, whether resolved or routed: its turns feed the graph's
   overlay.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
-  guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
+  guidance is prepended to each turn's prompt; AI SDK agents are guided per step. Under
+  successor-only tools a harness turn offers only its last call's successors among its
+  host tools, for the whole turn; the harness's builtins cannot be limited per turn.
 - **Localization extensions are settings, off in both presets.** A `state-tracker` match
   mode (a node a tool's result declares, then argument predicates on tool bindings, then
   the id), a horizon counted in action hops, and successor-only `activeTools` (the hard
@@ -236,7 +255,8 @@ The decision held; these details moved.
 - Live evidence shows the overlay's probation rules are too slow or too loose. Then tune
   the data, not the code.
 - A deployment needs per-caller access rules. Then pass the caller on model work.
-- The daemon drives task graphs. Then dream, or a session, can run plans from subgraphs.
+- Dream or a session needs to run plans itself (a plan as a turn's tool, or dream
+  rolling out plans to score a candidate). Then they call the same runner.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
 - An ablation shows that state tracking, action hops or successor-only tools help. Then

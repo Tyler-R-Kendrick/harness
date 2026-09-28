@@ -322,6 +322,8 @@ applies only when the graph has an evaluator.
    - `activeTools: "successors"` is the hard-constraint ablation (off in both presets):
      a step offers only the tools of the active node's successor actions, through AI SDK
      `activeTools`, and every tool when nothing matches or no successor's tool is offered.
+     A harness turn, whose steps the harness runs, offers for the whole turn only the
+     successors of its last call among the host tools of its own; its builtins stay offered.
 7. **Record.** `TurnOptions.report(update)` is `AgentWorker`'s own `update`, passed
    through `runtimeContext`.
    - The step record is a notice with

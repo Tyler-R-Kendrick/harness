@@ -88,6 +88,14 @@ describe("harness-procedural CLI", () => {
     await expect(cli("dream", "g", "--model", "provider/model")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
   });
 
+  it("PX2.124 dream --procedural-tools gives the dream the tools a deployment declares free of side effects; an invalid file is refused", async () => {
+    const { dir, cli } = await setup();
+    await writeFile(join(dir, "tools.json"), JSON.stringify({ sideEffectFree: ["search"] }));
+    await expect(cli("dream", "g", "--model", "provider/model", "--procedural-tools", join(dir, "tools.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
+    await writeFile(join(dir, "bad.json"), JSON.stringify({ sideEffectFree: ["search", "search"] }));
+    await expect(cli("dream", "g", "--model", "provider/model", "--procedural-tools", join(dir, "bad.json"))).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/^--procedural-tools .*bad\.json: invalid tool declarations[\s\S]*declared twice: search/) });
+  });
+
   it("PX2.91 dream --procedural-eval gates on the task suite, solved by the model given; a suite this CLI cannot run is refused", async () => {
     const { dir, cli, json } = await setup();
     const file = join(dir, "graph.json");
@@ -129,5 +137,29 @@ describe("harness-procedural CLI", () => {
     await expect(cli("decline", "team/search", proposal, "extra")).rejects.toMatchObject({ code: 2 });
     await expect(cli("approvals", "team/search", "extra")).rejects.toMatchObject({ code: 2 });
     // Fourteen CLI processes: about 9 s alone, and more than the default 20 s beside the other suites.
+  }, 60_000);
+
+  it("PX2.130 plan prints the plan between two nodes of a graph's head, and with --run runs it on the model given, keeping the run beside the store while it runs; a plan that cannot be built or a run that fails exits 1, and plan needs a graph and both ends", async () => {
+    const { dir, cli, json } = await setup();
+    const file = join(dir, "graph.json");
+    await writeFile(file, JSON.stringify(expert));
+    await json("import", "team/search", file);
+    const planned = await json("plan", "team/search", "Start", "End");
+    expect(planned).toMatchObject({ status: "ok", revision: revisionId(CandidateDocumentSchema.parse(expert)), overlay: 0, plan: { nodes: [{ id: "search", status: "pending" }], edges: [] } });
+    await expect(cli("plan", "team/search", "End", "Start")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"unreachable"') });
+    // The search task runs on the model given, which cannot be reached here: the task fails, and so does the run.
+    const failed = await cli("plan", "team/search", "Start", "End", "--run", "--model", "provider/model").then(
+      () => undefined,
+      (e: { code: number; stdout: string }) => e,
+    );
+    expect(failed?.code).toBe(1);
+    expect(JSON.parse(failed!.stdout)).toMatchObject({ graph: "team/search", status: "failed", tasks: [{ id: "search", status: "failed" }] });
+    expect(JSON.parse(await readFile(join(dir, "store", "plan-runs.json"), "utf8"))).toEqual({ runs: [] });
+    await json("import", "team/empty");
+    expect(await json("plan", "team/empty", "Start", "End", "--run", "--model", "provider/model")).toMatchObject({ graph: "team/empty", status: "succeeded", tasks: [] });
+    await expect(cli("plan", "team/search", "Start")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("plan", "team/search")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("history", "team/search", "--run")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("plan", "team/search", "Start", "End", "extra")).rejects.toMatchObject({ code: 2 });
   }, 60_000);
 });

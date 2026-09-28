@@ -11,9 +11,9 @@ import { AgentWorker, dialogueMiddleware, DialogueWorker, EchoWorker, rememberTu
 import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
-import type { ApprovalNotice, GraphId } from "@harness/procedural";
+import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/procedural";
 import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
-import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
+import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import { documentImporter } from "@harness/dialogue-standards";
@@ -21,7 +21,21 @@ import { conversationsDir, fileConversations, FileStorage } from "./file-storage
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { daemonSessions, hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativeProceduralStep, nativeStepEvictions, nativeTaskEvaluator, proceduralStore } from "./procedural-host.ts";
+import {
+  daemonSessions,
+  describePlanRun,
+  hookNotifier,
+  hostAuthorizer,
+  nativeComposition,
+  nativeDream,
+  nativeDreamSchedule,
+  nativeLiveLearner,
+  nativePlanRunner,
+  nativeProceduralStep,
+  nativeStepEvictions,
+  nativeTaskEvaluator,
+  proceduralStore,
+} from "./procedural-host.ts";
 import { lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
@@ -48,6 +62,7 @@ const { values } = parseArgs({
     "procedural-policy": { type: "string" },
     "procedural-composition": { type: "string" },
     "procedural-eval": { type: "string" },
+    "procedural-tools": { type: "string" },
     dialogue: { type: "string" },
     "dialogue-flows": { type: "string" },
     "dialogue-grace": { type: "string", default: "5000" },
@@ -74,7 +89,7 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
       "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>]\n" +
-      "                                 [--procedural-eval <tasks.json>] [--procedural-composition <composition.json>]]\n" +
+      "                                 [--procedural-eval <tasks.json>] [--procedural-composition <composition.json>] [--procedural-tools <tools.json>]]\n" +
       "               [--dialogue <file> [--dialogue-flows <dir>] [--dialogue-grace <ms>]]\n",
   );
   process.exit(2);
@@ -121,6 +136,20 @@ if (taskSuite?.tools !== undefined && taskSuite.tools.length > 0 && (values.work
   process.exit(2);
 }
 
+// The tools a deployment declares free of side effects (procedural's data/tools.json, none, by default):
+// a dream candidate that routes only into them needs no approval.
+if (values["procedural-tools"] !== undefined && values.procedural === undefined) {
+  process.stderr.write("--procedural-tools needs --procedural: it declares the tools that directory's graphs dream over\n");
+  process.exit(2);
+}
+let sideEffectFree: readonly string[] = [];
+try {
+  sideEffectFree = loadProceduralTools(...(values["procedural-tools"] === undefined ? [] : [values["procedural-tools"]])).sideEffectFree;
+} catch (e) {
+  process.stderr.write(`--procedural-tools ${values["procedural-tools"]}: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
+
 // Procedural graphs keep one store in their directory: sessions are guided by the graph the
 // resolver names, and the cognitive core serves the operations as `procedural.*`, under the policy.
 const principal = userInfo().username;
@@ -129,8 +158,15 @@ const proceduralPolicy = values["procedural-policy"] === undefined ? undefined :
 // The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
 // The approvals inbox announces proposals and decisions on the daemon's hook bus, once it is up.
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
-const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; schedule?: ReturnType<typeof nativeDreamSchedule>; notify?: (notice: ApprovalNotice) => void } = {};
-const notify = (notice: ApprovalNotice) => live.notify?.(notice);
+// Plan runs (`procedural.run`) start with the daemon too: the runner needs the session model and tools, made below.
+const live: {
+  learner?: ReturnType<typeof nativeLiveLearner>;
+  dream?: ReturnType<typeof nativeDream>;
+  schedule?: ReturnType<typeof nativeDreamSchedule>;
+  plans?: PlanRunner;
+  notify?: (notice: ApprovalNotice | PlanNotice) => void;
+} = {};
+const notify = (notice: ApprovalNotice | PlanNotice) => live.notify?.(notice);
 // One process owns a store file: the daemon holds the directory's lock while it runs, and
 // refuses to start while another process (another daemon, or harness-procedural) holds it.
 // A CLI that finds it held sends its operations to this daemon's socket instead.
@@ -160,6 +196,8 @@ const cognitive =
                 feedback: async (session: string, turn: string, score: number) => live.learner?.learner.feedback(session, turn, score),
                 dream: async (graph: GraphId) => live.dream?.(graph),
                 notify,
+                // Set below, before the daemon serves anything.
+                plans: { run: (graph, plan) => live.plans!.run(graph, plan) },
               },
             }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
@@ -181,21 +219,42 @@ const step =
     ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
     ...(cognitive ? { router: cognitive.ensemble.languageModel("tool-calling", "router") } : {}),
   });
-// Composition (agent workers): dream compiles well-trodden paths into workflows staged in the procedural
-// directory (never the shared --workflows library), with the session tools as its catalog, and each session
-// is offered its tools plus exactly the workflows its pinned core binds. The ensemble worker's tools are the
-// shared library's workflows; the model worker has none of its own.
+// The harness that runs sessions with --worker harness: its builtin tools are its own, run by the harness.
+if ((values.worker === "harness") !== (values.harness !== undefined)) {
+  process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
+  process.exit(2);
+}
+const adapter = values.harness === undefined ? undefined : harnessAdapter(parseHarnessSpec(values.harness));
+// Composition (agent and harness workers): dream compiles well-trodden paths into workflows staged in the
+// procedural directory (never the shared --workflows library), with the session tools as its catalog, and
+// each session is offered its host tools plus exactly the workflows its pinned core binds. The ensemble and
+// harness workers' host tools are the shared library's workflows; the model worker has none of its own. A
+// harness's builtins are in dream's catalog too, but a compiled path calls only host tools.
 const composition =
-  step && (values.worker === "model" || values.worker === "ensemble")
+  step && (values.worker === "model" || values.worker === "ensemble" || adapter)
     ? nativeComposition({
         dir: values.procedural!,
         settings: loadProceduralComposition(values["procedural-composition"]),
         step,
         ask: askModel(cognitive?.ensemble.languageModel() ?? gateway(values.model)),
-        base: async () => (values.worker === "ensemble" && cognitive?.workflowHost ? workflowTools(cognitive.workflowHost) : {}),
+        base: async () => (values.worker !== "model" && cognitive?.workflowHost ? workflowTools(cognitive.workflowHost) : {}),
         ...(values.workflows === undefined ? {} : { shared: values.workflows }),
+        ...(adapter ? { builtins: Object.keys(adapter.builtinTools) } : {}),
       })
     : undefined;
+// Plans run on the session model (the ensemble's chat model, or else the gateway model), their tasks calling the
+// session tools plus the workflows the graph's head binds. Runs under way are kept in the procedural directory
+// (plan-runs.json), and the daemon resumes any that a stopped daemon left once it is up.
+if (procedural && cognitive) {
+  const workflowBase = cognitive.workflowHost ? () => workflowTools(cognitive.workflowHost!) : () => ({});
+  live.plans = nativePlanRunner({
+    dir: values.procedural!,
+    ...procedural,
+    model: cognitive.ensemble.languageModel("chat"),
+    tools: (context) => (composition ? composition.planTools(context.view?.core) : workflowBase()),
+    notify,
+  });
+}
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 // Agent workers keep each session's conversation (a file each) beside the daemon's state, so
 // a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
@@ -236,18 +295,16 @@ const dialogue =
     onEvent: (event) => void running.host?.runtime.publish(event),
   });
 const scripted = (model: Exclude<LanguageModel, string>) => (dialogue ? wrapLanguageModel({ model, middleware: dialogueMiddleware(dialogue) }) : model);
-if ((values.worker === "harness") !== (values.harness !== undefined)) {
-  process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
-  process.exit(2);
-}
 // The harness worker runs each session on an AI SDK harness (Claude Code, Codex, an ACP
 // agent), in a sandbox of its own (this machine's, or a Docker container each); parked
 // sessions resume after a restart. `--sandbox-env` passes this process's variables in.
+// Beside its own tools, each turn offers host tools: the workflow library's (with procedural
+// graphs, plus the workflows the session's pinned core binds).
 const harness =
-  values.harness === undefined
+  adapter === undefined
     ? undefined
     : harnessWorker({
-        harness: harnessAdapter(parseHarnessSpec(values.harness)),
+        harness: adapter,
         sandbox: sandboxProvider(parseSandboxSpec(values.sandbox), {
           root: values.sandboxes ?? join(homedir(), ".cache", "harness", "sandboxes"),
           ...(values["sandbox-setup"] === undefined ? {} : { setup: values["sandbox-setup"] }),
@@ -256,6 +313,7 @@ const harness =
         stateFile: values["harness-state"] ?? join(homedir(), ".cache", "harness", "harness-sessions.json"),
         ...instructions,
         ...(step ? { step } : {}),
+        ...(composition ? { tools: composition.tools } : cognitive?.workflowHost ? { tools: () => workflowTools(cognitive.workflowHost!) } : {}),
       });
 // The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
 // on the ensemble (the steered kernel with a behavior pack), with memory and learning.
@@ -321,8 +379,16 @@ if (procedural && generator) {
   const evaluation = evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {};
   // With composition, a dream ends with a composition round over the session tools, which are its tool catalog.
   const composing = composition ? { composer: composition.composer, tools: composition.catalog } : {};
-  live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, model: generator, sessions: async () => daemonSessions(host.daemon), inbox: approvalInbox(notify) }));
+  live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, sideEffectFree, model: generator, sessions: async () => daemonSessions(host.daemon), inbox: approvalInbox(notify) }));
   live.schedule = nativeDreamSchedule({ runtime: host.runtime, ...procedural, dream: live.dream, log: (message) => void process.stderr.write(`${message}\n`) });
+}
+
+// Plan runs a stopped daemon left are resumed, one after another, each end logged (and announced on the hook bus).
+if (live.plans) {
+  void live.plans
+    .resume()
+    .then((outcomes) => outcomes.forEach((outcome) => void process.stderr.write(`${describePlanRun(outcome)}\n`)))
+    .catch((e: unknown) => void process.stderr.write(`procedural: resuming plan runs failed: ${e instanceof Error ? e.message : String(e)}\n`));
 }
 
 // The step hook forgets each session the daemon detaches (its pinned view and guidance cache).

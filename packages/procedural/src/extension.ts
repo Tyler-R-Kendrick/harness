@@ -7,12 +7,14 @@ import type { GraphId, RevisionId, RevisionRecord, Score } from "./graph.ts";
 import { exportGraph, graphHistory, importGraph, readGraph, revertGraph } from "./import-export.ts";
 import type { ClockLike } from "./import-export.ts";
 import type { LearnerResult } from "./learner.ts";
+import { parsePlan, planFromSubgraph } from "./plan.ts";
+import type { PlanRunner } from "./plan-runner.ts";
 import { presetOf } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
 
-/** What an operation does to a graph, as the access policy sees it (plan §8.3); `approve` decides candidates waiting for approval. */
-export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import" | "approve";
+/** What an operation does to a graph, as the access policy sees it (plan §8.3); `approve` decides candidates waiting for approval, `run` runs plans. */
+export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import" | "approve" | "run";
 
 export interface ProceduralExtensionOptions {
   readonly store: ProceduralStore;
@@ -31,11 +33,15 @@ export interface ProceduralExtensionOptions {
   readonly feedback?: (session: string, turn: string, score: Score) => Promise<LearnerResult | undefined>;
   /** Announces the approvals inbox's changes (an import proposal, a decision); the host publishes them on its hook bus. */
   readonly notify?: (notice: ApprovalNotice) => void | Promise<void>;
+  /** Runs plans (`planRunner`, with the host's model and tools), announcing each run's end itself. */
+  readonly plans?: Pick<PlanRunner, "run">;
 }
 
 /** Each operation's input. Built per extension, not at module load. */
 function inputSchemas() {
   const graph = GraphIdSchema;
+  /** A plan's end: a node of the graph, which the plan checks. */
+  const end = z.string().min(1);
   return {
     graph: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), overlay: z.boolean().exactOptional() }),
     history: z.strictObject({ graph }),
@@ -47,6 +53,10 @@ function inputSchemas() {
     approvals: z.strictObject({ graph }),
     approve: z.strictObject({ graph, candidate: RevisionIdSchema }),
     decline: z.strictObject({ graph, candidate: RevisionIdSchema }),
+    plan: z.strictObject({ graph, from: end, to: end }),
+    run: z
+      .strictObject({ graph, plan: z.unknown().exactOptional(), from: end.exactOptional(), to: end.exactOptional() })
+      .refine((r) => (r.plan === undefined ? r.from !== undefined && r.to !== undefined : r.from === undefined && r.to === undefined), "run takes a plan, or from and to"),
   };
 }
 type Inputs = ReturnType<typeof inputSchemas>;
@@ -59,6 +69,17 @@ function parseInput<O extends Op>(schemas: Inputs, op: O, value: unknown): z.out
 }
 
 const unavailable = (what: string) => ({ status: "unavailable" as const, reason: `no ${what} is configured` });
+
+/** The plan between two nodes of a graph's head and overlay (`planFromSubgraph`), or why there is none. */
+async function buildPlan(store: ProceduralStore, graph: GraphId, from: string, to: string) {
+  const view = await readGraph({ store, graph });
+  if (view.status !== "ok") return view;
+  const built = planFromSubgraph(view.effective, from, to);
+  if (!built.ok) return { status: "invalid" as const, diagnostics: built.diagnostics };
+  return { status: "ok" as const, revision: view.revision, overlay: view.effective.overlay, plan: built.plan };
+}
+
+const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /**
  * What `procedural.feedback` answers for the learner's result: `recorded` when the score
@@ -96,6 +117,11 @@ function feedbackOutcome(graph: GraphId, result: LearnerResult | undefined) {
  * - `procedural.approve` (approve, on the graph named): commit the graph's candidate after the
  *   structure and evidence gates pass against the current head
  * - `procedural.decline` (approve, on the graph named): reject the graph's candidate
+ * - `procedural.plan` (read): the plan between two nodes of the head with its overlay
+ *   (`planFromSubgraph`), as JSON, or its diagnostics
+ * - `procedural.run` (run, and read when it builds the plan): run a plan, built between
+ *   two nodes or given as JSON (`parsePlan`), with the host's plan runner; it answers each
+ *   task's outcome, and the runner announces the run's end (`procedural.plan.completed`)
  *
  * A new proposal and each decision are announced through `notify`.
  *
@@ -179,6 +205,30 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       },
       approve: async (value) => decide("approve", input("approve", value), (record) => approveCandidate({ store, record, preset, clock })),
       decline: async (value) => decide("decline", input("decline", value), (record) => declineCandidate({ store, record })),
+      plan: async (value) => {
+        const { graph: g, from, to } = input("plan", value);
+        check("plan", "read", g);
+        const built = await buildPlan(store, g, from, to);
+        return built.status === "ok" ? { ...built, plan: built.plan.toJSON() } : built;
+      },
+      run: async (value) => {
+        const request = input("run", value);
+        const g = request.graph;
+        check("run", "run", g);
+        if (request.plan === undefined) check("run", "read", g);
+        if (!options.plans) return unavailable("plan runner");
+        if (request.plan !== undefined) {
+          let plan: ReturnType<typeof parsePlan>;
+          try {
+            plan = parsePlan(request.plan);
+          } catch (e) {
+            return { status: "invalid", reason: messageOf(e) };
+          }
+          return options.plans.run(g, plan);
+        }
+        const built = await buildPlan(store, g, request.from!, request.to!);
+        return built.status === "ok" ? options.plans.run(g, built.plan) : built;
+      },
     },
   };
 }

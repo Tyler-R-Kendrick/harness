@@ -77,6 +77,22 @@ describe("one owner per procedural store", () => {
     expect(await json("history", "team/search")).toMatchObject({ head: revisionId(seedGraph()) });
   });
 
+  it("PX2.131 while a daemon holds the store, plan and plan --run are sent to it, which plans from its store and runs with its own runner", async () => {
+    const { dir, store, cli, json } = await scratch();
+    const socket = join(dir, "harness.sock");
+    const d = daemon(dir, store, ["--socket", socket]);
+    await d.ready;
+    await json("import", "team/search");
+    expect(await json("plan", "team/search", "Start", "End")).toMatchObject({ status: "ok", plan: { nodes: [], edges: [] } });
+    const ran = await cli("plan", "team/search", "Start", "End", "--run", "--model", "provider/model");
+    expect(JSON.parse(ran.stdout)).toMatchObject({ graph: "team/search", status: "succeeded", tasks: [] });
+    expect(ran.stderr).toContain("sending plan to it");
+    expect(ran.stderr).toContain("ignoring --model");
+    await expect(cli("plan", "team/none", "Start", "End", "--run")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"missing"') });
+    d.child.kill("SIGTERM");
+    expect(await d.exited).toBe(0);
+  });
+
   it("PX2.77 a daemon that holds the store without a socket makes harness-procedural refuse, and the store is untouched", async () => {
     const { dir, store, cli } = await scratch();
     const d = daemon(dir, store, ["--stdio"]);

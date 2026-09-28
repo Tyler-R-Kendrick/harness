@@ -9,9 +9,12 @@ import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-
 import { usage } from "@harness/cognitive";
 import { askModel } from "@harness/workflows";
 import { AgentWorker, sessionAgent } from "@harness/workers";
-import { approvalInbox, approveCandidate, FORMAT, GraphIdSchema, importGraph, parseCompositionSettings, parseResolver, parseSettings, presetOf } from "@harness/procedural";
+import { approvalInbox, approveCandidate, FORMAT, GraphIdSchema, importGraph, parseCompositionSettings, parseResolver, parseSettings, presetOf, workflowBinding } from "@harness/procedural";
+import type { WorkerEvent } from "@harness/core";
+import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import type { DreamResult, RevisionId } from "@harness/procedural";
 import {
+  harnessWorker,
   hostPorts,
   loadProceduralComposition,
   loadProceduralSettings,
@@ -231,5 +234,48 @@ describe("composition on the native host", () => {
     live.close();
     connection.disconnect();
     await host.close();
+  });
+});
+
+describe("composition for harness workers on the native host", () => {
+  const next = tool({ description: "Next.", inputSchema: jsonSchema({ type: "object" }), execute: async () => 1 });
+  const w = { name: "call-next", description: "Calls next.", inputs: { type: "object" }, code: "return await tools.next({});" };
+  const bound = {
+    ...DOCUMENT,
+    nodes: [...DOCUMENT.nodes, { id: "Run_Next", type: "ACTION", description: "Run next as a workflow.", binding: workflowBinding(w) }],
+    edges: [...DOCUMENT.edges, { from: "Start", relation: "LEADS_TO", to: "Run_Next", condition: null, guidance: "Or run next.", pitfalls: "" }],
+  };
+
+  it("PX2.120 a harness worker's sessions get, each turn, the host's base tools plus exactly the workflows their pinned core binds, and the harness's call of one runs the staged workflow on the host", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "procedural-"));
+    const store = proceduralStore(join(dir, "procedural"));
+    await importGraph({ store, graph, document: bound, clock: hostPorts.clock });
+    const resolver = parseResolver({ rules: [{ when: { cwdUnder: "/work" }, graph: "team/pages" }] });
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver, principal: "me", model: scriptedModel(() => "Run next.") });
+    const composition = nativeComposition({ dir: join(dir, "procedural"), settings: loadProceduralComposition(), step, ask: async () => "", base: () => ({ next }) });
+    await composition.staging.library.stage(w);
+    const harness = scriptedHarness((p) => (p.includes("run") ? { text: "ran:", tool: { name: "call-next", input: {} } } : "ok"));
+    const worker = harnessWorker({ harness, sandboxRoot: join(dir, "sandboxes"), step, tools: composition.tools });
+    const turn = async (sessionId: string, cwd: string, text: string) => {
+      const events: WorkerEvent[] = [];
+      await worker.worker.run({ type: "prompt", sessionId, turnId: "t1", prompt: [{ type: "text", text }], cwd }, (e) => events.push(e));
+      return events.flatMap((e) => (e.type === "update" && e.update.sessionUpdate === "agent_message_chunk" && e.update.content.type === "text" ? [e.update.content.text] : [])).join("");
+    };
+    expect(await turn("s1", "/work", "run it")).toBe("ran: 1");
+    // A session without a graph gets the base tools alone.
+    expect(await turn("s2", "/elsewhere", "hi")).toBe("ok");
+    expect(harness.log.turns.map((t) => [t.sessionId, [...t.tools].sort()])).toEqual([
+      ["s1", ["call-next", "next"]],
+      ["s2", ["next"]],
+    ]);
+    expect(readdirSync(join(dir, "procedural", "staging", ".runs"))).toEqual(["tool%2Fcall-1.json"]);
+    await worker.close();
+  });
+
+  it("PX2.121 a harness worker's dream gets a composer over the host's base tools, and a tool catalog of the harness's builtins and those tools", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "procedural-"));
+    const composition = nativeComposition({ dir, settings: loadProceduralComposition(), step: { core: async () => undefined }, ask: async () => "", base: () => ({ next }), builtins: ["Bash", "Read"] });
+    expect(await composition.catalog()).toEqual(["Bash", "Read", "next"]);
+    expect(Object.keys((await composition.composer()).toolSpecs)).toEqual(["next"]);
   });
 });

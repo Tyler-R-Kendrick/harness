@@ -29,6 +29,9 @@ function transition(e: EffectiveEdge): string[] {
   ];
 }
 
+/** Transitions in the serializer's words, one after another (a plan task's guidance: the transitions into its node). */
+export const serializeTransitions = (edges: readonly EffectiveEdge[]): string => edges.flatMap(transition).join("\n");
+
 const heading = (hop: number): string => (hop === 1 ? "Immediate Transition Options (Hop 1):" : `Subsequent Horizon (Hop ${hop}):`);
 
 /** The paper's local graph context: the active node, then each hop's transitions; a hop with none prints nothing. */
