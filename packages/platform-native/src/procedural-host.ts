@@ -2,10 +2,10 @@ import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, DreamSchedule, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, DreamRun, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, ScheduledDream, SessionLog, Settings } from "@harness/procedural";
+import { authorize, DreamSchedule, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, taskSuiteEvaluator } from "@harness/procedural";
+import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, DreamRun, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, ScheduledDream, SessionLog, Settings, TaskSuite } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
-import type { LanguageModel } from "ai";
+import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel, ToolSet } from "ai";
 import { FileStorage } from "./file-storage.ts";
 
 /** This host's clock and entropy, for pinning and the step hook. */
@@ -259,4 +259,23 @@ export function nativeDreamSchedule(options: {
     for (const run of await schedule.tick()) log(describeScheduled(run));
   });
   return { schedule, close };
+}
+
+/**
+ * Dream's evaluator on this host (plan §10): a user's task suite (`--procedural-eval`)
+ * run by `taskSuiteEvaluator` with the host's clock and entropy. `model` solves the tasks
+ * (guided by the candidate graph, and guiding itself unless `guidance` is given), `judge`
+ * scores them when the suite's scorer is `judge` (the catalog's judgment model), and
+ * `tools` are the host tools the suite may name.
+ */
+export function nativeTaskEvaluator(options: {
+  readonly suite: TaskSuite;
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly model: LanguageModel;
+  readonly guidance?: LanguageModel;
+  readonly judge?: () => EvaluationModel | Promise<EvaluationModel>;
+  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+}): Evaluator {
+  return taskSuiteEvaluator({ ...options, ...hostPorts });
 }

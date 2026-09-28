@@ -1153,6 +1153,17 @@ evaluator"; the names above keep their meaning.
   step's response messages). Building one refuses a `judge` scorer without a judge or a
   question; an unknown batch id is a `RangeError`, and a failing solver names its task.
   `evaluatorContract` (PD3.1–PD3.4) runs against it on scripted models.
+- **The evaluator on the native host.** `loadTaskSuite(file)` reads and parses a task
+  file; `nativeTaskEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?})`
+  is `taskSuiteEvaluator` with the host's clock and entropy. `main.ts` takes
+  `--procedural-eval <tasks.json>` (with `--procedural`): the solver is the ensemble's
+  `chat` model with the cognitive core, else the gateway `--model`; the judge is the
+  catalog's (`ensemble.resolve("judgment", "judge")`, resolved when a judge-scored suite
+  runs); the tools are the workflow library's (`workflowTools`, with `--workflows`);
+  and `nativeDream` gets the evaluator and the suite's `description` as its task, for
+  `procedural.dream` and the schedule alike. It refuses to start (exit 2) without
+  `--procedural`, with a file that does not parse, with a judge-scored suite and no
+  cognitive core, or with a suite naming tools and no workflow library.
 
 ## Open issues
 
