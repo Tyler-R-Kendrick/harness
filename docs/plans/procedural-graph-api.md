@@ -1080,6 +1080,14 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
   two units agree. `Preset.hopUnit: "edge" | "action"` (default `edge`; both shipped
   presets say `edge`) is the unit `proceduralStep` passes; `h` stays `HOPS`.
+- **Argument predicates.** A tool binding may carry `arguments: ArgumentPredicate`, a
+  JSON Schema over the call's arguments (`{kind: "tool", name: "Bash", arguments: {type: "object", properties: {command: {type: "string", pattern: "^npm test"}}}}`).
+  `ArgumentPredicateSchema` refuses a schema whose top-level `type` is not `"object"` or
+  that zod's `z.fromJSONSchema` cannot compile (a `malformed` diagnostic at
+  `nodes[i].binding.arguments`). The converter reads a keyword only under a declared
+  `type`. `acceptsArguments(predicate, args)` tests a call, compiling each predicate once.
+  The predicate is part of the document, so of its revision id; like any binding, only
+  seeding, import or dream's composition writes it (I5).
 
 ## Open issues
 
