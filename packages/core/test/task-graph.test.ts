@@ -242,3 +242,17 @@ describe("TaskGraph scheduling", () => {
     expect(g.revision()).toBe(r0 + 4);
   });
 });
+
+describe("TaskGraph payloads", () => {
+  it("TG5.1 a node carries an opaque payload, returned as given; a node without one has none", () => {
+    const g = new TaskGraph<{ tool: string }>();
+    const payload = { tool: "search" };
+    g.addNode("a", { payload });
+    g.addNode("b");
+    expect(g.payload("a")).toBe(payload);
+    expect(g.payload("b")).toBeUndefined();
+    expect(g.payload("ghost")).toBeUndefined();
+    expect(g.addNode("a", { payload: { tool: "other" } })).toMatchObject({ ok: false, error: { code: "duplicate_node" } });
+    expect(g.payload("a")).toBe(payload);
+  });
+});

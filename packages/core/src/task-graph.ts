@@ -6,12 +6,14 @@ export type EdgeKind = "contains" | DependencyKind | "exclusion";
 export type Join = { readonly kind: "all" } | { readonly kind: "any" } | { readonly kind: "quorum"; readonly count: number };
 export type NodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 
-export interface NodeSpec {
+export interface NodeSpec<P = unknown> {
   readonly join?: Join;
   /** Exclusive resources (ports, databases, browser profiles, devices, files...). */
   readonly resources?: readonly string[];
   /** Fan-out groups that must be sealed before this node can become ready. */
   readonly awaits?: readonly string[];
+  /** What the node stands for, opaque to the graph (a task, a tool call, a plan step). */
+  readonly payload?: P;
 }
 
 export type GraphError =
@@ -27,8 +29,9 @@ export type GraphError =
   | "not_running"
   | "already_terminal";
 
-interface GraphNode {
+interface GraphNode<P> {
   id: string;
+  payload?: P;
   join: Join;
   resources: readonly string[];
   awaits: readonly string[];
@@ -49,8 +52,8 @@ const TERMINAL: ReadonlySet<NodeStatus> = new Set(["succeeded", "failed", "cance
  * groups must be sealed before joins that await them; exclusive resources and
  * exclusion edges keep conflicting nodes from running at the same time.
  */
-export class TaskGraph {
-  #nodes = new Map<string, GraphNode>();
+export class TaskGraph<P = unknown> {
+  #nodes = new Map<string, GraphNode<P>>();
   #edges = new Set<string>();
   #revision = 0;
 
@@ -58,7 +61,7 @@ export class TaskGraph {
     return this.#revision;
   }
 
-  addNode(id: string, spec: NodeSpec = {}): Result<void, GraphError> {
+  addNode(id: string, spec: NodeSpec<P> = {}): Result<void, GraphError> {
     if (this.#nodes.has(id)) return err("duplicate_node", `node ${id} exists`);
     const missing = spec.awaits?.find((g) => !this.#nodes.has(g));
     if (missing !== undefined) return err("unknown_node", `awaited group ${missing} does not exist`);
@@ -66,6 +69,7 @@ export class TaskGraph {
     if (join.kind === "quorum" && !(Number.isInteger(join.count) && join.count >= 1)) throw new Error("quorum count must be a positive integer");
     this.#nodes.set(id, {
       id,
+      ...(spec.payload === undefined ? {} : { payload: spec.payload }),
       join,
       resources: spec.resources ?? [],
       awaits: spec.awaits ?? [],
@@ -125,6 +129,11 @@ export class TaskGraph {
     return this.#nodes.get(id)?.status;
   }
 
+  /** The payload the node was added with, if any. */
+  payload(id: string): P | undefined {
+    return this.#nodes.get(id)?.payload;
+  }
+
   parent(id: string): string | undefined {
     return this.#nodes.get(id)?.parent;
   }
@@ -141,7 +150,7 @@ export class TaskGraph {
   /** A conflict-free subset of ready nodes, in order, up to `limit`. */
   schedule(limit: number): string[] {
     const busy = [...this.#nodes.values()].filter((n) => n.status === "running");
-    const chosen: GraphNode[] = [];
+    const chosen: GraphNode<P>[] = [];
     for (const id of this.ready()) {
       if (chosen.length >= limit) break;
       const n = this.#nodes.get(id)!;
@@ -176,11 +185,11 @@ export class TaskGraph {
     return ok(this.#settle());
   }
 
-  #isReady(n: GraphNode): boolean {
+  #isReady(n: GraphNode<P>): boolean {
     return n.status === "pending" && this.#satisfaction(n) === "satisfied" && n.awaits.every((g) => this.#nodes.get(g)!.sealed);
   }
 
-  #satisfaction(n: GraphNode): "satisfied" | "waiting" | "impossible" {
+  #satisfaction(n: GraphNode<P>): "satisfied" | "waiting" | "impossible" {
     const statuses = n.preds.map((p) => this.#nodes.get(p)!.status);
     const succeeded = statuses.filter((s) => s === "succeeded").length;
     const open = statuses.filter((s) => !TERMINAL.has(s)).length;
@@ -224,6 +233,6 @@ export class TaskGraph {
   }
 }
 
-function conflicts(a: GraphNode, b: GraphNode): boolean {
+function conflicts(a: GraphNode<unknown>, b: GraphNode<unknown>): boolean {
   return a.exclusive.includes(b.id) || a.resources.some((r) => b.resources.includes(r));
 }

@@ -64,7 +64,7 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Typed nodes and edges; all/any/quorum joins; sealed fan-out | built (library) | TG1–TG4; not yet driven by the daemon |
+| Typed nodes and edges; all/any/quorum joins; sealed fan-out; an opaque payload per node | built (library) | TG1–TG4, TG5.1; not yet driven by the daemon |
 | Resource-aware scheduler; exclusion edges; cancellation is not rollback | built (library) | TG3.1–TG3.6, TG4.1 |
 | Every invocation as a durable task | not started | |
 | Task system of record (local, GitHub, Linear, Jira) | not started | |
