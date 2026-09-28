@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
@@ -17,6 +17,7 @@ import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sand
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
 import { daemonSessions, hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
+import { lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
   options: {
@@ -93,6 +94,16 @@ const proceduralPolicy = values["procedural-policy"] === undefined ? undefined :
 // The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
 const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream> } = {};
+// One process owns a store file: the daemon holds the directory's lock while it runs, and
+// refuses to start while another process (another daemon, or harness-procedural) holds it.
+// A CLI that finds it held sends its operations to this daemon's socket instead.
+const proceduralLock = values.procedural === undefined ? undefined : await lockStore(values.procedural, "harness");
+if (proceduralLock?.status === "held") {
+  const { holder, pid } = proceduralLock.owner;
+  process.stderr.write(`the procedural store in ${values.procedural} is in use by ${holder} (pid ${pid}); stop it first\n`);
+  process.exit(1);
+}
+const storeLock = proceduralLock?.lock;
 const proceduralFiles = values.procedural === undefined ? undefined : proceduralStore(values.procedural);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
@@ -195,6 +206,7 @@ const shutdown = async () => {
   await host.close();
   await harness?.close();
   await cognitive?.close();
+  await storeLock?.release();
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown());
@@ -207,6 +219,8 @@ if (values.stdio) {
 }
 if (values.socket !== undefined) {
   await host.listen(values.socket);
+  // harness-procedural reaches the store through this socket while the daemon holds it.
+  await storeLock?.advertise(resolve(values.socket));
   process.stderr.write(`harness listening on ${values.socket}\n`);
 }
 if (values.ws !== undefined) {

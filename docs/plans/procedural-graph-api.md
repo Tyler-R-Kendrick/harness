@@ -981,8 +981,24 @@ As built (P12). These refine the shapes above; no name another phase uses change
     and to `harnessWorker({ step })` for harness workers (guided by the ensemble's chat
     model, or the gateway model). With the cognitive core, `procedural.*` is served under the
     policy.
+- One owner per store directory (A1). `lockStore(dir, holder, {alive?})` takes
+  `<dir>/procedural.lock` (`STORE_LOCK`): a complete file hard-linked into place, naming
+  `{pid, holder, socket?}`; it returns `{status: "acquired", lock}` (`advertise(socket)`,
+  `release()`) or `{status: "held", owner}`. A lock whose process has exited, or that does
+  not parse, is stale and taken over (PX2.69–PX2.72). The daemon (`--procedural`) takes it
+  as `harness` before it opens the store and exits 1 while another process holds it
+  (PX2.75); once it listens on `--socket` it advertises the socket's absolute path, and it
+  releases the lock on shutdown. `invokeDaemon(socket, op, input)` runs one
+  `_harness/cognitive/invoke` on a daemon over its socket (DL1.3–DL1.4).
 - `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
-  operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`);
+  operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`),
+  holding the directory's lock as `harness-procedural` for the run (PX2.76). When a daemon
+  holds it and advertises a socket, the CLI sends `procedural.<command>` to that daemon
+  instead, which runs it under its policy with its own settings and models (options for a
+  local run are named on stderr as ignored) (PX2.73); a holder with no socket (a daemon on
+  `--stdio` or `--ws` only) makes the CLI exit 1 without touching the store (PX2.74). The
+  daemon serves `procedural.*` only with the cognitive core, so without it the daemon's
+  refusal is the CLI's error.
   `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
   file, `revert` `--to`, and `dream` `--model` (a gateway id) or else `--model-cache`,
   `--llama-server` and `--no-hosted` (the ensemble's reasoning model), and `--state`. A
@@ -1112,8 +1128,5 @@ the evaluator contract and scripted environment, rejection records). Still open:
   tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
   for their absence. The CLI approves on a terminal.
-- P12: `harness-procedural` opens the store file itself, so it must not run while a
-  daemon holds the same `--procedural` directory (one owner per store file). Routing the
-  CLI through a running daemon's `_harness/cognitive/invoke` would lift that.
 - P12: `procedural.feedback` answers `recorded` once the learner has the score, even when
   the learner skips it (for example, a turn it cannot find in the log).

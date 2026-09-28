@@ -157,6 +157,12 @@ The decision held; these details moved.
   and dream runs outside any session. The CLI asks on a terminal; `procedural.dream` in
   the daemon rejects candidates that need approval, and the rejection is recorded for a
   later dream or an operator.
+- **One owner per store directory.** The snapshot store loads its file once and saves it
+  whole, so two processes over one directory would lose each other's writes. A lock file
+  in the directory names its holder; the daemon refuses to start on a held store, and
+  `harness-procedural` either holds the lock for its run or, when a daemon holds it and
+  listens on a socket, sends its operation to that daemon's `procedural.*`. We chose a
+  lock over routing alone because a daemon on stdio has no socket to reach.
 - **Dream runs on demand.** `procedural.dream` and `harness-procedural dream` start it;
   there is no schedule or trigger in the daemon.
 - **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
