@@ -25,7 +25,7 @@ export { readJsonBlock, renderPrompt, type Decoding } from "./prompt.ts";
 export { logTrajectories, type SessionLog } from "./recorded.ts";
 export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { modelReflector, reflect, reflectionJsonSchema, type Reflector, type ReflectRequest } from "./reflect.ts";
-export { explainResolve, explainRoute, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, RouteSchema, routeGraph, WhenSchema, type GraphRouter, type Resolution, type ResolveContext, type Resolver, type Route, type RouteAnswer, type RouteCandidate, type RouteRequest, type When } from "./resolver.ts";
+export { explainResolve, explainRoute, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, routes, RouteSchema, routeGraph, WhenSchema, type GraphRouter, type Resolution, type ResolveContext, type Resolver, type Route, type RouteAnswer, type RouteCandidate, type RouteRequest, type When } from "./resolver.ts";
 export { GRAPH_TOOL, modelGraphRouter } from "./routing.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";

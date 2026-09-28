@@ -1098,6 +1098,14 @@ As built. A resolver rule may route instead of naming a graph (plan §8.1).
   schema is `{ graph: { enum: candidates } }`, the constraint. A valid call names the
   choice; no call chooses none. `settings.json` gains `prompts.route`
   (`PLACEHOLDERS.route = ["graphs"]`).
+- `routes(resolver, context): boolean` says whether the deciding rule routes.
+- The step hook: `ProceduralStepDeps.router?: GraphRouter`. At a turn boundary a session
+  whose rule routes is resolved with `explainRoute`, its prompt the first user message of
+  the conversation (system and advisory messages aside) and `pinned` its stored pin's
+  graph; other sessions resolve as before, without reading the pin. The router's answers
+  are kept per session by request, so a session routed to no graph is not asked again for
+  the same prompt; a router that throws is asked again at the next turn. Harness turns
+  (`turn`) route the same way.
 
 ## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
 

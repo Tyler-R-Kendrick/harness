@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ModelMessage, SystemModelMessage } from "ai";
-import { HARNESS } from "@harness/cognitive";
+import { HARNESS, probability } from "@harness/cognitive";
 import { ManualClock, promptText, SeededEntropy } from "@harness/testkit";
 import {
   ADVISORY,
@@ -16,7 +16,7 @@ import {
   sha256Hex,
   StepRecordSchema,
 } from "@harness/procedural";
-import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
+import type { GraphRouter, OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
@@ -498,5 +498,84 @@ describe("step records", () => {
     expect(StepRecordSchema.parse(JSON.parse(canonicalJson(record)))).toEqual(record);
     expect(StepRecordSchema.safeParse({ ...record, text: "advice" }).success).toBe(false);
     expect(StepRecordSchema.safeParse({ ...record, digest: "short" }).success).toBe(false);
+  });
+});
+
+describe("proceduralStep with a routing resolver (plan §8.1)", () => {
+  const OTHER = GraphIdSchema.parse("team/other");
+  const routing = parseResolver({ rules: [{ when: { meta: { procedural: "off" } }, graph: null }, { when: {}, route: { candidates: [GRAPH, { graph: OTHER, description: "Other work." }], minConfidence: 0.8 } }] });
+
+  /** A router answering `graph` at `confidence` (or throwing), recording the prompts it is asked. */
+  function router(answer: { graph?: string; confidence: number } | Error) {
+    const asked: string[] = [];
+    const route: GraphRouter = async (request) => {
+      asked.push(request.prompt);
+      if (answer instanceof Error) throw answer;
+      return { graph: answer.graph === undefined ? undefined : GraphIdSchema.parse(answer.graph), confidence: probability(answer.confidence) };
+    };
+    return { route, asked };
+  }
+
+  async function routed(answer: Parameters<typeof router>[0], preset = "harness") {
+    const s = await setup(preset, { resolver: routing });
+    await seed(s.store, variant(" (other)"), OTHER);
+    const r = router(answer);
+    return { s, r, hook: proceduralStep({ ...s.deps, router: r.route }) };
+  }
+
+  it("PW1.64 a session whose rule routes is guided on the graph the router chooses by its first prompt, and keeps it on later turns without asking again", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.9 });
+    await hook.prepare(input(s, [user("first question")]));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[0]).toMatchObject({ graph: OTHER, core: (await s.store.heads.get(OTHER))!.revision });
+    await hook.prepare(input(s, [user("first question"), calls("Scan_Index"), result("Scan_Index"), user("second question")], { turnId: "t2" }));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[1]).toMatchObject({ graph: OTHER });
+    // after a restart the pin keeps the routed graph, and the router is not asked
+    const again = router({ graph: GRAPH, confidence: 1 });
+    await proceduralStep({ ...s.deps, router: again.route }).prepare(input(s, [user("first question")], { turnId: "t3" }));
+    expect(again.asked).toEqual([]);
+    expect(s.records[2]).toMatchObject({ graph: OTHER });
+  });
+
+  it("PW1.65 a choice below the minimum confidence, or no router, leaves the session unguided; a session's routing is asked once per prompt", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.79 });
+    expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
+    expect(await hook.prepare(input(s, [user("q"), calls("grep"), result("grep"), user("more")], { turnId: "t2" }))).toBeUndefined();
+    expect(r.asked).toEqual(["q"]);
+    expect(await hook.prepare(input(s, [user("q")], { sessionId: "s2" }))).toBeUndefined();
+    expect(r.asked).toEqual(["q", "q"]);
+    const bare = await setup("harness", { resolver: routing });
+    expect(await proceduralStep(bare.deps).prepare(input(bare, [user("q")]))).toBeUndefined();
+    expect(s.notices).toEqual([]);
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+  });
+
+  it("PW1.66 the router reads the first user message, not system or advisory messages, and is not asked before there is one", async () => {
+    const { s, r, hook } = await routed({ graph: GRAPH, confidence: 0.95 });
+    const advisory: ModelMessage = { role: "user", content: `${GUIDANCE_LABEL}old`, providerOptions: { [HARNESS]: ADVISORY } };
+    expect(await hook.prepare(input(s, [{ role: "assistant", content: "Hello." }]))).toBeUndefined();
+    expect(r.asked).toEqual([]);
+    await hook.prepare(input(s, [{ role: "system", content: "sys" }, advisory, user("the task"), user("later")], { turnId: "t2" }));
+    expect(r.asked).toEqual(["the task"]);
+    expect(s.records[0]).toMatchObject({ graph: GRAPH });
+  });
+
+  it("PW1.67 a harness turn routes by its first prompt too; a failing router leaves the turn unguided and is asked again next turn", async () => {
+    const { s, r, hook } = await routed(new Error("no router member"));
+    expect(await hook.turn({ ...input(s, [user("do it")]), lastAction: undefined })).toBeUndefined();
+    expect(await hook.turn({ ...input(s, [user("do it")], { turnId: "t2" }), lastAction: undefined })).toBeUndefined();
+    expect(r.asked).toEqual(["do it", "do it"]);
+    const ok = await routed({ graph: OTHER, confidence: 0.9 });
+    expect(await ok.hook.turn({ ...input(ok.s, [user("do it")]), lastAction: undefined })).toBe(`${GUIDANCE_LABEL}advice 0`);
+    expect(ok.s.records[0]).toMatchObject({ graph: OTHER });
+  });
+
+  it("PW1.68 a session whose rule does not route never has its pin read for resolving, and never asks the router", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 1 });
+    const pins = pinCount(s);
+    expect(await hook.prepare(input(s, [user("q")], { sessionMeta: { procedural: "off" } }))).toBeUndefined();
+    expect(pins).not.toHaveBeenCalled();
+    expect(r.asked).toEqual([]);
   });
 });

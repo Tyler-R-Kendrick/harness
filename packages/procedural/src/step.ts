@@ -20,8 +20,8 @@ import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
 import { pinSession, readOverlay } from "./pinning.ts";
-import { resolveGraph } from "./resolver.ts";
-import type { Resolver } from "./resolver.ts";
+import { resolveGraph, routeGraph, routes } from "./resolver.ts";
+import type { GraphRouter, ResolveContext, Resolver, RouteAnswer } from "./resolver.ts";
 import { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 import { guidancePromptOf, HOPS, presetOf, WINDOW } from "./settings.ts";
 import type { Preset, Settings } from "./settings.ts";
@@ -108,6 +108,8 @@ export interface ProceduralStepDeps {
   readonly preset?: string;
   /** The guidance model; the step's own model when not given. */
   readonly model?: LanguageModel;
+  /** Chooses a graph for a session whose resolver rule routes (`modelGraphRouter`); without one such a session has no graph. */
+  readonly router?: GraphRouter;
 }
 
 /** The tag on the advisory message `trailing-message` delivery adds (under `providerOptions.harness`). */
@@ -193,6 +195,8 @@ interface Session {
   readonly turnId: string | undefined;
   readonly view: View | undefined;
   readonly cache: GuidanceCache;
+  /** The router's answers for this session, by request, so a session unrouted at one turn is not asked again for the same prompt. */
+  readonly routed: Map<string, RouteAnswer>;
 }
 
 /**
@@ -205,9 +209,27 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   const preset = presetOf(deps.settings, deps.preset ?? "harness");
   const sessions = new Map<string, Session>();
 
-  const load = async (scope: StepScope): Promise<View | undefined> => {
+  /** The session's graph: resolved, or routed by its first prompt (asking the router once per request, and not again once pinned). */
+  const resolve = async (scope: StepScope, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
     // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
-    const graph = resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) });
+    const context: ResolveContext = { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) };
+    if (!routes(deps.resolver, context)) return resolveGraph(deps.resolver, context);
+    const first = scoped(messages, "carry").find((m) => m.role === "user");
+    const pin = await deps.store.pins.get(scope.sessionId);
+    const router = deps.router;
+    const ask: GraphRouter | undefined =
+      router &&
+      (async (request) => {
+        const key = canonicalJson(request);
+        const known = routed.get(key) ?? (await router(request));
+        routed.set(key, known);
+        return known;
+      });
+    return routeGraph(deps.resolver, { ...context, ...(first === undefined ? {} : { prompt: textOf(first) }), ...(pin === undefined ? {} : { pinned: pin.graph }) }, ask);
+  };
+
+  const load = async (scope: StepScope, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<View | undefined> => {
+    const graph = await resolve(scope, messages, routed);
     if (graph === undefined) return undefined;
     const pin = await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
     const record = await deps.store.revisions.get(pin.core);
@@ -222,10 +244,11 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   };
 
   /** The session's state for this step, re-resolved and re-pinned unless the step is in the turn it knows. */
-  const enter = async (scope: StepScope, sameTurn: (known: Session) => boolean): Promise<Session> => {
+  const enter = async (scope: StepScope & { readonly messages: readonly ModelMessage[] }, sameTurn: (known: Session) => boolean): Promise<Session> => {
     const known = sessions.get(scope.sessionId);
     if (known !== undefined && sameTurn(known)) return known;
-    const session: Session = { turnId: scope.turnId, view: await load(scope), cache: known?.cache ?? new GuidanceCache() };
+    const routed = known?.routed ?? new Map<string, RouteAnswer>();
+    const session: Session = { turnId: scope.turnId, view: await load(scope, scope.messages, routed), cache: known?.cache ?? new GuidanceCache(), routed };
     sessions.set(scope.sessionId, session);
     return session;
   };

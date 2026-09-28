@@ -255,6 +255,9 @@ export async function explainRoute(resolver: Resolver, context: ResolveContext, 
   return { graph, rule, reason: `rule ${rule} routes to graph ${graph} at confidence ${confidence}` };
 }
 
+/** Whether the rule that decides for this session routes (so resolving it reads the prompt and the pin). */
+export const routes = (resolver: Resolver, context: ResolveContext): boolean => resolver.rules.find((r) => matches(r.when, context))?.route !== undefined;
+
 /** The graph a session resolves to, routing when its rule routes (see `explainRoute` for why). */
 export const routeGraph = async (resolver: Resolver, context: ResolveContext, router?: GraphRouter): Promise<GraphId | undefined> => (await explainRoute(resolver, context, router)).graph;
 

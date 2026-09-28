@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { HARNESS, probability, usage } from "@harness/cognitive";
-import { explainResolve, explainRoute, GRAPH_TOOL, GraphIdSchema, modelGraphRouter, parseResolver, parseSettings, renderPrompt, resolverJsonSchema, routeGraph } from "@harness/procedural";
+import { explainResolve, explainRoute, GRAPH_TOOL, GraphIdSchema, modelGraphRouter, parseResolver, parseSettings, renderPrompt, resolverJsonSchema, routeGraph, routes } from "@harness/procedural";
 import type { GraphRouter, RouteRequest } from "@harness/procedural";
 
 const id = (text: string) => GraphIdSchema.parse(text);
@@ -142,6 +142,7 @@ describe("routing sessions to graphs by the router's confidence", () => {
   it("PX1.52 resolving without routing (explainResolve) gives a route rule no graph; explainRoute resolves template rules as explainResolve does", async () => {
     const r = resolver(routeRule(["a"], 0.5, { cwdUnder: "/work" }), { when: {}, graph: "${principal}" });
     expect(explainResolve(r, { cwd: "/work/x" })).toEqual({ graph: undefined, rule: 0, reason: "rule 0 routes among graphs, which needs the router" });
+    expect([routes(r, { cwd: "/work/x" }), routes(r, { cwd: "/else" }), routes(resolver(), {})]).toEqual([true, false, false]);
     expect(await explainRoute(r, { cwd: "/else", principal: "ann" }, router("a", 1))).toEqual(explainResolve(r, { cwd: "/else", principal: "ann" }));
     expect(await explainRoute(r, { cwd: "/else" }, router("a", 1))).toEqual({ graph: undefined, rule: 1, reason: "rule 1 needs principal, which the session does not have" });
     expect(await explainRoute(resolver(), {}, router("a", 1))).toEqual({ graph: undefined, rule: undefined, reason: "no rule matches" });
