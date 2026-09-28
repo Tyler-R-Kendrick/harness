@@ -666,6 +666,9 @@ As built (A1). These are additions; nothing above changed meaning.
   any other session's log (`snapshot()` copies them all). Entries compacted below the
   log's base are gone, so a read starts there; a read past the head, or of an unknown
   session, is empty; a negative or fractional bound is a `RangeError` (DM10.12–DM10.15).
+- `Daemon.sessionIds(): string[]`, host-side, names every session the daemon holds in
+  creation order, restored ones included (DM10.16), so a host reads every log with
+  `readLog` instead of a snapshot.
 
 ## P9: resolver and policy (`resolver.ts`, `policy.ts`, `pinning.ts`)
 

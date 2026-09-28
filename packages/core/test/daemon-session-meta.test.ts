@@ -214,4 +214,11 @@ describe("host-side log reads", () => {
     expect(restored.readLog(first, 0, 3)).toStrictEqual(kept.slice(0, 1));
     expect(restored.readLog(first, 0, 2)).toStrictEqual([]);
   });
+
+  it("DM10.16 sessionIds lists every session the daemon holds, in creation order, restored ones included", () => {
+    const { daemon, first, second } = twoSessions();
+    expect(daemon.sessionIds()).toStrictEqual([first, second]);
+    expect(new Daemon(deps()).sessionIds()).toStrictEqual([]);
+    expect(Daemon.restore(JSON.parse(JSON.stringify(daemon.snapshot())), deps()).sessionIds()).toStrictEqual([first, second]);
+  });
 });

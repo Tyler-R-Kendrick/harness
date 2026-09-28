@@ -405,6 +405,11 @@ export class Daemon {
     return this.#hooks.publish(input, this.#now());
   }
 
+  /** The id of every session the daemon holds, in creation order, for host-side reads such as `readLog`. */
+  sessionIds(): string[] {
+    return [...this.#sessions.keys()];
+  }
+
   /**
    * A session's log entries in `[from, to)` (`to` defaults to the head), read on the host's
    * behalf without copying any other session's log, as `snapshot()` would. Entries compacted
