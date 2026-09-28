@@ -6,7 +6,7 @@ import { MemoryLibrary, parseWorkflow, quickjsCodeMode } from "@harness/workflow
 import type { Workflow } from "@harness/workflows";
 import { MemoryStorage } from "@harness/testkit";
 import { compilePath, composeCandidate, composer, composition, NodeNameSchema, parseGraph, sessionTools, staging, StagingLibrary, toolSpecs, workflowBinding } from "@harness/procedural";
-import type { ProceduralGraph, StagingFiles, StepScope, TurnToolsScope } from "@harness/procedural";
+import type { ProceduralGraph, StagingFiles, StepScope, ToolsScope } from "@harness/procedural";
 import { chain, PATH, RUNS, settings, SPECS } from "./compose-fixtures.ts";
 
 /** Staging files in memory: a library with a journal per run, as a host keeps them. */
@@ -41,7 +41,7 @@ function bound(w: Workflow): ProceduralGraph {
   return parsed.graph;
 }
 
-const scope = (sessionId: string): StepScope => ({ sessionId, turnId: "t1", report: () => {} });
+const scope = (sessionId: string): ToolsScope => ({ sessionId, turnId: "t1", report: () => {} });
 
 describe("composition on a host", () => {
   it("PC1.36 staging keeps staged workflows in the host's files (checked and immutable, as the staging library), and its host runs one on the base tools it is given, journaled in those files", async () => {
@@ -109,11 +109,28 @@ describe("composition on a host", () => {
   it("PC1.53 sessionTools hands the turn's conversation to core and to per-turn base tools, so a routing session is routed by its first prompt", async () => {
     const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
     const told: (readonly ModelMessage[] | undefined)[] = [];
-    const step = { core: async (sc: TurnToolsScope) => (told.push(sc.messages), undefined) };
+    const step = { core: async (sc: ToolsScope) => (told.push(sc.messages), undefined) };
     const messages: ModelMessage[] = [{ role: "user", content: "fetch the page" }];
     const tools = sessionTools({ step, staging: s, base: (sc) => (told.push(sc.messages), {}) });
     await tools({ ...scope("s1"), messages });
     expect(told).toEqual([messages, messages]);
+  });
+
+  it("PC1.54 sessionTools: a core the step hook cannot give (a missing pin, a store that fails) leaves the turn its base tools and a warning, never a failed turn", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const base = { search: tool({ inputSchema: jsonSchema({ type: "object" }), execute: async () => [] }) };
+    const reported: unknown[] = [];
+    const failing = sessionTools({ step: { core: async () => Promise.reject(new Error("the pinned core revision is missing")) }, staging: s, base });
+    expect(await failing({ sessionId: "s1", turnId: "t1", report: (u) => void reported.push(u) })).toBe(base);
+    expect(reported).toEqual([{ sessionUpdate: "notice", severity: "warning", title: "Procedural tools failed", description: "the pinned core revision is missing" }]);
+    // Base tools that fail are the host's own failure, and fail the turn.
+    const broken = sessionTools({ step: { core: async () => undefined }, staging: s, base: () => Promise.reject(new Error("no tools")) });
+    await expect(broken(scope("s1"))).rejects.toThrow("no tools");
+    // The step hook is told the turn's conversation, by which it tells a resumed turn from a new one.
+    const told: ToolsScope[] = [];
+    const messages = [{ role: "user" as const, content: "q" }];
+    await sessionTools({ step: { core: async (sc: ToolsScope) => void told.push(sc) }, staging: s, base })({ ...scope("s1"), messages });
+    expect(told[0]!.messages).toBe(messages);
   });
 
   it("PC1.40 composition is what a host hands out: a session's per-turn tools, and for each dream a composer and a tool catalog over the base tools as they are then", async () => {

@@ -15,6 +15,16 @@ export interface TurnScope {
   readonly report: (update: SessionUpdate) => void;
 }
 
+/** What tools given anew each turn are told: the turn's scope and its conversation so far. */
+export interface ToolContext extends TurnScope {
+  /**
+   * The call's conversation (a prompt given as text is one user message): a new prompt
+   * last, or, for a stream restarted in its turn (after an approval round), what the turn
+   * did so far.
+   */
+  readonly messages: readonly ModelMessage[];
+}
+
 /** One step of an agent's loop, as AI SDK `prepareStep` sees it. */
 export interface StepContext extends TurnScope {
   /** Everything the step's model call would get: the conversation so far, this turn's tool calls and results included. */
@@ -46,11 +56,6 @@ export interface TurnContext extends TurnScope {
   readonly lastCall?: LastCall;
   /** The names of the tools the harness offers. */
   readonly tools: readonly string[];
-}
-
-/** A turn as per-turn tools see it: its scope and its conversation, ending with the turn's prompt. */
-export interface TurnToolsContext extends TurnScope {
-  readonly messages: readonly ModelMessage[];
 }
 
 /** A step that ended, as AI SDK `onStepEnd` sees it: its number and its model call's usage. */
@@ -191,7 +196,7 @@ export function sessionAgent(options: {
    * can get tools of its own (e.g. the workflows its pinned procedural core binds, where a
    * routing resolver reads the first prompt).
    */
-  readonly tools?: ToolSet | ((turn: TurnToolsContext) => ToolSet | Promise<ToolSet>);
+  readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -212,7 +217,8 @@ export function sessionAgent(options: {
     maxRetries: 0,
     callOptionsSchema: TurnOptionsSchema,
     prepareCall: async ({ options: turn, ...call }) => {
-      const user = lastUser(call.messages ?? []);
+      const messages = call.messages ?? [];
+      const user = lastUser(messages);
       const said = textOf(user);
       const playbook = options.learning && said ? await options.learning.recall(said).then((r) => r.playbook, () => "") : "";
       const memories = options.memory && said ? await options.memory.recall(said, { excludeSession: turn.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];

@@ -9,9 +9,11 @@ import {
   GUIDANCE_LABEL,
   MemoryProceduralStore,
   parseGraph,
+  parsePolicy,
   parseResolver,
   parseSettings,
   proceduralStep,
+  revisionId,
   RevisionIdSchema,
   sha256Hex,
   StepRecordSchema,
@@ -99,6 +101,43 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(await hook.turn({ ...input(s, [user("q")]), lastAction: undefined })).toBeUndefined();
     expect(s.guidance.doGenerateCalls).toHaveLength(0);
     expect(s.notices).toEqual([]);
+  });
+
+  it("PW1.93 the access policy decides which graphs a session may be guided by: it needs read and write (its turns feed the overlay), and a denied session is left unguided and unpinned", async () => {
+    // The session's meta names its graph, and the policy lets only the retrieval team's sessions near it.
+    const byMeta = parseResolver({ rules: [{ when: { meta: { graph: "*" } }, graph: "${meta.graph}" }] });
+    const policy = parsePolicy({ rules: [{ when: { meta: { team: "retrieval" } }, allow: true }, { when: { actions: ["write"], meta: { role: "reader" } }, allow: false }], default: "deny" });
+    const s = await setup("paper", { resolver: byMeta });
+    const hook = proceduralStep({ ...s.deps, policy });
+    expect(await hook.prepare(input(s, [user("q")], { sessionId: "intruder", sessionMeta: { graph: GRAPH, team: "other" } }))).toBeUndefined();
+    const reader = await setup("paper", { resolver: byMeta });
+    expect(await proceduralStep({ ...reader.deps, policy: parsePolicy({ rules: [{ when: { actions: ["write"] }, allow: false }] }) }).prepare(input(reader, [user("q")], { sessionMeta: { graph: GRAPH } }))).toBeUndefined();
+    expect(await proceduralStep({ ...reader.deps, policy: parsePolicy({ rules: [{ when: { actions: ["read"] }, allow: false }] }) }).prepare(input(reader, [user("q")], { sessionMeta: { graph: GRAPH } }))).toBeUndefined();
+    // A session that resolves to no graph never reaches the policy (whose graph patterns need one).
+    const patterned = parsePolicy({ rules: [{ when: { graph: "team/*" }, allow: true }], default: "deny" });
+    expect(await proceduralStep({ ...reader.deps, policy: patterned }).prepare(input(reader, [user("q")], { sessionId: "none" }))).toBeUndefined();
+    expect(reader.notices).toEqual([]);
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+    expect(await s.store.pins.get("intruder")).toBeUndefined();
+    await hook.prepare(input(s, [user("q")], { sessionId: "member", sessionMeta: { graph: GRAPH, team: "retrieval" } }));
+    expect(s.records.map((r) => r.graph)).toEqual([GRAPH]);
+    // The policy sees the session's cwd and the host's principal too.
+    const byCwd = parsePolicy({ rules: [{ when: { cwdUnder: "/repo", principal: "me" }, allow: true }], default: "deny" });
+    const cwd = await setup("paper");
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "me" }).prepare(input(cwd, [user("q")]));
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "you" }).prepare(input(cwd, [user("q")], { sessionId: "s2" }));
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "me" }).prepare(input(cwd, [user("q")], { sessionId: "s3", cwd: "/elsewhere" }));
+    expect(cwd.records).toHaveLength(1);
+  });
+
+  it("PW1.94 a session whose graph has no head yet is left unguided, without a warning on every step", async () => {
+    const s = await setup("paper", { resolver: parseResolver({ rules: [{ when: {}, graph: "not/imported" }] }) });
+    const hook = proceduralStep(s.deps);
+    expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
+    expect(await hook.turn({ ...input(s, [user("q")], { turnId: "t2" }), lastAction: undefined })).toBeUndefined();
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+    expect(s.notices).toEqual([]);
+    expect(await s.store.pins.get("s1")).toBeUndefined();
   });
 
   it("PW1.31 the resolver sees the session's meta and cwd", async () => {
@@ -550,6 +589,26 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(await proceduralStep(none.deps).core(input(none, [user("q")]))).toBeUndefined();
   });
 
+  it("PW1.96 core at a stream that continues its turn after eviction (its conversation ends with tool results) reads the pin it had; a new prompt re-pins", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    const first = s.records[0]!.core;
+    const next = await seed(s.store, variant("."), GRAPH, "dream");
+    // An approval round restarts the stream in the same turn, after the session was evicted: the tools read the same core as its steps.
+    hook.forget("s1");
+    const resumed = [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")];
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t1", report: () => {}, messages: resumed }))!)).toBe(first);
+    await hook.prepare(input(s, resumed, { stepNumber: 0 }));
+    expect(s.records.map((r) => r.core)).toEqual([first, first]);
+    // A new prompt is a new turn: it re-pins, as does a call that does not give the conversation.
+    hook.forget("s1");
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t2", report: () => {}, messages: [...resumed, user("again")] }))!)).toBe(next);
+    await pinned(s, "s1", { core: first });
+    hook.forget("s1");
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t3", report: () => {} }))!)).toBe(next);
+  });
+
   it("PW1.47 without a turn id, the first step of a stream is the turn boundary", async () => {
     const s = await setup("paper");
     const pins = pinCount(s);
@@ -814,6 +873,18 @@ describe("step usage", () => {
     expect(usages).toHaveLength(2);
     // Nothing is read or pinned for it.
     expect(await s.store.pins.get("s1")).toBeUndefined();
+  });
+
+  it("PW1.95 a session the access policy keeps from its graph reports no step usage, as it is not guided by it", async () => {
+    const s = await setup("harness");
+    const usages: StepUsageNotice[] = [];
+    const scope = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n) };
+    for (const denied of ["read", "write"] as const) {
+      await proceduralStep({ ...s.deps, policy: parsePolicy({ rules: [{ when: { actions: [denied] }, allow: false }] }) }).end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    }
+    expect(usages).toEqual([]);
+    await proceduralStep({ ...s.deps, policy: parsePolicy({ rules: [] }) }).end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    expect(usages).toHaveLength(1);
   });
 });
 

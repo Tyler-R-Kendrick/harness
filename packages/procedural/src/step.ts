@@ -22,6 +22,8 @@ import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
 import { pinSession, readOverlay } from "./pinning.ts";
+import { authorize } from "./policy.ts";
+import type { AccessPolicy } from "./policy.ts";
 import { resolveGraph, routeGraph, routes } from "./resolver.ts";
 import type { GraphRouter, ResolveContext, Resolver, RouteAnswer } from "./resolver.ts";
 import { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
@@ -122,6 +124,9 @@ export interface ProceduralStepHook {
    * core: a host builds the turn's tools from it (`sessionTools`, plan §7.6). Without a
    * turn id every call is a boundary. A session whose resolver rule routes is routed by
    * the first prompt of `messages`, the turn's conversation; without them it has no graph.
+   * Given the conversation, a call for a session evicted meanwhile whose conversation
+   * resumes its turn (a stream restarted after an approval round) reads the pin it had, as
+   * a step does.
    */
   core(scope: StepScope & { readonly messages?: readonly ModelMessage[] }): Promise<ProceduralGraph | undefined>;
   /** Records a step's model usage in the session log, for a session with a graph (the trajectory's input and output tokens). */
@@ -136,6 +141,12 @@ export interface ProceduralStepDeps {
   readonly resolver: Resolver;
   /** The owner principal the resolver sees for every session (the host's). */
   readonly principal?: string;
+  /**
+   * The access policy (plan §8.3). A guided session is pinned and its turns feed the
+   * graph's overlay, so it is guided only when the policy allows both `read` and `write`
+   * on its graph for its context. Without one, every graph the resolver names is allowed.
+   */
+  readonly policy?: AccessPolicy;
   readonly settings: Settings;
   /** Stamps pins (the core's `Clock`). */
   readonly clock: { now(): number };
@@ -286,7 +297,10 @@ interface Session {
  * the stream, or a restarted stream (after an approval round) whose conversation ends
  * with tool results rather than a new prompt.
  */
-const continues = (input: StepInput): boolean => input.stepNumber > 0 || input.messages.filter((m) => m.role !== "system" && !isAdvisory(m)).at(-1)?.role !== "user";
+const continues = (input: StepInput): boolean => input.stepNumber > 0 || resumes(input.messages);
+
+/** Whether a conversation resumes its turn: it ends with something other than a new prompt (advisories and system messages aside). */
+const resumes = (messages: readonly ModelMessage[]): boolean => messages.filter((m) => m.role !== "system" && !isAdvisory(m)).at(-1)?.role !== "user";
 
 /**
  * The procedural step hook (plan §5): resolve, pin, match, neighborhood, serialize,
@@ -325,11 +339,8 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     }
   };
 
-  /** The session's graph: resolved, or routed by its first prompt (asking the router once per request, and not again once pinned). */
-  const resolve = async (scope: StepScope<never>, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
-    // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
-    const context: ResolveContext = { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) };
-    if (!routes(deps.resolver, context)) return resolveGraph(deps.resolver, context);
+  /** A routing session's graph, routed by its first prompt. */
+  const route = async (scope: StepScope<never>, context: ResolveContext, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
     const first = scoped(messages, "carry").find((m) => m.role === "user");
     const pin = await deps.store.pins.get(scope.sessionId);
     const router = deps.router;
@@ -344,10 +355,24 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     return routeGraph(deps.resolver, { ...context, ...(first === undefined ? {} : { prompt: textOf(first) }), ...(pin === undefined ? {} : { pinned: pin.graph }) }, ask);
   };
 
+  /**
+   * The session's graph: resolved, or routed by its first prompt (asking the router once per
+   * request, and not again once pinned), and only when the access policy allows it.
+   */
+  const resolve = async (scope: StepScope<never>, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
+    // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
+    const context: ResolveContext = { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) };
+    const graph = routes(deps.resolver, context) ? await route(scope, context, messages, routed) : resolveGraph(deps.resolver, context);
+    // A guided session is pinned and its turns feed the graph's overlay: the policy must allow both.
+    return graph !== undefined && authorize(deps.policy, "read", graph, context) && authorize(deps.policy, "write", graph, context) ? graph : undefined;
+  };
+
   /** The session's view: pinned for a new turn, or, for a turn it continues, at the pin it has on that graph. */
   const load = async (scope: StepScope, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>, continuing: boolean): Promise<View | undefined> => {
     const graph = await resolve(scope, messages, routed);
     if (graph === undefined) return undefined;
+    // A graph nothing has been imported into yet has nothing to guide by.
+    if ((await deps.store.heads.get(graph)) === undefined) return undefined;
     const stored = continuing ? await deps.store.pins.get(scope.sessionId) : undefined;
     const pin = stored?.graph === graph ? stored : await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
     const record = await deps.store.revisions.get(graph, pin.core);
@@ -358,7 +383,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     if (!preset.overlay || live === undefined) return { graph, core: parsed.graph, effective: coreView(parsed.graph) };
     const state = await readOverlay(deps.store, pin);
     // A session never pairs a core with an overlay built on another core.
-    return { graph, core: parsed.graph, effective:effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
+    return { graph, core: parsed.graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
   };
 
   /**
@@ -473,8 +498,10 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     },
 
     async core(scope) {
-      // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows.
-      const session = await enter({ ...scope, messages: scope.messages ?? [] }, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, false);
+      // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows,
+      // or, for a session evicted meanwhile, a restarted stream whose conversation resumes its turn.
+      const continuing = scope.messages !== undefined && resumes(scope.messages);
+      const session = await enter({ ...scope, messages: scope.messages ?? [] }, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, continuing);
       return session.view?.core;
     },
 

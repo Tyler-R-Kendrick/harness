@@ -188,4 +188,15 @@ describe("dream on the native host", () => {
     await host.close();
     await cognitive.close();
   });
+
+  it("PX2.116 a dream given no tool catalog (the CLI's, or the daemon's without composition) enforces none under the harness preset, so a candidate over action nodes can commit", async () => {
+    const store = new MemoryProceduralStore();
+    await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
+    await store.heads.set(graph, undefined, revisionId(seed));
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({ content: [{ type: "text", text: JSON.stringify(shorter) }], finishReason: { unified: "stop", raw: undefined }, usage: usage(1, 1), warnings: [] }),
+    });
+    const result = await nativeDream({ store, settings, model, sessions: async () => [], sideEffectFree: ["search"] })(graph);
+    expect(result).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "committed" }, {}, {}] });
+  });
 });

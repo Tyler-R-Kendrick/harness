@@ -91,4 +91,8 @@ describe("the access policy (plan §8.3)", () => {
     const schema = JSON.stringify(policyJsonSchema());
     expect(schema).toContain('"approve"');
   });
+
+  it("PX1.59 a policy file's JSON Schema is generated from the parser (data/policy.schema.json), for the file's $schema", async () => {
+    await expect(`${JSON.stringify(policyJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/policy.schema.json");
+  });
 });

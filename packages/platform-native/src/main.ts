@@ -12,7 +12,7 @@ import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedur
 import type { ApprovalNotice, GraphId } from "@harness/procedural";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
-import { FileStorage } from "./file-storage.ts";
+import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
@@ -24,6 +24,7 @@ const { values } = parseArgs({
     stdio: { type: "boolean", default: false },
     socket: { type: "string" },
     state: { type: "string" },
+    conversations: { type: "string" },
     worker: { type: "string", default: "echo" },
     model: { type: "string", default: "openai/gpt-oss-20b" },
     system: { type: "string" },
@@ -57,7 +58,8 @@ const { values } = parseArgs({
 
 if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
+    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--conversations <dir>]\n" +
+      "               [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>]\n" +
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
@@ -166,6 +168,7 @@ const step =
     ...procedural,
     resolver: loadProceduralResolver(values["procedural-resolver"]),
     principal,
+    ...(proceduralPolicy === undefined ? {} : { policy: proceduralPolicy }),
     ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
     ...(cognitive ? { router: cognitive.ensemble.languageModel("tool-calling", "router") } : {}),
   });
@@ -185,6 +188,10 @@ const composition =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
+// Agent workers keep each session's conversation (a file each) beside the daemon's state, so
+// a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
+const conversationsPath = conversationsDir(values);
+const conversations = conversationsPath === undefined ? {} : { conversations: fileConversations(conversationsPath) };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
   process.exit(2);
@@ -211,7 +218,7 @@ const harness =
 const worker: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}) }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}) }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
@@ -230,6 +237,7 @@ const worker: Worker = harness
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
           ...(behavior ? { onEvent: (sessionId: string, name: string) => cognitive!.raiseBehavior(sessionId, name) } : {}),
+          ...conversations,
         })
       : new EchoWorker();
 
@@ -287,8 +295,9 @@ if (values.stdio) {
 }
 if (values.socket !== undefined) {
   await host.listen(values.socket);
-  // harness-procedural reaches the store through this socket while the daemon holds it.
-  await storeLock?.advertise(resolve(values.socket));
+  // harness-procedural reaches the store through this socket while the daemon holds it, when
+  // the daemon serves `procedural.*` (its cognitive core has the extension); otherwise it refuses.
+  if (cognitive) await storeLock?.advertise(resolve(values.socket));
   process.stderr.write(`harness listening on ${values.socket}\n`);
 }
 if (values.ws !== undefined) {

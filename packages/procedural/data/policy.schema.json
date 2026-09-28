@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "when": {
+            "type": "object",
+            "properties": {
+              "meta": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwdUnder": {
+                "type": "string",
+                "minLength": 1
+              },
+              "principal": {
+                "type": "string",
+                "minLength": 1
+              },
+              "actions": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "read",
+                    "write",
+                    "dream",
+                    "revert",
+                    "import",
+                    "approve"
+                  ]
+                }
+              },
+              "graph": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "allow": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "when",
+          "allow"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "default": {
+      "default": "allow",
+      "type": "string",
+      "enum": [
+        "allow",
+        "deny"
+      ]
+    }
+  },
+  "required": [
+    "rules"
+  ],
+  "additionalProperties": false
+}

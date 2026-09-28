@@ -170,7 +170,9 @@ The decision held; these details moved.
   whole, so two processes over one directory would lose each other's writes. A lock file
   in the directory names its holder; the daemon refuses to start on a held store, and
   `harness-procedural` either holds the lock for its run or, when a daemon holds it and
-  listens on a socket, sends its operation to that daemon's `procedural.*`. We chose a
+  serves `procedural.*` on a socket (it has a cognitive core), sends its operation there;
+  a daemon that serves none advertises no socket, and the CLI refuses. Stale locks are
+  cleared under a takeover guard, so two contenders never both hold one. We chose a
   lock over routing alone because a daemon on stdio has no socket to reach.
 - **Dream runs on demand and on a schedule.** `procedural.dream` and
   `harness-procedural dream` start it, and the preset's schedule (`dream.every`, a
@@ -213,6 +215,14 @@ The decision held; these details moved.
   serializes to JSON; `planFromSubgraph` turns the subgraph between two nodes into one,
   a task per action node, with the graph's relations as data and control dependencies.
   Nothing drives plans yet.
+- **A tool catalog is enforced only when a host gives one.** The daemon's dream has one
+  only with composition (its session tools); the CLI's dream, and the daemon's without
+  composition, have none: the harness preset's `enforceToolCatalog` then has nothing to
+  check, and the refiner is shown no tools.
+- **Guidance follows the access policy.** A session's meta can name any graph the resolver
+  templates, so the step hook guides (and pins) a session only when the policy allows it
+  to read and write that graph, whether resolved or routed: its turns feed the graph's
+  overlay.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 - **Localization extensions are settings, off in both presets.** A `state-tracker` match

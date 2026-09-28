@@ -8,7 +8,7 @@ import { EchoWorker } from "@harness/workers";
 import { MockLanguageModelV4 } from "ai/test";
 import { Ensemble, HARNESS, invokeCognitive, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GRAPH_TOOL, GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
+import { GRAPH_TOOL, GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
 import { promptText, scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
@@ -207,6 +207,17 @@ describe("procedural guidance and access on the native host", () => {
     expect(await store.pins.get("s2")).toBeUndefined();
   });
 
+  it("PX2.118 the host's step hook applies the access policy it is given: a session the policy denies is left unguided", async () => {
+    const store = await seeded();
+    const resolver = parseResolver({ rules: [{ when: {}, graph: "default" }] });
+    const policy = parsePolicy({ rules: [{ when: { meta: { team: "search" } }, allow: true }], default: "deny" });
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver, policy, model: scriptedModel(() => "Search first.") });
+    const input = { sessionId: "s1", turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Search first."), report: () => {} };
+    expect(await step.prepare(input)).toBeUndefined();
+    expect(await store.pins.get("s1")).toBeUndefined();
+    expect(await step.prepare({ ...input, sessionId: "s2", sessionMeta: { team: "search" } })).toBeDefined();
+  });
+
   it("PX2.54 a harness worker with the step hook prepends each turn's guidance, from the hook's guidance model, to its prompt", async () => {
     const store = await seeded();
     const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: parseResolver({ rules: [{ when: {}, graph: "default" }] }), model: scriptedModel(() => "Search first.") });
@@ -253,7 +264,7 @@ describe("procedural guidance and access on the native host", () => {
     expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
   });
 
-  it("PX2.114 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
+  it("PX2.119 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
     const routing = parseResolver({ rules: [{ when: {}, route: { candidates: ["default", "other"], minConfidence: 0.8 } }] });
     const input = (sessionId: string) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Start by searching."), report: () => undefined });
     const router = new MockLanguageModelV4({

@@ -18,10 +18,8 @@ import type { CodeMode, Effects, ToolSpec, WorkflowLibrary } from "@harness/work
 import { revisionTools, StagingLibrary } from "./compose.ts";
 import type { CompositionSettings } from "./compose.ts";
 import type { Composer } from "./dream-runner.ts";
-import type { ProceduralStepHook, StepScope } from "./step.ts";
-
-/** A turn as its tools see it: the session's scope and, when the worker gives it, the turn's conversation (a routing session is routed by its first prompt). */
-export type TurnToolsScope = StepScope & { readonly messages?: readonly ModelMessage[] };
+import type { ProceduralGraph } from "./graph.ts";
+import type { ProceduralStepHook, StepNotice, StepScope } from "./step.ts";
 
 /**
  * Where a host keeps staged workflows, with a journal per run (a directory of its own
@@ -61,21 +59,47 @@ export async function composer(options: { readonly settings: CompositionSettings
   return { settings, toolSpecs: await toolSpecs(tools), staging: options.staging.library, ...(runs === undefined ? {} : { runs }) };
 }
 
+/** The warning a turn is told when its procedural tools could not be built: it goes on with its base tools. */
+export interface ToolsNotice {
+  readonly sessionUpdate: "notice";
+  readonly severity: "warning";
+  readonly title: string;
+  readonly description: string;
+}
+
+/**
+ * A turn's scope as a session's tools see it: it reports step records and warnings, and
+ * may carry the turn's conversation, by which the step hook tells a stream that resumes
+ * its turn from a new one, and routes a routing session by its first prompt
+ * (`sessionAgent` gives it).
+ */
+export type ToolsScope = StepScope<StepNotice | ToolsNotice> & { readonly messages?: readonly ModelMessage[] };
+
+const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
 /**
  * A session worker's tools, per turn (`sessionAgent({ tools })`): the base tools (given
  * per turn, told its scope, or once) plus exactly the workflows the core the session reads
  * this turn binds (`step.core`, pinned as the turn's steps read it), each offered only
- * while its staged code hashes to the binding. A session without a graph gets the base.
+ * while its staged code hashes to the binding. A session without a graph gets the base,
+ * and so does one whose core the step hook cannot give (a missing pin, a store that
+ * fails), with a warning: as for its step guidance, a procedural failure never fails a turn.
  */
 export function sessionTools(options: {
   readonly step: Pick<ProceduralStepHook, "core">;
   readonly staging: Staging;
-  readonly base?: ToolSet | ((scope: TurnToolsScope) => ToolSet | Promise<ToolSet>);
-}): (scope: TurnToolsScope) => Promise<ToolSet> {
+  readonly base?: ToolSet | ((scope: ToolsScope) => ToolSet | Promise<ToolSet>);
+}): (scope: ToolsScope) => Promise<ToolSet> {
   const { step, base = {} } = options;
   return async (scope) => {
     const tools = typeof base === "function" ? await base(scope) : base;
-    const core = await step.core(scope);
+    let core: ProceduralGraph | undefined;
+    try {
+      core = await step.core(scope);
+    } catch (e) {
+      scope.report({ sessionUpdate: "notice", severity: "warning", title: "Procedural tools failed", description: messageOf(e) });
+      return tools;
+    }
     return core === undefined ? tools : revisionTools({ base: tools, pinnedCore: core, staging: options.staging.host(tools) });
   };
 }
@@ -84,7 +108,7 @@ export function sessionTools(options: {
 export interface HostComposition {
   readonly staging: Staging;
   /** A session worker's per-turn tools (`sessionTools`). */
-  readonly tools: (scope: TurnToolsScope) => Promise<ToolSet>;
+  readonly tools: (scope: ToolsScope) => Promise<ToolSet>;
   /** Dream's composer over the base tools as they are when it is called: once per dream. */
   readonly composer: () => Promise<Composer>;
   /** Dream's tool catalog: the base tools' names, when it is called. */

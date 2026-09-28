@@ -197,7 +197,7 @@ describe("runDream", () => {
       store,
       graph: GRAPH,
       settings: withRounds(harness, 1),
-      ports: ports({ refiner: refiner([{ edits: toTool, raw: "{}" }]), approver: { approve: async (request) => (seen.push(request), false) } }),
+      ports: ports({ entropy: new SeededEntropy(8), refiner: refiner([{ edits: toTool, raw: "{}" }]), approver: { approve: async (request) => (seen.push(request), false) } }),
       tools: ["first_hop_retrieve", "Scan_Index"],
     });
     expect(result).toMatchObject({ status: "done", rounds: [{ outcome: "rejected", gate: "approval-for-side-effects", reason: "declined by the approver" }] });
@@ -328,6 +328,31 @@ describe("runDream: inputs and recovery", () => {
     const replaced = await run(rejected);
     expect(replaced.record).toMatchObject({ decision: { kind: "pending-approval" }, edits: toTool });
     expect(replaced.announced).toHaveLength(1);
+  });
+
+  it("PD2.36 a dream left by a host that approves another way (an inbox, not an approver) is not replayed by this one: it starts a new dream", async () => {
+    const store = seeded();
+    store.overlayLog.set(GRAPH, support());
+    const inbox = { pending: async () => undefined };
+    const settings2 = withRounds(harness, 2);
+    const tools = ["first_hop_retrieve", "Scan_Index"];
+    // The daemon's dream proposes round 1's candidate to its inbox, then its refiner fails in round 2.
+    await expect(runDream({ store, graph: GRAPH, settings: settings2, ports: ports({ refiner: refiner([{ edits: toTool, raw: "{}" }, new Error("model down")]), inbox }), tools })).rejects.toThrow("model down");
+    const first = (store.dreamLog.get(GRAPH)![0] as { dream: string }).dream;
+    // A terminal's run (an approver, no inbox) cannot replay the `proposed` event as an approval: it dreams anew.
+    const asked: unknown[] = [];
+    const result = await runDream({ store, graph: GRAPH, settings: settings2, ports: ports({ entropy: new SeededEntropy(8), refiner: refiner([{ edits: toTool, raw: "{}" }]), approver: { approve: async (r) => (asked.push(r.candidate.id), false) } }), tools });
+    expect(result).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "rejected", gate: "approval-for-side-effects" }, { round: 2 }] });
+    expect(result.status === "done" && result.dream).not.toBe(first);
+    expect(asked).toEqual([revisionId(applyEdits(G0, toTool))]);
+    expect(store.dreamLog.get(GRAPH)!.filter((e) => (e as { kind: string }).kind === "started")).toHaveLength(2);
+    // The same host resumes its own dream from the log.
+    const again = seeded();
+    again.overlayLog.set(GRAPH, support());
+    await expect(runDream({ store: again, graph: GRAPH, settings: settings2, ports: ports({ refiner: refiner([{ edits: toTool, raw: "{}" }, new Error("model down")]), inbox }), tools })).rejects.toThrow("model down");
+    const resumed = await runDream({ store: again, graph: GRAPH, settings: settings2, ports: ports({ refiner: refiner([]), inbox }), tools });
+    expect(resumed).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "pending-approval" }, { round: 2 }] });
+    expect(again.dreamLog.get(GRAPH)!.filter((e) => (e as { kind: string }).kind === "started")).toHaveLength(1);
   });
 
   it("PD2.18 only rejected records are remembered", async () => {
