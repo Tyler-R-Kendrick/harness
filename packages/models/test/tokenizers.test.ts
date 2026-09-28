@@ -23,13 +23,17 @@ describe("tokenizers read as Hugging Face's Rust tokenizers read them (faithfulT
     expect(ids(new Tokenizer(sentencePiece(), CONFIG), "  ")).toEqual([5]);
   });
 
-  it("TK1.3 a tokenizer whose Metaspace does not split, or whose added tokens are normalized, keeps the library's reading", () => {
+  it("TK1.3 a tokenizer whose Metaspace does not split keeps the library's reading; one with normalized added tokens keeps its normalizer, matching them after normalizing as Rust does", () => {
     const plain = sentencePiece(false);
     expect(ids(faithfulTokenizer(plain, CONFIG), "a  b")).toEqual(ids(new Tokenizer(plain, CONFIG), "a  b"));
     const normalized = sentencePiece();
     (normalized["added_tokens"] as { normalized: boolean }[])[5]!.normalized = true;
     // The normalizer stays (it makes the added token's normalized form), and splitting still applies.
-    expect(faithfulTokenizer(normalized, CONFIG).normalizer).not.toBeNull();
+    const kept = faithfulTokenizer(normalized, CONFIG);
+    expect(kept.normalizer).not.toBeNull();
+    // Rust's ids for this tokenizer (a normalized "▁▁" matches the two spaces once they are ▁▁).
+    expect(ids(kept, "a  b")).toEqual([9, 5, 10]);
+    expect(ids(kept, "  ")).toEqual([5]);
     expect(faithfulTokenizer(sentencePiece(), CONFIG).normalizer).toBeNull();
   });
 

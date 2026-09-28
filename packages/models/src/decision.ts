@@ -138,6 +138,26 @@ export function collateDecisions(rows: readonly EncodedDecision[], options: { re
   return { size: rows.length, length, options: width, inputIds, attentionMask, markerPos, markerMask, qtype: BigInt64Array.from(rows, (r) => BigInt(r.qtype)) };
 }
 
+/** Split rows into runs whose padded size (rows times their padded length) is within the model's `batchTokens`; a longer row runs alone. */
+function batches(rows: readonly EncodedDecision[], format: DecisionFormat): EncodedDecision[][] {
+  const padded = (n: number) => Math.min(format.limits.tokens, Math.ceil(n / format.padTo) * format.padTo);
+  const out: EncodedDecision[][] = [];
+  let current: EncodedDecision[] = [];
+  let longest = 0;
+  for (const row of rows) {
+    const length = padded(row.ids.length);
+    if (current.length > 0 && (current.length + 1) * Math.max(longest, length) > format.batchTokens) {
+      out.push(current);
+      current = [];
+      longest = 0;
+    }
+    current.push(row);
+    longest = Math.max(longest, length);
+  }
+  if (current.length > 0) out.push(current);
+  return out;
+}
+
 /** Runs a batch: one score per row and option, row-major (`size` x `options`). */
 export interface DecisionSession {
   run(batch: DecisionBatch): Promise<Float32Array>;
@@ -171,7 +191,12 @@ export class OnnxDecisionSession implements DecisionSession {
       marker_mask: new T("bool", batch.markerMask, [batch.size, batch.options]),
       qtype: new T("int64", batch.qtype, [batch.size]),
     });
-    return Float32Array.from((out["logits"] as OrtTensorLike).data as Float32Array);
+    const logits = out["logits"] as OrtTensorLike;
+    const expected = [batch.size, batch.options];
+    if (logits.type !== "float32" || logits.dims.length !== 2 || logits.dims.some((d, i) => d !== expected[i])) {
+      throw new Error(`logits are ${logits.type} [${logits.dims.join(",")}]; expected float32 [${expected.join(",")}]`);
+    }
+    return Float32Array.from(logits.data as Float32Array);
   }
 }
 
@@ -205,14 +230,19 @@ export function decisionModel(options: { readonly modelId: string; readonly sess
       abortSignal?.throwIfAborted();
       const asked = Object.entries(questions).map(([id, q]) => ({ id, q, ...optionsOf(q, text) }));
       const encoded = asked.map(({ q, options }) => encodeDecision(tokenizer, format, { type: q.type, question: text(q.instructions), options, state }));
-      const batch = collateDecisions(encoded, { pad: tokenizer.ids.pad, padTo: format.padTo, tokens: format.limits.tokens });
-      const scores = await mutex.runExclusive(() => {
-        abortSignal?.throwIfAborted();
-        return session.run(batch);
+      const scores = await mutex.runExclusive(async () => {
+        const rows: number[][] = [];
+        for (const part of batches(encoded, format)) {
+          abortSignal?.throwIfAborted();
+          const batch = collateDecisions(part, { pad: tokenizer.ids.pad, padTo: format.padTo, tokens: format.limits.tokens });
+          const out = await session.run(batch);
+          part.forEach((_, r) => rows.push(Array.from(out.subarray(r * batch.options, (r + 1) * batch.options))));
+        }
+        return rows;
       });
       const answers: Record<string, Experimental_EvaluationModelV4Answer> = {};
       asked.forEach(({ id, q, keys }, row) => {
-        const z = Array.from(scores.subarray(row * batch.options, row * batch.options + keys.length));
+        const z = scores[row]!.slice(0, keys.length);
         if (!z.every(Number.isFinite)) throw new Error(`${modelId} returned non-finite scores for ${id}`);
         const top = Math.max(...z);
         const e = z.map((x) => Math.exp(x - top));

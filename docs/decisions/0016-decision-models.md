@@ -59,8 +59,8 @@ differed on 1,380.
   only turns spaces into ▁ is dropped (the Metaspace does the same replacement after
   added tokens are matched) unless an added token is normalized. With it the 6,000 random
   strings match Python's ids exactly, and all 100 reference cases pick the reference's
-  option with probabilities within 1e-4 (logits within 7.3e-5; the export reports 7.8e-5
-  against PyTorch). Other tokenizers are read as the library reads them.
+  option with their logits within 7.3e-5 of PyTorch's (the export reports 7.8e-5 against
+  PyTorch); RW6.3 holds the probabilities to 1e-3. Other tokenizers are read as the library reads them.
 - **Julia 1 in the catalog** as `SupersonicLabs/Julia-1` (the model its owner named),
   its artifact the publisher's ONNX export pinned by revision and sha256, 614 MB. It
   serves **classification only**: its publisher says it compares the options it is

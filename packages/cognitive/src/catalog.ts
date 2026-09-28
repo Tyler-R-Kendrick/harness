@@ -105,6 +105,8 @@ const RUN = {
     strict: z.boolean(),
     /** Sequence lengths are padded to a multiple of this. */
     padTo: z.int().positive(),
+    /** The most padded tokens one run takes (rows times their padded length); a call's questions are split into runs within it, a longer row alone. */
+    batchTokens: z.int().positive(),
   }),
 } satisfies Record<(typeof RUNTIMES)[number], z.ZodType>;
 
@@ -172,6 +174,8 @@ const Model = z
       if (run.limits.options.max < run.limits.options.min) issue("at least min options fit", "run", "limits", "options");
       if (run.limits.head + 4 >= run.limits.tokens) issue("room for the state beyond the question head", "run", "limits", "head");
       if (run.limits.option >= run.limits.head) issue("an option fits in the question head", "run", "limits", "option");
+      // Both hosts keep root files under their own names, which is where the model file says its weights are.
+      if ([run.model, run.data].some((f) => f?.includes("/"))) issue("a decision model's model and weights sit at the artifact's root", "run", "model");
     }
     const files = new Set(m.artifact?.files.map((f) => f.path));
     for (const key of ["loader", "wasm", "weights", "model", "projector", "data", "tokenizer", "tokenizerConfig"] as const) {

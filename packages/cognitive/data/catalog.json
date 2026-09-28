@@ -115,7 +115,8 @@
           }
         },
         "strict": true,
-        "padTo": 8
+        "padTo": 8,
+        "batchTokens": 16384
       },
       "platforms": [
         "native",
