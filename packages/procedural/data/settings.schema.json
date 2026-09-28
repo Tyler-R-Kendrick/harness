@@ -828,6 +828,26 @@
       ],
       "additionalProperties": false
     },
+    "sessions": {
+      "type": "object",
+      "properties": {
+        "idleMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "idleMs",
+        "max"
+      ],
+      "additionalProperties": false
+    },
     "graphContext": {
       "type": "object",
       "properties": {
@@ -916,6 +936,7 @@
   "required": [
     "presets",
     "decoding",
+    "sessions",
     "graphContext",
     "prompts"
   ],

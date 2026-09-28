@@ -155,6 +155,12 @@ export const SettingsSchema = z.strictObject({
     solverMaxTokens: z.int().positive(),
     refinerMaxTokens: z.int().positive(),
   }),
+  /**
+   * The step hook's per-session state (its pinned view and guidance cache): a session is
+   * evicted after `idleMs` without a step (by the Clock port), and beyond `max` sessions
+   * the least recently used one is.
+   */
+  sessions: z.strictObject({ idleMs: z.int().positive(), max: z.int().positive() }),
   /** The guidance prompt's context slots for a neighborhood (`local`) and for the full-graph fallback (`full`, App. B.5). */
   graphContext: z.strictObject({ local: ContextWordsSchema, full: ContextWordsSchema }),
   prompts: PromptsSchema,
