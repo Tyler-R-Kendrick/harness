@@ -153,10 +153,15 @@ The decision held; these details moved.
   evidence, and it goes through the same gates as any candidate. By default approval is
   needed, because a workflow counts as a tool with side effects. No host gives dream a
   composer yet, and no worker takes `revisionTools` yet, so composition is a library.
-- **Approval has no daemon path yet.** The permission flow belongs to a session's turn,
-  and dream runs outside any session. The CLI asks on a terminal; `procedural.dream` in
-  the daemon rejects candidates that need approval, and the rejection is recorded for a
-  later dream or an operator.
+- **Approval outside a session is an inbox.** The permission flow belongs to a session's
+  turn, and dream runs outside any session, so a dream with no one to ask stores each
+  candidate that needs approval as `pending-approval` and moves on without blocking. The
+  inbox (`procedural.approvals`, `procedural.approve`, `procedural.decline`, under the
+  policy's `approve` action) is where an operator decides; approving re-runs the
+  structure and evidence gates against the current head (re-applying the candidate's
+  edits there when the head moved) and commits by compare-and-set. Proposals and
+  decisions are announced on the hook bus through the host publish API. The CLI still
+  asks on a terminal when it has one.
 - **Dream runs on demand and on a schedule.** `procedural.dream` and
   `harness-procedural dream` start it, and the preset's schedule (`dream.every`, a
   duration, or `dream.afterTurns`, observed turns since the last dream) starts it from
@@ -185,5 +190,5 @@ The decision held; these details moved.
 - The task graph gains payloads. Then dream can emit plans from subgraphs.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
-- The daemon gains approvals outside a session's turn. Then `procedural.dream` can ask
-  for approval instead of rejecting.
+- Operators need approvals routed to a person (a notification channel, a review UI).
+  Then a plugin on `procedural.approval.*` does it; the inbox stays the record.

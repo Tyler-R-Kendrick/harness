@@ -61,7 +61,7 @@ async function withFile<T>(content: unknown, run: (file: string) => Promise<T>):
 }
 
 describe("dream's evaluator on the native host (--procedural-eval)", () => {
-  it("PX2.68 a user's task file is read and parsed at startup; one that cannot be right is refused, naming where", async () => {
+  it("PX2.86 a user's task file is read and parsed at startup; one that cannot be right is refused, naming where", async () => {
     const suite = await withFile(TASK_FILE, async (file) => loadTaskSuite(file));
     expect(suite).toMatchObject({ scorer: "normalized-exact", description: "Name the capital of a country." });
     expect(suite.tasks.map((t) => t.id)).toEqual(["t0", "v0", "v1"]);
@@ -69,7 +69,7 @@ describe("dream's evaluator on the native host (--procedural-eval)", () => {
     await expect(withFile("{", async (file) => loadTaskSuite(file))).rejects.toThrow(SyntaxError);
   });
 
-  it("PX2.69 nativeDream gates on the task suite: the solver, guided by each candidate, answers the suite's tasks, and a candidate that scores higher is committed", async () => {
+  it("PX2.87 nativeDream gates on the task suite: the solver, guided by each candidate, answers the suite's tasks, and a candidate that scores higher is committed", async () => {
     const store = new MemoryProceduralStore();
     await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
     await store.heads.set(graph, undefined, revisionId(seed));
@@ -95,7 +95,7 @@ describe("dream's evaluator on the native host (--procedural-eval)", () => {
     for (const q of ["Capital of Spain?", "Capital of France?", "Capital of Italy?"]) expect(solved.some((p) => p.includes(q))).toBe(true);
   });
 
-  it("PX2.70 a judge-scored suite asks the judge the host gives it, once per evaluation", async () => {
+  it("PX2.88 a judge-scored suite asks the judge the host gives it, once per evaluation", async () => {
     const suite = await withFile({ ...TASK_FILE, scorer: "judge" }, async (file) => loadTaskSuite(file));
     const judge = scriptedJudge(() => ({ type: "boolean", probability: 0.75 }));
     let resolved = 0;

@@ -51,7 +51,7 @@ const until = async (check: () => Promise<boolean> | boolean): Promise<void> => 
 };
 
 describe("scheduled dream on the native host", () => {
-  it("PX2.66 the host's ticks run the schedule: a graph due under the shipped harness preset dreams once, and the store remembers when", async () => {
+  it("PX2.84 the host's ticks run the schedule: a graph due under the shipped harness preset dreams once, and the store remembers when", async () => {
     const dir = await mkdtemp(join(tmpdir(), "harness-schedule-"));
     try {
       const store = proceduralStore(dir);
@@ -86,7 +86,7 @@ describe("scheduled dream on the native host", () => {
     }
   });
 
-  it("PX2.67 each outcome is logged in a line: a dream another holder runs is busy, a failure says why, and closing stops the ticks", async () => {
+  it("PX2.85 each outcome is logged in a line: a dream another holder runs is busy, a failure says why, and closing stops the ticks", async () => {
     const dir = await mkdtemp(join(tmpdir(), "harness-schedule-"));
     try {
       const store = proceduralStore(dir);

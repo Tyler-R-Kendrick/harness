@@ -50,6 +50,16 @@ export interface Approver {
   approve(request: { graph: GraphId; candidate: RevisionRecord; tools: readonly string[] }): Promise<boolean>;
 }
 
+/**
+ * Where candidates that need approval wait when there is no approver to ask during the
+ * dream (the daemon, where the permission flow belongs to a session's turn): the runner
+ * stores each as `pending-approval`, the approvals inbox, and tells the inbox, which
+ * announces it (a hook event on the daemon). Deciding happens later, outside the dream.
+ */
+export interface ApprovalInbox {
+  pending(request: { graph: GraphId; candidate: RevisionRecord; tools: readonly string[] }): Promise<void>;
+}
+
 /** Recorded trajectories under a revision, from the session log's projections. */
 export interface TrajectorySource {
   select(request: { graph: GraphId; revision: RevisionId; limit: number }): Promise<readonly ScoredTrajectory[]>;
@@ -72,6 +82,8 @@ export interface DreamPorts {
   refiner: Refiner;
   evaluator?: Evaluator;
   approver?: Approver;
+  /** Without an approver, candidates that need approval wait here instead of being rejected. */
+  inbox?: ApprovalInbox;
   /** With one, and `compose` in the dream settings, a dream ends with a composition round. */
   composer?: Composer;
   trajectories: TrajectorySource;
@@ -181,6 +193,7 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       settings: settings.dream,
       evaluator: ports.evaluator !== undefined,
       approver: ports.approver !== undefined,
+      inbox: ports.inbox !== undefined,
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
@@ -238,6 +251,18 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
     if (existing === undefined || isRejection(existing)) await store.revisions.put(record);
   }
 
+  /**
+   * Store a candidate as waiting for approval and announce it, unless its id already holds
+   * a record that is not a rejection: one already waiting (a replay, a later round, an
+   * import) is not announced again, and a head's record stays.
+   */
+  async function propose(record: RevisionRecord, tools: readonly string[]): Promise<void> {
+    const existing = await store.revisions.get(record.id);
+    if (existing !== undefined && !isRejection(existing)) return;
+    await store.revisions.put(record);
+    await ports.inbox!.pending({ graph, candidate: record, tools });
+  }
+
   async function begin(): Promise<Started | undefined> {
     const head = await store.heads.get(graph);
     if (head === undefined) return undefined;
@@ -284,6 +309,9 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       case "reject":
         await putRejection(command.record);
         return { kind: "recorded" };
+      case "propose":
+        await propose(command.record, command.tools);
+        return { kind: "proposed" };
       case "compose":
         return { kind: "composed", result: await compose(command) };
       case "rebase": {

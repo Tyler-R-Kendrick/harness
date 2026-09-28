@@ -696,6 +696,8 @@ As built (P9). These are additions; nothing above changed meaning.
     A graph pattern's `*` is any run of characters (`globMatches(pattern, text)`).
   - `authorize(policy: AccessPolicy | undefined, …)`: no policy allows everything; else
     the first matching rule decides, then the default.
+  - `ACTIONS` also has `approve`: deciding the candidates in a graph's approvals inbox
+    (listing them included), so a policy can give that to fewer principals than `dream`.
 - `pinning.ts`:
   - `PinRequest` also takes `overlayRefresh?: "turn" | "session"` (default `"turn"`):
     with the core kept, `"turn"` moves the pin to the overlay's latest version on that
@@ -868,9 +870,12 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `dream.cycles`) and `clock: { now(): number }`;
   - `authorize?: (action: ProceduralAction, graph: GraphId) => boolean`, the policy bound
     by the host (P9's `authorize(policy, action, graph, context)` with its context), which
-    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
+    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import" | "approve"`;
   - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
-    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`);
+  - `notify?: (notice: ApprovalNotice) => void | Promise<void>`, where the host publishes
+    the approvals inbox's notices (an import proposal is `requested`, a decision
+    `decided`).
 
   It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
   parses its input (malformed input throws `invalid procedural.<op> input`), then checks
@@ -886,6 +891,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
   | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
   | `revert` | `{graph, to?}` | revert | `RevertResult` |
   | `import` | `{graph, document?}` | import | `ImportResult` |
+  | `approvals` | `{graph}` | approve | `ApprovalList` |
+  | `approve` | `{candidate}` | approve (on the candidate's graph) | `ApprovalResult`, or `missing` for an unknown id |
+  | `decline` | `{candidate}` | approve (on the candidate's graph) | `ApprovalResult`, or `missing` for an unknown id |
 
 - `import-export.ts` holds the operations over a store, which the CLI shares:
   - `importGraph({store, graph, document?, clock, cycles?})`: no document is `seedGraph()`.
@@ -954,6 +962,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
   file, `revert` `--to`, and `dream` `--model` (a gateway id) or else `--model-cache`,
   `--llama-server` and `--no-hosted` (the ensemble's reasoning model), and `--state`. A
   result a caller handles (a dream that did not finish included) exits 1, bad usage 2.
+  `harness-procedural approvals <graph>`, `approve <candidate>` and `decline <candidate>`
+  run the inbox's operations; a dream without a terminal leaves candidates that need
+  approval in the inbox (saying so on stderr) instead of rejecting them.
 - Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
   extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
 
@@ -1054,8 +1065,9 @@ their meaning.
     model (`--model-cache`, `--llama-server`, `--no-hosted`; it loads only when the refiner
     is asked), over the session logs of the daemon state file `--state` names, with the
     terminal approver when stdin is a terminal; a dream that is `busy`, `no-head` or
-    `lease-lost` exits 1. The daemon has no approver: the
-    permission flow is per session, and dream runs outside any session.
+    `lease-lost` exits 1. The daemon has no approver (the permission flow is per session,
+    and dream runs outside any session): its dream has the approvals inbox instead (see
+    "Approvals inbox").
 - **P6's notes.**
   - `DreamSettings.stride?` is the paper's S; `runDream`'s `stride` option overrides it.
   - `DreamInput.tokenizer?` and `runDream`'s `tokenizer?` (`Tokenizer = {encode, decode}`)
@@ -1170,18 +1182,79 @@ evaluator"; the names above keep their meaning.
   judge-scored suite with `--model` (no ensemble to judge), and a suite naming tools
   (the CLI has no workflow library).
 
+## Approvals inbox
+
+As built. Candidates that need approval no longer need someone to ask during the dream;
+the names above keep their meaning.
+
+- **Dream proposes (P6).** `DreamInput.inbox?: boolean` (the runner sets it when
+  `DreamPorts.inbox` is given). When an approval gate applies and there is no approver,
+  the reducer issues `propose {record, tools}` instead of rejecting: the record is the
+  candidate with decision `pending-approval` and `evidence.approval = {gate, tools}`. The
+  runner answers `proposed`, and the round's outcome is
+  `{outcome: "pending-approval", revision, gate}`. The retained graph stays, the candidate
+  is not a rejection (nothing is remembered against it), and the next round starts. An
+  approver, when there is one, is still asked instead; with neither, the candidate is
+  rejected as before.
+- **The runner stores and announces.** `ApprovalInbox = {pending({graph, candidate, tools})}`.
+  `propose` puts the record unless its id already holds a record that is not a rejection
+  (one already waiting, from an earlier round, a replay or an import, is not announced
+  again; a head's record stays), then calls `inbox.pending`.
+- **The inbox (`approvals.ts`).** Every record of a graph with decision `pending-approval`
+  waits: a dream's proposals and import proposals alike.
+  - `listApprovals({store, graph})` returns `ApprovalList = {graph, head?, approvals}`,
+    oldest first, each an `ApprovalSummary`: `{candidate, graph, origin, parent, onHead,
+    dream?, at, edits, gate?, tools}` (the gate and tools from `evidence.approval`).
+  - `approveCandidate({store, record, preset, clock})` re-runs, against the current head,
+    the gates that need no evaluator. Structure: on the head it was proposed on (and for
+    an import) the document as it is under the preset's cycle policy; on a later head the
+    candidate's edits applied there by `prepareCandidate`, leaving out additions the head
+    already has (the same node, or the same edge the deletions leave) and carrying the
+    workflow bindings of the nodes it adds (a composition). Evidence, when the preset
+    lists it and the candidate has edits: `evidenceGate` over the overlay folded from the
+    graph's first head, which must be on the current head (`no live evidence yet: …`
+    otherwise; a preset without an overlay fails as in dream); a composition's
+    `evidence.composition` support counts. An import has no live evidence to show, and
+    approving it is the decision. Then the revision (parents: the head; the candidate's
+    origin, dream, edits and evidence plus `approved: {candidate, on, gates}`) commits by
+    compare-and-set and the overlay is rebased onto it (`absorbedEntries`), as a dream
+    commit is. A candidate rebased onto a later head commits under its new id, and its own
+    record's decision becomes `{kind: "approved", revision}`, a new `Decision` kind; one
+    whose edits the head already has is `unchanged` and marked approved as the head.
+  - `ApprovalResult` is `committed {revision, previous}`, `unchanged {head}`, `declined`,
+    or `refused {reason, gate?}` where `gate` is `structure`, `evidence` or `head` (a lost
+    compare-and-set: the id's earlier record is put back, or the rebased candidate is
+    remembered as rejected by `head`, as a dream's lost race is). A candidate that is not
+    waiting, is redacted, or whose graph has no readable head is refused. A refused
+    candidate keeps waiting.
+  - `declineCandidate({store, record})` records `rejected-gate` under the gate that asked
+    (`approval` for an import) with the approval gate's reason, `declined by the
+    approver`, so a dream with deduplication remembers it.
+  - Notices for the host's hook bus: `ApprovalNotice` is
+    `procedural.approval.requested {graph, candidate, origin, parent, dream?, gate?, tools}`
+    (`requestedNotice(record)`) or `procedural.approval.decided {graph, candidate,
+    decision: "approved" | "declined", revision?}` (`decidedNotice(result)`, none for a
+    refusal). `approvalInbox(notify)` is dream's `ApprovalInbox` over a notifier.
+- **Hosts.** `DaemonRuntime.publish(input)` is core's host publish API through the
+  runtime, which saves the snapshot (hook events are part of it). On the native host,
+  `hookNotifier(runtime)` publishes each `ApprovalNotice` under source `procedural`;
+  `nativeDream` takes `inbox?: ApprovalInbox`, and `buildNativeEnsemble`'s `procedural`
+  takes `notify`. `main.ts` gives both the host's notifier once the daemon is up, so its
+  dream proposes to the inbox and plugins subscribed to `procedural.approval.*` hear of
+  proposals and decisions. `browserProcedural` takes `notify` too; a page publishes the
+  notices where it likes.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
-the evaluator contract and scripted environment, rejection records), and the section
-above gave dream a schedule and a configured evaluator. Still open:
+the evaluator contract and scripted environment, rejection records), and the sections
+above gave dream a schedule, a configured evaluator and an approvals inbox. Still open:
 
-- P6 × P12: dream on the daemon (on demand or scheduled) has no approver (the permission
-  flow, MX3, is per session and dream runs outside any session) and no session tool
+- P6 × P12: dream on the daemon has no session tool
   catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
-  for their absence. The CLI approves on a terminal.
+  for their absence. Candidates that need approval wait in the approvals inbox.
 - P12: content-id keying means two graphs holding the same document share one record (its
   `graph` is whichever wrote last), and a revert replaces its target's record;
   `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by

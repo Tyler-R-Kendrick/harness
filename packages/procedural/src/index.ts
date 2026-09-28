@@ -1,7 +1,8 @@
 // @harness/procedural: see docs/decisions/0011-procedural-graph.md and docs/plans/procedural-graph.md.
+export { approvalInbox, approveCandidate, declineCandidate, decidedNotice, listApprovals, requestedNotice, type ApprovalList, type ApprovalNotice, type ApprovalResult, type ApprovalSummary } from "./approvals.ts";
 export { canonicalJson, sha256Hex } from "./canonical.ts";
 export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
-export { DEFAULT_SELECT, DreamLogEntrySchema, modelRefiner, runDream, type Approver, type Composer, type DreamLogEntry, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
+export { DEFAULT_SELECT, DreamLogEntrySchema, modelRefiner, runDream, type ApprovalInbox, type Approver, type Composer, type DreamLogEntry, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
 export { DreamSchedule, exclusiveDream, type DreamDue, type DreamRun, type DreamScheduleOptions, type ScheduledDream, type ScheduleReason } from "./dream-schedule.ts";
 export { absorbedEntries, CompositionSchema, DreamEventSchema, dreamStart, dreamStep, RolloutResultSchema, tailTokens, type DreamCommand, type DreamComposition, type Tokenizer, type DreamEvent, type DreamInput, type DreamOutcome, type DreamRefineRequest, type DreamState, type DreamStep, type Rejection, type RolloutResult, type RoundOutcome } from "./dream.ts";
 export { applyEdits, prepareCandidate, type PreparedCandidate, type PrepareOptions, type RepairedEdge } from "./edits.ts";

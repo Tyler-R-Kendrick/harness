@@ -340,6 +340,20 @@ describe("DaemonRuntime", () => {
     expect(saves).toEqual([]);
   });
 
+  it("RT2.9 a host event published through the runtime reaches the hook bus under the host's source and is saved; a refused one saves nothing", async () => {
+    const saves: { hooks: { events: { type: string; source: string; payload: unknown }[] } }[] = [];
+    const storage: SnapshotStorage = { load: async () => undefined, save: async (s) => void saves.push(s as (typeof saves)[number]) };
+    const { rt } = await runtime({ storage });
+    const refused = rt.publish({ source: "host", type: "x.y", cause: "evt-404", payload: {} });
+    expect(refused).toMatchObject({ ok: false, error: { code: "unknown_cause" } });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(saves).toEqual([]);
+    const published = rt.publish({ source: "host", type: "x.y", payload: { n: 1 } });
+    expect(published).toMatchObject({ ok: true, value: { type: "x.y", source: "host", payload: { n: 1 } } });
+    await rt.close();
+    expect(saves.at(-1)?.hooks.events).toEqual([expect.objectContaining({ type: "x.y", source: "host", payload: { n: 1 } })]);
+  });
+
   it("RT2.7 a restored runtime saves at once, so the turns it marked interrupted stay marked", async () => {
     const storage = new MemoryStorage();
     const { rt } = await runtime({ storage, worker: { ...idle, run: () => new Promise(() => {}) } });

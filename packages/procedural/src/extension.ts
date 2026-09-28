@@ -1,15 +1,17 @@
 import { z } from "zod";
 import type { CognitiveExtension } from "@harness/cognitive";
+import { approveCandidate, declineCandidate, decidedNotice, listApprovals, requestedNotice } from "./approvals.ts";
+import type { ApprovalNotice, ApprovalResult } from "./approvals.ts";
 import { GraphIdSchema, RevisionIdSchema, ScoreSchema } from "./graph.ts";
-import type { GraphId, Score } from "./graph.ts";
+import type { GraphId, RevisionId, RevisionRecord, Score } from "./graph.ts";
 import { exportGraph, graphHistory, importGraph, readGraph, revertGraph } from "./import-export.ts";
 import type { ClockLike } from "./import-export.ts";
 import { presetOf } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
 
-/** What an operation does to a graph, as the access policy sees it (plan §8.3). */
-export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import";
+/** What an operation does to a graph, as the access policy sees it (plan §8.3); `approve` decides candidates waiting for approval. */
+export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import" | "approve";
 
 export interface ProceduralExtensionOptions {
   readonly store: ProceduralStore;
@@ -26,6 +28,8 @@ export interface ProceduralExtensionOptions {
   readonly dream?: (graph: GraphId) => Promise<unknown>;
   /** Scores a session's turn (P11's `LiveLearner.feedback`). */
   readonly feedback?: (session: string, turn: string, score: Score) => Promise<unknown>;
+  /** Announces the approvals inbox's changes (an import proposal, a decision); the host publishes them on its hook bus. */
+  readonly notify?: (notice: ApprovalNotice) => void | Promise<void>;
 }
 
 /** Each operation's input. Built per extension, not at module load. */
@@ -39,6 +43,9 @@ function inputSchemas() {
     revert: z.strictObject({ graph, to: RevisionIdSchema.exactOptional() }),
     import: z.strictObject({ graph, document: z.unknown().exactOptional() }),
     export: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), format: z.enum(["json", "mermaid"]).default("json"), overlay: z.boolean().exactOptional() }),
+    approvals: z.strictObject({ graph }),
+    approve: z.strictObject({ candidate: RevisionIdSchema }),
+    decline: z.strictObject({ candidate: RevisionIdSchema }),
   };
 }
 type Inputs = ReturnType<typeof inputSchemas>;
@@ -63,19 +70,39 @@ const unavailable = (what: string) => ({ status: "unavailable" as const, reason:
  * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to
  * - `procedural.dream` (dream): run a dream on the graph
  * - `procedural.revert` (revert): move the head back to an earlier head
- * - `procedural.import` (import): a seed or expert graph; head only for a graph with none
+ * - `procedural.import` (import): a seed or expert graph; head only for a graph with none,
+ *   otherwise a proposal waiting for approval
+ * - `procedural.approvals` (approve): the candidates waiting for approval
+ * - `procedural.approve` (approve, on the candidate's graph): commit a candidate after the
+ *   structure and evidence gates pass against the current head
+ * - `procedural.decline` (approve, on the candidate's graph): reject a candidate
+ *
+ * A new proposal and each decision are announced through `notify`.
  *
  * Results a caller handles (a missing graph, an invalid document, a refused revert) are
  * values; a refused authorization or malformed input throws.
  */
 export function proceduralExtension(options: ProceduralExtensionOptions): CognitiveExtension {
   const { store, clock } = options;
-  const cycles = presetOf(options.settings, options.preset ?? "harness").dream.cycles;
+  const preset = presetOf(options.settings, options.preset ?? "harness");
+  const cycles = preset.dream.cycles;
+  const notify = async (notice: ApprovalNotice | undefined): Promise<void> => {
+    if (notice !== undefined) await options.notify?.(notice);
+  };
   const authorize = options.authorize ?? (() => true);
   const schemas = inputSchemas();
   const input = <O extends Op>(op: O, value: unknown) => parseInput(schemas, op, value);
   const check = (op: Op, action: ProceduralAction, g: GraphId) => {
     if (!authorize(action, g)) throw new Error(`procedural.${op}: ${action} on graph ${g} is not allowed`);
+  };
+  /** Decide a candidate: it must be recorded, and the caller allowed to approve on its graph. */
+  const decide = async (op: "approve" | "decline", candidate: RevisionId, run: (record: RevisionRecord) => Promise<ApprovalResult>) => {
+    const record = await store.revisions.get(candidate);
+    if (record === undefined) return { status: "missing", reason: `no candidate ${candidate} is recorded` };
+    check(op, "approve", record.graph);
+    const result = await run(record);
+    await notify(decidedNotice(result));
+    return result;
   };
   return {
     id: "procedural",
@@ -121,8 +148,17 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       import: async (value) => {
         const request = input("import", value);
         check("import", "import", request.graph);
-        return importGraph({ store, clock, cycles, ...request });
+        const result = await importGraph({ store, clock, cycles, ...request });
+        if (result.status === "proposed") await notify(requestedNotice((await store.revisions.get(result.revision))!));
+        return result;
       },
+      approvals: async (value) => {
+        const { graph: g } = input("approvals", value);
+        check("approvals", "approve", g);
+        return listApprovals({ store, graph: g });
+      },
+      approve: async (value) => decide("approve", input("approve", value).candidate, (record) => approveCandidate({ store, record, preset, clock })),
+      decline: async (value) => decide("decline", input("decline", value).candidate, (record) => declineCandidate({ store, record })),
     },
   };
 }

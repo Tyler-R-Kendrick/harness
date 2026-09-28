@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { GraphIdSchema, parseGraph, parseSettings, proceduralExtension, revisionId, seedGraph } from "@harness/procedural";
-import type { GraphId, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
+import type { ApprovalNotice, GraphId, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
 import { hotpot } from "./fixtures.ts";
 import { proposed, shortcut } from "./overlay-fixtures.ts";
 import { FakeStore } from "./store-fake.ts";
@@ -23,11 +23,11 @@ function extension(options: Partial<ProceduralExtensionOptions> = {}) {
 }
 
 describe("proceduralExtension", () => {
-  it("PX2.28 is a cognitive extension with id procedural, no models, and the seven operations", () => {
+  it("PX2.28 is a cognitive extension with id procedural, no models, and its operations", () => {
     const { x } = extension();
     expect(x.id).toBe("procedural");
     expect(x.models).toEqual([]);
-    expect(Object.keys(x.operations!).sort()).toEqual(["dream", "export", "feedback", "graph", "history", "import", "revert"]);
+    expect(Object.keys(x.operations!).sort()).toEqual(["approvals", "approve", "decline", "dream", "export", "feedback", "graph", "history", "import", "revert"]);
   });
 
   it("PX2.29 import, graph, export and history work on the store", async () => {
@@ -136,5 +136,79 @@ describe("proceduralExtension", () => {
     expect(await strict.op("import", { graph, document: cyclic })).toMatchObject({ status: "invalid", diagnostics: [{ code: "cycle" }] });
     expect(await extension().op("import", { graph, document: cyclic })).toMatchObject({ status: "head" });
     expect(() => extension({ preset: "absent" })).toThrow(RangeError);
+  });
+
+  describe("the approvals inbox", () => {
+    /** The hotpot core with another description: an expert's document proposed onto the head. */
+    const expert = () => {
+      const d = hotpot();
+      d.nodes[2]!.description = "Scan every passage.";
+      return d;
+    };
+    const expertId = () => {
+      const parsed = parseGraph(expert());
+      if (!parsed.ok) throw new Error("fixture");
+      return revisionId(parsed.graph);
+    };
+
+    it("PX2.75 approvals lists what waits (an import proposal announced as requested), approve commits it and decline rejects it, each announced as decided", async () => {
+      const notices: ApprovalNotice[] = [];
+      const { op, store } = extension({ notify: (n) => void notices.push(n) });
+      await op("import", { graph, document: hotpot() });
+      expect(notices).toEqual([]);
+      expect(await op("import", { graph, document: expert() })).toMatchObject({ status: "proposed" });
+      const requested = { type: "procedural.approval.requested", payload: { graph, candidate: expertId(), origin: "import", parent: revisionId(core()), tools: [] } };
+      expect(notices).toEqual([requested]);
+      expect(await op("approvals", { graph })).toEqual({ graph, head: revisionId(core()), approvals: [{ candidate: expertId(), graph, origin: "import", parent: revisionId(core()), onHead: true, at: 5, edits: null, tools: [] }] });
+      expect(await op("approve", { candidate: expertId() })).toEqual({ status: "committed", graph, candidate: expertId(), revision: expertId(), previous: revisionId(core()) });
+      expect(notices.at(-1)).toEqual({ type: "procedural.approval.decided", payload: { graph, candidate: expertId(), decision: "approved", revision: expertId() } });
+      expect(store.headOf.get(graph)?.revision).toBe(expertId());
+      // Deciding it again is refused, and nothing is announced.
+      expect(await op("decline", { candidate: expertId() })).toMatchObject({ status: "refused", reason: expect.stringContaining("not waiting for approval") });
+      expect(await op("approve", { candidate: expertId() })).toMatchObject({ status: "refused" });
+      expect(notices).toHaveLength(2);
+      // Another proposal, declined.
+      const shorter = hotpot();
+      shorter.edges[0]!.guidance = "Go.";
+      const parsed = parseGraph(shorter);
+      if (!parsed.ok) throw new Error("fixture");
+      const other = revisionId(parsed.graph);
+      await op("import", { graph, document: shorter });
+      expect(await op("decline", { candidate: other })).toEqual({ status: "declined", graph, candidate: other });
+      expect(notices.at(-1)).toEqual({ type: "procedural.approval.decided", payload: { graph, candidate: other, decision: "declined" } });
+      expect(store.records.get(other)?.decision).toEqual({ kind: "rejected-gate", gate: "approval", reason: "declined by the approver" });
+      const unknown = "0".repeat(64);
+      expect(await op("approve", { candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded` });
+      expect(await op("decline", { candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded` });
+      // Without a notifier the operations work the same.
+      const quiet = extension();
+      await quiet.op("import", { graph, document: hotpot() });
+      await quiet.op("import", { graph, document: expert() });
+      expect(await quiet.op("approve", { candidate: expertId() })).toMatchObject({ status: "committed" });
+    });
+
+    it("PX2.76 approvals, approve and decline are the approve action, on the graph named or the candidate's graph; a refusal throws and nothing is decided", async () => {
+      const asked: [ProceduralAction, string][] = [];
+      const store = new FakeStore();
+      const setup = extension({ store });
+      await setup.op("import", { graph, document: hotpot() });
+      await setup.op("import", { graph, document: expert() });
+      const notices: ApprovalNotice[] = [];
+      const { op } = extension({ store, notify: (n) => void notices.push(n), authorize: (action, g) => (asked.push([action, g]), action !== "approve") });
+      for (const [name, input] of [["approvals", { graph }], ["approve", { candidate: expertId() }], ["decline", { candidate: expertId() }]] as const) {
+        await expect(op(name, input)).rejects.toThrow(`procedural.${name}: approve on graph team/search is not allowed`);
+        expect(asked.at(-1)).toEqual(["approve", graph]);
+      }
+      expect(store.records.get(expertId())?.decision).toEqual({ kind: "pending-approval" });
+      expect(notices).toEqual([]);
+      await expect(op("import", { graph, document: hotpot() })).resolves.toMatchObject({ status: "known" });
+    });
+
+    it("PX2.77 their malformed input throws, naming the operation", async () => {
+      const { op } = extension();
+      await expect(op("approvals", {})).rejects.toThrow(/invalid procedural\.approvals input/);
+      await expect(op("approve", { candidate: "abc" })).rejects.toThrow(/invalid procedural\.approve input[\s\S]*candidate/);
+      await expect(op("decline", { candidate: expertId(), graph })).rejects.toThrow(/invalid procedural\.decline input/);
+    });
   });
 });
