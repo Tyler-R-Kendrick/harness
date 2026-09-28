@@ -210,6 +210,9 @@ describe("slash commands: parsed before bash, with a command-line parser", () =>
     const t = await terminal();
     const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
     expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    const commands = new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: [] }).list();
+    expect(commands.map((c) => `/${c.name.split(" ")[0]}`)).toEqual(listed);
+    expect(commands[0]).toEqual({ name: "ask [...prompt]", description: expect.stringContaining("Run a turn") });
   });
 });
 

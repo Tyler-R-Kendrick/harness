@@ -15,12 +15,14 @@ import listFilesSeed from "../data/templates/list-files.md?raw";
 import runCommandSeed from "../data/templates/run-command.md?raw";
 import showFileSeed from "../data/templates/show-file.md?raw";
 import todaySeed from "../data/templates/today.md?raw";
+import { AGENT, syncAgentDir } from "./agent-dir.ts";
+import type { HarnessState } from "./agent-dir.ts";
 import { lexicalJudge } from "./decide.ts";
 import { TemplateEngine } from "./engine.ts";
 import { parseEngineSettings } from "./engine-settings.ts";
 import { TEMPLATES, TemplateStore } from "./templates.ts";
 import { Coalesced, parsePageState, parseTrace, parseVfsSnapshot, reported, resilient, restoreVfs, snapshotVfs, storableEvent } from "./persist.ts";
-import { Playground } from "./playground.ts";
+import { INSTRUCTIONS, Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
 import type { ModelTier, Sample } from "./sample-model.ts";
@@ -29,7 +31,7 @@ import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
 import { Tracer } from "./trace.ts";
 import type { TraceEvent, TraceKind } from "./trace.ts";
-import { HOME, walk } from "./vfs.ts";
+import { HOME, vfsTools, walk } from "./vfs.ts";
 import type { FileEntry, VfsDiff } from "./vfs.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -101,6 +103,8 @@ const clock = (at: number) => {
 
 let sample: Sample | undefined;
 let claudeState: "checking" | "ready" | "off" = "checking";
+/** Rewrite the harness's agent directory (~/agent) from its state; set once the page has booted. */
+let resyncHarness: (() => Promise<void>) | undefined;
 const claude = sampleLanguageModel(
   (input, options) =>
     sample
@@ -116,6 +120,8 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   // A worker restored from a visit where Claude was reachable, on a page where it is not.
   if (!sample && settings.worker === "claude") settings.worker = "templates";
   sync();
+  // Whether Claude can write templates is part of the harness's state (~/agent/agent.ts).
+  void resyncHarness?.().then(refreshFiles);
 });
 
 // ---- controls ---------------------------------------------------------------------------
@@ -568,24 +574,56 @@ async function boot() {
 
   const templateStore = new TemplateStore(bash.fs, { retireMargin: engineSettings.curation.retireMargin });
   const judge = lexicalJudge(engineSettings.lexical);
+  const facts = {
+    cwd: () => HOME,
+    files: () => [...files.keys()].filter((f) => !f.startsWith(`${HOME}/agent/`)).map((f) => f.slice(HOME.length + 1)).join("\n"),
+    date: () => new Date().toLocaleDateString([], { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
+    templates: async () => (await templateStore.list()).templates.map((t) => `${t.id}: ${t.description}`).join("\n"),
+    sessions: async () => (playground ? (await playground.sessions()).join("\n") : ""),
+    worker: () => settings.worker,
+  };
   const engine = new TemplateEngine({
     store: templateStore,
     settings: engineSettings,
-    facts: {
-      cwd: () => HOME,
-      files: () => [...files.keys()].filter((f) => !f.startsWith(`${HOME}/agent/`)).map((f) => f.slice(HOME.length + 1)).join("\n"),
-      date: () => new Date().toLocaleDateString([], { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
-      templates: async () => (await templateStore.list()).templates.map((t) => `${t.id}: ${t.description}`).join("\n"),
-      sessions: async () => (playground ? (await playground.sessions()).join("\n") : ""),
-      worker: () => settings.worker,
-    },
+    facts,
     judge: () => judge,
     generators: () => (claudeState === "ready" ? [claude] : []),
     generation: () => settings.generate,
   });
+  // The harness as an Eve agent in its own filesystem (~/AGENTS.md, ~/agent/), kept in sync with its state.
+  const commands: { slash?: SlashCommands } = {};
+  const WORKERS = [
+    { name: "templates", description: "Answers from the templates in ~/agent/templates; generates only what cannot be decided, asking first", model: "harness.templates/templates", instructions: "Answer each request from a template: a decision model picks it, and its holes are filled from facts, the request and choices. Write, fill or rewrite a template only when nothing else answers, and only with consent." },
+    { name: "echo", description: "Echoes the prompt: no model, no tools" },
+    { name: "shell", description: "Runs `$ <command>` through the bash tool, deterministically", model: "harness.playground/shell" },
+    { name: "claude", description: "Claude through this artifact's sample capability: inference on every turn, only when picked", model: "claude.sample/sample", instructions: INSTRUCTIONS },
+  ];
+  const approvalOf = (name: string) => {
+    const generation = engine.approval(name);
+    if (generation !== undefined) return generation === "user-approval" ? "asks first (/generate ask)" : generation === "denied" ? "off (/generate off)" : "runs on its own (/generate auto)";
+    return name === "readFile" ? "never asks" : settings.approval === "ask" ? "asks first (/approve ask)" : "runs on its own (/approve auto)";
+  };
+  const harnessState = async (): Promise<HarnessState> => ({
+    instructions: INSTRUCTIONS,
+    workers: WORKERS,
+    tools: { ...vfsTools(bash), ...engine.tools() },
+    approval: approvalOf,
+    settings,
+    decisionModel: `${judge.provider}/${judge.modelId}`,
+    generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
+    templates: (await templateStore.list()).templates,
+    facts: Object.keys(facts),
+    commands: commands.slash?.list() ?? [],
+    sessions: playground ? await playground.sessions() : [],
+  });
+  let syncing = Promise.resolve();
+  const syncHarness = () => (syncing = syncing.then(async () => void (await syncAgentDir(bash.fs, await harnessState()))).catch((e: unknown) => void storageProblem(`agent directory: ${String(e)}`)));
+  resyncHarness = syncHarness;
   playground = await Playground.start({
     bash,
     tracer,
+    instructions: async () => (await bash.fs.readFile(`${AGENT}/instructions.md`).catch(() => INSTRUCTIONS)).trim() || INSTRUCTIONS,
+    afterTurn: syncHarness,
     models: { templates: engine.model(), shell: shellModel(), claude },
     tools: engine.tools(),
     toolApproval: (name) => engine.approval(name),
@@ -598,7 +636,7 @@ async function boot() {
   const p = playground;
   vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));
   pageSaver = new Coalesced(() => stores.page.save({ version: 1, sessionId: p.sessionId, settings: { ...settings }, turns }), (e) => storageProblem(`page: ${e}`));
-  withSlashCommands(bash, new SlashCommands({
+  const slash = (commands.slash = new SlashCommands({
     playground: p,
     tracer,
     settings,
@@ -610,6 +648,7 @@ async function boot() {
     onChange: () => {
       sync();
       pageSaver?.request();
+      void syncHarness().then(refreshFiles);
     },
     onTurn: (prompt, report) => {
       const { files: after, ...summary } = report;
@@ -625,6 +664,8 @@ async function boot() {
     },
     onReset: reset,
   }));
+  withSlashCommands(bash, slash);
+  await syncHarness();
   await refreshFiles();
   sync();
 

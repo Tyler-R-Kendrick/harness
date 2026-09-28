@@ -252,6 +252,11 @@ export class SlashCommands {
     this.#ctx = ctx;
   }
 
+  /** The commands, as the parser has them (name with its arguments, and what it does). */
+  list(): { name: string; description: string }[] {
+    return this.#cli(undefined, "").commands.map((c) => ({ name: c.rawName, description: c.description }));
+  }
+
   /** Whether a line is a slash command's (or an unknown one's), not bash's. */
   claims(line: string): boolean {
     return slashName(line) !== undefined;
