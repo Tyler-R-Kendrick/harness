@@ -51,12 +51,15 @@ no scripts from other hosts, no network.
 ## Consequences
 
 - What the playground keeps lives in the viewer's browser (IndexedDB, one database with a
-  record each for the daemon's snapshot, the agent conversations, the filesystem and the
-  page's state), restored on reload and cleared by `harness reset`. Conversations are kept
+  record each for the daemon's snapshot, the filesystem and the page's state, and one per
+  session's agent conversation), restored on reload and cleared by `harness reset`. Conversations are kept
   by the agent worker through an optional `ConversationStore`, since the daemon's session
   log holds ACP updates, not the model messages an agent continues from. The filesystem
   is saved whole after each command, tool run and turn; a turn running at a reload ends
-  as interrupted, as on any daemon restart. The timeline is not kept.
+  as interrupted, as on any daemon restart. The timeline's newest 2,000 events are kept
+  too, saved at most once a second, each as plain data (bytes named by their size,
+  details cut to a preview past 16,000 characters); times are shown on the wall clock so
+  events from before a reload read correctly.
 - Claude's usage in the artifact is the viewer's own, asked for at the first call.
 - Its model calls report no token usage: the capability does not expose it.
 

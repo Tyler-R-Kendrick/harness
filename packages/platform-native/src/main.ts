@@ -9,7 +9,7 @@ import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/w
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
-import { FileStorage } from "./file-storage.ts";
+import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
@@ -19,6 +19,7 @@ const { values } = parseArgs({
     stdio: { type: "boolean", default: false },
     socket: { type: "string" },
     state: { type: "string" },
+    conversations: { type: "string" },
     worker: { type: "string", default: "echo" },
     model: { type: "string", default: "openai/gpt-oss-20b" },
     system: { type: "string" },
@@ -46,7 +47,8 @@ const { values } = parseArgs({
 
 if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
+    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--conversations <dir>]\n" +
+      "               [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>]\n" +
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
@@ -89,6 +91,10 @@ const cognitive =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
+// Agent workers keep each session's conversation (a file each) beside the daemon's state, so
+// a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
+const conversationsPath = conversationsDir(values);
+const conversations = conversationsPath === undefined ? {} : { conversations: fileConversations(conversationsPath) };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
   process.exit(2);
@@ -114,7 +120,7 @@ const harness =
 const worker: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
@@ -131,6 +137,7 @@ const worker: Worker = harness
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
           ...(behavior ? { onEvent: (sessionId: string, name: string) => cognitive!.raiseBehavior(sessionId, name) } : {}),
+          ...conversations,
         })
       : new EchoWorker();
 

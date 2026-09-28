@@ -1,23 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import type { ModelMessage } from "ai";
-import type { SnapshotStorage } from "@harness/core";
-import { Coalesced, conversationStore, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
+import { Coalesced, parsePageState, parseTrace, reported, storableEvent, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
 import { HOME, walk } from "../src/vfs.ts";
-
-/** Storage that keeps a structured clone, as IndexedDB does. */
-function cloneStorage(): SnapshotStorage & { value: unknown; saves: number } {
-  const s = {
-    value: undefined as unknown,
-    saves: 0,
-    load: async () => structuredClone(s.value),
-    save: async (v: unknown) => {
-      s.saves++;
-      s.value = structuredClone(v);
-    },
-  };
-  return s;
-}
 
 /** A walk's entries without their times (a restore writes files anew). */
 const content = async (fs: Parameters<typeof walk>[0]) => new Map([...(await walk(fs, HOME))].map(([path, { mtime: _mtime, ...entry }]) => [path, entry]));
@@ -84,26 +68,6 @@ describe("the page's own state across reloads", () => {
   });
 });
 
-describe("conversations across reloads", () => {
-  const said = (text: string): ModelMessage[] => [{ role: "user", content: [{ type: "text", text }] }];
-
-  it("PS3.1 each session's conversation is saved, and a new store on the same storage (after a reload) loads it", async () => {
-    const storage = cloneStorage();
-    const first = conversationStore(storage);
-    await Promise.all([first.save("s1", said("one")), first.save("s2", said("two"))]);
-    expect(await first.load("s1")).toEqual(said("one"));
-    const again = conversationStore(storage);
-    expect(await again.load("s2")).toEqual(said("two"));
-    expect(await again.load("s3")).toBeUndefined();
-  });
-
-  it("PS3.2 a stored value that is not a map of conversations is treated as none", async () => {
-    const storage = cloneStorage();
-    await storage.save(["nonsense"]);
-    expect(await conversationStore(storage).load("s1")).toBeUndefined();
-  });
-});
-
 describe("storage that may not work (a private window, a blocked site)", () => {
   it("PS4.1 a failed load is no state and a failed save is reported, never thrown", async () => {
     const errors: string[] = [];
@@ -126,6 +90,27 @@ describe("storage that may not work (a private window, a blocked site)", () => {
     expect(await none.load()).toBeUndefined();
     await none.save(1);
     expect(errors).toEqual(["storage unavailable: indexedDB is not defined"]);
+  });
+});
+
+describe("storage whose reader has its own fallback (the agent worker's conversations)", () => {
+  it("PS4.4 failures are reported and passed on, not turned into no state; storage that cannot be opened fails each call", async () => {
+    const errors: string[] = [];
+    const flaky = reported({ load: () => Promise.reject(new Error("busy")), save: () => Promise.reject(new Error("quota")) }, (e) => errors.push(e));
+    await expect(flaky.load()).rejects.toThrow("busy");
+    await expect(flaky.save(1)).rejects.toThrow("quota");
+    let opened = 0;
+    const none = reported(() => {
+      opened++;
+      throw new Error("indexedDB is not defined");
+    }, (e) => errors.push(e));
+    await expect(none.load()).rejects.toThrow("indexedDB is not defined");
+    await expect(none.save(1)).rejects.toThrow("indexedDB is not defined");
+    expect(opened).toBe(1);
+    const fine = reported({ load: async () => "kept", save: async () => {} }, (e) => errors.push(e));
+    expect(await fine.load()).toBe("kept");
+    await fine.save(2);
+    expect(errors).toEqual(["load failed: busy", "save failed: quota", "storage unavailable: indexedDB is not defined", "load failed: indexedDB is not defined", "save failed: indexedDB is not defined"]);
   });
 });
 
@@ -165,7 +150,7 @@ describe("coalesced saves", () => {
         started();
         await new Promise<void>((r) => (release = r));
       }
-    });
+    }, () => {});
     saver.request();
     await running;
     state = 1;
@@ -204,5 +189,29 @@ describe("coalesced saves", () => {
     await saver.flush();
     expect(seen).toEqual(["saved"]);
     expect(errors).toEqual(["save failed: once", "save failed: odd"]);
+  });
+});
+
+describe("the timeline across reloads", () => {
+  const event = { seq: 3, at: 1000, kind: "acp" as const, name: "result #1", direction: "out" as const, sessionId: "s", detail: { jsonrpc: "2.0", id: 1, result: {} } };
+
+  it("PS6.1 an event is stored as plain data: bytes are named by their size, and a detail too large to keep is cut to a preview", () => {
+    expect(storableEvent(event)).toEqual(event);
+    expect(storableEvent({ ...event, detail: { image: new Uint8Array(3) } }).detail).toEqual({ image: "[3 bytes]" });
+    const big = storableEvent({ ...event, detail: "x".repeat(50) }, { maxDetail: 20 });
+    expect(big.detail).toEqual({ cut: "52 characters", preview: `"${"x".repeat(19)}` });
+    expect(storableEvent({ seq: 1, at: 0, kind: "host", name: "no detail" })).toEqual({ seq: 1, at: 0, kind: "host", name: "no detail" });
+  });
+
+  it("PS6.2 a detail that cannot be written as JSON is kept as a note; one JSON has no value for is left out", () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    expect(storableEvent({ ...event, detail: circular }).detail).toEqual({ unstorable: expect.stringMatching(/circular/i) });
+    expect("detail" in storableEvent({ ...event, detail: () => 1 })).toBe(false);
+  });
+
+  it("PS6.3 a stored timeline is parsed back; anything else, or an event of the wrong shape, is no timeline", () => {
+    expect(parseTrace({ version: 1, events: [event] })).toEqual([event]);
+    for (const bad of [undefined, { version: 2, events: [] }, { version: 1, events: [{ ...event, kind: "nope" }] }, { version: 1, events: [{ ...event, seq: "3" }] }]) expect(parseTrace(bad)).toBeUndefined();
   });
 });

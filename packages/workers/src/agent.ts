@@ -96,6 +96,7 @@ export class AgentWorker implements Worker {
     const messages: ModelMessage[] = [...past, { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
+    let finished: readonly ModelMessage[] | undefined;
     try {
       for (;;) {
         const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
@@ -170,7 +171,7 @@ export class AgentWorker implements Worker {
         messages.push({ role: "tool", content: responses });
       }
       this.#history.set(command.sessionId, messages);
-      if (loaded?.ok) await this.#conversations?.save(command.sessionId, messages).catch(() => undefined);
+      finished = messages;
       // Remembering is best effort: a turn never fails because of it.
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {
@@ -183,7 +184,12 @@ export class AgentWorker implements Worker {
     } finally {
       this.#running.delete(key);
     }
+    // The save begins before the turn ends, so a turn started from the end event loads after it
+    // (the store orders a session's load after its saves); it is awaited after, so a slow store
+    // does not hold the end back. Saving is best effort.
+    const saved = finished && loaded?.ok ? this.#conversations?.save(command.sessionId, finished).catch(() => undefined) : undefined;
     emit({ type: "end", ...base, stopReason });
+    await saved;
   }
 
   cancel(sessionId: string, turnId: string): void {

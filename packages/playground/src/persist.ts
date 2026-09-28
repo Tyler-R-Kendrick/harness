@@ -1,15 +1,15 @@
 /**
  * What the playground keeps across reloads, in the viewer's browser: the daemon's
- * snapshot (its sessions and logs), each session's agent conversation, the shared
- * filesystem, and the page's own state (the current session, the settings, the turns).
+ * snapshot (its sessions and logs), each session's agent conversation (kept by the
+ * worker, `storedConversations`), the shared filesystem, and the page's own state (the
+ * current session, the settings, the turns).
  * Every store is a `SnapshotStorage` (IndexedDB in the page), read back through a parser,
  * and allowed to fail: without storage the playground simply starts fresh.
  */
-import type { ModelMessage } from "ai";
 import type { IFileSystem } from "just-bash";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
-import type { ConversationStore } from "@harness/workers";
+import type { TraceEvent } from "./trace.ts";
 
 const vfsSnapshot = z.object({
   version: z.literal(1),
@@ -83,24 +83,6 @@ export function parsePageState(value: unknown): PageState | undefined {
   return parsed.success ? parsed.data : undefined;
 }
 
-/** Each session's conversation, all in one stored record (a map from session to messages). */
-export function conversationStore(storage: SnapshotStorage): ConversationStore {
-  let all: Promise<Map<string, readonly ModelMessage[]>> | undefined;
-  const loaded = () =>
-    (all ??= storage.load().then((value) => new Map(value instanceof Map ? (value as Map<string, readonly ModelMessage[]>) : [])));
-  let saving = Promise.resolve();
-  return {
-    load: async (sessionId) => (await loaded()).get(sessionId),
-    save: async (sessionId, messages) => {
-      const map = await loaded();
-      map.set(sessionId, messages);
-      // Saves run one after another, each storing the whole map as it is then.
-      saving = saving.then(() => storage.save(map));
-      await saving;
-    },
-  };
-}
-
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
@@ -141,6 +123,26 @@ export function resilient(storage: SnapshotStorage | (() => SnapshotStorage), re
   };
 }
 
+/**
+ * Storage whose failures are reported and passed on, for a reader with a fallback of its
+ * own (the agent worker keeps a conversation it could not load in memory, and does not
+ * overwrite it); storage that cannot be opened fails every call.
+ */
+export function reported(storage: SnapshotStorage | (() => SnapshotStorage), report: (error: string) => void): SnapshotStorage {
+  let inner: SnapshotStorage;
+  try {
+    inner = typeof storage === "function" ? storage() : storage;
+  } catch (e) {
+    report(`storage unavailable: ${message(e)}`);
+    inner = { load: () => Promise.reject(e), save: () => Promise.reject(e) };
+  }
+  const passOn = (what: string) => (e: unknown) => {
+    report(`${what} failed: ${message(e)}`);
+    throw e;
+  };
+  return { load: () => inner.load().catch(passOn("load")), save: (value) => inner.save(value).catch(passOn("save")) };
+}
+
 /** One save at a time: requests while one runs become a single save after it, which sees the latest state. */
 export class Coalesced {
   readonly #save: () => Promise<void>;
@@ -148,7 +150,7 @@ export class Coalesced {
   #running: Promise<void> = Promise.resolve();
   #pending = false;
 
-  constructor(save: () => Promise<void>, report: (error: string) => void = () => {}) {
+  constructor(save: () => Promise<void>, report: (error: string) => void) {
     this.#save = save;
     this.#report = report;
   }
@@ -166,4 +168,43 @@ export class Coalesced {
   flush(): Promise<void> {
     return this.#running;
   }
+}
+
+const traceEvent = z.object({
+  seq: z.number().int(),
+  at: z.number(),
+  kind: z.enum(["acp", "worker", "model", "tool", "vfs", "hook", "host"]),
+  name: z.string(),
+  detail: z.unknown().optional(),
+  direction: z.enum(["in", "out"]).optional(),
+  sessionId: z.string().optional(),
+  turnId: z.string().optional(),
+  phase: z.enum(["start", "end"]).optional(),
+  spanOf: z.number().int().optional(),
+  duration: z.number().optional(),
+});
+const storedTrace = z.object({ version: z.literal(1), events: z.array(traceEvent) });
+
+/** A stored timeline's events, or undefined when what is stored is not one. */
+export function parseTrace(value: unknown): TraceEvent[] | undefined {
+  const parsed = storedTrace.safeParse(value);
+  return parsed.success ? (parsed.data.events as TraceEvent[]) : undefined;
+}
+
+/**
+ * An event as plain data to store: its detail written as JSON (bytes named by their
+ * size), cut to a preview past `maxDetail` characters, or a note when it cannot be written.
+ */
+export function storableEvent(event: TraceEvent, options: { readonly maxDetail?: number } = {}): TraceEvent {
+  const { detail, ...rest } = event;
+  if (detail === undefined) return rest;
+  const max = options.maxDetail ?? 16_000;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(detail, (_key, value: unknown) => (value instanceof Uint8Array ? `[${value.length} bytes]` : value));
+  } catch (e) {
+    return { ...rest, detail: { unstorable: message(e) } };
+  }
+  if (text === undefined) return rest;
+  return { ...rest, detail: text.length > max ? { cut: `${text.length} characters`, preview: text.slice(0, max) } : (JSON.parse(text) as unknown) };
 }

@@ -145,6 +145,11 @@ Run the daemon as a background service on a user-private socket:
 node packages/platform-native/src/main.ts --socket ~/.harness.sock --state ~/.harness/state.json
 ```
 
+With `--state`, sessions survive a restart, and agent workers (`--worker model` or
+`ensemble`) keep each session's conversation beside it (a file per session in
+`state.conversations/`, or in `--conversations <dir>`), so a restored session continues
+where it stopped.
+
 Or on a WebSocket on this machine's loopback, for clients that cannot use a Unix socket
 (browser pages need their origin allowed; every client presents the token kept in
 `--ws-token-file`, as a bearer header or the subprotocol `harness.token.<token>`):
@@ -202,8 +207,8 @@ To try it by hand, build the browser playground: one HTML file with the daemon, 
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
 claude.ai artifact, its model is Claude; anywhere, `ask '$ <command>'` runs the whole
-tool-call path on a deterministic model. Sessions, conversations and files are kept in
-the browser across reloads (`harness reset` forgets them).
+tool-call path on a deterministic model. Sessions, conversations, files and the timeline
+are kept in the browser across reloads (`harness reset` forgets them).
 
 ```sh
 node packages/playground/build.ts   # writes packages/playground/dist/harness-playground.html

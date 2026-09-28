@@ -6,8 +6,8 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { sessionOf, stateContent, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { promptText } from "@harness/testkit";
-import { AgentWorker, rememberTurns, sessionAgent, userContent } from "@harness/workers";
+import { MemoryStorage, promptText } from "@harness/testkit";
+import { AgentWorker, rememberTurns, sessionAgent, storedConversations, userContent } from "@harness/workers";
 
 const finish = (unified: "stop" | "length" | "tool-calls" | "content-filter" | "other" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
 const text = (t: string, id = "0"): LanguageModelV4StreamPart[] => [
@@ -100,6 +100,34 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     const said = (m: { role: string; content: unknown }) => `${m.role}:${typeof m.content === "string" ? m.content : (m.content as { text?: string }[]).map((p) => p.text ?? "").join("")}`;
     expect(a.doStreamCalls[1]!.prompt.map(said)).toEqual(["user:one", "assistant:a1", "user:two", "assistant:b2", "user:three"]);
     expect(saved.get("s1")).toHaveLength(6);
+  });
+
+  it("AW2.6 the turn ends before its conversation is saved: a slow store does not hold the turn's end back", async () => {
+    let release: () => void = () => {};
+    const saving = new Promise<void>((r) => (release = r));
+    const conversations = { load: async () => undefined, save: () => saving };
+    const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations }), [{ type: "text", text: "hi" }]);
+    await new Promise<void>((resolve) => {
+      const wait = setInterval(() => end(events)?.type === "end" && (clearInterval(wait), resolve()), 1);
+    });
+    let finished = false;
+    void done.then(() => (finished = true));
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    await done;
+  });
+
+  it("AW2.7 a turn that starts the moment the last one ends (from its end event) continues it: the save has begun, and the load waits for it", async () => {
+    const model = scripted([...text("first answer"), finish()], [...text("second answer"), finish()]);
+    const cells = new Map<string, MemoryStorage>();
+    const shared = new AgentWorker({ agent: sessionAgent({ model }), conversations: storedConversations((id) => cells.get(id) ?? (cells.set(id, new MemoryStorage()), cells.get(id)!)) });
+    let next: Promise<void> | undefined;
+    await shared.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "one" }], cwd: "/" }, (e) => {
+      if (e.type === "end") next = shared.run({ type: "prompt", sessionId: "s1", turnId: "t2", prompt: [{ type: "text", text: "two" }], cwd: "/" }, () => {});
+    });
+    await next;
+    expect(model.doStreamCalls[1]!.prompt.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {
