@@ -47,6 +47,9 @@ async function booted(page: Page, errors: string[] = []) {
   });
 }
 
+/** How many page loads the timeline shows (host events named so). */
+const pageLoads = (page: Page) => page.evaluate(() => [...document.querySelectorAll("#events summary")].filter((s) => s.textContent?.includes("page loaded")).length);
+
 const terminalText = (page: Page) => page.locator("#terminal").innerText();
 
 async function type(page: Page, line: string) {
@@ -87,7 +90,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.4 a reload keeps the files, the sessions, the current session's log, the turns and the settings; harness reset starts over", async () => {
+  it("PI1.4 a reload keeps the files, the sessions, the current session's log, the turns, the settings and the timeline; harness reset starts over", async () => {
     const { page } = await open();
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
     await page.locator("#approval").uncheck();
@@ -97,7 +100,9 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await type(page, "harness sessions");
     await page.waitForFunction(() => /\* ses_/.test(document.getElementById("terminal")?.innerText ?? ""));
     const session = /\* (ses_\S+)/.exec(await terminalText(page))![1]!;
-    await page.waitForTimeout(500);
+    const before = Number(await page.locator("#count-timeline").textContent());
+    // The timeline is saved at most once a second.
+    await page.waitForTimeout(1_500);
 
     await page.reload();
     await booted(page);
@@ -107,6 +112,9 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(restored).toContain("exit 0");
     expect(await page.locator("#count-turns").textContent()).toBe("2");
     expect(await page.locator("#approval").isChecked()).toBe(false);
+    expect(restored).toMatch(/, \d+ timeline events/);
+    expect(Number(await page.locator("#count-timeline").textContent())).toBeGreaterThan(before);
+    expect(await pageLoads(page)).toBe(2);
     await type(page, "cat kept.txt; ls -d empty/dir; harness sessions");
     // Terminal rows are padded to the terminal's width.
     await page.waitForFunction(() => /empty\/dir\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
@@ -120,6 +128,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await booted(page);
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
     expect(await page.locator("#count-turns").textContent()).toBe("1");
+    expect(await pageLoads(page)).toBe(1);
     await type(page, "ls kept.txt");
     await page.waitForFunction(() => /No such file/i.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.close();

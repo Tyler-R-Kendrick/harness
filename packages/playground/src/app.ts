@@ -9,7 +9,7 @@ import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
 import { IndexedDbStorage } from "@harness/platform-browser";
 import { storedConversations } from "@harness/workers";
-import { Coalesced, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "./persist.ts";
+import { Coalesced, parsePageState, parseTrace, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs, storableEvent } from "./persist.ts";
 import { Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
@@ -74,7 +74,11 @@ const GREETING = [
 const settings: Settings = { worker: "shell", tier: "default", approval: "ask" };
 let workerChosen = false;
 const tracer = new Tracer(() => Date.now());
-const t0 = Date.now();
+/** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
+const clock = (at: number) => {
+  const d = new Date(at);
+  return `${d.toLocaleTimeString([], { hour12: false })}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+};
 
 // ---- Claude, through the artifact runtime's sample capability ------------------------
 
@@ -190,10 +194,17 @@ $("follow").addEventListener("click", () => {
 });
 $("clear-trace").addEventListener("click", () => {
   tracer.clear();
+  recount();
+  traceSaver.request();
+});
+
+/** Count the kinds again and redraw the timeline (after it was cleared or restored). */
+function recount() {
   for (const k of KINDS) counts.set(k, 0);
+  for (const e of tracer.events()) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
   rebuild = true;
   flushEvents(true);
-});
+}
 
 const isChunk = (e: TraceEvent) => e.name.includes("chunk");
 const visible = (e: TraceEvent) => shownKinds.has(e.kind) && (showChunks || !isChunk(e));
@@ -208,7 +219,7 @@ function eventRow(e: TraceEvent): HTMLDetailsElement {
   const summary = h(
     "summary",
     {},
-    h("span", { className: "t" }, `${((e.at - t0) / 1000).toFixed(2)}s`),
+    h("span", { className: "t" }, clock(e.at)),
     h("span", { className: "k" }, e.kind),
     h("span", { className: "d" }, arrow),
     h("span", { className: "n", title: e.name }, e.name),
@@ -411,7 +422,7 @@ function renderDaemon() {
           "table",
           { className: "grid" },
           h("thead", {}, h("tr", {}, h("th", {}, "#"), h("th", {}, "type"), h("th", {}, "session"), h("th", {}, "at"))),
-          h("tbody", {}, ...hooks.reverse().slice(0, 60).map((e) => h("tr", {}, h("td", {}, String(e.offset)), h("td", {}, e.type), h("td", {}, e.sessionId ? short(e.sessionId) : ""), h("td", {}, `${((e.at - t0) / 1000).toFixed(2)}s`)))),
+          h("tbody", {}, ...hooks.reverse().slice(0, 60).map((e) => h("tr", {}, h("td", {}, String(e.offset)), h("td", {}, e.type), h("td", {}, e.sessionId ? short(e.sessionId) : ""), h("td", {}, clock(e.at))))),
         ),
       ),
     ),
@@ -437,13 +448,28 @@ const kept = (key: string) => {
   const storage = resilient(() => new IndexedDbStorage({ name: "harness-playground", key }), storageProblem);
   return { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.save(undefined) } satisfies SnapshotStorage & { clear(): Promise<void> };
 };
-const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page") };
+const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page"), trace: kept("trace") };
 let pageSaver: Coalesced | undefined;
 let vfsSaver: Coalesced | undefined;
 const saveAll = () => {
   vfsSaver?.request();
   pageSaver?.request();
+  traceSaver.request();
 };
+
+// The timeline's newest events, kept as plain data (each event converted once).
+const KEPT_EVENTS = 2_000;
+const storable = new WeakMap<TraceEvent, TraceEvent>();
+const stored = (e: TraceEvent) => storable.get(e) ?? (storable.set(e, storableEvent(e)), storable.get(e)!);
+const traceSaver = new Coalesced(() => stores.trace.save({ version: 1, events: tracer.events().slice(-KEPT_EVENTS).map(stored) }), (e) => storageProblem(`timeline: ${e}`));
+let traceTimer: ReturnType<typeof setTimeout> | undefined;
+tracer.subscribe(() => {
+  // Events come in bursts (every streamed chunk): save at most once a second.
+  traceTimer ??= setTimeout(() => {
+    traceTimer = undefined;
+    traceSaver.request();
+  }, 1_000);
+});
 tracer.subscribe((e) => {
   // A tool that ran may have changed files; keep them even if the page closes mid-turn.
   if (e.kind === "tool" && e.phase === "end") vfsSaver?.request();
@@ -454,7 +480,7 @@ addEventListener("pagehide", saveAll);
 async function reset() {
   resetting = true;
   await playground?.close();
-  await Promise.all([vfsSaver?.flush(), pageSaver?.flush()]);
+  await Promise.all([vfsSaver?.flush(), pageSaver?.flush(), traceSaver.flush()]);
   await Promise.all(Object.values(stores).map((s) => s.clear()));
   location.reload();
 }
@@ -464,6 +490,14 @@ async function reset() {
 let playground: Playground | undefined;
 
 async function boot() {
+  // The timeline from before a reload goes first, so everything after follows it.
+  const savedTrace = await stores.trace.load().then(parseTrace);
+  if (savedTrace) {
+    tracer.restore(savedTrace);
+    recount();
+  }
+  tracer.record({ kind: "host", name: "page loaded" });
+
   const style = document.createElement("style");
   style.textContent = wtermCss;
   document.head.append(style);
@@ -485,7 +519,7 @@ async function boot() {
   const prompter = (late.prompter = new Prompter(write));
   prompter.onAsk = () => term.focus();
   const [savedVfs, savedPage] = await Promise.all([stores.vfs.load().then(parseVfsSnapshot), stores.page.load().then(parsePageState)]);
-  const restored = savedVfs !== undefined || savedPage !== undefined;
+  const restored = savedVfs !== undefined || savedPage !== undefined || savedTrace !== undefined;
   if (savedPage) {
     Object.assign(settings, savedPage.settings);
     workerChosen = true;
@@ -540,7 +574,7 @@ async function boot() {
   if (restored) {
     // Replace the first prompt with what was restored, then the session's log, then a new prompt.
     const sessions = await p.sessions();
-    write(`\r\x1b[K\x1b[2mrestored from this browser: ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${files.size} file${files.size === 1 ? "" : "s"}, ${turns.length} turn${turns.length === 1 ? "" : "s"} (harness reset starts over)\x1b[0m\r\n`);
+    write(`\r\x1b[K\x1b[2mrestored from this browser: ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${files.size} file${files.size === 1 ? "" : "s"}, ${turns.length} turn${turns.length === 1 ? "" : "s"}, ${savedTrace?.length ?? 0} timeline events (harness reset starts over)\x1b[0m\r\n`);
     const current = savedPage?.sessionId;
     if (current !== undefined && sessions.includes(current)) {
       write(`\x1b[2m── session ${current}\x1b[0m\r\n`);

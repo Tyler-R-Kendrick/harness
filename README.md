@@ -206,8 +206,8 @@ To try it by hand, build the browser playground: one HTML file with the daemon, 
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
 claude.ai artifact, its model is Claude; anywhere, `ask '$ <command>'` runs the whole
-tool-call path on a deterministic model. Sessions, conversations and files are kept in
-the browser across reloads (`harness reset` forgets them).
+tool-call path on a deterministic model. Sessions, conversations, files and the timeline
+are kept in the browser across reloads (`harness reset` forgets them).
 
 ```sh
 node packages/playground/build.ts   # writes packages/playground/dist/harness-playground.html
