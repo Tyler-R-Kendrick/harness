@@ -1250,7 +1250,13 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   offered, it returns none, and every tool stays offered. The step record then carries
   `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
   may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
-  step only. The turn variant cannot limit a harness's tools and ignores the setting.
+  step only. The turn variant limits a harness turn the same way, for the whole turn
+  (the harness runs its own steps): it returns `{ text, activeTools }` in place of the
+  text (PW1.99), and `harnessSessions` offers only those of the turn's own host tools
+  (`harnessSessions({ tools })`, PW1.98). The harness's builtin tools stay offered: a
+  turn cannot limit them (`HarnessAgent`'s `activeTools` is fixed when it is built, and
+  filtering builtins needs the adapter's support), nor the agent's own tools, which a
+  turn cannot tell from its builtins.
 
 ## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
 
