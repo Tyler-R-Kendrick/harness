@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { jsonSchema, tool } from "ai";
+import type { ToolSet } from "ai";
 import type { WorkerEvent } from "@harness/core";
 import { nullSandbox, scriptedHarness } from "@harness/testkit";
 import type { ScriptedTurn } from "@harness/testkit";
-import { AgentWorker, harnessSessions } from "@harness/workers";
+import { AgentWorker, harnessSessions, harnessTurnTools } from "@harness/workers";
+import type { ToolContext } from "@harness/workers";
 
 function run(worker: AgentWorker, text: string, sessionId = "s1", turnId = "t1") {
   const events: WorkerEvent[] = [];
@@ -168,5 +170,56 @@ describe("harnessSessions: an AI SDK harness (Claude Code, Codex, any ACP agent)
     expect(reply(events)).toBe("fresh");
     expect(harness.log.resumed).toEqual([]);
     expect(saved.has("s1")).toBe(false);
+  });
+});
+
+describe("harnessSessions' per-turn tools: host-executed tools chosen for each turn", () => {
+  const other = tool({ description: "Another tool.", inputSchema: jsonSchema<Record<string, never>>({ type: "object" }), execute: async () => "other" });
+
+  it("HS1.12 each turn offers the harness the tools chosen for it, told the turn's scope and conversation, and the harness's call of one runs on the host", async () => {
+    const harness = scriptedHarness((p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"));
+    const told: ToolContext[] = [];
+    const tools = async (turn: ToolContext): Promise<ToolSet> => (told.push(turn), turn.turnId === "t1" ? { weather } : { weather, other });
+    const worker = new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness, prepareCall: harnessTurnTools }), { sandboxSession: nullSandbox, tools }) });
+    const first = run(worker, "weather?");
+    await first.done;
+    expect(reply(first.events)).toBe('Lagos: {"city":"Lagos","sky":"clear"}');
+    await run(worker, "thanks", "s1", "t2").done;
+    expect(harness.log.turns.map((t) => t.tools)).toEqual([["weather"], ["weather", "other"]]);
+    // Told the worker's conversation, ending with the turn's prompt.
+    expect(told.map((t) => [t.sessionId, t.turnId, t.cwd, t.messages.length > 1, t.messages.at(-1)])).toEqual([
+      ["s1", "t1", "/", false, { role: "user", content: [{ type: "text", text: "weather?" }] }],
+      ["s1", "t2", "/", true, { role: "user", content: [{ type: "text", text: "thanks" }] }],
+    ]);
+  });
+
+  it("HS1.13 the turn's tools replace the agent's own host tools; tools given once, and generate's turns, get them too; without them a turn keeps the agent's", async () => {
+    const harness = scriptedHarness(() => "ok");
+    const agent = new HarnessAgent({ harness, tools: { weather }, prepareCall: harnessTurnTools });
+    const worker = new AgentWorker({ agent: harnessSessions(agent, { sandboxSession: nullSandbox, tools: { other } }) });
+    await run(worker, "hi").done;
+    const sessions = harnessSessions(agent, { sandboxSession: nullSandbox, tools: async () => ({ other }) });
+    await sessions.generate({ prompt: "ping", options: { sessionId: "s9" } });
+    await sessions.generate({ prompt: [{ role: "user", content: "pong" }], options: { sessionId: "s9" } });
+    await run(new AgentWorker({ agent: harnessSessions(agent, { sandboxSession: nullSandbox }) }), "hi", "s2").done;
+    expect(harness.log.turns.map((t) => [t.sessionId, t.tools])).toEqual([
+      ["s1", ["other"]],
+      ["s9", ["other"]],
+      ["s9", ["other"]],
+      ["s2", ["weather"]],
+    ]);
+  });
+
+  it("HS1.14 a turn's tool that needs approval continues, after the answer, with the turn's own tools", async () => {
+    const harness = scriptedHarness(() => ({ text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } }));
+    const agent = new HarnessAgent({ harness, prepareCall: harnessTurnTools, toolApproval: { weather: "user-approval" } });
+    const worker = new AgentWorker({ agent: harnessSessions(agent, { sandboxSession: nullSandbox, tools: async () => ({ weather }) }) });
+    const events: WorkerEvent[] = [];
+    await worker.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "weather?" }], cwd: "/" }, (e) => {
+      events.push(e);
+      if (e.type === "permission") worker.permission({ type: "permission", sessionId: "s1", turnId: "t1", requestId: e.requestId, outcome: { outcome: "selected", optionId: "allow" } });
+    });
+    expect(events.find((e) => e.type === "permission")).toMatchObject({ toolCall: { title: "weather" } });
+    expect(reply(events)).toBe('Lagos: {"city":"Lagos","sky":"clear"}');
   });
 });
