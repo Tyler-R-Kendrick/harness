@@ -87,9 +87,33 @@ model at all. Only the parts nobody can decide need a generator.
   a file, so the next similar request costs no inference.
 - **Generating needs consent.** The generation tools ask for approval ("Spend inference to
   …?") unless `/generate auto`; `/generate off` turns them off, and the engine then says
-  which holes or request it could not answer. Generators are tried cheapest first; in
-  the page the only one is Claude through `sample`, used only this way or when a person
-  picks the `claude` worker. Claude is never picked for them.
+  which holes or request it could not answer.
+- **Generators are tried local first, and a written template is tried before it is kept.**
+  Which model writes is a slug (`/writer [slug]`), chosen as decision models are
+  (`auto` picks the catalog's best-ranked local generator this browser can run that
+  enforces a JSON Schema, Qwen3.5 0.8B today, needing WebGPU and room for its 716 MB after
+  the decision model's download; a catalog id names one; `claude` leaves Claude alone).
+  Generators are asked in order, the local one when it is ready, then Claude through
+  `sample` when reachable, and the next is asked when one fails: it throws, its answer is
+  not a template, or its template fails the trial. The trial: every hole of the template
+  has a value for this request, it does not repeat a template already kept (same kind and
+  body), and a script runs cleanly (exit 0) on a throwaway copy of the files within
+  `generation.trialMs`. The turn's metadata, the header's pill and `~/AGENTS.md` say who
+  wrote it and why the ones before did not. A generator writes to a schema bounded by the
+  settings (a kebab-case id, 1 to 3 short examples, a capped body, `generation.maxTokens`)
+  and is shown seed templates as worked examples (`generation.examples`). Claude is
+  otherwise used only when a person picks the `claude` worker, and never picked for them.
+- **The local generator was measured before it went first.** Qwen3.5 0.8B wrote templates
+  natively (CPU, 10 to 150 s each) for 8 requests no seed answers:
+  - Asked with the unbounded schema, 2 of 8 answers were cut off before the JSON closed,
+    ids were "1", and every template was a script (prose run as one, for a joke).
+  - With the bounded schema and worked examples, all 8 were templates with fitting ids,
+    descriptions and examples, but their bodies were mostly wrong: the trial refuses 6
+    (a script that does not parse, twice; a hole left without a value, three times; prose
+    run as a command), and keeps 2 that are wrong in what they say (`ls -la | wc -l`
+    counts three lines too many; "what time is it?" copied the `today` example, which the
+    repeat check now refuses). So in the page the local generator saves Claude a call
+    only for simple scripts, and a template it gets wrong is caught by `/rate bad`.
 - **Feedback refines and retires.** `/rate good|bad [why]` counts the last answer's
   template helpful or harmful in its file; a reason makes it rewritten when next chosen,
   and a template harmful by the settings' margin retires to `retired/`.
@@ -112,14 +136,20 @@ model at all. Only the parts nobody can decide need a generator.
   `/rate bad` rewrites a template given a request it should not answer.
 - The claude.ai artifact may not be allowed to fetch the model or onnxruntime-web's
   WebAssembly: the pill then says it could not load, and the lexical judge decides.
-- No local generator runs in the page yet: the browser ensemble's generator
-  (Qwen3.5-0.8B on transformers.js) would be the first generator tried, before Claude.
+- The local generator is a 716 MB download, loaded on its own where it fits (WebGPU and
+  room): a browser that runs it spends Claude only on templates it cannot write, but
+  most templates are still Claude's (the measurement above). A script is run on a copy
+  of the files before a person approves the real run; the copy has no network and is
+  thrown away.
+- A written template that runs but says the wrong thing is kept; `/rate bad <why>`
+  rewrites it (local first, then Claude).
 
 ## Revisit when
 
 - A decision model is measured to place requests without the lexical judge's help, or
   without averaging over orders: drop them (one question instead of one per option).
-- A local generator loads in the page: try it before Claude, and keep Claude for what
-  it cannot write.
+- A local generator for a browser is measured to write templates whose bodies are right
+  (not only well-formed): let it write without the trial's refusals sending most of them
+  to Claude, or give it narrower jobs (only the text holes) if that is where it is right.
 - Templates grow past what a 20-option question and lexical narrowing handle: narrow
   with embeddings (the memory extension's recall) instead.

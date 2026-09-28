@@ -17,7 +17,7 @@ afterEach(async () => {
 async function terminal(answer?: (key: Prompter) => void) {
   const tracer = new Tracer(() => Date.now());
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
-  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "auto" };
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "auto", writer: "auto" };
   const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
   open.push(playground);
   let out = "";
@@ -70,7 +70,7 @@ describe("the terminal's slash commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "auto", writer: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
       expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
@@ -101,7 +101,7 @@ describe("the terminal's slash commands", () => {
     expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
     expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
     expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
-    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "auto" });
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "auto", writer: "auto" });
     expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
@@ -209,7 +209,7 @@ describe("slash commands: parsed before bash, with a command-line parser", () =>
   it("TM5.5 the parser's commands are the ones help lists, each with a description", async () => {
     const t = await terminal();
     const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
-    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/decide", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/decide", "/writer", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
     const commands = new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: [] }).list();
     expect(commands.map((c) => `/${c.name.split(" ")[0]}`)).toEqual(listed);
     expect(commands[0]).toEqual({ name: "ask [...prompt]", description: expect.stringContaining("Run a turn") });
@@ -233,7 +233,7 @@ describe("the template engine's commands", () => {
     const bash = new Bash({ fs: t.bash.fs, cwd: HOME });
     const decider = { state: "Julia 1: loading (614 MB)" };
     const slugs = ["auto", "lexical", "org/decider"];
-    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store, decider: { slugs: () => slugs, status: (slug) => (slug === "lexical" ? "the lexical judge alone" : decider.state) } }));
+    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store, decider: { slugs: () => slugs, status: (slug) => (slug === "lexical" ? "the lexical judge alone" : decider.state) }, writer: { slugs: () => ["auto", "claude", "org/writer"], status: (slug) => (slug === "claude" ? "Claude alone" : `${slug}: Writer: ready`) } }));
     const run = async (line: string) => {
       const r = await bash.exec(line, { cwd: HOME });
       return { ...r, stdout: plain(r.stdout) };
@@ -260,6 +260,16 @@ describe("the template engine's commands", () => {
     expect((await t.run("/decide lexical")).stdout).toBe("decide: lexical\n");
     expect((await t.run("/status")).stdout).toMatch(/^decide\s+lexical: the lexical judge alone$/m);
     expect(await t.run("/decide julia")).toMatchObject({ exitCode: 2, stderr: "unknown decide julia (one of auto, lexical, org/decider)\n" });
+  });
+
+  it("TM6.6 /writer shows and sets which model writes templates by slug: auto (a local one for this browser, then Claude), claude, or a catalog id", async () => {
+    const t = await withEngine();
+    expect((await t.run("/writer")).stdout).toBe("auto (one of auto, claude, org/writer)\ngenerator: auto: Writer: ready\n");
+    expect((await t.run("/status")).stdout).toMatch(/^writer\s+auto: auto: Writer: ready$/m);
+    expect((await t.run("/writer claude")).stdout).toBe("writer: claude\n");
+    expect(t.settings.writer).toBe("claude");
+    expect((await t.run("/status")).stdout).toMatch(/^writer\s+claude: Claude alone$/m);
+    expect(await t.run("/writer gpt")).toMatchObject({ exitCode: 2, stderr: "unknown writer gpt (one of auto, claude, org/writer)\n" });
   });
 
   it("TM6.2 /templates lists the templates with their feedback, and the files that are not templates", async () => {

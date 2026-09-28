@@ -102,13 +102,17 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.5 the decision model is picked for this browser (auto): headless Chromium has no WebGPU, so none fits, nothing is downloaded, and the page says why; a model named by its slug (/decide <id>) is tried anyway", async () => {
+  it("PI1.5 the decision model and the generator are picked for this browser (auto): headless Chromium has no WebGPU, so none fits, nothing is downloaded, and the page says why; a model named by its slug (/decide <id>) is tried anyway", async () => {
     const { page, errors } = await open();
     const requested: string[] = [];
     page.on("request", (r) => requested.push(r.url()));
     await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("none fits"));
     expect(await page.locator("#decide-pill").textContent()).toBe("Decides: lexical");
     expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/^\/decide auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model\); the lexical judge decides/);
+    // The same holds for the generator: none fits, so Claude writes (when reachable), and nothing is downloaded.
+    await page.waitForFunction(() => document.getElementById("writer-pill")?.getAttribute("title")?.includes("none fits"));
+    expect(await page.locator("#writer-pill").textContent()).toBe("Writes: Claude");
+    expect(await page.locator("#writer-pill").getAttribute("title")).toMatch(/^\/writer auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model\); Claude writes templates, when reachable/);
     await type(page, "/decide");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("decision model: "));
     // The terminal wraps long lines: compare with the wrapping taken out. The slugs are auto, lexical, then the catalog's ids.

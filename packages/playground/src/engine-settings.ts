@@ -48,6 +48,23 @@ const EngineSettingsSchema = z.strictObject({
     fill: Prompt,
     /** Rewriting a template from feedback. */
     refine: Prompt,
+    /** The most tokens a generator's answer may take (a small model can loop until it is cut off). */
+    maxTokens: z.number().int().min(64),
+    /** How long a written script may run on a copy of the files before it is kept (milliseconds). */
+    trialMs: z.number().int().min(100),
+    /** Seed templates shown to a generator as worked examples of a written template, by id. */
+    examples: z.array(z.string().min(1)),
+    /** Bounds on a written template, held by the schema a generator writes to. */
+    limits: z.strictObject({
+      /** Characters in its id. */
+      id: z.number().int().min(8),
+      /** Characters in its description, and in each example request. */
+      text: z.number().int().min(16),
+      /** Characters in its body. */
+      body: z.number().int().min(16),
+      /** Example requests it answers. */
+      examples: z.number().int().min(1),
+    }),
   }),
 });
 

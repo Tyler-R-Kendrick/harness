@@ -19,9 +19,14 @@ const SEEDS = Object.fromEntries(readdirSync(seedDir).map((f) => [`${TEMPLATES}/
 
 /** A generator that answers each call with the next scripted JSON value, and records the prompts. */
 function generator(...replies: unknown[]) {
+  return named("writer", ...replies);
+}
+
+/** A generator (test/<modelId>) that answers each call with the next scripted JSON value. */
+function named(modelId: string, ...replies: unknown[]) {
   const model = new MockLanguageModelV4({
     provider: "test",
-    modelId: "writer",
+    modelId,
     doGenerate: async (): Promise<LanguageModelV4GenerateResult> => ({
       content: [{ type: "text", text: JSON.stringify(replies.shift() ?? {}) }],
       finishReason: { unified: "stop", raw: undefined },
@@ -33,7 +38,14 @@ function generator(...replies: unknown[]) {
 }
 
 function setup(options: { files?: Record<string, string>; generation?: Generation; generators?: MockLanguageModelV4[]; deciders?: () => Decider[] } = {}) {
-  const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "# hello\n", ...SEEDS, ...options.files } });
+  const files = { [`${HOME}/README.md`]: "# hello\n", ...SEEDS, ...options.files };
+  const bash = new Bash({ cwd: HOME, files });
+  /** Scripts tried before a written template is kept, each on its own copy of the files. */
+  const tried: string[] = [];
+  const trial = async (script: string) => {
+    tried.push(script);
+    return new Bash({ cwd: HOME, files }).exec(script, { cwd: HOME });
+  };
   const store = new TemplateStore(bash.fs, { retireMargin: settings.curation.retireMargin });
   let generation = options.generation ?? "auto";
   const engine = new TemplateEngine({
@@ -43,10 +55,11 @@ function setup(options: { files?: Record<string, string>; generation?: Generatio
     deciders: options.deciders ?? (() => [lexicalDecider(settings.lexical)]),
     generators: () => options.generators ?? [],
     generation: () => generation,
+    trial,
   });
   const tools = { ...vfsTools(bash), ...engine.tools() };
   const ask = (prompt: string) => generateText({ model: engine.model(), prompt, tools, stopWhen: isStepCount(6) });
-  return { bash, store, engine, ask, setGeneration: (g: Generation) => (generation = g) };
+  return { bash, store, engine, ask, tried, setGeneration: (g: Generation) => (generation = g) };
 }
 
 const haiku = {
@@ -150,6 +163,77 @@ describe("the template engine: answers from templates before inference", () => {
   it("TE1.7 a generator's answer that is not a template is refused, and the reply says why", async () => {
     const { ask } = setup({ generators: [generator({ ...haiku, body: "{{a}}{{b}}" })] });
     expect((await ask("write a haiku about the sea")).text).toMatch(/could not write a template: .*next to each other/i);
+  });
+
+  it("TE1.12 generators are asked in order: one that fails (it throws, or its answer is not a template) leaves the writing to the next, and the metadata says who wrote and why the ones before did not", async () => {
+    const local = new MockLanguageModelV4({ provider: "local", modelId: "small", doGenerate: () => Promise.reject(new Error("out of memory")) });
+    const garbled = named("garbled", { ...haiku, body: "{{a}}{{b}}" });
+    const claude = named("claude", haiku);
+    const { ask, engine, bash } = setup({ generators: [local, garbled, claude] });
+    const written = await ask("write a haiku about the sea");
+    expect(written.text).toBe("A haiku about the sea:\nwaves fold into foam\n");
+    const problems = ["local/small: out of memory", expect.stringMatching(/^test\/garbled: .*next to each other/)];
+    expect(written.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { template: "haiku", by: "test/claude", after: "write_template", problems } });
+    expect(engine.lastWriteProblems).toEqual(problems);
+    expect(await bash.readFile(`${TEMPLATES}/haiku.md`)).toContain("origin: generated:test/claude");
+    // The first that writes is the only one asked; a later write that needs no fallback clears the problems.
+    const { ask: ask2, engine: engine2 } = setup({ generators: [named("local", haiku), claude] });
+    expect((await ask2("write a haiku about the sea")).steps.at(-1)!.providerMetadata).toMatchObject({ harness: { by: "test/local" } });
+    expect(engine2.lastWriteProblems).toEqual([]);
+    // When every generator fails, the last one's error is the reply, the others' in the metadata.
+    const { ask: ask3, engine: engine3 } = setup({ generators: [local, named("garbled", { ...haiku, body: "{{a}}{{b}}" })] });
+    const failed = await ask3("write a haiku about the sea");
+    expect(failed.text).toMatch(/^Could not write a template: .*next to each other/);
+    expect(failed.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { problems: ["local/small: out of memory"] } });
+    expect(engine3.lastWriteProblems).toEqual(["local/small: out of memory", expect.stringMatching(/^test\/garbled: /)]);
+  });
+
+  it("TE1.13 a generator is shown the seed templates named in the settings as worked examples, capped in length, and held to a schema bounded by the settings", async () => {
+    const writer = generator(haiku);
+    const { ask } = setup({ generators: [writer] });
+    await ask("write a haiku about the sea");
+    const call = writer.doGenerateCalls[0]!;
+    expect(call.maxOutputTokens).toBe(settings.generation.maxTokens);
+    const system = JSON.stringify(call.prompt[0]);
+    for (const id of settings.generation.examples) expect(system).toContain(`\\"id\\": \\"${id}\\"`);
+    const schema = (call.responseFormat as unknown as { schema: { properties: Record<string, Record<string, unknown>> } }).schema.properties;
+    const { limits } = settings.generation;
+    expect(schema["id"]).toMatchObject({ maxLength: limits.id, pattern: expect.any(String) });
+    expect(schema["examples"]).toMatchObject({ minItems: 1, maxItems: limits.examples, items: { maxLength: limits.text } });
+    expect(schema["body"]).toMatchObject({ maxLength: limits.body });
+    // An id that is not kebab-case is refused, as the schema says.
+    const { ask: ask2 } = setup({ generators: [generator({ ...haiku, id: "1" })] });
+    expect((await ask2("write a haiku about the sea")).text).toMatch(/could not write a template/i);
+  });
+
+  it("TE1.14 a written template is tried before it is kept: one that leaves a hole without a value, or a script that fails on a copy of the files, leaves the writing to the next generator", async () => {
+    const script = (id: string, body: string, holes = {}) => ({ id, description: "How many lines a file has", examples: ["tally the lines in notes.txt"], kind: "script", body, holes, values: {} });
+    const prose = named("prose", script("greet", "Hello, I am Sam.\n"));
+    const unvalued = named("unvalued", script("count", "wc -l < '{{path}}'\n"));
+    const good = named("good", script("count-lines", "wc -l < '{{path}}'\n", { path: { description: "the file", source: "pattern", pattern: "lines in (\\S+)" } }));
+    const { ask, store, tried } = setup({ generators: [prose, unvalued, good], files: { [`${HOME}/notes.txt`]: "one\ntwo\n" } });
+    const counted = await ask("tally the lines in notes.txt");
+    // The step that ran the template's script carries who wrote it (the last step is its outcome).
+    expect(counted.steps.at(-2)!.providerMetadata).toMatchObject({
+      harness: { template: "count-lines", by: "test/good", problems: [expect.stringMatching(/^test\/prose: its script failed on a copy of the files \(exit 127: .*Hello/), "test/unvalued: it leaves path without a value"] },
+    });
+    expect(counted.text).toMatch(/^exit 0\n\s*2\n$/);
+    // Only the script that ran cleanly was kept; the trial ran each script as it would answer this request.
+    expect([await store.get("greet"), await store.get("count")]).toEqual([undefined, undefined]);
+    expect(tried).toEqual(["Hello, I am Sam.", "wc -l < 'notes.txt'"]);
+    // A reply is rendered, not run.
+    const { ask: ask2, tried: tried2 } = setup({ generators: [generator(haiku)] });
+    expect((await ask2("write a haiku about the sea")).text).toBe("A haiku about the sea:\nwaves fold into foam\n");
+    expect(tried2).toEqual([]);
+  });
+
+  it("TE1.15 a written template that repeats one already kept (the same kind and body) is refused, and the writing goes to the next generator", async () => {
+    const copy = named("copier", { id: "time-now", description: "The time now", examples: ["what time is it?"], kind: "reply", body: "Today is {{date}}.\n", holes: { date: { description: "today's date", source: "fact" } } });
+    const clock = named("clock", { id: "time-now", description: "The time now", examples: ["what time is it?"], kind: "reply", body: "It is {{time}}.\n", holes: { time: { description: "the time" } }, values: { time: "noon" } });
+    const { ask } = setup({ generators: [copy, clock] });
+    const told = await ask("what time is it?");
+    expect(told.text).toBe("It is noon.\n");
+    expect(told.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { by: "test/clock", problems: ["test/copier: it repeats today"] } });
   });
 
   it("TE1.8 generation asks for approval unless it is on auto; bash and writes follow the approval policy elsewhere", () => {

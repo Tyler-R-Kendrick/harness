@@ -77,7 +77,8 @@ const pageState = z.object({
       .min(1)
       // Pages kept when this was "model" or "lexical": "model" meant the decision model, which auto now picks.
       .transform((d) => (d === "model" ? "auto" : d))
-      .default("auto") }),
+      .default("auto"),
+    writer: z.string().min(1).default("auto") }),
   turns: z.array(z.object({ prompt: z.string(), report: turnReport })),
 });
 

@@ -4,7 +4,8 @@ import type { Experimental_EvaluationModelV4 as EvaluationModelV4 } from "@ai-sd
 import { bytes, parseCatalog } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { lexicalDecider } from "../src/decide.ts";
-import { DecisionModel, DecisionModels, rankDecisionModels } from "../src/decision-model.ts";
+import { deciders, DECIDING, rankDecisionModels } from "../src/decision-model.ts";
+import { LocalModel, LocalModels } from "../src/local-models.ts";
 import type { Capabilities, Past } from "../src/model-choice.ts";
 import { parseEngineSettings } from "../src/engine-settings.ts";
 
@@ -33,6 +34,8 @@ function ensemble() {
   };
 }
 const tick = () => new Promise((r) => setTimeout(r, 0));
+/** A model's load through a stand-in ensemble: its port. */
+const loads = (e: ReturnType<typeof ensemble>) => () => e.resolve().then((r) => r.port);
 
 describe("the page's decision model", () => {
   it("PD1.1 the page's decision models are the catalog's local classification judges that run in a browser, best first by rank, not by name", () => {
@@ -50,9 +53,9 @@ describe("the page's decision model", () => {
   it("PD1.2 it loads when asked, not before; until it is ready the lexical judge decides alone, then the model decides first and the lexical judge stands behind it", async () => {
     const e = ensemble();
     const changes: string[] = [];
-    const m = new DecisionModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, ensemble: e, onChange: () => changes.push(m.status()) });
+    const m = new LocalModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, load: loads(e), onChange: () => changes.push(m.status()), role: DECIDING });
     expect([m.status(), m.phase(), m.name, m.id, m.label]).toEqual(["Decider: not downloaded (614 MB, once; kept in this browser)", "idle", "Decider (org/decider)", "org/decider", "Decider"]);
-    expect(m.deciders(lexical)).toEqual([lexical]);
+    expect(m.port).toBeUndefined();
     m.load();
     m.load();
     expect(e.asked).toBe(1);
@@ -60,19 +63,18 @@ describe("the page's decision model", () => {
     e.settle().resolve(judge);
     await tick();
     expect([m.status(), m.phase()]).toEqual(["Decider: ready", "ready"]);
-    const [first, second] = m.deciders(lexical);
-    expect([first!.judge, first!.lexical, second]).toEqual([judge, false, lexical]);
+    expect(m.port).toBe(judge);
     expect(changes).toEqual(["Decider: loading (614 MB, once; kept in this browser)", "Decider: ready"]);
   });
 
   it("PD1.3 a model that cannot load says why, and the lexical judge keeps deciding", async () => {
     const e = ensemble();
-    const m = new DecisionModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(1) }, ensemble: e, onChange: () => {} });
+    const m = new LocalModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(1) }, load: loads(e), onChange: () => {}, role: DECIDING });
     m.load();
     e.settle().reject(new Error("GET https://huggingface.co/... failed: TypeError: Failed to fetch"));
     await tick();
     expect([m.status(), m.phase(), m.failure]).toEqual(["Decider: could not load (GET https://huggingface.co/... failed: TypeError: Failed to fetch); the lexical judge decides", "failed", "GET https://huggingface.co/... failed: TypeError: Failed to fetch"]);
-    expect(m.deciders(lexical)).toEqual([lexical]);
+    expect(m.port).toBeUndefined();
     // Asked again, it tries again.
     m.load();
     expect(e.asked).toBe(2);
@@ -83,7 +85,7 @@ describe("the page's decision model", () => {
 
   it("PD1.5 files the browser would not keep are said, and so is the last decision it left to the lexical judge", async () => {
     const e = ensemble();
-    const m = new DecisionModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, ensemble: e, onChange: () => {} });
+    const m = new LocalModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, load: loads(e), onChange: () => {}, role: DECIDING });
     m.load();
     m.cacheProblem("QuotaExceededError");
     e.settle().resolve(judge);
@@ -106,12 +108,14 @@ const small = { id: "org/small", name: "Small", downloadBytes: bytes(36_000_000)
 function models(ranked = [big, small], past: Record<string, Past> = {}) {
   const ensembles = new Map<string, ReturnType<typeof ensemble>>();
   const changed: string[] = [];
-  const m = new DecisionModels({
+  const ensembleOf = (id: string) => ensembles.get(id) ?? (ensembles.set(id, ensemble()), ensembles.get(id)!);
+  const m = new LocalModels<EvaluationModelV4>({
     ranked,
     settings: FIT,
     past: (id) => past[id],
-    ensemble: (model) => ensembles.get(model.id) ?? (ensembles.set(model.id, ensemble()), ensembles.get(model.id)!),
+    load: (model) => loads(ensembleOf(model.id))(),
     onChange: (model) => changed.push(`${model.id}: ${model.phase()}`),
+    role: DECIDING,
   });
   /** The models asked to load, in order of their ensembles. */
   const asked = () => [...ensembles].filter(([, e]) => e.asked > 0).map(([id]) => id);
@@ -125,17 +129,20 @@ describe("which decision model decides: picked for this browser unless named (/d
 
   it("PD2.2 auto waits for what the browser offers, then loads the best-ranked model that fits, local first, without being asked; the lexical judge decides until it is ready", async () => {
     const { m, ensembles, changed, asked } = models();
-    expect([m.phase("auto"), m.status("auto")]).toEqual(["checking", "checking what this browser can run; the lexical judge decides meanwhile"]);
+    expect([m.phase("auto"), m.status("auto"), m.pick()]).toEqual(["checking", "checking what this browser can run; the lexical judge decides meanwhile", undefined]);
     m.want("auto", false);
     expect(asked()).toEqual([]);
     m.detected({ ...GPU, webgpu: false });
     m.want("auto", false);
     expect(asked()).toEqual(["org/small"]);
     expect(m.status("auto")).toBe("Small: loading (36 MB, once; kept in this browser); picked for this browser over Big (no WebGPU adapter for a 600 MB model)");
-    expect(m.deciders("auto", lexical)).toEqual([lexical]);
+    expect(deciders(m, "auto", lexical)).toEqual([lexical]);
     ensembles.get("org/small")!.settle().resolve(judge);
     await tick();
-    expect([m.phase("auto"), m.name("auto"), m.deciders("auto", lexical).length, m.current("auto")?.id]).toEqual(["ready", "Small (org/small)", 2, "org/small"]);
+    expect([m.phase("auto"), m.name("auto"), m.current("auto")?.id, m.pick()?.id, m.port("auto")]).toEqual(["ready", "Small (org/small)", "org/small", "org/small", judge]);
+    // The model decides first, the lexical judge behind it.
+    const [first, second] = deciders(m, "auto", lexical);
+    expect([first!.judge, first!.lexical, second]).toEqual([judge, false, lexical]);
     expect(changed).toEqual(["org/small: loading", "org/small: ready"]);
   });
 
@@ -143,7 +150,7 @@ describe("which decision model decides: picked for this browser unless named (/d
     const none = models([big]);
     none.m.detected({ ...GPU, saveData: true });
     none.m.want("auto", false);
-    expect([none.m.phase("auto"), none.m.status("auto"), none.m.deciders("auto", lexical), none.m.name("auto")]).toEqual(["none", "none fits this browser (Big: this browser asks to save data); the lexical judge decides (/decide org/big loads one anyway)", [lexical], undefined]);
+    expect([none.m.phase("auto"), none.m.status("auto"), deciders(none.m, "auto", lexical), none.m.name("auto")]).toEqual(["none", "none fits this browser (Big: this browser asks to save data); the lexical judge decides (/decide org/big loads one anyway)", [lexical], undefined]);
     expect(models([]).m.status("auto")).toBe("none for a browser in the catalog; the lexical judge decides");
     const { m, ensembles } = models();
     m.detected(GPU);
@@ -174,10 +181,10 @@ describe("which decision model decides: picked for this browser unless named (/d
     m.detected(GPU);
     for (const slug of ["lexical", "org/gone"]) {
       m.want(slug, true);
-      expect([m.deciders(slug, lexical), m.current(slug), m.name(slug)]).toEqual([[lexical], undefined, undefined]);
+      expect([deciders(m, slug, lexical), m.current(slug), m.name(slug)]).toEqual([[lexical], undefined, undefined]);
     }
     expect(asked()).toEqual([]);
-    expect([m.phase("lexical"), m.status("lexical")]).toEqual(["lexical", "the lexical judge decides alone (/decide auto picks a decision model for this browser)"]);
+    expect([m.phase("lexical"), m.status("lexical")]).toEqual(["alone", "the lexical judge decides alone (/decide auto picks a decision model for this browser)"]);
     expect([m.phase("org/gone"), m.status("org/gone")]).toEqual(["none", "org/gone is not a decision model in this page's catalog; the lexical judge decides"]);
   });
 });

@@ -255,7 +255,9 @@ of every ACP message, worker event, model call, tool run and hook event. Opened 
 claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0014). A
 decision model picks the template, chosen for the browser (`/decide auto`, local first: Julia 1
 where there is WebGPU and room for its 614 MB, once) or named by its slug (`/decide <id>`), with
-the lexical judge until it is ready or where none fits. Anywhere, `/ask $ <command>` runs the whole
+the lexical judge until it is ready or where none fits. A template is written by a local generator
+first (`/writer auto`: Qwen3.5 0.8B where it fits), tried before it is kept, and by Claude when the
+local one cannot write it. Anywhere, `/ask $ <command>` runs the whole
 tool-call path on a deterministic model. Sessions, conversations, files and the timeline
 are kept in the browser across reloads (`/reset` forgets them).
 

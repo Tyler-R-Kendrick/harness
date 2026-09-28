@@ -6,9 +6,14 @@
 import wtermCss from "@wterm/dom/css?inline";
 import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
+import { Bash } from "just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
+import type { Experimental_EvaluationModelV4 as EvaluationModelV4, LanguageModelV4 } from "@ai-sdk/provider";
+import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
+import { wrapLanguageModel } from "ai";
 import { parseCatalog } from "@harness/cognitive";
-import { buildBrowserEnsemble, IndexedDbStorage } from "@harness/platform-browser";
+import type { ModelDescriptor, PortMap, TaskCategory } from "@harness/cognitive";
+import { buildBrowserEnsemble, IndexedDbStorage, xgrammarFromSource } from "@harness/platform-browser";
 import benchmarksFile from "@harness/cognitive/data/benchmarks.json?raw";
 import catalogFile from "@harness/cognitive/data/catalog.json?raw";
 import { storedConversations } from "@harness/workers";
@@ -21,7 +26,10 @@ import todaySeed from "../data/templates/today.md?raw";
 import { AGENT, syncAgentDir } from "./agent-dir.ts";
 import type { HarnessState } from "./agent-dir.ts";
 import { lexicalDecider } from "./decide.ts";
-import { AUTO, DecisionModels, LEXICAL, rankDecisionModels } from "./decision-model.ts";
+import { deciders, DECIDING, LEXICAL, rankDecisionModels } from "./decision-model.ts";
+import { CLAUDE, rankGenerators, WRITING, writers } from "./generator-model.ts";
+import { AUTO, LocalModels } from "./local-models.ts";
+import type { LocalModel } from "./local-models.ts";
 import type { Capabilities, Past } from "./model-choice.ts";
 import { TemplateEngine } from "./engine.ts";
 import { parseEngineSettings } from "./engine-settings.ts";
@@ -34,7 +42,7 @@ import type { ModelTier, Sample } from "./sample-model.ts";
 import { Prompter, SlashCommands, TurnRenderer, withSlashCommands } from "./shell.ts";
 import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
-import { Tracer } from "./trace.ts";
+import { Tracer, tracingMiddleware } from "./trace.ts";
 import type { TraceEvent, TraceKind } from "./trace.ts";
 import { HOME, vfsTools, walk } from "./vfs.ts";
 import type { FileEntry, VfsDiff } from "./vfs.ts";
@@ -100,12 +108,14 @@ const GREETING = [
   "  \x1b[36m/ask\x1b[0m $ <command>      runs a command through the agent's bash tool and its approval",
   "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether writing one asks first",
   "  \x1b[36m/decide\x1b[0m [slug]        which decision model picks templates: auto (for this browser), lexical, or a model id",
+  "  \x1b[36m/writer\x1b[0m [slug]        which model writes templates: auto (local first, then Claude), claude, or a model id",
   "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
-// The decision model is picked for this browser (/decide auto): the best-ranked one it can run, local first; /decide <id> names one.
-const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: AUTO };
+// The decision model and the generator are picked for this browser (/decide auto, /writer auto): the best-ranked it can run, local
+// first (Claude writes only when no local generator is ready, or for a template it fails); /decide <id> and /writer <id> name one.
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: AUTO, writer: AUTO };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -138,49 +148,76 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   void resyncHarness?.().then(refreshFiles);
 });
 
-// ---- the decision models: the catalog's local ones for a browser (Julia 1), picked for this browser -----
+// ---- local models: decision models (Julia 1) and generators (Qwen3.5 0.8B), picked for this browser -----
 
 /** What became of a model's files on an earlier visit: kept, or why not. */
-const pastKey = (id: string) => `harness-playground.decision-model.${id}`;
+const pastKey = (id: string) => `harness-playground.model.${id}`;
 const KEPT = "kept";
 const pastOf = (id: string): Past | undefined => {
   const v = store.get(pastKey(id));
   return v === undefined ? undefined : v === KEPT ? { kept: true } : { kept: false, reason: v };
 };
-const decisionModels = new DecisionModels({
-  ranked: rankDecisionModels(parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile))),
-  settings: engineSettings.choice,
-  past: pastOf,
-  ensemble: (model) => ({
-    resolve: async (task, kind) => {
-      // onnxruntime-web comes with the page (WebGPU when the browser has it, else WebAssembly); its WebAssembly from its CDN.
-      const ort = await import("onnxruntime-web/webgpu");
-      const ensemble = buildBrowserEnsemble({
-        catalog: { models: [model], preferences: {} },
-        allowHosted: false,
-        onnxruntime: ort,
-        onnxWasm: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`,
-        onCacheProblem: (key, e) => {
-          decisionModels.current(model.id)?.cacheProblem(e instanceof Error ? e.message : String(e));
-          tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
-        },
-      });
-      // A member that fails to load says why; the ensemble only says none is available.
-      return ensemble.resolve(task, kind).catch((e: unknown) => {
-        throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
-      });
+const catalog = parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile));
+/** What this browser offers, once asked (a generator runs on WebGPU when there is an adapter). */
+let capabilities: Capabilities | undefined;
+
+/** One catalog model loaded through the browser host's ensemble: its port for the task. */
+async function loadLocal<K extends "judge" | "generator">(model: ModelDescriptor, task: TaskCategory, kind: K, cacheProblem: (reason: string) => void): Promise<PortMap[K]> {
+  // onnxruntime-web comes with the page (WebGPU when the browser has it, else WebAssembly); its WebAssembly from its CDN.
+  const ort = await import("onnxruntime-web/webgpu");
+  const onnxWasm = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`;
+  // A generator runs on transformers.js (over the same onnxruntime-web), its JSON held to the schema by XGrammar.
+  const transformers = kind === "generator" ? await import("@huggingface/transformers") : undefined;
+  const onnx = transformers?.env.backends.onnx as { wasm?: { wasmPaths?: unknown } } | undefined;
+  if (onnx?.wasm) onnx.wasm.wasmPaths = onnxWasm;
+  const ensemble = buildBrowserEnsemble({
+    catalog: { models: [model], preferences: {} },
+    allowHosted: false,
+    onnxruntime: ort,
+    onnxWasm,
+    ...(transformers ? { transformers, xgrammar: xgrammarFromSource(xgrammarSource), device: capabilities?.webgpu ? ("webgpu" as const) : ("wasm" as const) } : {}),
+    onCacheProblem: (key, e) => {
+      cacheProblem(e instanceof Error ? e.message : String(e));
+      tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
     },
-  }),
-  onChange: (model) => {
+  });
+  // A member that fails to load says why; the ensemble only says none is available.
+  const { port } = await ensemble.resolve(task, kind).catch((e: unknown) => {
+    throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
+  });
+  return port;
+}
+
+/** A local model started loading, is ready, or failed: keep whether its files were kept, and move auto on past a failure. */
+function localChanged<P>(models: LocalModels<P, ModelDescriptor>, slug: () => string, what: string) {
+  return (model: LocalModel<P>) => {
     // A visit whose download the browser would not keep does not start the next one on its own.
     if (model.phase() === "ready") store.set(pastKey(model.id), model.unkept ?? KEPT);
-    tracer.record({ kind: "host", name: "decision model", detail: `${model.id}: ${model.status()}` });
+    tracer.record({ kind: "host", name: what, detail: `${model.id}: ${model.status()}` });
     // Auto moves on to the next model that fits when its pick could not load.
-    if (model.phase() === "failed" && settings.decide === AUTO) decisionModels.want(AUTO, false);
+    if (model.phase() === "failed" && slug() === AUTO) models.want(AUTO, false);
     sync();
-    // Which model decides is part of the harness's state (~/AGENTS.md).
+    // Which models decide and write is part of the harness's state (~/AGENTS.md).
     void resyncHarness?.().then(refreshFiles);
-  },
+  };
+}
+
+const decisionModels: LocalModels<EvaluationModelV4, ModelDescriptor> = new LocalModels({
+  ranked: rankDecisionModels(catalog),
+  settings: engineSettings.choice,
+  past: pastOf,
+  load: (model) => loadLocal(model, "classification", "judge", (reason) => decisionModels.current(model.id)?.cacheProblem(reason)),
+  onChange: (model) => localChanged(decisionModels, () => settings.decide, "decision model")(model),
+  role: DECIDING,
+});
+const localGenerators: LocalModels<LanguageModelV4, ModelDescriptor> = new LocalModels({
+  ranked: rankGenerators(catalog),
+  settings: engineSettings.choice,
+  past: pastOf,
+  // The generator's calls show in the timeline, as the worker's do.
+  load: async (model) => wrapLanguageModel({ model: await loadLocal(model, "structured-extraction", "generator", (reason) => localGenerators.current(model.id)?.cacheProblem(reason)), middleware: tracingMiddleware(tracer) }),
+  onChange: (model) => localChanged(localGenerators, () => settings.writer, "generator")(model),
+  role: WRITING,
 });
 
 /** What this browser offers a local model: a WebGPU adapter, room in its storage, and whether it asks to save data. */
@@ -194,13 +231,19 @@ async function detectCapabilities(): Promise<Capabilities> {
 const detected = detectCapabilities()
   .catch((): Capabilities => ({ webgpu: false, freeBytes: undefined, saveData: false }))
   .then((c) => {
+    capabilities = c;
     decisionModels.detected(c);
+    // The generator's room is what is left after auto's decision model downloads (unless the browser kept it).
+    const deciding = settings.decide === AUTO ? decisionModels.pick() : undefined;
+    const reserved = deciding && pastOf(deciding.id)?.kept !== true ? deciding.downloadBytes * engineSettings.choice.headroom : 0;
+    localGenerators.detected({ ...c, freeBytes: c.freeBytes === undefined ? undefined : c.freeBytes - reserved });
     tracer.record({ kind: "host", name: "browser capabilities", detail: c });
   });
-/** Load the decision model the slug wants, once the browser's capabilities are known: auto's pick on its own, a named one when asked or kept. */
-const wantDecisionModel = (asked: boolean) =>
+/** Load the local models the slugs want, once the browser's capabilities are known: auto's picks on their own, named ones when asked or kept. */
+const wantLocalModels = (asked: boolean) =>
   void detected.then(() => {
     decisionModels.want(settings.decide, asked);
+    localGenerators.want(settings.writer, asked);
     sync();
     void resyncHarness?.().then(refreshFiles);
   });
@@ -228,6 +271,12 @@ function sync() {
   decides.dataset["state"] = phase === "ready" ? "ready" : phase === "loading" || phase === "idle" || phase === "checking" ? "checking" : "off";
   decides.textContent = `Decides: ${phase === "ready" ? label : phase === "loading" ? `loading ${label}` : "lexical"}`;
   decides.title = `/decide ${settings.decide}: ${decisionModels.status(settings.decide)}`;
+  const writes = $("writer-pill");
+  const writing = localGenerators.phase(settings.writer);
+  const writerLabel = localGenerators.current(settings.writer)?.label ?? "model";
+  writes.dataset["state"] = writing === "ready" ? "ready" : writing === "loading" || writing === "idle" || writing === "checking" ? "checking" : "off";
+  writes.textContent = `Writes: ${writing === "ready" ? writerLabel : writing === "loading" ? `loading ${writerLabel}` : "Claude"}`;
+  writes.title = `/writer ${settings.writer}: ${localGenerators.status(settings.writer)}`;
   $("session-line").textContent = playground?.sessionId ? `session ${short(playground.sessionId)}` : "no session yet";
 }
 
@@ -673,9 +722,16 @@ async function boot() {
     store: templateStore,
     settings: engineSettings,
     facts,
-    deciders: () => decisionModels.deciders(settings.decide, lexical),
-    generators: () => (claudeState === "ready" ? [claude] : []),
+    deciders: () => deciders(decisionModels, settings.decide, lexical),
+    // A local generator writes first; Claude only when none is ready, or for a template it fails.
+    generators: () => writers(localGenerators, settings.writer, claudeState === "ready" ? claude : undefined),
     generation: () => settings.generate,
+    // A written script is tried on a throwaway copy of the files (no network here) before it is kept.
+    trial: async (script) => {
+      const copy = new Bash({ cwd: HOME });
+      await restoreVfs(copy.fs, HOME, await snapshotVfs(bash.fs, HOME));
+      return copy.exec(script, { cwd: HOME, env: { PWD: HOME }, signal: AbortSignal.timeout(engineSettings.generation.trialMs) });
+    },
   });
   // The harness as an Eve agent in its own filesystem (~/AGENTS.md, ~/agent/), kept in sync with its state.
   const commands: { slash?: SlashCommands } = {};
@@ -700,7 +756,10 @@ async function boot() {
       settings.decide === LEXICAL
         ? "the lexical judge (harness.lexical/tf-idf) alone (/decide lexical)"
         : `${decisionModels.name(settings.decide) ?? "no model"} (/decide ${settings.decide}): ${decisionModels.status(settings.decide)}; the lexical judge (harness.lexical/tf-idf) behind it`,
-    generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
+    generators: [
+      ...(settings.writer === CLAUDE || !localGenerators.current(settings.writer) ? [] : [`${localGenerators.name(settings.writer)}: ${localGenerators.status(settings.writer)}`]),
+      ...(claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : []),
+    ],
     templates: (await templateStore.list()).templates,
     facts: Object.keys(facts),
     commands: commands.slash?.list() ?? [],
@@ -716,6 +775,8 @@ async function boot() {
     afterTurn: () => {
       // A decision the model left to the lexical judge shows in the pill.
       decisionModels.current(settings.decide)?.fellBack(engine.lastProblems);
+      // So does a template the local generator left to Claude.
+      localGenerators.current(settings.writer)?.fellBack(engine.lastWriteProblems);
       sync();
       return syncHarness();
     },
@@ -741,8 +802,9 @@ async function boot() {
     engine,
     store: templateStore,
     decider: decisionModels,
+    writer: localGenerators,
     onChange: () => {
-      wantDecisionModel(true);
+      wantLocalModels(true);
       sync();
       pageSaver?.request();
       void syncHarness().then(refreshFiles);
@@ -780,7 +842,7 @@ async function boot() {
     write(promptFor(shell.cwd));
     sync();
     term.focus();
-    wantDecisionModel(false);
+    wantLocalModels(false);
     document.documentElement.dataset["booted"] = "restored";
     await claudeReady;
     return;
@@ -798,7 +860,7 @@ async function boot() {
   sync();
   saveAll();
   term.focus();
-  wantDecisionModel(false);
+  wantLocalModels(false);
   document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }

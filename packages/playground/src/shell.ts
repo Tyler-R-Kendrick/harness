@@ -25,6 +25,8 @@ export interface Settings {
   generate: Generation;
   /** Which decision model picks templates, by slug: `auto` (the best this browser runs), `lexical` (the lexical judge alone), or a catalog id. */
   decide: string;
+  /** Which model writes templates, by slug: `auto` (a local one this browser runs, then Claude), `claude` (Claude alone), or a catalog id. */
+  writer: string;
 }
 
 const TIERS: readonly ModelTier[] = ["quick", "default", "complex"];
@@ -179,6 +181,8 @@ export interface ShellContext {
   readonly store?: TemplateStore;
   /** The decision models' slugs, and how a slug's model is doing (loading, ready, or why not), for `/decide` and `/status`. */
   readonly decider?: { slugs(): readonly string[]; status(slug: string): string };
+  /** The generators' slugs, and how a slug's local model is doing, for `/writer` and `/status`. */
+  readonly writer?: { slugs(): readonly string[]; status(slug: string): string };
 }
 
 /** A path under home as the terminal shows it. */
@@ -332,6 +336,12 @@ export class SlashCommands {
       if (v === undefined && decider) return ok(`${settings.decide} (one of ${slugs.join(", ")})\ndecision model: ${decider.status(settings.decide)}\n`);
       return choose("decide", v, slugs, () => settings.decide, (d) => (settings.decide = d));
     });
+    cli.command("writer [slug]", "Which model writes templates: auto (a local one this browser runs, then Claude), claude, or a catalog id").action((v: string | undefined) => {
+      const { writer } = this.#ctx;
+      const slugs = writer?.slugs() ?? [settings.writer];
+      if (v === undefined && writer) return ok(`${settings.writer} (one of ${slugs.join(", ")})\ngenerator: ${writer.status(settings.writer)}\n`);
+      return choose("writer", v, slugs, () => settings.writer, (w) => (settings.writer = w));
+    });
     cli.command("templates", "The templates /ask answers from, with their feedback (files in ~/agent/templates)").action(async () => {
       const { store } = this.#ctx;
       if (!store) return fail("no template engine here\n", 1);
@@ -366,6 +376,7 @@ export class SlashCommands {
         ["approve", settings.approval],
         ["generate", settings.generate],
         ["decide", this.#ctx.decider ? `${settings.decide}: ${this.#ctx.decider.status(settings.decide)}` : settings.decide],
+        ["writer", this.#ctx.writer ? `${settings.writer}: ${this.#ctx.writer.status(settings.writer)}` : settings.writer],
         ["hook events", hooks],
         ["trace events", tracer.events().length],
         ["capabilities", playground.host.daemon.capabilities().map((c) => c.name).join(", ")],
