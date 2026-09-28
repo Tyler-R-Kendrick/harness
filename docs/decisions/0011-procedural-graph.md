@@ -1,8 +1,8 @@
 # 0011: Procedural graphs: a static core, a live dynamic layer, and dream
 
-Status: proposed 2026-09-27; revised the same day, after an adversarial review and the
-owner's direction. Research: `docs/research/procedural-graphs.md`. Plan:
-`docs/plans/procedural-graph.md`.
+Status: accepted 2026-09-27; implemented. Proposed and revised the same day, after an
+adversarial review and the owner's direction. Research: `docs/research/procedural-graphs.md`.
+Plan: `docs/plans/procedural-graph.md`; the API as built: `docs/plans/procedural-graph-api.md`.
 
 ## Context
 
@@ -139,6 +139,37 @@ shared, and teams may merge them later.
 - A guidance call per step costs tokens. A cache keyed by the query and version pair,
   and cascade selection of the guidance model, mitigate this.
 
+## What changed during implementation
+
+The decision held; these details moved.
+
+- **Dream is a reducer that prepares candidates itself.** There is no `prepare` command:
+  preparation is pure, so only model calls, evaluation, approval and store writes are
+  commands. A refiner answer that is not an edit set is a structural rejection kept in
+  memory without a record.
+- **Composition is a round of its own.** After its refine rounds, a dream with a composer
+  (and `compose` in its settings) compiles the best-supported path into a workflow, stages
+  it and binds it to a new node. The path's distinct-session support is that node's
+  evidence, and it goes through the same gates as any candidate. By default approval is
+  needed, because a workflow counts as a tool with side effects. No host gives dream a
+  composer yet, and no worker takes `revisionTools` yet, so composition is a library.
+- **Approval has no daemon path yet.** The permission flow belongs to a session's turn,
+  and dream runs outside any session. The CLI asks on a terminal; `procedural.dream` in
+  the daemon rejects candidates that need approval, and the rejection is recorded for a
+  later dream or an operator.
+- **Dream runs on demand.** `procedural.dream` and `harness-procedural dream` start it;
+  there is no schedule or trigger in the daemon.
+- **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
+  event with `rescore`, which moves the turn's score without a new traversal.
+- **Reflection is a port.** The live learner takes a `Reflector`, which the native host
+  builds on the ensemble's generator, so the harness preset can keep reflection off
+  while a deployment turns it on with data.
+- **Records are keyed by content.** A rejection never replaces an older head's or an
+  import's record with the same id, and a commit that loses the head race puts back the
+  record it replaced.
+- **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
+  guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
+
 ## Revisit when
 
 - Live evidence shows the overlay's probation rules are too slow or too loose. Then tune
@@ -147,3 +178,5 @@ shared, and teams may merge them later.
 - The task graph gains payloads. Then dream can emit plans from subgraphs.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
+- The daemon gains approvals outside a session's turn. Then `procedural.dream` can ask
+  for approval instead of rejecting.

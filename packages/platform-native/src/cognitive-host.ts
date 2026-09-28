@@ -90,6 +90,8 @@ export interface NativeEnsembleOptions {
     readonly dir: string;
     /** Presets, decoding and prompts; defaults to procedural's data file. */
     readonly settings?: ProceduralSettings;
+    /** The store to serve, when the host already opened the one in `dir` (for dream, the step hook and the learner). */
+    readonly store?: ProceduralStore;
   } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback">;
   readonly workflows?: {
     readonly dir: string;
@@ -272,8 +274,7 @@ function installLearning(ensemble: Ensemble, memory: Memory, options: NonNullabl
 
 /** Procedural graphs' operations over the store in the directory, with the host's clock. */
 function installProcedural(ensemble: Ensemble, options: NonNullable<NativeEnsembleOptions["procedural"]>): { store: ProceduralStore; settings: ProceduralSettings } {
-  const { dir, settings = loadProceduralSettings(), ...rest } = options;
-  const store = proceduralStore(dir);
+  const { dir, settings = loadProceduralSettings(), store = proceduralStore(dir), ...rest } = options;
   ensemble.install(proceduralExtension({ store, settings, clock: { now: () => Date.now() }, ...rest }));
   return { store, settings };
 }

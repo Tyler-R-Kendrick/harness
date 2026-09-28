@@ -1,7 +1,7 @@
 /** A live learner over a fake store and fake session logs, for the learner's tests. */
 import { readFileSync } from "node:fs";
 import { foldAll, LiveLearner, parseSettings, presetOf, ScoreSchema } from "@harness/procedural";
-import type { EntryId, LearnerEvent, LiveSettings, LogEntryLike, OverlayState, Preset, ScoredTrajectory, ScoreSource } from "@harness/procedural";
+import type { EntryId, LearnerEvent, LiveLearnerDeps, LiveSettings, LogEntryLike, OverlayState, Preset, ScoredTrajectory, ScoreSource } from "@harness/procedural";
 import { call, CORE, ended, FakeStore, GRAPH, logOf, record, result, revisionOf, said, started, user } from "./learner-fixtures.ts";
 import { core } from "./overlay-fixtures.ts";
 
@@ -33,7 +33,7 @@ export interface Setup {
   state(): OverlayState;
 }
 
-export function setup(options: { preset?: Preset; score?: (t: ScoredTrajectory) => Promise<{ score: number; source: ScoreSource } | null>; withCore?: boolean } = {}): Setup {
+export function setup(options: { preset?: Preset; score?: (t: ScoredTrajectory) => Promise<{ score: number; source: ScoreSource } | null>; withCore?: boolean; reflect?: LiveLearnerDeps["reflect"] } = {}): Setup {
   const store = new FakeStore();
   if (options.withCore !== false) {
     store.records.set(CORE, revisionOf(core()));
@@ -50,6 +50,7 @@ export function setup(options: { preset?: Preset; score?: (t: ScoredTrajectory) 
     store,
     settings: options.preset ?? preset(),
     readLog,
+    ...(options.reflect === undefined ? {} : { reflect: options.reflect }),
     ...(score === undefined
       ? {}
       : {

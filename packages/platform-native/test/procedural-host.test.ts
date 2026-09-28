@@ -232,6 +232,24 @@ describe("the live learner on the native host", () => {
     await host.close();
   });
 
+  it("PX2.61 with reflection on in the preset, the learner reflects on a scored turn with the host's reflector", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    const { revision } = (await importGraph({ store, graph, clock: hostPorts.clock })) as { revision: RevisionId };
+    await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
+    const base = loadProceduralSettings();
+    const settings = { ...base, presets: { ...base.presets, harness: { ...base.presets.harness, live: { ...base.presets.harness.live!, reflection: "turn" as const } } } };
+    const asked: string[] = [];
+    const live = nativeLiveLearner({ runtime: host.runtime, store, settings, intervalMs: 60_000, reflect: async ({ trajectory }) => (asked.push(trajectory), []) });
+    await prompt("reflect on this");
+    const ended = JSON.stringify(host.daemon.snapshot()).match(/"event":"turn\.ended","data":\{"turnId":"([^"]+)"/)!;
+    expect(await live.learner.feedback(sessionId, ended[1]!, 0.9)).toMatchObject({ kind: "observed" });
+    expect(asked).toEqual([expect.stringMatching(/^Score: 0\.90\nQuery: reflect on this/)]);
+    live.close();
+    await host.close();
+  });
+
   it("PX2.57 a learner failure is logged and the turn is observed on a later drain", async () => {
     const { host, sessionId, prompt } = await withSession();
     const store = new MemoryProceduralStore();

@@ -1,8 +1,9 @@
 import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
-import type { Daemon, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, presetOf, proceduralStep, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, GraphId, ProceduralStepHook, ProceduralStore, Resolver, Settings } from "@harness/procedural";
+import { createInterface } from "node:readline/promises";
+import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
+import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
+import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
 import { FileStorage } from "./file-storage.ts";
@@ -128,10 +129,12 @@ export function nativeLiveLearner(options: {
   readonly settings: Settings;
   readonly preset?: string;
   readonly intervalMs?: number;
+  /** Live reflection (`modelReflector`), used when the preset turns reflection on. */
+  readonly reflect?: Reflector;
   readonly log?: (message: string) => void;
 }): { learner: LiveLearner; drain(): Promise<void>; close(): void } {
   const { runtime, store, settings, log } = options;
-  const learner = new LiveLearner({ store, settings: presetOf(settings, options.preset ?? "harness"), readLog: sessionLogReader(runtime.daemon), clock: hostPorts.clock });
+  const learner = new LiveLearner({ store, settings: presetOf(settings, options.preset ?? "harness"), readLog: sessionLogReader(runtime.daemon), clock: hostPorts.clock, ...(options.reflect === undefined ? {} : { reflect: options.reflect }) });
   const pump = pumpHookEvents(runtime, {
     plugin: "procedural-learner",
     types: ["turn.ended"],
@@ -149,8 +152,76 @@ export function nativeLiveLearner(options: {
  */
 export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to?: number) => Promise<LogEntry<unknown>[]> {
   return async (sessionId, from, to = Number.POSITIVE_INFINITY) => {
-    const session = daemon.snapshot().sessions.find((s) => s.id === sessionId);
-    const entries = (session?.log as { entries?: LogEntry<unknown>[] } | undefined)?.entries ?? [];
-    return entries.filter((e) => e.offset >= from && e.offset < to);
+    const session = snapshotSessions(daemon.snapshot()).find((s) => s.id === sessionId);
+    return (session?.entries ?? []).filter((e) => e.offset >= from && e.offset < to);
+  };
+}
+
+/** Every session's log in a daemon snapshot (the daemon's, or the one saved in its state file); a snapshot of another shape has none. */
+export function snapshotSessions(snapshot: unknown): { id: string; entries: LogEntry<unknown>[] }[] {
+  const sessions = (snapshot as Partial<DaemonSnapshot> | undefined)?.sessions;
+  if (!Array.isArray(sessions)) return [];
+  return sessions.map((s: DaemonSnapshot["sessions"][number]) => ({ id: s.id, entries: (s.log as { entries?: LogEntry<unknown>[] } | undefined)?.entries ?? [] }));
+}
+
+/**
+ * Dream on this host (plan §7.1, P6): `runDream` over the store with real ports. The
+ * refiner is `modelRefiner` on the given generator, trajectories are the turns of the
+ * session logs `sessions` returns (`logTrajectories`), and time and ids come from this
+ * host. An evaluator, an approver and a composer are optional: without an approver a
+ * candidate that needs approval is rejected, and without a composer there is no
+ * composition round.
+ */
+export function nativeDream(options: {
+  readonly store: ProceduralStore;
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly model: LanguageModel;
+  readonly sessions: () => Promise<readonly SessionLog[]>;
+  readonly evaluator?: Evaluator;
+  readonly approver?: Approver;
+  readonly composer?: Composer;
+  readonly task?: string;
+  readonly tools?: readonly string[];
+  readonly sideEffectFree?: readonly string[];
+}): (graph: GraphId) => Promise<DreamResult> {
+  const { store, settings, model, sessions, evaluator, approver, composer, task, tools, sideEffectFree } = options;
+  const preset = presetOf(settings, options.preset ?? "harness");
+  const ports: DreamPorts = {
+    refiner: modelRefiner({ model, settings }),
+    trajectories: logTrajectories({ store, sessions }),
+    ...hostPorts,
+    ...(evaluator === undefined ? {} : { evaluator }),
+    ...(approver === undefined ? {} : { approver }),
+    ...(composer === undefined ? {} : { composer }),
+  };
+  return (graph) =>
+    runDream({
+      store,
+      graph,
+      settings: preset,
+      ports,
+      ...(task === undefined ? {} : { task }),
+      ...(tools === undefined ? {} : { tools }),
+      ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
+    });
+}
+
+/**
+ * An approver that asks on a terminal (the CLI's permission flow): it names the graph,
+ * the candidate and the tools its new edges route into, and approves only on `y` or `yes`.
+ */
+export function terminalApprover(input: NodeJS.ReadableStream, output: NodeJS.WritableStream): Approver {
+  return {
+    approve: async ({ graph, candidate, tools }) => {
+      const lines = createInterface({ input, output, terminal: false });
+      const routes = tools.length === 0 ? "no tools" : `tools ${tools.join(", ")}`;
+      try {
+        const answer = await lines.question(`Approve dream candidate ${candidate.id.slice(0, 12)} of graph ${graph}, routing into ${routes}? [y/N] `);
+        return /^y(es)?$/i.test(answer.trim());
+      } finally {
+        lines.close();
+      }
+    },
   };
 }

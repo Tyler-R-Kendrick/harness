@@ -31,7 +31,7 @@ import { prepareCandidate } from "./edits.ts";
 import type { PreparedCandidate, PrepareOptions } from "./edits.ts";
 import { anchoredNonInferiority, approvalGate, atLeastRetained, evidenceGate, graphSize, poorStatistics, routesIntoSideEffects, structureGate } from "./gates.ts";
 import type { GateResult, TaskScore } from "./gates.ts";
-import { EditSetSchema, EntryIdSchema, revisionId, seedGraph } from "./graph.ts";
+import { BindingSchema, EditSetSchema, EntryIdSchema, NodeNameSchema, ProceduralGraphSchema, revisionId, seedGraph } from "./graph.ts";
 import type { CandidateDocument, Decision, DreamId, EditSet, EntryId, GraphId, ProceduralGraph, RevisionId, RevisionRecord } from "./graph.ts";
 import { edgeKey, foldOverlay } from "./overlay.ts";
 import { OverlayEventSchema } from "./overlay-types.ts";
@@ -59,6 +59,22 @@ export type RolloutResult = z.output<typeof RolloutResultSchema>;
 
 const stamp = { command: z.int().min(0), at: z.int().min(0) };
 
+const [, WorkflowBindingSchema] = BindingSchema.options;
+
+/**
+ * A composition as the runner reports it: the path it compiles, the distinct sessions that
+ * walked it, the workflow node and its binding, and the edits (`composeCandidate`'s) that
+ * add the node beside the path. The reducer binds the node when it prepares the candidate.
+ */
+export const CompositionSchema = z.strictObject({
+  path: z.array(NodeNameSchema).min(1),
+  support: z.int().min(0),
+  node: NodeNameSchema,
+  binding: WorkflowBindingSchema,
+  edits: EditSetSchema,
+});
+export type DreamComposition = z.output<typeof CompositionSchema>;
+
 /** The result of one command, stamped with the command's id and the Clock's time. */
 export const DreamEventSchema = z.discriminatedUnion("kind", [
   /** Per-task validation scores, and the seed any resampling uses (drawn from Entropy). */
@@ -77,6 +93,8 @@ export const DreamEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...stamp, kind: z.literal("recorded") }),
   /** The `rebased` overlay event the runner appended. */
   z.strictObject({ ...stamp, kind: z.literal("rebased"), event: OverlayEventSchema }),
+  /** A path compiled, staged and composed into the retained graph (plan §7.6), or why there is none. */
+  z.strictObject({ ...stamp, kind: z.literal("composed"), result: z.union([CompositionSchema, z.strictObject({ none: z.string() })]) }),
 ]);
 export type DreamEvent = z.output<typeof DreamEventSchema>;
 
@@ -88,7 +106,8 @@ export type RoundOutcome =
   | { round: number; outcome: "rejected"; revision: RevisionId | null; gate: string; reason: string }
   | { round: number; outcome: "unchanged"; score: number | null }
   | { round: number; outcome: "known-rejection"; revision: RevisionId }
-  | { round: number; outcome: "conflict"; revision: RevisionId };
+  | { round: number; outcome: "conflict"; revision: RevisionId }
+  | { round: number; outcome: "no-composition"; reason: string };
 
 /** What a finished dream reports. */
 export interface DreamOutcome {
@@ -112,6 +131,8 @@ export type DreamCommand =
   | { id: number; kind: "commit"; record: RevisionRecord; expected: RevisionId }
   | { id: number; kind: "reject"; record: RevisionRecord }
   | { id: number; kind: "rebase"; core: ProceduralGraph; absorbed: EntryId[] }
+  /** Compose a path of `graph` into a workflow node; `known` are rejected candidates not to propose again. */
+  | { id: number; kind: "compose"; revision: RevisionId; graph: ProceduralGraph; known: RevisionId[] }
   | { id: number; kind: "done"; result: DreamOutcome };
 type Draft = DreamCommand extends infer C ? (C extends DreamCommand ? Omit<C, "id"> : never) : never;
 
@@ -124,6 +145,7 @@ const EVENT_OF: Record<DreamCommand["kind"], DreamEvent["kind"] | undefined> = {
   commit: "committed",
   reject: "recorded",
   rebase: "rebased",
+  compose: "composed",
   done: undefined,
 };
 
@@ -166,6 +188,16 @@ export interface DreamInput {
   overlay?: { state: OverlayState; live: LiveSettings };
   /** Rejection records from earlier dreams (the harness remembers them; the paper starts empty). */
   rejections: readonly RevisionRecord[];
+  /** After the rounds, one composition round (plan §7.6): the settings ask for it and the runner has a composer. */
+  compose?: boolean;
+  /** Counts `contextTokens` in the refiner's tokens; without one, whitespace-separated words. */
+  tokenizer?: Tokenizer;
+}
+
+/** A tokenizer, for the paper's Tail_{L_max}: text to token ids and back. */
+export interface Tokenizer {
+  encode(text: string): readonly number[];
+  decode(ids: readonly number[]): string;
 }
 
 interface Retained {
@@ -197,6 +229,8 @@ interface Round {
   mean: number | null;
   /** The approval gate that asked, while an approval is pending. */
   approval?: string;
+  /** The composition this round's candidate binds. */
+  composition?: DreamComposition;
 }
 
 export interface DreamState {
@@ -225,8 +259,15 @@ export interface DreamStep {
 
 // ---- rendering ----------------------------------------------------------------------------
 
-/** The last `limit` whitespace-separated tokens of a text; a shorter text is unchanged (the paper's Tail_{L_max}). */
-export function tailTokens(text: string, limit: number): string {
+/**
+ * The last `limit` tokens of a text; a shorter text is unchanged (the paper's Tail_{L_max}).
+ * Tokens are the tokenizer's when one is given, else whitespace-separated words.
+ */
+export function tailTokens(text: string, limit: number, tokenizer?: Tokenizer): string {
+  if (tokenizer !== undefined) {
+    const ids = tokenizer.encode(text);
+    return ids.length <= limit ? text : tokenizer.decode(ids.slice(ids.length - limit));
+  }
   // Stryker disable next-line ArrayDeclaration: equivalent; with no match the text is empty, and dropping tokens from an empty text leaves it empty
   const tokens = text.match(/\S+\s*/g) ?? [];
   if (tokens.length <= limit) return text;
@@ -257,11 +298,11 @@ function balanced(attempts: readonly Attempt[]): Attempt[] {
   return [...out, ...attempts.filter((a) => a.score === null)];
 }
 
-function renderAttempts(attempts: readonly Attempt[], settings: DreamSettings): string {
-  if (settings.context === "tail-concatenated") return tailTokens(attempts.map((a) => joinLines(header(a), body(a))).join("\n\n"), settings.contextTokens);
+function renderAttempts(attempts: readonly Attempt[], settings: DreamSettings, tokenizer: Tokenizer | undefined): string {
+  if (settings.context === "tail-concatenated") return tailTokens(attempts.map((a) => joinLines(header(a), body(a))).join("\n\n"), settings.contextTokens, tokenizer);
   const ordered = balanced(attempts);
   const share = Math.floor(settings.contextTokens / Math.max(1, ordered.length));
-  return ordered.map((a) => joinLines(header(a), tailTokens(body(a), share))).join("\n\n");
+  return ordered.map((a) => joinLines(header(a), tailTokens(body(a), share, tokenizer))).join("\n\n");
 }
 
 const graphJson = (g: ProceduralGraph): string => JSON.stringify({ format: g.format, nodeTypes: g.nodeTypes, relations: g.relations, nodes: g.nodes, edges: g.edges }, null, 2);
@@ -422,10 +463,16 @@ function outcome(state: DreamState): DreamOutcome {
   return { dream: state.input.dream, graph: state.input.graph, initial: revisionId(state.input.head), head: state.retained.revision, score: state.retained.mean, rounds: [...state.rounds] };
 }
 
+/** The next round, then (when composing) one composition round, then done. */
 function nextRound(state: DreamState): DreamStep {
   const last = state.input.settings.mode === "onetime" ? 1 : state.input.settings.rounds;
-  if (state.round >= last) return issue(state, { kind: "done", result: outcome(state) });
-  return startRound(state, state.round + 1);
+  if (state.round < last) return startRound(state, state.round + 1);
+  if (state.input.compose === true && state.round === last) {
+    const { revision, graph } = state.retained;
+    const known = [...new Set(state.rejections.flatMap((r) => (r.id === null ? [] : [r.id])))];
+    return issue({ ...state, round: last + 1, work: emptyRound() }, { kind: "compose", revision, graph, known });
+  }
+  return issue(state, { kind: "done", result: outcome(state) });
 }
 
 const addRound = (state: DreamState, round: RoundOutcome): DreamState => ({ ...state, rounds: [...state.rounds, round] });
@@ -437,7 +484,7 @@ function gather(state: DreamState, attempts: readonly Attempt[]): DreamStep {
     task: input.task,
     mode: `${revisionId(input.head) === revisionId(seedGraph()) ? "scratch" : "static"}_${input.settings.mode}`,
     tools: input.tools,
-    attempts: renderAttempts(attempts, input.settings),
+    attempts: renderAttempts(attempts, input.settings, input.tokenizer),
     graphJson: graphJson(state.retained.graph),
     rejected: renderRejections(shown),
     ...(state.overlay && { consolidation: consolidation(state, state.overlay, shown) }),
@@ -467,6 +514,7 @@ function record(state: DreamState, decision: Decision, at: number): RevisionReco
       score: work.mean,
       retained: retained.mean,
       ...(work.scores !== null && { validation: work.scores }),
+      ...(work.composition && { composition: { path: work.composition.path, node: work.composition.node, support: work.composition.support } }),
       gates: work.gates,
       repaired: prepared.repaired,
     },
@@ -497,19 +545,29 @@ function rejectGate(state: DreamState, gate: string, result: GateResult, at: num
 }
 
 function refined(state: DreamState, result: Extract<DreamEvent, { kind: "refined" }>["result"], at: number): DreamStep {
-  const { input, retained } = state;
+  const { retained } = state;
   if ("error" in result) {
     const decision: RejectedDecision = { kind: "rejected-structure", diagnostics: [{ code: "malformed", message: result.error }] };
     const rejection: Rejection = { id: null, parent: retained.revision, round: state.round, edits: null, document: null, decision, score: null };
     return nextRound(addRound({ ...state, rejections: [...state.rejections, rejection] }, { round: state.round, outcome: "rejected", revision: null, gate: "structure", reason: structureGate(decision).reason }));
   }
-  const options: PrepareOptions = {
+  const prepared = prepareCandidate(retained.graph, result.edits, prepareOptions(state));
+  return candidate({ ...state, work: { ...state.work, edits: result.edits, prepared } }, at);
+}
+
+function prepareOptions(state: DreamState, extraTools: readonly string[] = []): PrepareOptions {
+  const { input } = state;
+  return {
     cycles: input.settings.cycles,
-    ...(input.settings.enforceToolCatalog && { tools: input.tools }),
+    ...(input.settings.enforceToolCatalog && { tools: [...input.tools, ...extraTools] }),
     ...(input.settings.editFilter && { filter: { observations: state.work.observations } }),
   };
-  const prepared = prepareCandidate(retained.graph, result.edits, options);
-  const s: DreamState = { ...state, work: { ...state.work, edits: result.edits, prepared } };
+}
+
+/** The prepared candidate of a round: structure, then the rejection memory, then the gates. */
+function candidate(s: DreamState, at: number): DreamStep {
+  const { input, retained } = s;
+  const prepared = s.work.prepared!;
   if (prepared.diagnostics.length > 0) return reject(s, { kind: "rejected-structure", diagnostics: prepared.diagnostics }, at);
   if (input.settings.rejections.dedupe) {
     if (s.rejections.some((r) => r.id === prepared.id)) return nextRound(addRound(s, { round: s.round, outcome: "known-rejection", revision: prepared.id }));
@@ -518,13 +576,31 @@ function refined(state: DreamState, result: Extract<DreamEvent, { kind: "refined
   return afterStructure(s, at);
 }
 
+/**
+ * The composition round's candidate (plan §7.6): the composition's edits prepared as any
+ * refiner's (its workflow node counts as a tool the catalog has), then the node bound to
+ * the staged workflow, which is the document the gates decide on.
+ */
+function composed(state: DreamState, result: Extract<DreamEvent, { kind: "composed" }>["result"], at: number): DreamStep {
+  if ("none" in result) return nextRound(addRound(state, { round: state.round, outcome: "no-composition", reason: result.none }));
+  const edited = prepareCandidate(state.retained.graph, result.edits, prepareOptions(state, [result.node]));
+  const document: CandidateDocument = { ...edited.document, nodes: edited.document.nodes.map((n) => (n.id === result.node ? { ...n, binding: result.binding } : n)) };
+  const prepared: PreparedCandidate = {
+    ...edited,
+    document,
+    id: revisionId(document),
+    ...(edited.diagnostics.length === 0 && { graph: ProceduralGraphSchema.parse(document) }),
+  };
+  return candidate({ ...state, work: { ...state.work, edits: result.edits, prepared, composition: result } }, at);
+}
+
 function afterStructure(state: DreamState, at: number): DreamStep {
   const { input, retained } = state;
   const gates = gatesOf(input);
   let s = state;
   if (gates.evidence) {
     const result = s.overlay
-      ? evidenceGate({ base: retained.graph, candidate: s.work.prepared!.graph!, overlay: s.overlay.state, minSupport: s.overlay.live.minSupport, confidence: s.overlay.live.promote.confidence })
+      ? evidenceGate({ base: retained.graph, candidate: s.work.prepared!.graph!, overlay: s.overlay.state, minSupport: s.overlay.live.minSupport, confidence: s.overlay.live.promote.confidence, ...(s.work.composition && { composition: { node: s.work.composition.node, support: s.work.composition.support } }) })
       : { pass: false, reason: "no live evidence: the preset has no overlay" };
     if (!result.pass) return rejectGate(s, "evidence", result, at);
     s = withGate(s, "evidence", result);
@@ -628,5 +704,7 @@ export function dreamStep(state: DreamState, event: DreamEvent): DreamStep {
       return nextRound(s);
     case "rebased":
       return nextRound({ ...s, overlay: { ...s.overlay!, state: foldOverlay(s.overlay!.state, event.event) } });
+    case "composed":
+      return composed(s, event.result, event.at);
   }
 }

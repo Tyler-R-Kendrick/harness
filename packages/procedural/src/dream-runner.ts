@@ -18,8 +18,11 @@
  */
 import type { LanguageModel } from "ai";
 import { z } from "zod";
+import type { ToolSpec, Workflow } from "@harness/workflows";
+import { compilePath, composeCandidate, pathCandidates, recordedRuns } from "./compose.ts";
+import type { CompositionSettings, WorkflowBinding } from "./compose.ts";
 import { DreamEventSchema, dreamStart, dreamStep } from "./dream.ts";
-import type { DreamCommand, DreamEvent, DreamInput, DreamOutcome, DreamRefineRequest, DreamState, RolloutResult } from "./dream.ts";
+import type { DreamCommand, DreamComposition, DreamEvent, DreamInput, DreamOutcome, DreamRefineRequest, DreamState, RolloutResult, Tokenizer } from "./dream.ts";
 import { DreamIdSchema, parseGraph, revisionId, RevisionIdSchema } from "./graph.ts";
 import type { DreamId, GraphId, ProceduralGraph, RevisionId, RevisionRecord } from "./graph.ts";
 import { foldAll, rebaseOverlay } from "./overlay.ts";
@@ -52,10 +55,25 @@ export interface TrajectorySource {
   select(request: { graph: GraphId; revision: RevisionId; limit: number }): Promise<readonly ScoredTrajectory[]>;
 }
 
+/**
+ * What composition needs (plan §7.6): which paths qualify, the input schemas of the tools a
+ * compiled path may call, and where a compiled workflow is staged (a `StagingLibrary`)
+ * until a revision binds it.
+ */
+export interface Composer {
+  settings: CompositionSettings;
+  toolSpecs: Readonly<Record<string, ToolSpec>>;
+  staging: { stage(workflow: Workflow): Promise<WorkflowBinding> };
+  /** Recorded trajectories under the head that compiling reads its runs from (default `DEFAULT_SELECT`). */
+  runs?: number;
+}
+
 export interface DreamPorts {
   refiner: Refiner;
   evaluator?: Evaluator;
   approver?: Approver;
+  /** With one, and `compose` in the dream settings, a dream ends with a composition round. */
+  composer?: Composer;
   trajectories: TrajectorySource;
   clock: { now(): number };
   entropy: { bytes(length: number): Uint8Array };
@@ -73,8 +91,10 @@ export interface RunDreamOptions {
   tools?: readonly string[];
   /** Tools declared free of side effects. */
   sideEffectFree?: readonly string[];
-  /** Tasks per round with an evaluator (default: the training tasks once over the rounds), or trajectories selected per round (default 20). */
+  /** Tasks per round with an evaluator, or trajectories selected per round; overrides the settings' `stride` (default: the training tasks once over the rounds, or `DEFAULT_SELECT`). */
   stride?: number;
+  /** The refiner's tokenizer, so `contextTokens` counts its tokens (default: whitespace-separated words). */
+  tokenizer?: Tokenizer;
   /** Who holds the lease; a restarted process resumes under the same holder. */
   holder?: string;
   /** The new dream's id; drawn from Entropy when omitted. */
@@ -98,6 +118,8 @@ const StartedSchema = z.strictObject({
 });
 type Started = z.output<typeof StartedSchema>;
 const EntrySchema = z.discriminatedUnion("kind", [StartedSchema, z.strictObject({ kind: z.literal("event"), dream: DreamIdSchema, event: DreamEventSchema })]);
+
+const isRejection = (r: RevisionRecord): boolean => r.decision.kind === "rejected-structure" || r.decision.kind === "rejected-gate";
 
 const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -149,15 +171,61 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       tools: options.tools ?? [],
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,
+      compose: settings.dream.compose === true && ports.composer !== undefined,
+      ...(options.tokenizer && { tokenizer: options.tokenizer }),
       ...(settings.overlay && settings.live && { overlay: { state: foldAll(started.head, events), live: settings.live } }),
     };
+  }
+
+  /**
+   * The best path that compiles, composes and is not a known rejection, staged; or why
+   * there is none. Paths come from the overlay log's observed turns, runs from recorded
+   * trajectories under the head.
+   */
+  async function compose(command: Extract<DreamCommand, { kind: "compose" }>): Promise<DreamComposition | { none: string }> {
+    const composer = ports.composer!;
+    const events = (await overlayLog.read(0)).map((e) => e.event);
+    const candidates = pathCandidates(command.graph, events, composer.settings);
+    if (candidates.length === 0) return { none: "no path has the support and score to compile" };
+    const trajectories = await ports.trajectories.select({ graph, revision: command.revision, limit: composer.runs ?? DEFAULT_SELECT });
+    const reasons: string[] = [];
+    for (const c of candidates) {
+      const route = c.path.join(" → ");
+      const compiled = compilePath(c.path, recordedRuns(command.graph, trajectories, c.path, settings.match), composer.toolSpecs);
+      if (!compiled.ok) {
+        reasons.push(`${route}: ${compiled.error}`);
+        continue;
+      }
+      const composed = composeCandidate(command.graph, c.path, compiled.workflow);
+      if (!composed.ok) {
+        reasons.push(`${route}: ${composed.error}`);
+        continue;
+      }
+      if (command.known.includes(revisionId(composed.document))) {
+        reasons.push(`${route}: its candidate was rejected before`);
+        continue;
+      }
+      const binding = await composer.staging.stage(compiled.workflow).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
+      if (binding instanceof Error) {
+        reasons.push(`${route}: ${binding.message}`);
+        continue;
+      }
+      return { path: c.path, support: c.support, node: composed.node, binding, edits: composed.edits };
+    }
+    return { none: reasons.join("; ") };
+  }
+
+  /** Put a rejection, unless the id already holds a record that is not one (an older head, an import proposal): ids are content, and put replaces. */
+  async function putRejection(record: RevisionRecord): Promise<void> {
+    const existing = await store.revisions.get(record.id);
+    if (existing === undefined || isRejection(existing)) await store.revisions.put(record);
   }
 
   async function begin(): Promise<Started | undefined> {
     const head = await store.heads.get(graph);
     if (head === undefined) return undefined;
     const train = ports.evaluator === undefined ? [] : [...(await ports.evaluator.tasks("train"))];
-    const rejections = settings.dream.rejections.dedupe ? (await store.revisions.list(graph)).filter((r) => r.decision.kind === "rejected-structure" || r.decision.kind === "rejected-gate").map((r) => r.id) : [];
+    const rejections = settings.dream.rejections.dedupe ? (await store.revisions.list(graph)).filter(isRejection).map((r) => r.id) : [];
     const started: Started = {
       kind: "started",
       dream: options.dream ?? DreamIdSchema.parse(hex(ports.entropy.bytes(8))),
@@ -165,7 +233,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       overlay: settings.overlay ? await overlayLog.head() : 0,
       rejections,
       train,
-      stride: options.stride ?? (ports.evaluator === undefined ? DEFAULT_SELECT : Math.max(1, Math.ceil(train.length / settings.dream.rounds))),
+      stride: options.stride ?? settings.dream.stride ?? (ports.evaluator === undefined ? DEFAULT_SELECT : Math.max(1, Math.ceil(train.length / settings.dream.rounds))),
     };
     await log.append([started]);
     return started;
@@ -187,15 +255,19 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
         return { kind: "approved", approved: await ports.approver!.approve({ graph, candidate: command.candidate, tools: command.tools }) };
       case "commit": {
         const { record, expected } = command;
+        // An id is its content: a candidate equal to an older revision replaces that record while it is the head.
+        const earlier = await store.revisions.get(record.id);
         await store.revisions.put(record);
         // Stryker disable next-line OptionalChaining: equivalent; a head that a compare-and-set just saw is never removed
         const ok = (await store.heads.set(graph, expected, record.id)) || (await store.heads.get(graph))?.revision === record.id;
-        if (!ok) await store.revisions.put({ ...record, decision: { kind: "rejected-gate", gate: "head", reason: "the head moved during the dream" } });
+        if (!ok) await store.revisions.put(earlier !== undefined && earlier.dream !== record.dream ? earlier : { ...record, decision: { kind: "rejected-gate", gate: "head", reason: "the head moved during the dream" } });
         return { kind: "committed", ok };
       }
       case "reject":
-        await store.revisions.put(command.record);
+        await putRejection(command.record);
         return { kind: "recorded" };
+      case "compose":
+        return { kind: "composed", result: await compose(command) };
       case "rebase": {
         const core = revisionId(command.core);
         const events = (await overlayLog.read(0)).map((e) => e.event);

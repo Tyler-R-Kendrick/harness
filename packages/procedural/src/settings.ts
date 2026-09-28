@@ -31,20 +31,26 @@ const EVALUATOR_GATES = ["evaluator-at-least-retained", "evaluator-anchored-noni
 const GateSchema = z.union([z.enum(GATES), z.templateLiteral([z.enum(EVALUATOR_GATES), "?"])]);
 export type Gate = z.output<typeof GateSchema>;
 
-const LiveSettingsSchema = z.strictObject({
-  /** Model-written overlay entries after a turn (`turn`) or a batch of turns (`batch`); off by default (plan §6.2). */
-  reflection: z.enum(["off", "turn", "batch"]),
-  /** The share of sessions shown a probationary entry. */
-  probationShare: ProbabilitySchema,
-  /** Distinct sessions needed to propose an entry, and for dream's evidence gate. */
-  minSupport: z.int().min(1),
-  /** Confidence at which exposed sessions must be non-inferior to promote an entry. */
-  promote: z.strictObject({ confidence: ProbabilitySchema }),
-  /** Support decays by half over this long without new evidence. */
-  halfLifeDays: z.number().positive(),
-  /** Entries beyond this many are displaced. */
-  maxEntries: z.int().positive(),
-});
+const LiveSettingsSchema = z
+  .strictObject({
+    /** Model-written overlay entries after a scored turn (`turn`) or a batch of scored turns (`batch`); off by default (plan §6.2). */
+    reflection: z.enum(["off", "turn", "batch"]),
+    /** Scored turns per reflection under `batch`. */
+    reflectionBatch: z.int().min(1).exactOptional(),
+    /** The share of sessions shown a probationary entry. */
+    probationShare: ProbabilitySchema,
+    /** Distinct sessions needed to propose an entry, and for dream's evidence gate. */
+    minSupport: z.int().min(1),
+    /** Confidence at which exposed sessions must be non-inferior to promote an entry. */
+    promote: z.strictObject({ confidence: ProbabilitySchema }),
+    /** Support decays by half over this long without new evidence. */
+    halfLifeDays: z.number().positive(),
+    /** Entries beyond this many are displaced. */
+    maxEntries: z.int().positive(),
+  })
+  .superRefine((l, ctx) => {
+    if (l.reflection === "batch" && l.reflectionBatch === undefined) ctx.addIssue({ code: "custom", message: "batch reflection needs a batch size", path: ["reflectionBatch"] });
+  });
 export type LiveSettings = z.output<typeof LiveSettingsSchema>;
 
 const DreamSettingsSchema = z
@@ -53,6 +59,14 @@ const DreamSettingsSchema = z
     mode: z.enum(["incremental", "onetime"]),
     /** The round budget K. */
     rounds: z.int().positive(),
+    /**
+     * The paper's S: training tasks rolled out per round with an evaluator, or recorded
+     * trajectories selected per round without one. Unset: the training tasks once over the
+     * rounds, or the runner's `DEFAULT_SELECT`.
+     */
+    stride: z.int().positive().exactOptional(),
+    /** After the rounds, one more: compose a well-trodden path into a workflow node (plan §7.6), gated as any candidate. */
+    compose: z.boolean().exactOptional(),
     /** The cycle policy c of App. B.6. */
     cycles: z.enum(["allowed", "forbidden"]),
     /** The trajectory limit L_max, in tokens. */
