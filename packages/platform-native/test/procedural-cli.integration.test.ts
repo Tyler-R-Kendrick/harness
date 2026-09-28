@@ -87,4 +87,21 @@ describe("harness-procedural CLI", () => {
     await expect(cli("dream", "g", "--model", "provider/model", "--state", join(dir, "state.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"status": "no-head"') });
     await expect(cli("dream", "g", "--model", "provider/model")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
   });
+
+  it("PX2.73 dream --procedural-eval gates on the task suite, solved by the model given; a suite this CLI cannot run is refused", async () => {
+    const { dir, cli, json } = await setup();
+    const file = join(dir, "graph.json");
+    await writeFile(file, JSON.stringify(expert));
+    await json("import", "team/search", file);
+    const tasks = async (name: string, over: Record<string, unknown> = {}) => {
+      const path = join(dir, name);
+      await writeFile(path, JSON.stringify({ description: "Find release notes.", scorer: "exact", tasks: [{ id: "v0", prompt: "Where are the notes?", expected: "here", split: "validation" }], ...over }));
+      return path;
+    };
+    // No gateway credential: the solver fails on the suite's first task, which ends the dream.
+    await expect(cli("dream", "team/search", "--model", "provider/model", "--procedural-eval", await tasks("a.json"))).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("task v0 failed: ") });
+    await expect(cli("dream", "team/search", "--model", "provider/model", "--procedural-eval", await tasks("b.json", { scorer: "judge" }))).rejects.toMatchObject({ code: 2, stderr: "the task suite's judge scorer needs the catalog's judge: leave out --model to use the ensemble\n" });
+    await expect(cli("dream", "team/search", "--model", "provider/model", "--procedural-eval", await tasks("c.json", { tools: [{ name: "lookup" }] }))).rejects.toMatchObject({ code: 2, stderr: expect.stringContaining("the task suite names tools, and harness-procedural offers none") });
+    await expect(cli("dream", "team/search", "--model", "provider/model", "--procedural-eval", await tasks("d.json", { tasks: [] }))).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/d\.json: invalid task suite/) });
+  });
 });

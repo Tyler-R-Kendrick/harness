@@ -1164,6 +1164,11 @@ evaluator"; the names above keep their meaning.
   `procedural.dream` and the schedule alike. It refuses to start (exit 2) without
   `--procedural`, with a file that does not parse, with a judge-scored suite and no
   cognitive core, or with a suite naming tools and no workflow library.
+  `harness-procedural dream <graph> --procedural-eval <tasks.json>` does the same from
+  the CLI: the solver is the `--model` gateway model, or else the ensemble's `chat`
+  model, and the judge the catalog's; it refuses (exit 2) a malformed file, a
+  judge-scored suite with `--model` (no ensemble to judge), and a suite naming tools
+  (the CLI has no workflow library).
 
 ## Open issues
 
