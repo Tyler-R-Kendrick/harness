@@ -1097,6 +1097,13 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   the arguments; a node bound to the tool without a predicate; a node whose id is the
   tool's name. A node whose predicate rejects the call is never matched by its binding.
   `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
+  `Preset.match` accepts `"state-tracker"`; both shipped presets stay `exact`.
+- **The step hook as a state tracker.** `proceduralStep` observes the last action with its
+  call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
+  string) of the call's own result (the `tool-result` with its `toolCallId` in a later
+  tool message, `json` or `error-json` output). A tool, an MCP server (whose
+  `CallToolResult._meta` is where the AI SDK puts it) or an environment wrapping tools
+  declares the state this way. The step record's `action` is still the tool name.
 
 ## Open issues
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ModelMessage, SystemModelMessage } from "ai";
+import type { ModelMessage, SystemModelMessage, ToolResultPart } from "ai";
 import { HARNESS } from "@harness/cognitive";
 import { ManualClock, promptText, SeededEntropy } from "@harness/testkit";
 import {
@@ -294,6 +294,49 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(actions).toContain("Immediate Transition Options (Hop 1):\n- Transition: [Retrieve] → [Scan_Index]");
     expect(actions).toContain("- Transition: [Decide_Capital] → [Answer_Lookup]");
     expect(actions).toContain("Subsequent Horizon (Hop 2):\n- Transition: [Answer_Lookup] → [End]");
+  });
+
+  describe("state-tracker localization", () => {
+    const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+    const tracked = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "Bash" } },
+        { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "Bash", arguments: tests } },
+        { id: "Review", type: "REASONING", description: "Read the failures." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Review"), edge("Review", "End")],
+    });
+    if (!tracked.ok) throw new Error("fixture");
+    const bash = (command: string): ModelMessage => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "b1", toolName: "Bash", input: { command } }] });
+    const bashResult = (output: ToolResultPart["output"], toolCallId = "b1"): ModelMessage => ({ role: "tool", content: [{ type: "tool-result", toolCallId, toolName: "Bash", output }] });
+    const declaring = (node: string | number): ToolResultPart["output"] => ({ type: "json", value: { stdout: "ok", _meta: { harness: { procedural: { node } } } } });
+    const nodeAt = async (preset: string, messages: ModelMessage[]) => {
+      const s = await setup("custom", { settings: withPreset(preset === "harness" ? "harness" : "paper", preset === "paper" || preset === "harness" ? {} : { match: preset }) });
+      await seed(s.store, tracked.graph);
+      await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages]));
+      return s.records[0]!.node;
+    };
+
+    it("PW1.65 a state-tracker preset localizes a coarse tool's call by its arguments, where exact takes the bare binding", async () => {
+      expect(await nodeAt("state-tracker", [bash("npm test -w procedural"), bashResult({ type: "text", value: "ok" })])).toBe("Run_Tests");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "text", value: "ok" })])).toBe("Shell");
+      expect(await nodeAt("paper", [bash("npm test -w procedural"), bashResult({ type: "text", value: "ok" })])).toBe("Shell");
+    });
+
+    it("PW1.66 a node the call's tool result declares under _meta.harness.procedural.node is the active node, in a JSON result, error or not", async () => {
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review"))])).toBe("Review");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "error-json", value: { _meta: { harness: { procedural: { node: "Review" } } } } })])).toBe("Review");
+      // Only the last call's own result declares; a declaration that is not a string, or a result of another call, says nothing.
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review"), "other")])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring(7))])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "json", value: ["Review"] })])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls")])).toBe("Shell");
+      // The paper's exact Match ignores the declaration.
+      expect(await nodeAt("paper", [bash("ls"), bashResult(declaring("Review"))])).toBe("Shell");
+    });
   });
 
   it("PW1.59 a message tagged by another provider is not an advisory", async () => {

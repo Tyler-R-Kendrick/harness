@@ -16,6 +16,7 @@ import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, Rev
 import type { GraphId } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
 import { match, neighborhood } from "./locate.ts";
+import type { ObservedAction } from "./locate.ts";
 import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
@@ -134,20 +135,39 @@ function scoped(messages: readonly ModelMessage[], boundary: Preset["turnBoundar
   return own.slice(from);
 }
 
-/** The last action: the last tool call of the last assistant message that has one, with the rest of its batch. */
-function lastCall(messages: readonly ModelMessage[]): { name: string; others: string[] } | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.role !== "assistant" || typeof m.content === "string") continue;
-    const names = m.content.flatMap((p) => (p.type === "tool-call" ? [p.toolName] : []));
-    if (names.length > 0) return { name: names.at(-1)!, others: names.slice(0, -1) };
-  }
-  return undefined;
-}
 
 const outputText = (output: ToolResultPart["output"]): string => (output.type === "text" || output.type === "error-text" ? output.value : canonicalJson(output.type === "json" || output.type === "error-json" ? output.value : output));
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const field = (v: unknown, key: string): unknown => (isRecord(v) ? v[key] : undefined);
+
+/** The node a tool's result declares active: `_meta.harness.procedural.node` of its JSON value. */
+function declaredBy(output: ToolResultPart["output"]): string | undefined {
+  if (output.type !== "json" && output.type !== "error-json") return undefined;
+  const node = field(field(field(field(output.value, "_meta"), "harness"), "procedural"), "node");
+  return typeof node === "string" ? node : undefined;
+}
+
+/**
+ * The last action: the last tool call of the last assistant message that has one, with
+ * the rest of its batch, its arguments and the node its result (in a later tool message)
+ * declared.
+ */
+function lastCall(messages: readonly ModelMessage[]): { action: ObservedAction; others: string[] } | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    if (m.role !== "assistant" || typeof m.content === "string") continue;
+    const calls = m.content.flatMap((p) => (p.type === "tool-call" ? [p] : []));
+    const last = calls.at(-1);
+    if (last === undefined) continue;
+    const results = messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? r.content : []));
+    const own = results.find((p) => p.type === "tool-result" && p.toolCallId === last.toolCallId);
+    const declared = own?.type === "tool-result" ? declaredBy(own.output) : undefined;
+    const action: ObservedAction = { name: last.toolName, arguments: last.input, ...(declared === undefined ? {} : { declared }) };
+    return { action, others: calls.slice(0, -1).map((c) => c.toolName) };
+  }
+  return undefined;
+}
 
 /** Messages as learning's steps, for the trajectory window. */
 function stepsOf(messages: readonly ModelMessage[]): Step[] {
@@ -231,10 +251,11 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   };
 
   /** Guidance for the step at `action`, reported as a step record; the delivered text is returned. */
-  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, action: string | undefined, others: string[], model: LanguageModel): Promise<string> => {
+  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel): Promise<string> => {
     const { messages, tools } = scope;
     const view = session.view.effective;
-    const node = match(action, view, preset.match);
+    const action = observed?.name;
+    const node = match(observed, view, preset.match);
     const active = node === undefined ? undefined : nodeById(view, node);
     const inert = tools !== undefined && active?.type === "ACTION" && !tools.includes(active.id) && !(active.binding !== undefined && tools.includes(active.binding.name));
     const around = node === undefined ? undefined : neighborhood(view, node, HOPS, preset.hopUnit);
@@ -298,7 +319,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const session = await enter(input, (known) => (input.turnId === undefined ? input.stepNumber > 0 : known.turnId === input.turnId));
       if (session.view === undefined) return undefined;
       const call = lastCall(scoped(input.messages, preset.turnBoundary));
-      const block = await advise(input, { ...session, view: session.view }, call?.name, call?.others ?? [], deps.model ?? input.model);
+      const block = await advise(input, { ...session, view: session.view }, call?.action, call?.others ?? [], deps.model ?? input.model);
       if (preset.delivery === "system") return { instructions: withGuidance(input.initialInstructions, block) };
       const advisory: ModelMessage = { role: "user", content: block, providerOptions: { [HARNESS]: ADVISORY } };
       return { messages: [...input.messages.filter((m) => !isAdvisory(m)), advisory] };
@@ -308,7 +329,8 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const session = await enter(input, () => false);
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");
-      return advise(input, { ...session, view: session.view }, preset.turnBoundary === "start" ? undefined : input.lastAction, [], deps.model);
+      const last = preset.turnBoundary === "start" || input.lastAction === undefined ? undefined : { name: input.lastAction };
+      return advise(input, { ...session, view: session.view }, last, [], deps.model);
     },
   };
 }

@@ -157,6 +157,12 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["presets", "paper", "hopUnit"], "node")).toThrow(/presets\.paper\.hopUnit/);
   });
 
+  it("PG1.51 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
+    expect(presetOf(settings(), "paper").match).toBe("exact");
+    expect(presetOf(settings(), "harness").match).toBe("exact");
+    expect(presetOf(edit(["presets", "harness", "match"], "state-tracker")(), "harness").match).toBe("state-tracker");
+  });
+
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
     const s = structuredClone(file) as { presets: Record<string, unknown> };
     s.presets["careful"] = { ...(s.presets["harness"] as object), match: "case-insensitive", guidanceCache: false };

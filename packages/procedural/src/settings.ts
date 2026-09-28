@@ -99,8 +99,8 @@ const PresetSchema = z
   .strictObject({
     /** Learn a dynamic layer from live traffic. */
     overlay: z.boolean(),
-    /** `exact` is the paper's written Match. */
-    match: z.enum(["exact", "case-insensitive"]),
+    /** `exact` is the paper's written Match; `state-tracker` also reads a node the tool's result declares and bindings' argument predicates (plan §5.2). */
+    match: z.enum(["exact", "case-insensitive", "state-tracker"]),
     /** `start` resets to Start at each turn (the paper); `carry` keeps the previous turn's last action. */
     turnBoundary: z.enum(["start", "carry"]),
     /** `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
