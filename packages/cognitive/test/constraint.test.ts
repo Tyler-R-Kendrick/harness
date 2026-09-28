@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ConstraintSchema, readTemplate } from "@harness/cognitive";
+import { ConstraintSchema, fillTemplate, readTemplate } from "@harness/cognitive";
 import type { Constraint } from "@harness/cognitive";
 
 const card: Constraint = {
@@ -27,4 +27,16 @@ describe("constraints on generation", () => {
     expect(() => readTemplate(card, "Name: Ada\nAge: 36\nextra")).toThrow("the output goes on after the template");
   });
 
+
+  it("CN1.3 a template filled with its holes' values is its text, which reads back into the same values; a missing or ill-fitting value is refused", () => {
+    const template = ConstraintSchema.parse(card) as Extract<Constraint, { type: "template" }>;
+    const text = fillTemplate(template, { name: "Ada Lovelace", age: "36", unused: "x" });
+    expect(text).toBe("Name: Ada Lovelace\nAge: 36\n");
+    expect(readTemplate(template, text)).toEqual({ name: "Ada Lovelace", age: "36" });
+    expect(() => fillTemplate(template, { name: "Ada" })).toThrow("hole age has no value");
+    expect(() => fillTemplate(template, { name: "Ada", age: "old" })).toThrow("hole age does not match /[0-9]+/: old");
+    expect(fillTemplate({ type: "template", parts: [{ hole: "all" }] }, { all: "" })).toBe("");
+    // A hole may be empty: the text after it follows at once.
+    expect(readTemplate(template, "Name: \nAge: 7\n")).toEqual({ name: "", age: "7" });
+  });
 });

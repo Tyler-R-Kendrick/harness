@@ -1,0 +1,48 @@
+/**
+ * What the template engine is tuned by, as data (`data/templates.json`, whose `$schema`
+ * is generated from this parser): when a decision is taken, how the lexical decision
+ * model scores, when a template retires, and what generators are asked.
+ */
+import { z } from "zod";
+
+const Prompt = z.string().min(1);
+
+const EngineSettingsSchema = z.strictObject({
+  $schema: z.string().optional(),
+  decision: z.strictObject({
+    /** The probability the chosen template needs before it answers. */
+    accept: z.number().gt(0).lt(1),
+    /** Options per question the decision model takes (none included); more templates are narrowed lexically first. */
+    maxOptions: z.number().int().min(2),
+    question: Prompt,
+    /** The option that says no template answers. */
+    none: Prompt,
+  }),
+  lexical: z.strictObject({
+    /** The similarity the `none` option scores, so a request unlike every template is none. */
+    none: z.number().min(0).max(1),
+    /** Softmax temperature over similarities. */
+    temperature: z.number().gt(0),
+    stopwords: z.array(z.string().min(1)),
+  }),
+  curation: z.strictObject({
+    /** Harmful minus helpful votes that retire a template. */
+    retireMargin: z.number().int().min(1),
+  }),
+  generation: z.strictObject({
+    /** Writing a new template: its format, and the facts a hole can take its value from. */
+    write: Prompt,
+    /** Filling a template's text holes for one request. */
+    fill: Prompt,
+    /** Rewriting a template from feedback. */
+    refine: Prompt,
+  }),
+});
+
+export type EngineSettings = z.output<typeof EngineSettingsSchema>;
+
+export function parseEngineSettings(value: unknown): EngineSettings {
+  return EngineSettingsSchema.parse(value);
+}
+
+export const engineSettingsJsonSchema = (): object => z.toJSONSchema(EngineSettingsSchema, { io: "input" });
