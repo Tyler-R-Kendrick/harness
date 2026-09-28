@@ -3,35 +3,26 @@ import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
 import type { ConversationStore } from "./agent.ts";
 
-const stored = z.object({ version: z.literal(1), sessions: z.record(z.string(), z.array(z.unknown())) });
+const stored = z.object({ version: z.literal(1), messages: z.array(z.unknown()) });
 
 /**
- * Every session's conversation in one record of snapshot storage (a file on the native
- * host, IndexedDB in a browser), as plain data: `{ version: 1, sessions: { [id]: messages } }`.
- * Saves run one after another, each storing every session as it is then. Something else
- * in the record is no conversations; a failed load is tried again on the next one.
+ * Each session's conversation in a snapshot-storage record of its own (a file per session
+ * on the native host, an IndexedDB key per session in a browser), as plain data:
+ * `{ version: 1, messages }`. A turn writes only its session's record. Saves of a session
+ * run in the order made, and one that fails does not stop the next; something else in a
+ * record is no conversation.
  */
-export function storedConversations(storage: SnapshotStorage): ConversationStore {
-  let sessions: Promise<Record<string, readonly ModelMessage[]>> | undefined;
-  const loaded = () =>
-    (sessions ??= storage.load().then(
-      (value) => {
-        const parsed = stored.safeParse(value);
-        return parsed.success ? (parsed.data.sessions as Record<string, readonly ModelMessage[]>) : {};
-      },
-      (e: unknown) => {
-        sessions = undefined;
-        throw e;
-      },
-    ));
-  let saving = Promise.resolve();
+export function storedConversations(storageFor: (sessionId: string) => SnapshotStorage): ConversationStore {
+  const saving = new Map<string, Promise<void>>();
   return {
-    load: async (sessionId) => (await loaded())[sessionId],
-    save: async (sessionId, messages) => {
-      const all = await loaded();
-      all[sessionId] = messages;
-      saving = saving.then(() => storage.save({ version: 1, sessions: all }));
-      await saving;
+    load: async (sessionId) => {
+      const parsed = stored.safeParse(await storageFor(sessionId).load());
+      return parsed.success ? (parsed.data.messages as ModelMessage[]) : undefined;
+    },
+    save: (sessionId, messages) => {
+      const next = (saving.get(sessionId) ?? Promise.resolve()).catch(() => undefined).then(() => storageFor(sessionId).save({ version: 1, messages }));
+      saving.set(sessionId, next);
+      return next;
     },
   };
 }

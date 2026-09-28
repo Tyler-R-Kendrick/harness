@@ -96,6 +96,7 @@ export class AgentWorker implements Worker {
     const messages: ModelMessage[] = [...past, { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
+    let finished: readonly ModelMessage[] | undefined;
     try {
       for (;;) {
         const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
@@ -170,7 +171,7 @@ export class AgentWorker implements Worker {
         messages.push({ role: "tool", content: responses });
       }
       this.#history.set(command.sessionId, messages);
-      if (loaded?.ok) await this.#conversations?.save(command.sessionId, messages).catch(() => undefined);
+      finished = messages;
       // Remembering is best effort: a turn never fails because of it.
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {
@@ -184,6 +185,8 @@ export class AgentWorker implements Worker {
       this.#running.delete(key);
     }
     emit({ type: "end", ...base, stopReason });
+    // The turn has ended for everyone; its conversation is saved after (best effort).
+    if (finished && loaded?.ok) await this.#conversations?.save(command.sessionId, finished).catch(() => undefined);
   }
 
   cancel(sessionId: string, turnId: string): void {

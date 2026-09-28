@@ -102,6 +102,22 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(saved.get("s1")).toHaveLength(6);
   });
 
+  it("AW2.6 the turn ends before its conversation is saved: a slow store does not hold the turn's end back", async () => {
+    let release: () => void = () => {};
+    const saving = new Promise<void>((r) => (release = r));
+    const conversations = { load: async () => undefined, save: () => saving };
+    const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations }), [{ type: "text", text: "hi" }]);
+    await new Promise<void>((resolve) => {
+      const wait = setInterval(() => end(events)?.type === "end" && (clearInterval(wait), resolve()), 1);
+    });
+    let finished = false;
+    void done.then(() => (finished = true));
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
+    await done;
+  });
+
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {
     const model = scripted([...text("text"), finish()]);
     const vision = scripted([...text("a cat"), finish()]);
