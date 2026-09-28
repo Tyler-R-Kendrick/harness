@@ -107,6 +107,51 @@ interrupted run resumes where it stopped. Session agents get the library's workf
 harness-workflow run path/to/skill/workflow.json --run first-try --input '{"env":"staging"}'
 ```
 
+### Scripted dialogue
+
+Call centers answer most calls from scripts and transfer the rest to a person. The
+harness does the same with its model (ADR 0012): a dialogue in front of the session's
+model answers the steps its scripts cover, with no inference or only for a script's
+holes, and passes the rest to the model. Scripts are fixed text with holes filled from
+what the user said (slots), from the tool result a step reads back, or by the model under
+a template constraint. They are matched by pattern, by meaning or by the tool router,
+fill missing slots by asking (VoiceXML-style forms, handing over to the model after the
+last prompt), and can be authored as a script book. The dialogue also builds them itself:
+steps the model answered are clustered and aligned into templates, or drafted (with
+follow-ups for the next turn), and a built script answers only after the model's own
+replies, in sessions other than the ones it was built from, have agreed with it in shadow.
+Steps the model acts on (it calls tools) are never scripted, and active built scripts are
+audited in shadow now and then, so one that starts to mislead is retired.
+
+The dialogue fronts any worker: with `--worker model` or `ensemble` it sits in front of the
+model; with an external harness (Claude Code, Codex) or the echo worker it sits in front
+of the worker, and learns from its replies. What it learns in a project (a session's
+working directory) answers only there. Clients manage it over ACP (`dialogue.status`,
+`.list`, `.put`, `.feedback`, `.import`), plugins get its `dialogue.*` hook events, and the
+browser host has it too (`browserDialogue`).
+
+Longer dialogues (an IVR call flow, a whole chatbot) are **flows**: workflows that talk
+through `tools.say` and `tools.hear`, run durably by the workflow host, so a flow in
+progress survives a restart. A script can start one, and a book can name an entry flow
+every session starts in. Flows live in the workflow library (`--workflows`) or in
+`--dialogue-flows` (by default next to the book).
+
+Dialogues can be authored in the standards call centers and chatbots already use, with
+their own tools, or brought from a bot that exists: **VoiceXML 2.1** with SRGS grammars
+(XML or ABNF), and **AIML 2.0** with its sets, maps and properties (ADR 0013). The
+harness runs an imported document a turn at a time as a flow, so its state is durable; a
+turn it cannot answer (a nomatch, the bot's catch-all, a `<transfer>`) goes to the model,
+and `<data src="tool:...">` calls the harness's tools and workflows.
+
+```sh
+node packages/platform-native/src/dialogue-cli.ts import ./my-ivr --book ~/.harness/dialogue.json --name front-desk --pattern "talk to the front desk"
+node packages/platform-native/src/dialogue-cli.ts import ./alice --book ~/.harness/dialogue.json --name alice --entry
+```
+
+```sh
+node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
+```
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
@@ -288,12 +333,13 @@ reported as `blocked`, never as a pass.
 | `packages/runtime` | The daemon runtime every host wraps: worker dispatch, cognitive work, capability mirroring, snapshot saves (pure) |
 | `packages/cognitive` | The ensemble as an AI SDK provider, task taxonomy, catalog, selection, tool cascade, statistics (pure) |
 | `packages/testkit` | Deterministic ports, AI SDK model fakes, daemon driver, contract suites |
-| `packages/workers` | Echo worker, and a worker that runs any AI SDK agent or harness (portable) |
+| `packages/workers` | Echo worker, a worker that runs any AI SDK agent or harness, and the dialogue as model middleware (portable) |
 | `packages/client` | The daemon as an AI SDK harness (`daemonHarness`), for any `HarnessAgent` (portable) |
 | `packages/platform-native` | Node host: stdio and socket bindings, atomic file storage, CLI |
 | `packages/platform-browser` | Browser host: MessagePort and extension-port bindings, IndexedDB storage, shared-worker serving, the ensemble with a Cache API byte cache, durable workflows on QuickJS |
 | `packages/evals` | eval runner (the best reachable judge from the catalog), suites, CLI |
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
+| `packages/dialogue` | Scripted dialogue: scripts answer turns without inference, IVR-style forms, scripts induced and drafted from the model's answers and verified in shadow (pure) |
 | `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |

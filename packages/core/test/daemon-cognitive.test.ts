@@ -22,7 +22,8 @@ describe("Daemon: cognitive core over ACP", () => {
     d.send("c1", { jsonrpc: "2.0", id: 7, method: invoke, params: { op: "embed", input: { inputs: [{ kind: "query", text: "hi" }] } } });
     expect(d.inbox("c1")).toEqual([]);
     const [work] = d.cognitive();
-    expect(work).toEqual({ requestId: expect.any(String), op: "embed", task: "text-embedding", input: { inputs: [{ kind: "query", text: "hi" }] } });
+    // The work names its caller, so an extension can tell who asks (a plugin, a person's client).
+    expect(work).toEqual({ requestId: expect.any(String), op: "embed", task: "text-embedding", input: { inputs: [{ kind: "query", text: "hi" }] }, caller: ALICE });
     d.cognitiveResult(work!.requestId, { ok: true, value: { vectors: [[1, 0]] } });
     expect(d.inbox("c1")).toEqual([{ jsonrpc: "2.0", id: 7, result: { vectors: [[1, 0]] } }]);
   });
@@ -142,7 +143,7 @@ describe("Daemon: cognitive core over ACP", () => {
     expect(d.request("c1", invoke, { op: "memory.recall", input: {} }).error).toMatchObject({ code: -32005, message: "no extension memory is installed on this host" });
     daemon.offerPlatformCapability({ name: "memory", version: 1, trust: "trusted" });
     d.send("c1", { jsonrpc: "2.0", id: 9, method: invoke, params: { op: "memory.recall", input: { query: "x" } } });
-    expect(d.cognitive()).toEqual([{ requestId: expect.any(String), op: "memory.recall", task: undefined, input: { query: "x" } }]);
+    expect(d.cognitive()).toEqual([{ requestId: expect.any(String), op: "memory.recall", task: undefined, input: { query: "x" }, caller: ALICE }]);
     for (const op of ["memory", "memory.", ".recall", "memory.recall.now", "Memory.Recall"]) expect(d.request("c1", invoke, { op, input: {} }).error, op).toMatchObject({ code: -32602 });
   });
 });

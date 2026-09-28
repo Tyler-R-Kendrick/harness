@@ -1,0 +1,28 @@
+{
+  "$schema": "../../data/book.schema.json",
+  "scripts": [
+    {
+      "id": "order-status",
+      "intent": "The customer asks where their order is",
+      "patterns": ["where(?: is|'s) (?:my )?order (?<order_id>\\d+)"],
+      "exemplars": ["has my order shipped yet", "track my package"],
+      "slots": {
+        "order_id": { "description": "The order number", "pattern": "\\d+", "prompts": ["What is your order number?", "Sorry, I need the order number: the digits on your receipt."] }
+      },
+      "reply": ["Let me look up order ", { "slot": "order_id" }, "."]
+    },
+    {
+      "id": "tracking",
+      "intent": "Read back a tracking result",
+      "result": { "tool": "track_order" },
+      "reply": ["Order ", { "input": ["id"] }, " is ", { "output": ["status"] }, " and arrives ", { "output": ["eta", "day"] }, "."]
+    },
+    {
+      "id": "confirm-cancel",
+      "intent": "The customer confirms a cancellation",
+      "context": "order-status",
+      "patterns": ["yes(?:,? please)?"],
+      "reply": ["Done: ", { "generate": "summary", "constraint": { "type": "regex", "pattern": "[^\\n]{1,80}" } }, "."]
+    }
+  ]
+}

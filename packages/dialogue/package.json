@@ -1,0 +1,21 @@
+{
+  "name": "@harness/dialogue",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Scripted dialogue: templates the harness answers turns from without inference (or with inference only for their holes), authored or built from the turns a model answered, verified in shadow before they answer anyone. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@harness/cognitive": "0.0.0",
+    "ai": "7.0.114",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0",
+    "@harness/workflows": "0.0.0"
+  }
+}

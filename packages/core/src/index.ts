@@ -18,7 +18,7 @@ export type { Attempt, AttemptStatus, EffectRecord, EffectStatus, Intent, Ledger
 export { CapabilityRegistry } from "./capabilities.ts";
 export type { CapabilityError, CapabilityEvent, CapabilityLease, CapabilityOffer, Criteria, Provenance, Trust } from "./capabilities.ts";
 export { Deduper, HookBus } from "./hooks.ts";
-export type { Filter, HookError, HookEvent, PublishInput } from "./hooks.ts";
+export type { Filter, HookError, HookEvent, HostPublishInput, PublishInput } from "./hooks.ts";
 export { TaskGraph } from "./task-graph.ts";
 export type { DependencyKind, EdgeKind, GraphError, Join, NodeSpec, NodeStatus, TaskEdgeData, TaskGraphData, TaskNodeData } from "./task-graph.ts";
 export { COGNITIVE_OPS, Daemon } from "./daemon.ts";

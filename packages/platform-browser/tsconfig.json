@@ -38,6 +38,12 @@
       "path": "../workflows"
     },
     {
+      "path": "../dialogue"
+    },
+    {
+      "path": "../dialogue-standards"
+    },
+    {
       "path": "../procedural"
     }
   ]

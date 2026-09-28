@@ -55,6 +55,12 @@
       "path": "../runtime"
     },
     {
+      "path": "../dialogue"
+    },
+    {
+      "path": "../dialogue-standards"
+    },
+    {
       "path": "../procedural"
     }
   ]

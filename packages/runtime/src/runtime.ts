@@ -1,5 +1,5 @@
 import { Daemon, newId } from "@harness/core";
-import type { AgentInfo, Clock, CognitiveWork, Entropy, HookError, HookEvent, Identity, Output, PublishInput, Result, SnapshotStorage, WorkerCommand } from "@harness/core";
+import type { AgentInfo, Clock, CognitiveWork, Entropy, HookError, HookEvent, Identity, Output, HostPublishInput, Result, SnapshotStorage, WorkerCommand } from "@harness/core";
 import { invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
 import type { Worker } from "@harness/workers";
@@ -119,10 +119,10 @@ export class DaemonRuntime {
   }
 
   /**
-   * Publish a host event on the hook bus (the core's host publish API: the host picks the
-   * `source`, peers never do), and save: hook events are part of the snapshot.
+   * Publish a host event on the hook bus (see Daemon.publish: the host picks the `source`,
+   * peers never do), and save: hook events are part of the snapshot.
    */
-  publish(input: PublishInput): Result<HookEvent, HookError> {
+  publish(input: HostPublishInput): Result<HookEvent, HookError> {
     const published = this.daemon.publish(input);
     if (published.ok) this.#persist();
     return published;
@@ -173,7 +173,7 @@ export class DaemonRuntime {
   /** Run cognitive work on the ensemble and report the result to the daemon. */
   #think(work: CognitiveWork): void {
     const ensemble = this.#ensemble;
-    const job = (ensemble ? invokeCognitive(ensemble, work.op, work.input) : Promise.reject(new Error(this.#off)))
+    const job = (ensemble ? invokeCognitive(ensemble, work.op, work.input, work.caller) : Promise.reject(new Error(this.#off)))
       .then(
         (value) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: true, value })),
         (e: unknown) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: false, message: e instanceof Error ? e.message : String(e) })),

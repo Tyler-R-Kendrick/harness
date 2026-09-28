@@ -1,0 +1,71 @@
+{
+  "$schema": "./settings.schema.json",
+  "match": {
+    "similar": 0.85,
+    "route": 0.9,
+    "maxLength": 500
+  },
+  "induce": {
+    "support": 2,
+    "cluster": 0.8,
+    "determined": 0.6,
+    "holes": 3,
+    "keep": 8,
+    "sessions": 2,
+    "clusters": 256,
+    "words": 8,
+    "valueLength": 100
+  },
+  "promote": {
+    "fits": 3,
+    "sessions": 2,
+    "audit": 20,
+    "sessionsKept": 32,
+    "retireMargin": 2,
+    "judge": 0.8,
+    "question": "Is `candidate` as correct, complete and fitting a reply to `request` as `reply` is, saying nothing that `reply` contradicts?"
+  },
+  "generate": {
+    "instruction": "Reply with exactly the text below, word for word, writing only the parts in {braces} yourself: replace each {name} with a short phrase that fits there, and add nothing before or after."
+  },
+  "handoff": {
+    "heading": "Earlier in this conversation, answered for you (for context; do not repeat it):",
+    "turns": 10,
+    "said": "Already said in reply to this, before you (go on from it; do not repeat it):"
+  },
+  "confirm": {
+    "yes": [
+      "yes",
+      "yeah",
+      "yep",
+      "yup",
+      "sure",
+      "correct",
+      "right",
+      "that's right",
+      "that is right",
+      "yes please",
+      "ok",
+      "okay",
+      "exactly",
+      "absolutely"
+    ],
+    "no": [
+      "no",
+      "nope",
+      "nah",
+      "wrong",
+      "incorrect",
+      "no thanks",
+      "not right",
+      "that's wrong",
+      "that is wrong"
+    ]
+  },
+  "draft": {
+    "system": "You turn exchanges between a user and an assistant into a reusable reply script, so that later requests of the same kind are answered from the script without a model. You are given `exchanges` (requests of one kind: what the user said and what the assistant replied) and `followUps`, a number. Answer with one JSON object and nothing else: {\"intent\": what the user wants, in one sentence; \"exemplars\": a few ways a user might say it, writing a slot's value as {name}; \"slots\": one {\"name\": snake_case, \"description\", \"pattern\": a regular expression matching the value (optional), \"prompt\": a question asking the user for it (optional)} for each value the user supplies that the reply repeats; \"reply\": the reply as parts in order, each {\"text\": fixed text}, {\"slot\": name} where the reply repeats a slot's value, or {\"generate\": snake_case name} for a short part that differs between replies and cannot be fixed; \"followUps\": up to `followUps` scripts for what the user is most likely to say next, each {\"intent\", \"exemplars\", \"slots\", \"reply\"}}. Copy the fixed text exactly from one of the replies: the script must reproduce it. Keep generated parts few and short, and never put secrets, credentials or personal data in fixed text or exemplars.",
+    "maxTokens": 1024,
+    "followUps": 3
+  },
+  "sessions": 1024
+}

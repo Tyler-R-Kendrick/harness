@@ -27,7 +27,7 @@ import { CapabilityRegistry } from "./capabilities.ts";
 import type { CapabilityOffer, Trust } from "./capabilities.ts";
 import { FlowController } from "./flow.ts";
 import { HookBus } from "./hooks.ts";
-import type { HookError, HookEvent, PublishInput } from "./hooks.ts";
+import type { HookError, HookEvent, HostPublishInput } from "./hooks.ts";
 import { newId } from "./ids.ts";
 import { InputLease } from "./input-lease.ts";
 import type { Clock, Entropy } from "./ports.ts";
@@ -129,6 +129,8 @@ export interface CognitiveWork {
   /** The task whose `cognitive.<task>` capability gated this work; undefined for status. */
   readonly task: string | undefined;
   readonly input: unknown;
+  /** Who asked: extensions may treat callers differently (a plugin, a person's client). */
+  readonly caller: Identity;
 }
 
 export type CognitiveResult = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string };
@@ -399,10 +401,13 @@ export class Daemon {
 
   /**
    * Publish a hook event on the host's behalf, e.g. a host extension announcing its own
-   * work. The host names the source; peers have no way to publish or to choose one.
+   * work or a dialogue's script promoted. The host names the source (`host` unless it says
+   * otherwise); peers have no way to publish or to choose one. Its type is dotted
+   * lower-case names (`area.thing.happened`).
    */
-  publish(input: PublishInput): Result<HookEvent, HookError> {
-    return this.#hooks.publish(input, this.#now());
+  publish(input: HostPublishInput): Result<HookEvent, HookError> {
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(input.type)) throw new Error(`an event type is dotted lower-case names, not ${JSON.stringify(input.type)}`);
+    return this.#hooks.publish({ ...input, source: input.source ?? "host" }, this.#now());
   }
 
   /** The id of every session the daemon holds, in creation order, for host-side reads such as `readLog`. */
@@ -609,7 +614,7 @@ export class Daemon {
   #cognitiveWork(conn: Connection, id: JsonRpcId, op: CognitiveOp, task: string | undefined, input: unknown): typeof DEFER {
     const requestId = `cog-${++this.#cognitiveSeq}`;
     this.#cognitive.set(requestId, { connectionId: conn.id, id });
-    this.#out.push({ kind: "cognitive", work: { requestId, op, task, input } });
+    this.#out.push({ kind: "cognitive", work: { requestId, op, task, input, caller: conn.identity } });
     return DEFER;
   }
 

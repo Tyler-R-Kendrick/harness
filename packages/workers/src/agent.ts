@@ -11,7 +11,7 @@ export interface TurnOptions {
   readonly sessionId: string;
   /** The daemon turn: an approval round restarts the agent's stream within the same turn. */
   readonly turnId?: string;
-  /** The session's working directory. */
+  /** The session's working directory: the scope what the turn teaches belongs to. */
   readonly cwd?: string;
   /** The session's opaque `_meta.harness.session` from `session/new`, when it had one. */
   readonly sessionMeta?: Readonly<Record<string, unknown>>;

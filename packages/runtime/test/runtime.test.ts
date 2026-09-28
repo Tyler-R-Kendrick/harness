@@ -236,6 +236,21 @@ describe("DaemonRuntime", () => {
     expect(JSON.stringify(saves.at(-1))).toContain("end_turn");
   });
 
+  it("RT2.6 an event the host publishes reaches subscribed plugins, and is saved with the state", async () => {
+    const saves: unknown[] = [];
+    const storage: SnapshotStorage = { load: async () => undefined, save: async (s) => void saves.push(JSON.parse(JSON.stringify(s))) };
+    const { rt } = await runtime({ storage });
+    const received: Message[] = [];
+    const plugin = rt.connect({ principal: "audit", kind: "plugin" }, (m) => received.push(m as Message));
+    plugin.receive({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1 } });
+    plugin.receive({ jsonrpc: "2.0", id: 2, method: "_harness/hooks/subscribe", params: { types: ["dialogue.*"] } });
+    rt.publish({ type: "dialogue.script.promoted", payload: { id: "s1" } });
+    plugin.receive({ jsonrpc: "2.0", id: 3, method: "_harness/hooks/poll", params: {} });
+    expect(received.find((m) => m["id"] === 3)).toMatchObject({ result: { events: [{ type: "dialogue.script.promoted", source: "host", payload: { id: "s1" } }] } });
+    await rt.close();
+    expect(JSON.stringify(saves.at(-1))).toContain("dialogue.script.promoted");
+  });
+
   it("RT2.5 without storage the runtime runs in memory", async () => {
     const { rt } = await runtime();
     const p = peer(rt);

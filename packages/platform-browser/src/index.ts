@@ -14,3 +14,4 @@ export { browserWorkflows, IndexedDbWorkflows } from "./workflows.ts";
 export { packagedEmscripten, xgrammarFromFactory } from "./packaged.ts";
 export { browserComposition, browserProcedural } from "./procedural.ts";
 export type { PackagedModule } from "./packaged.ts";
+export { browserDialogue } from "./dialogue.ts";

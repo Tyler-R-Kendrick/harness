@@ -118,19 +118,19 @@ describe("host-side publish", () => {
 
   it("DM10.8 an event without session or correlation gets neither a session nor a borrowed correlation", () => {
     const d = driver();
-    const r = d.daemon.publish({ source: "host", type: "x", payload: null });
-    expect(r.ok && r.value).toStrictEqual({ eventId: "evt-0", offset: 0, type: "x", source: "host", correlationId: "cor-0", depth: 0, at: 1_000, payload: null });
+    const r = d.daemon.publish({ source: "host", type: "host.x", payload: null });
+    expect(r.ok && r.value).toStrictEqual({ eventId: "evt-0", offset: 0, type: "host.x", source: "host", correlationId: "cor-0", depth: 0, at: 1_000, payload: null });
   });
 
   it("DM10.9 a caused event joins its cause's saga; an unknown cause or too deep a chain is an error", () => {
     const d = new Daemon({ ...deps(), hookDepth: 1 });
-    const root = d.publish({ source: "host", type: "a", correlationId: "saga", payload: 1 });
+    const root = d.publish({ source: "host", type: "saga.a", correlationId: "saga", payload: 1 });
     const rootId = root.ok ? root.value.eventId : "";
-    const child = d.publish({ source: "host", type: "b", cause: rootId, payload: 2 });
+    const child = d.publish({ source: "host", type: "saga.b", cause: rootId, payload: 2 });
     expect(child.ok && [child.value.correlationId, child.value.causationId, child.value.depth]).toStrictEqual(["saga", rootId, 1]);
-    const grandchild = d.publish({ source: "host", type: "c", cause: child.ok ? child.value.eventId : "", payload: 3 });
+    const grandchild = d.publish({ source: "host", type: "saga.c", cause: child.ok ? child.value.eventId : "", payload: 3 });
     expect(grandchild.ok ? undefined : grandchild.error.code).toBe("depth_exceeded");
-    const orphan = d.publish({ source: "host", type: "d", cause: "evt-99", payload: 4 });
+    const orphan = d.publish({ source: "host", type: "saga.d", cause: "evt-99", payload: 4 });
     expect(orphan.ok ? undefined : orphan.error.code).toBe("unknown_cause");
   });
 

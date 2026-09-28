@@ -1,6 +1,6 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { streamText, ToolLoopAgent } from "ai";
-import { HARNESS } from "@harness/cognitive";
+import { HARNESS, projectScope } from "@harness/cognitive";
 import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, StepResult, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
@@ -234,7 +234,8 @@ export function sessionAgent(options: {
         .join("\n\n");
       const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: conversationOf(call) }) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
-      const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
+      const scope = turn.cwd === undefined ? undefined : projectScope(turn.cwd);
+      const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId, ...(scope === undefined ? {} : { scope }) } };
       return {
         ...call,
         providerOptions,

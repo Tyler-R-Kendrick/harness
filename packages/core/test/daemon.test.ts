@@ -549,6 +549,30 @@ describe("Daemon: capabilities and hooks", () => {
     const events = (d.request("plg", "_harness/hooks/poll", {}).result as { events: { type: string }[] }).events;
     expect(events.map((e) => e.type)).toEqual(["capability.added", "capability.revoked"]);
   });
+
+  it("DM7.4 the host publishes events of its own (a dialogue's, say) to plugins, from source host, with a session when named", () => {
+    const { d, daemon } = setup();
+    d.connect("plg", { principal: "audit", kind: "plugin" });
+    d.initialize("plg");
+    d.request("plg", "_harness/hooks/subscribe", { types: ["dialogue.*"] });
+    daemon.publish({ type: "dialogue.script.promoted", payload: { id: "s1" } });
+    daemon.publish({ type: "dialogue.script.built", payload: { id: "s2" }, sessionId: "abc" });
+    const events = (d.request("plg", "_harness/hooks/poll", {}).result as { events: { type: string; source: string; sessionId?: string; payload: unknown }[] }).events;
+    expect(events.map((e) => [e.type, e.source, e.sessionId, e.payload])).toEqual([
+      ["dialogue.script.promoted", "host", undefined, { id: "s1" }],
+      ["dialogue.script.built", "host", "abc", { id: "s2" }],
+    ]);
+    expect(() => daemon.publish({ type: "Bad Type", payload: {} })).toThrow("an event type is dotted lower-case names");
+    expect(() => daemon.publish({ type: "single", payload: {} })).toThrow("an event type is dotted lower-case names");
+  });
+
+  it("DM7.5 a host event type is dotted lower-case names from its first character to its last", () => {
+    const { daemon } = setup();
+    for (const type of ["Area.thing", "area.thing!", "area.thing Happened", "-area.thing"]) {
+      expect(() => daemon.publish({ type, payload: {} })).toThrow(`an event type is dotted lower-case names, not ${JSON.stringify(type)}`);
+    }
+    expect(daemon.publish({ type: "area-1.thing-2.happened", payload: {} }).ok).toBe(true);
+  });
 });
 
 describe("Daemon: restart (MX5)", () => {
