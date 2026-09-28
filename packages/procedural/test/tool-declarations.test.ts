@@ -17,5 +17,6 @@ describe("tool declarations (data: data/tools.json)", () => {
     expect(() => parseToolDeclarations({ sideEffectFree: [], other: 1 })).toThrow(/other/);
     expect(() => parseToolDeclarations({})).toThrow(/sideEffectFree/);
     expect(ToolDeclarationsSchema.safeParse({ sideEffectFree: [] }).success).toBe(true);
+    expect(ToolDeclarationsSchema.safeParse({ sideEffectFree: ["a", "b", "a"] }).error?.issues).toEqual([{ code: "custom", path: ["sideEffectFree"], message: "declared twice: a" }]);
   });
 });
