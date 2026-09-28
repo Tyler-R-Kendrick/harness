@@ -116,7 +116,7 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       revert: async (value) => {
         const request = input("revert", value);
         check("revert", "revert", request.graph);
-        return revertGraph({ store, clock, ...request });
+        return revertGraph({ store, ...request });
       },
       import: async (value) => {
         const request = input("import", value);

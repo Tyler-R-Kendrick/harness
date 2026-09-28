@@ -224,25 +224,18 @@ describe("graphHistory", () => {
 });
 
 describe("revertGraph", () => {
-  it("PX2.23 moves the head back to the previous head as a revert revision that keeps what it replaced, and rebases the overlay onto it", async () => {
+  it("PX2.23 moves the head back to the previous head, whose record stays as it was, and rebases the overlay onto it", async () => {
     const store = await withHeads(doc(), shorter());
     const from = revisionId(shorter());
     const to = revisionId(doc());
+    const records = new Map(store.records);
     await store.overlay(graph).append([proposed(shortcut, ["s1"])]);
-    const result = await revertGraph({ store, graph, clock });
+    const result = await revertGraph({ store, graph });
     expect(result).toEqual({ status: "reverted", from, to });
+    // The heads record the revert: the head names an earlier head again.
     expect(await store.heads.get(graph)).toEqual({ revision: to, history: [from, to] });
-    expect(store.records.get(to)).toEqual({
-      id: to,
-      graph,
-      parents: [from],
-      document: doc(),
-      edits: null,
-      origin: "revert",
-      evidence: { reverted: from, replaces: { origin: "import", parents: [], edits: null, evidence: { round: 0 }, decision: { kind: "head" }, at: 0 } },
-      decision: { kind: "head" },
-      at: 1_000,
-    });
+    expect(store.records).toEqual(records);
+    expect(store.records.get(to)).toMatchObject({ origin: "import", parents: [], evidence: { round: 0 }, at: 0 });
     const events = (await store.overlay(graph).read(0)).map((e) => e.event);
     expect(events.at(-1)).toEqual({ kind: "rebased", core: to, absorbed: [], dropped: [], frozenAt: 1 });
     expect(foldAll(from, events).base).toBe(to);
@@ -256,36 +249,43 @@ describe("revertGraph", () => {
     const store = await withHeads(doc(), shorter(), withVerify);
     const note = { kind: "note", on: { from: "Bridge_Extract", to: "Verify" }, text: "Check twice." };
     await store.overlay(graph).append([proposed(note, ["s1"])]);
-    const result = await revertGraph({ store, graph, to: revisionId(doc()), clock });
+    const result = await revertGraph({ store, graph, to: revisionId(doc()) });
     expect(result).toEqual({ status: "reverted", from: revisionId(withVerify), to: revisionId(doc()) });
     const events = (await store.overlay(graph).read(0)).map((e) => e.event);
     expect(events.at(-1)).toEqual({ kind: "rebased", core: revisionId(doc()), absorbed: [], dropped: [entryId(entry(note))], frozenAt: 1 });
   });
 
   it("PX2.25 refuses without a head, without an earlier head, or for a revision that was never an earlier head of the graph", async () => {
-    expect(await revertGraph({ store: new FakeStore(), graph, clock })).toEqual({ status: "refused", reason: "graph team/search has no head" });
+    expect(await revertGraph({ store: new FakeStore(), graph })).toEqual({ status: "refused", reason: "graph team/search has no head" });
     const single = await withHeads(doc());
-    expect(await revertGraph({ store: single, graph, clock })).toEqual({ status: "refused", reason: "graph team/search has no earlier head" });
+    expect(await revertGraph({ store: single, graph })).toEqual({ status: "refused", reason: "graph team/search has no earlier head" });
     const store = await withHeads(doc(), shorter());
-    expect(await revertGraph({ store, graph, to: revisionId(shorter()), clock })).toEqual({ status: "refused", reason: `${revisionId(shorter())} is already the head of graph team/search` });
-    expect(await revertGraph({ store, graph, to: revisionId(other()), clock })).toEqual({ status: "refused", reason: `${revisionId(other())} is not an earlier head of graph team/search` });
+    expect(await revertGraph({ store, graph, to: revisionId(shorter()) })).toEqual({ status: "refused", reason: `${revisionId(shorter())} is already the head of graph team/search` });
+    expect(await revertGraph({ store, graph, to: revisionId(other()) })).toEqual({ status: "refused", reason: `${revisionId(other())} is not an earlier head of graph team/search` });
     expect((await store.heads.get(graph))?.revision).toBe(revisionId(shorter()));
   });
 
   it("PX2.26 refuses a target whose record is gone or redacted, since sessions cannot be guided by it", async () => {
     const store = await withHeads(doc(), shorter());
     await store.redact(revisionId(doc()));
-    expect(await revertGraph({ store, graph, clock })).toEqual({ status: "refused", reason: `revision ${revisionId(doc())} is redacted` });
+    expect(await revertGraph({ store, graph })).toEqual({ status: "refused", reason: `revision ${revisionId(doc())} is redacted` });
     store.records.delete(revisionId(doc()));
-    expect(await revertGraph({ store, graph, clock })).toEqual({ status: "refused", reason: `revision ${revisionId(doc())} is not recorded` });
+    expect(await revertGraph({ store, graph })).toEqual({ status: "refused", reason: `revision ${revisionId(doc())} is not recorded` });
   });
 
-  it("PX2.27 when the head moves during a revert, it is refused and the replaced record is put back", async () => {
+  it("PX2.27 when the head moves during a revert, it is refused and nothing is written", async () => {
     const store = await withHeads(doc(), shorter());
-    const original = store.records.get(revisionId(doc()));
+    const records = new Map(store.records);
+    let puts = 0;
+    const put = store.revisions.put;
+    store.revisions.put = async (r) => {
+      puts += 1;
+      await put(r);
+    };
     store.beforeSet = async () => void (await store.heads.set(graph, revisionId(shorter()), revisionId(other())));
-    expect(await revertGraph({ store, graph, clock })).toEqual({ status: "refused", reason: "the head of graph team/search moved; try again" });
-    expect(store.records.get(revisionId(doc()))).toEqual(original);
+    expect(await revertGraph({ store, graph })).toEqual({ status: "refused", reason: "the head of graph team/search moved; try again" });
+    expect(puts).toBe(0);
+    expect(store.records).toEqual(records);
     expect(await store.overlay(graph).head()).toBe(0);
   });
 });

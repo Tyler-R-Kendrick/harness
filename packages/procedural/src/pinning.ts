@@ -4,7 +4,8 @@
  * each turn boundary `pinSession` decides the pair for the turn:
  *
  * - A first pin takes the graph's head, and the overlay's latest version on that core.
- * - A pinned core that was reverted (the head no longer descends from it) is re-pinned.
+ * - A pinned core is re-pinned when the head was reverted (it names an earlier head
+ *   again) or no longer descends from it.
  * - When a dream moves the head, `repinOnDream: "turn"` re-pins to the new head; `"never"`
  *   keeps the old core, whose overlay then stops at the version the `rebased` event
  *   recorded as `frozenAt`.
@@ -19,7 +20,7 @@ import { bytesToHex } from "@noble/hashes/utils.js";
 import type { GraphId, RevisionId } from "./graph.ts";
 import type { OverlayEvent, OverlayState } from "./overlay-types.ts";
 import { emptyOverlay, foldOverlay } from "./overlay.ts";
-import type { Pin, ProceduralStore } from "./store.ts";
+import type { Head, Pin, ProceduralStore } from "./store.ts";
 
 /** Bytes of entropy in a session's salt. */
 export const SALT_BYTES = 16;
@@ -90,10 +91,15 @@ async function descends(store: ProceduralStore, graph: GraphId, id: RevisionId, 
   return false;
 }
 
-/** Whether the head moved on from `pinned` by dream or merge, rather than reverting it (or replacing it by an import). */
-async function movedOn(store: ProceduralStore, graph: GraphId, pinned: RevisionId, head: RevisionId): Promise<boolean> {
-  const record = await store.revisions.get(graph, head);
-  return record !== undefined && record.origin !== "revert" && (await descends(store, graph, head, pinned));
+/**
+ * Whether the head moved on from `pinned` by dream or merge, rather than reverting (a head
+ * that names an earlier head again, or a `revert` record from before reverts wrote none)
+ * or replacing it by an import.
+ */
+async function movedOn(store: ProceduralStore, graph: GraphId, pinned: RevisionId, head: Head): Promise<boolean> {
+  if (head.history.includes(head.revision)) return false;
+  const record = await store.revisions.get(graph, head.revision);
+  return record !== undefined && record.origin !== "revert" && (await descends(store, graph, head.revision, pinned));
 }
 
 /** Pin the session for this turn (see the module comment), storing the pin when it changes. */
@@ -106,7 +112,7 @@ export async function pinSession(request: PinRequest): Promise<Pin> {
   const bases = overlayBases(head.history.at(-1) ?? head.revision, events);
   const old = await store.pins.get(session);
   const same = old !== undefined && old.graph === graph;
-  const keep = same && (old.core === head.revision || (request.repinOnDream === "never" && (await movedOn(store, graph, old.core, head.revision))));
+  const keep = same && (old.core === head.revision || (request.repinOnDream === "never" && (await movedOn(store, graph, old.core, head))));
   const core = keep ? old.core : head.revision;
   const overlay = keep && request.overlayRefresh === "session" ? old.overlay : latestOn(bases, core);
   if (same && old.core === core && old.overlay === overlay) return old;

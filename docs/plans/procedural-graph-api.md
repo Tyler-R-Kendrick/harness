@@ -925,14 +925,15 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `exportMermaid(effective)`; both end with a newline.
   - `graphHistory({store, graph})`: `{head?, heads (head then history), revisions}`, the
     revisions oldest first, as `RevisionSummary` without documents.
-  - `revertGraph({store, graph, to?, clock})`: `to` defaults to the previous head and must
-    be an earlier head (not the head itself), recorded and not redacted. A revision's id is
-    its content, so the `revert` record (parent: the head it leaves) takes the target's id
-    and replaces its record; `evidence` is `{reverted, replaces}` with the replaced record
-    minus its id, graph and document. Then a compare-and-set moves the head (on a lost race
-    the replaced record is put back and the revert is refused), and a `rebased` event onto
-    the target is appended, so the overlay follows the head and entries the target cannot
-    anchor are dropped. P9's `pinSession` sees the `revert` origin and re-pins.
+  - `revertGraph({store, graph, to?})`: `to` defaults to the previous head and must
+    be an earlier head (not the head itself), recorded and not redacted. The target is
+    already recorded under the graph, so no record is written and the target's stays as
+    it was (A1: the revert no longer replaces it); the heads record the revert, since the
+    head names an earlier head again. A compare-and-set moves the head (a lost race is
+    refused, with nothing written), and a `rebased` event onto the target is appended, so
+    the overlay follows the head and entries the target cannot anchor are dropped. P9's
+    `pinSession` sees a head that is in its own history as a revert and re-pins (PX1.46),
+    as it does for a `revert` record a store saved before A1.
 - `exportMermaid(g)` renders `flowchart TD`, a `%% core <id>, overlay <n|none>` comment,
   nodes as `n<index>` with the name and type as the label (statuses as stadiums, reasoning
   as rhombi, other types as boxes), edges with the relation and `when: <condition>`,
@@ -1102,9 +1103,6 @@ the evaluator contract and scripted environment, rejection records). Still open:
   tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
   for their absence. The CLI approves on a terminal.
-- P12: a revert replaces its target's record (a revision's id is its content, so the
-  `revert` record takes the target's key); `revertGraph` keeps what it replaced in
-  `evidence.replaces`.
 - P12: `harness-procedural` opens the store file itself, so it must not run while a
   daemon holds the same `--procedural` directory (one owner per store file). Routing the
   CLI through a running daemon's `_harness/cognitive/invoke` would lift that.

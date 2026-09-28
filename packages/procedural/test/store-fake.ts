@@ -28,7 +28,7 @@ export class FakeStore implements ProceduralStore {
   /** Runs before each head compare-and-set, e.g. to move the head under the caller. */
   beforeSet: (() => Promise<void>) | undefined;
 
-  readonly revisions = {
+  readonly revisions: { put(r: RevisionRecord): Promise<void>; get(graph: GraphId, id: RevisionId): Promise<RevisionRecord | undefined>; list(graph: GraphId): Promise<RevisionRecord[]> } = {
     put: async (r: RevisionRecord) => void this.records.set(r.id, r),
     // Records by id: the tests here keep each document in one graph, so a record of another graph is absent.
     get: async (graph: GraphId, id: RevisionId) => (this.records.get(id)?.graph === graph ? this.records.get(id) : undefined),

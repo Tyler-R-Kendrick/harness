@@ -168,7 +168,8 @@ The decision held; these details moved.
   the store keys its record by the graph too, so two graphs that hold the same document
   each keep their own record. Within a graph a rejection never replaces an older head's
   or an import's record with the same id, and a commit that loses the head race puts
-  back the record it replaced. Redaction follows the content into every graph.
+  back the record it replaced. Redaction follows the content into every graph. A revert
+  writes no record: its target is already recorded, and the heads show the move back.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 

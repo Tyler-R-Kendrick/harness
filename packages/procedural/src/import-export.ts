@@ -142,15 +142,15 @@ export async function graphHistory(input: { store: ProceduralStore; graph: Graph
 export type RevertResult = { status: "reverted"; from: RevisionId; to: RevisionId } | { status: "refused"; reason: string };
 
 /**
- * Move the head back to an earlier head (the previous one by default), as a `revert`
- * revision whose parent is the head it leaves. A revision's id is its content, so the
- * revert record takes the target's id and replaces its record; the evidence keeps what it
- * replaced. The overlay is rebased onto the target, dropping entries it cannot anchor, so
+ * Move the head back to an earlier head (the previous one by default). A revision's id is
+ * its content and the target is already recorded, so no record is written: the target's
+ * stays as it was, and the heads record the revert (the head names an earlier head
+ * again). The overlay is rebased onto the target, dropping entries it cannot anchor, so
  * no session pairs a core with an overlay built on another; pinned sessions re-pin at
  * their next turn (P9).
  */
-export async function revertGraph(input: { store: ProceduralStore; graph: GraphId; to?: RevisionId; clock: ClockLike }): Promise<RevertResult> {
-  const { store, graph, clock } = input;
+export async function revertGraph(input: { store: ProceduralStore; graph: GraphId; to?: RevisionId }): Promise<RevertResult> {
+  const { store, graph } = input;
   const head = await store.heads.get(graph);
   if (!head) return { status: "refused", reason: `graph ${graph} has no head` };
   const to = input.to ?? head.history[0];
@@ -161,13 +161,8 @@ export async function revertGraph(input: { store: ProceduralStore; graph: GraphI
   if (!target) return { status: "refused", reason: `revision ${to} is not recorded` };
   const parsed = parseGraph(target.document);
   if (target.redacted || !parsed.ok) return { status: "refused", reason: `revision ${to} is redacted` };
-  const { id: _, document: __, graph: ___, ...replaced } = target;
   const from = head.revision;
-  await store.revisions.put(record({ graph, parents: [from], document: target.document, origin: "revert", evidence: { reverted: from, replaces: replaced }, decision: { kind: "head" }, at: clock.now() }));
-  if (!(await store.heads.set(graph, from, to))) {
-    await store.revisions.put(target);
-    return { status: "refused", reason: `the head of graph ${graph} moved; try again` };
-  }
+  if (!(await store.heads.set(graph, from, to))) return { status: "refused", reason: `the head of graph ${graph} moved; try again` };
   const log = store.overlay(graph);
   const { event } = rebaseOverlay(foldAll(firstHead(head), await overlayEvents(store, graph)), parsed.graph, []);
   await log.append([event]);

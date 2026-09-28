@@ -65,7 +65,7 @@ describe("harness-procedural CLI", () => {
     await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(next), graph, parents: [seed], document: next, edits: null, origin: "dream", evidence: {}, decision: { kind: "head" }, at: 1 }));
     await store.heads.set(graph, seed, revisionId(next));
     expect(await json("revert", "team/search")).toEqual({ status: "reverted", from: revisionId(next), to: seed });
-    expect(await json("history", "team/search")).toMatchObject({ head: seed, revisions: [{ id: revisionId(next) }, { id: seed, origin: "revert" }] });
+    expect(await json("history", "team/search")).toMatchObject({ head: seed, heads: [seed, revisionId(next), seed], revisions: [{ id: seed, origin: "import" }, { id: revisionId(next), origin: "dream" }] });
   });
 
   it("PX2.47 results a caller handles exit 1 with the result; a dream that cannot run (no head) exits 1; bad usage exits 2", async () => {
