@@ -35,4 +35,32 @@ describe("TaskGraph execution properties", () => {
     }
     for (let i = 0; i < n; i++) expect(["succeeded", "failed", "skipped"]).toContain(g.status(`n${i}`));
   });
+
+  test.prop([dag, fc.array(fc.nat(), { maxLength: 40 })])("TG4.2 at any point of an execution, the graph restored from its JSON behaves as the original", ({ n, edges, resources, fails, parallel }, picks) => {
+    const g = new TaskGraph<number>();
+    for (let i = 0; i < n; i++) g.addNode(`n${i}`, { resources: resources[i]!, payload: i });
+    for (const [a, b] of edges) if (a < b) g.addEdge(`n${a}`, `n${b}`, "data");
+    const same = (h: TaskGraph<number>) => {
+      expect(h.toJSON()).toEqual(g.toJSON());
+      expect(h.revision()).toBe(g.revision());
+      expect(h.ready()).toEqual(g.ready());
+      expect(h.schedule(parallel)).toEqual(g.schedule(parallel));
+      for (let i = 0; i < n; i++) expect(h.payload(`n${i}`)).toBe(i);
+    };
+    for (const pick of picks) {
+      const h = TaskGraph.fromJSON<number>(JSON.parse(JSON.stringify(g.toJSON())));
+      same(h);
+      // Drive both the same way: start a schedulable node, or finish or cancel a running one.
+      const running = [...Array(n).keys()].map((i) => `n${i}`).filter((id) => g.status(id) === "running");
+      const choices = [...g.schedule(parallel).map((id) => ["start", id] as const), ...running.flatMap((id) => [["complete", id] as const, ["cancel", id] as const])];
+      if (choices.length === 0) break;
+      const [op, id] = choices[pick % choices.length]!;
+      for (const x of [g, h]) {
+        if (op === "start") x.start(id);
+        else if (op === "cancel") x.cancel(id);
+        else x.complete(id, fails[Number(id.slice(1))] ? "failed" : "succeeded");
+      }
+      same(h);
+    }
+  });
 });

@@ -38,6 +38,12 @@ describe("TaskGraph readiness and joins", () => {
     expect(run(g, "a", "failed").sort()).toEqual(["after", "j"]);
     expect(g.status("j")).toBe("skipped");
     expect(g.status("after")).toBe("skipped");
+    // The skip cascades whatever order the nodes were added in.
+    const late = new TaskGraph();
+    ["after", "j", "a"].forEach((n) => late.addNode(n));
+    late.addEdge("a", "j", "data");
+    late.addEdge("j", "after", "data");
+    expect(run(late, "a", "failed")).toEqual(["j", "after"]);
     expect(g.ready()).toEqual(["b"]);
   });
 
@@ -112,8 +118,12 @@ describe("TaskGraph readiness and joins", () => {
     const g = new TaskGraph();
     g.addNode("fanout");
     g.addNode("late");
+    expect(g.isSealed("fanout")).toBe(false);
     expect(g.seal("fanout").ok).toBe(true);
     expect(g.isSealed("fanout")).toBe(true);
+    expect(g.isSealed("ghost")).toBe(false);
+    expect(g.parent("ghost")).toBeUndefined();
+    expect(g.children("ghost")).toEqual([]);
     expect(g.addEdge("fanout", "late", "contains")).toMatchObject({ ok: false, error: { code: "sealed" } });
   });
 
@@ -236,6 +246,7 @@ describe("TaskGraph scheduling", () => {
     g.addEdge("a", "b", "data");
     g.seal("a");
     expect(g.revision()).toBe(r0 + 4);
+    g.seal("a");
     g.start("a");
     g.complete("a", "succeeded");
     g.addEdge("a", "a", "data");
@@ -254,5 +265,156 @@ describe("TaskGraph payloads", () => {
     expect(g.payload("ghost")).toBeUndefined();
     expect(g.addNode("a", { payload: { tool: "other" } })).toMatchObject({ ok: false, error: { code: "duplicate_node" } });
     expect(g.payload("a")).toBe(payload);
+  });
+});
+
+/** A graph mid-execution with every kind of structure: containment, a sealed group, joins, resources, exclusion, payloads. */
+function sample(): TaskGraph<{ step: number }> {
+  const g = new TaskGraph<{ step: number }>();
+  g.addNode("group");
+  g.addNode("a", { payload: { step: 1 }, resources: ["db"] });
+  g.addNode("b", { join: { kind: "any" } });
+  g.addNode("c", { join: { kind: "quorum", count: 1 }, awaits: ["group"], payload: { step: 3 } });
+  g.addNode("d");
+  g.addNode("e");
+  g.addEdge("group", "a", "contains");
+  g.addEdge("group", "b", "contains");
+  g.addEdge("a", "b", "data");
+  g.addEdge("a", "c", "control");
+  g.addEdge("b", "c", "assurance");
+  g.addEdge("d", "e", "data");
+  g.addEdge("a", "d", "exclusion");
+  g.seal("group");
+  run(g, "a");
+  g.start("b");
+  g.start("d");
+  g.complete("d", "failed");
+  return g;
+}
+
+const roundTrip = <P>(g: TaskGraph<P>): TaskGraph<P> => TaskGraph.fromJSON<P>(JSON.parse(JSON.stringify(g.toJSON())));
+
+describe("TaskGraph serialization", () => {
+  it("TG5.2 toJSON lists nodes in the order added, with their spec, status, sealing and payload, and edges in the order added", () => {
+    expect(sample().toJSON()).toStrictEqual({
+      nodes: [
+        { id: "group", join: { kind: "all" }, resources: [], awaits: [], status: "pending", sealed: true },
+        { id: "a", join: { kind: "all" }, resources: ["db"], awaits: [], status: "succeeded", sealed: false, payload: { step: 1 } },
+        { id: "b", join: { kind: "any" }, resources: [], awaits: [], status: "running", sealed: false },
+        { id: "c", join: { kind: "quorum", count: 1 }, resources: [], awaits: ["group"], status: "pending", sealed: false, payload: { step: 3 } },
+        { id: "d", join: { kind: "all" }, resources: [], awaits: [], status: "failed", sealed: false },
+        { id: "e", join: { kind: "all" }, resources: [], awaits: [], status: "skipped", sealed: false },
+      ],
+      edges: [
+        { from: "group", to: "a", kind: "contains" },
+        { from: "group", to: "b", kind: "contains" },
+        { from: "a", to: "b", kind: "data" },
+        { from: "a", to: "c", kind: "control" },
+        { from: "b", to: "c", kind: "assurance" },
+        { from: "d", to: "e", kind: "data" },
+        { from: "a", to: "d", kind: "exclusion" },
+      ],
+    });
+  });
+
+  it("TG5.3 fromJSON restores a graph that behaves as the original: statuses, readiness, scheduling, structure, revision and payloads", () => {
+    const g = sample();
+    const h = roundTrip(g);
+    expect(h.toJSON()).toEqual(g.toJSON());
+    expect(h.revision()).toBe(g.revision());
+    expect(h.ready()).toEqual(g.ready());
+    expect(h.ready()).toEqual(["group", "c"]);
+    expect(h.children("group")).toEqual(["a", "b"]);
+    expect(h.parent("b")).toBe("group");
+    expect(h.isSealed("group")).toBe(true);
+    expect(h.payload("c")).toEqual({ step: 3 });
+    expect(h.addEdge("c", "a", "data")).toMatchObject({ ok: false, error: { code: "target_started" } });
+    expect(h.addEdge("a", "group", "contains")).toMatchObject({ ok: false, error: { code: "cycle" } });
+    h.addNode("x", { resources: ["db"] });
+    h.addNode("y");
+    h.addEdge("y", "x", "exclusion");
+    expect(h.ready()).toEqual(["group", "c", "x", "y"]);
+    expect(h.schedule(5)).toEqual(["group", "c", "x"]);
+    expect(h.complete("b", "succeeded")).toEqual({ ok: true, value: [] });
+    expect(h.status("b")).toBe("succeeded");
+    h.start("y");
+    expect(h.schedule(5)).toEqual(["group", "c"]);
+  });
+
+  it("TG5.4 fromJSON refuses data that is not a task graph, saying what is wrong", () => {
+    const valid = sample().toJSON();
+    const bad = (patch: (d: Record<string, unknown>) => void): unknown => {
+      const d = JSON.parse(JSON.stringify(valid)) as Record<string, unknown>;
+      patch(d);
+      return d;
+    };
+    const node = (d: Record<string, unknown>, i: number) => (d["nodes"] as Record<string, unknown>[])[i]!;
+    const edge = (d: Record<string, unknown>, i: number) => (d["edges"] as Record<string, unknown>[])[i]!;
+    const cases: [unknown, RegExp][] = [
+      [null, /not an object/],
+      ["graph", /not an object/],
+      [{ nodes: [] }, /edges is not a list/],
+      [{ edges: [] }, /nodes is not a list/],
+      [bad((d) => (d["nodes"] = [5])), /node 0 is not an object/],
+      [bad((d) => (node(d, 1)["id"] = 7)), /node 1 has no id/],
+      [bad((d) => (node(d, 1)["join"] = { kind: "most" })), /node a has an invalid join/],
+      [bad((d) => (node(d, 1)["join"] = { kind: "most", count: 2 })), /node a has an invalid join/],
+      [bad((d) => (node(d, 1)["join"] = null)), /node a has an invalid join/],
+      [bad((d) => (node(d, 1)["join"] = { kind: "quorum", count: "2" })), /node a has an invalid join/],
+      [bad((d) => (node(d, 1)["join"] = { kind: "quorum", count: 0 })), /node a has an invalid join/],
+      [bad((d) => (node(d, 1)["resources"] = "db")), /node a has invalid resources/],
+      [bad((d) => (node(d, 1)["resources"] = [1])), /node a has invalid resources/],
+      [bad((d) => (node(d, 3)["awaits"] = [null])), /node c has invalid awaits/],
+      [bad((d) => (node(d, 1)["status"] = "done")), /node a has an invalid status/],
+      [bad((d) => (node(d, 1)["sealed"] = "no")), /node a has an invalid sealed flag/],
+      [bad((d) => (d["edges"] = [null])), /edge 0 is not an object/],
+      [bad((d) => (edge(d, 2)["from"] = 1)), /edge 2 has no endpoints/],
+      [bad((d) => (edge(d, 2)["to"] = undefined)), /edge 2 has no endpoints/],
+      [bad((d) => (edge(d, 2)["kind"] = "blocks")), /edge 2 has an invalid kind/],
+    ];
+    for (const [data, message] of cases) expect(() => TaskGraph.fromJSON(data), String(message)).toThrow(message);
+  });
+
+  it("TG5.5 fromJSON refuses structure the graph itself refuses: duplicates, unknown nodes, cycles, a second parent, an unknown awaited group", () => {
+    const n = (id: string, extra: Record<string, unknown> = {}) => ({ id, join: { kind: "all" }, resources: [], awaits: [], status: "pending", sealed: false, ...extra });
+    const cases: [unknown, RegExp][] = [
+      [{ nodes: [n("a"), n("a")], edges: [] }, /duplicate_node/],
+      [{ nodes: [n("a", { awaits: ["g"] }), n("g")], edges: [] }, /unknown_node/],
+      [{ nodes: [n("a")], edges: [{ from: "a", to: "ghost", kind: "data" }] }, /unknown_node/],
+      [{ nodes: [n("a")], edges: [{ from: "a", to: "a", kind: "control" }] }, /self_edge/],
+      [{ nodes: [n("a"), n("b")], edges: [{ from: "a", to: "b", kind: "data" }, { from: "a", to: "b", kind: "data" }] }, /duplicate_edge/],
+      [{ nodes: [n("a"), n("b")], edges: [{ from: "a", to: "b", kind: "data" }, { from: "b", to: "a", kind: "control" }] }, /cycle/],
+      [{ nodes: [n("p"), n("q"), n("c")], edges: [{ from: "p", to: "c", kind: "contains" }, { from: "q", to: "c", kind: "contains" }] }, /multiple_parents/],
+    ];
+    for (const [data, message] of cases) expect(() => TaskGraph.fromJSON(data), String(message)).toThrow(message);
+  });
+
+  it("TG5.6 fromJSON refuses statuses no execution reaches: a started node whose dependencies or awaited groups were not ready, a skipped node that can still be satisfied", () => {
+    const n = (id: string, extra: Record<string, unknown> = {}) => ({ id, join: { kind: "all" }, resources: [], awaits: [], status: "pending", sealed: false, ...extra });
+    const dep = [{ from: "a", to: "b", kind: "data" }];
+    for (const status of ["running", "succeeded", "failed"]) {
+      expect(() => TaskGraph.fromJSON({ nodes: [n("a"), n("b", { status })], edges: dep })).toThrow(/node b is .* but was never ready/);
+      expect(() => TaskGraph.fromJSON({ nodes: [n("a", { status: "succeeded" }), n("b", { status })], edges: dep })).not.toThrow();
+      expect(() => TaskGraph.fromJSON({ nodes: [n("g"), n("b", { status, awaits: ["g"] })], edges: [] })).toThrow(/node b is .* but was never ready/);
+      expect(() => TaskGraph.fromJSON({ nodes: [n("g", { sealed: true }), n("b", { status, awaits: ["g"] })], edges: [] })).not.toThrow();
+    }
+    expect(() => TaskGraph.fromJSON({ nodes: [n("a"), n("b", { status: "skipped" })], edges: dep })).toThrow(/node b is skipped but can still run/);
+    expect(TaskGraph.fromJSON({ nodes: [n("a", { status: "failed" }), n("b", { status: "skipped" })], edges: dep }).status("b")).toBe("skipped");
+    expect(TaskGraph.fromJSON({ nodes: [n("a", { status: "failed" }), n("b", { status: "cancelled" })], edges: dep }).status("b")).toBe("cancelled");
+    expect(TaskGraph.fromJSON({ nodes: [n("a", { status: "cancelled" }), n("b")], edges: dep }).ready()).toEqual([]);
+  });
+
+  it("TG5.7 fromJSON checks each payload with the parser it is given, and keeps payloads as given without one", () => {
+    const data = sample().toJSON();
+    const step = (raw: unknown): number => {
+      const value = (raw as { step?: unknown }).step;
+      if (typeof value !== "number") throw new RangeError("not a step");
+      return value;
+    };
+    expect(TaskGraph.fromJSON(data, step).payload("c")).toBe(3);
+    expect(TaskGraph.fromJSON(data, step).payload("b")).toBeUndefined();
+    expect(TaskGraph.fromJSON(data).payload("a")).toEqual({ step: 1 });
+    expect(TaskGraph.fromJSON(data).toJSON()).toStrictEqual(data);
+    expect(() => TaskGraph.fromJSON({ ...data, nodes: data.nodes.map((node) => (node.id === "a" ? { ...node, payload: { step: "one" } } : node)) }, step)).toThrow(/node a has an invalid payload: not a step/);
   });
 });

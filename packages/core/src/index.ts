@@ -20,6 +20,6 @@ export type { CapabilityError, CapabilityEvent, CapabilityLease, CapabilityOffer
 export { Deduper, HookBus } from "./hooks.ts";
 export type { Filter, HookError, HookEvent, PublishInput } from "./hooks.ts";
 export { TaskGraph } from "./task-graph.ts";
-export type { DependencyKind, EdgeKind, GraphError, Join, NodeSpec, NodeStatus } from "./task-graph.ts";
+export type { DependencyKind, EdgeKind, GraphError, Join, NodeSpec, NodeStatus, TaskEdgeData, TaskGraphData, TaskNodeData } from "./task-graph.ts";
 export { COGNITIVE_OPS, Daemon } from "./daemon.ts";
 export type { AgentInfo, BehaviorChange, CognitiveOp, CognitiveResult, CognitiveWork, DaemonDeps, DaemonSnapshot, Identity, Output, PermissionOptionSpec, SessionMeta, StopReason, WorkerCommand, WorkerEvent } from "./daemon.ts";
