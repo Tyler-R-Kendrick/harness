@@ -379,6 +379,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     },
 
     async turn(input) {
+      // Stryker disable next-line ArrowFunction: equivalent; undefined is as false as false
       const session = await enter(input, () => false, false);
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");

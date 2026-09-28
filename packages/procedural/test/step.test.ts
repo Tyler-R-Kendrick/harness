@@ -15,6 +15,7 @@ import {
   RevisionIdSchema,
   sha256Hex,
   StepRecordSchema,
+  StepUsageSchema,
 } from "@harness/procedural";
 import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, StepUsageNotice } from "@harness/procedural";
 import { answering } from "./models.ts";
@@ -561,16 +562,28 @@ describe("per-session state: evicted when a session is forgotten, idle or least 
     // An approval round restarts the stream at step 0 on a conversation ending with tool results: the same turn.
     hook.forget("s1");
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 0 }));
-    expect(s.records.map((r) => r.core)).toEqual([first, first, first]);
+    // A later step of the stream continues the turn whatever its messages end with.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    // Advisories and system messages are not the conversation: one after the tool results still continues the turn.
+    const advisory: ModelMessage = { role: "user", content: `${GUIDANCE_LABEL}advice`, providerOptions: { [HARNESS]: ADVISORY } };
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve"), advisory], { stepNumber: 0 }));
+    expect(s.records.map((r) => r.core)).toEqual([first, first, first, first, first]);
+    // A new prompt followed by a system message starts a turn.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), { role: "system", content: "Be brief." }], { turnId: "t1b" }));
+    expect(s.records.at(-1)!.core).toBe(next);
+    await pinned(s, "s1", { core: first });
     hook.forget("s1");
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve"), user("again")], { turnId: "t2" }));
-    expect(s.records[3]!.core).toBe(next);
+    expect(s.records.at(-1)!.core).toBe(next);
     // A continuing step with no pin, or a pin on another graph, is pinned as at a boundary.
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "fresh", stepNumber: 1 }));
-    expect(s.records[4]!.core).toBe(next);
+    expect(s.records.at(-1)!.core).toBe(next);
     await pinned(s, "moved", { graph: GraphIdSchema.parse("team/other"), core: first });
     await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "moved", stepNumber: 1 }));
-    expect(s.records[5]).toMatchObject({ graph: GRAPH, core: next });
+    expect(s.records.at(-1)).toMatchObject({ graph: GRAPH, core: next });
     expect(await s.store.pins.get("moved")).toMatchObject({ graph: GRAPH, core: next });
   });
 });
@@ -587,6 +600,8 @@ describe("step usage", () => {
       { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "40 input and 7 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 40, outputTokens: 7 } } } } },
       { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "0 input and 0 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 0, outputTokens: 0 } } } } },
     ]);
+    expect(StepUsageSchema.parse(usages[0]!._meta.harness.procedural.usage)).toEqual({ inputTokens: 40, outputTokens: 7 });
+    for (const bad of [{ inputTokens: -1, outputTokens: 0 }, { inputTokens: 0, outputTokens: -1 }, { inputTokens: 1.5, outputTokens: 0 }, { inputTokens: 1 }, { outputTokens: 1 }]) expect(StepUsageSchema.safeParse(bad).success).toBe(false);
     await hook.end({ ...scope, sessionMeta: { procedural: "off" }, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
     expect(usages).toHaveLength(2);
     // Nothing is read or pinned for it.
