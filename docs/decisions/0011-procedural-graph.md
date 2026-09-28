@@ -165,6 +165,14 @@ The decision held; these details moved.
   matched actions never showed it. A turn that ends (`end_turn`) with a final answer
   after a matched node with an edge to exactly one terminal walks on to that terminal,
   so edges into `End` get statistics and cautions.
+- **A step's model usage is its own record.** A step record precedes its model call, so
+  the step's AI SDK usage (from `onStepEnd`, for agents and harnesses alike) follows it as
+  a usage record, and projection sums those into the trajectory's tokens.
+- **The step hook's session state is a bounded cache.** It is evicted on detach, after an
+  idle time and beyond a session cap (settings data, measured with the Clock port). A
+  step that continues its turn after eviction reads its stored pin as it is, so I3 holds.
+- **Feedback answers what the learner did.** `procedural.feedback` returns `recorded`,
+  `unknown-turn`, `no-pin` or `invalid` from the learner's result, not `recorded` always.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host
   builds on the ensemble's generator, so the harness preset can keep reflection off
   while a deployment turns it on with data.
