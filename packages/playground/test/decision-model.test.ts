@@ -45,11 +45,11 @@ describe("the page's decision model", () => {
     expect(pickDecisionModel({ models: [], preferences: {} })).toBeUndefined();
   });
 
-  it("PD1.2 it loads once, when asked; until it is ready the lexical judge decides alone, then the model decides first and the lexical judge stands behind it", async () => {
+  it("PD1.2 it loads when asked, not before; until it is ready the lexical judge decides alone, then the model decides first and the lexical judge stands behind it", async () => {
     const e = ensemble();
     const changes: string[] = [];
     const m = new DecisionModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, ensemble: e, onChange: () => changes.push(m.status()) });
-    expect([m.status(), m.phase(), m.name]).toEqual(["Decider: not loaded", "idle", "Decider (org/decider)"]);
+    expect([m.status(), m.phase(), m.name]).toEqual(["Decider: not downloaded (614 MB, once; kept in this browser): /decide model loads it", "idle", "Decider (org/decider)"]);
     expect(m.deciders("model", lexical)).toEqual([lexical]);
     m.load();
     m.load();
@@ -72,8 +72,27 @@ describe("the page's decision model", () => {
     await tick();
     expect([m.status(), m.phase()]).toEqual(["Decider: could not load (GET https://huggingface.co/... failed: TypeError: Failed to fetch); the lexical judge decides", "failed"]);
     expect(m.deciders("model", lexical)).toEqual([lexical]);
+    // Asked again (/decide model), it tries again.
     m.load();
-    expect(e.asked).toBe(1);
+    expect(e.asked).toBe(2);
+    e.settle().resolve(judge);
+    await tick();
+    expect(m.phase()).toBe("ready");
+  });
+
+  it("PD1.5 files the browser would not keep are said, and so is the last decision it left to the lexical judge", async () => {
+    const e = ensemble();
+    const m = new DecisionModel({ model: { id: "org/decider", name: "Decider", downloadBytes: bytes(614_135_099) }, ensemble: e, onChange: () => {}, notKept: "QuotaExceededError" });
+    expect(m.status()).toBe("Decider: not kept in this browser last time (QuotaExceededError): /decide model downloads it again (614 MB)");
+    m.load();
+    m.cacheProblem("QuotaExceededError");
+    e.settle().resolve(judge);
+    await tick();
+    expect(m.status()).toBe("Decider: ready (not kept in this browser: QuotaExceededError; it downloads again next visit)");
+    m.fellBack(["harness.decision/m: the question and options are more than 512 tokens"]);
+    expect(m.status()).toMatch(/ready .*; the last decision fell back to the lexical judge \(harness.decision\/m: the question and options are more than 512 tokens\)$/);
+    m.fellBack([]);
+    expect(m.status()).not.toMatch(/fell back/);
   });
 
   it("PD1.4 a page whose catalog has no such model says so, and never loads", () => {

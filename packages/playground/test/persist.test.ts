@@ -65,7 +65,7 @@ describe("the page's own state across reloads", () => {
     expect(parsePageState(state)).toEqual(state);
     // A page kept before generation had a setting asks first.
     // Settings saved before a setting existed take its default.
-    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings).toMatchObject({ generate: "ask", decide: "model" });
+    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings).toMatchObject({ generate: "ask", decide: "lexical" });
     expect(parsePageState({ ...state, sessionId: undefined })).toEqual({ ...state, sessionId: undefined });
     for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, settings: { ...state.settings, generate: "always" } }, { ...state, settings: { ...state.settings, decide: "julia" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
   });

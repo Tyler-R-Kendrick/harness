@@ -94,15 +94,22 @@ const nameOf = (judge: EvaluationModelV4) => `${judge.provider}/${judge.modelId}
  * batch) and its answers are averaged, so where an option sits does not decide it (a
  * decision model can favour a position); the lexical judge, which has no order, is asked once.
  */
-async function choose(decider: Decider, state: string, instructions: string, criteria: Readonly<Record<string, string | null>>, rotate: boolean): Promise<{ choice: string; probabilities: Record<string, number> }> {
-  const entries = Object.entries(criteria);
-  const orders = !decider.lexical && rotate ? entries.map((_, i) => [...entries.slice(i), ...entries.slice(0, i)]) : [entries];
-  const questions = Object.fromEntries(orders.map((order, i) => [`q${i}`, { type: "choice" as const, instructions, criteria: Object.fromEntries(order) }]));
-  const { answers } = await experimental_evaluate({ model: decider.judge, maxRetries: 0, state, questions });
+async function choose(decider: Decider, state: string, instructions: string, entries: readonly (readonly [string, string | null])[], rotate: boolean): Promise<{ choice: string; probabilities: Record<string, number> }> {
   const probabilities: Record<string, number> = Object.fromEntries(entries.map(([k]) => [k, 0]));
-  for (const answer of Object.values(answers)) {
-    const p = answer.probabilities ?? { [answer.choice]: 1 };
-    for (const k of Object.keys(probabilities)) probabilities[k] = probabilities[k]! + (p[k] ?? 0) / orders.length;
+  if (decider.lexical || !rotate) {
+    const { answers } = await experimental_evaluate({ model: decider.judge, maxRetries: 0, state, questions: { q0: { type: "choice", instructions, criteria: Object.fromEntries(entries) } } });
+    Object.assign(probabilities, answers["q0"]!.probabilities ?? { [answers["q0"]!.choice]: 1 });
+  } else {
+    // Options go under stand-in names (o0, o1, …) that keep each rotation's order: an object puts integer-like keys first.
+    const described = entries.map(([name, text]) => [name, text ?? name] as const);
+    const orders = described.map((_, i) => [...described.slice(i), ...described.slice(0, i)]);
+    const questions = Object.fromEntries(orders.map((order, i) => [`q${i}`, { type: "choice" as const, instructions, criteria: Object.fromEntries(order.map(([, text], k) => [`o${k}`, text])) }]));
+    const { answers } = await experimental_evaluate({ model: decider.judge, maxRetries: 0, state, questions });
+    orders.forEach((order, i) => {
+      const answer = answers[`q${i}`]!;
+      const p = answer.probabilities ?? { [answer.choice]: 1 };
+      order.forEach(([name], k) => (probabilities[name] = probabilities[name]! + (p[`o${k}`] ?? 0) / orders.length));
+    });
   }
   const choice = entries.map(([k]) => k).reduce((best, k) => (probabilities[k]! > probabilities[best]! ? k : best));
   return { choice, probabilities };
@@ -152,8 +159,8 @@ export async function chooseTemplate(deciders: readonly Decider[], request: stri
   if (matched) return { template: matched, probability: 1, probabilities: { [matched.id]: 1 }, by: "match" };
   const candidates = narrow(request, templates, (t) => `${t.id} ${describe(t)}`, settings.decision.maxOptions - 1, settings.lexical.stopwords);
   const { value: answer, decider, problems } = await firstAnswer(deciders, (d) => {
-    const criteria = { [NONE]: settings.decision.none, ...Object.fromEntries(candidates.map((t) => [t.id, d.lexical ? describe(t) : t.description])) };
-    return choose(d, request, settings.decision.question, criteria, settings.decision.rotate);
+    const options: [string, string][] = [[NONE, settings.decision.none], ...candidates.map((t) => [t.id, d.lexical ? describe(t) : t.description] as [string, string])];
+    return choose(d, request, settings.decision.question, options, settings.decision.rotate);
   });
   const { probabilities } = answer;
   const probability = probabilities[answer.choice]!;
@@ -201,7 +208,7 @@ export async function resolveHoles(
       const options = narrow(request, all, (o) => o, settings?.decision.maxOptions ?? 20, settings?.lexical.stopwords ?? []);
       if (options.length === 1) value = options[0];
       else if (options.length > 1) {
-        const asked = await firstAnswer(deciders, (d) => choose(d, request, hole.description, Object.fromEntries(options.map((o) => [o, null])), settings?.decision.rotate ?? true));
+        const asked = await firstAnswer(deciders, (d) => choose(d, request, hole.description, options.map((o) => [o, null] as const), settings?.decision.rotate ?? true));
         problems.push(...asked.problems);
         value = asked.value.choice;
       }

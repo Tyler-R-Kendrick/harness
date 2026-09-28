@@ -65,6 +65,13 @@ const store = {
       // storage is a convenience here
     }
   },
+  remove: (key: string) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // storage is a convenience here
+    }
+  },
 };
 
 const SAMPLE_FILES: Record<string, string> = {
@@ -96,7 +103,8 @@ const GREETING = [
   "",
 ];
 
-const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: "model" };
+// The decision model is a 614 MB download: it loads when asked (/decide model), then again on each visit from the browser's cache.
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: "lexical" };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -132,10 +140,16 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
 // ---- the decision model: the catalog's local one for a browser (Julia 1), on WebGPU --------
 
 const decidingModel = pickDecisionModel(parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile)));
+/** Why this browser did not keep the model's files on an earlier visit (its storage quota), if it did not. */
+const NOT_KEPT = "harness-playground.decision-model.not-kept";
 const decisionModel = new DecisionModel({
   model: decidingModel,
+  ...(store.get(NOT_KEPT) === undefined ? {} : { notKept: store.get(NOT_KEPT)! }),
   ensemble: {
     resolve: async (task, kind) => {
+      // On WebAssembly alone a decision takes seconds (a row per option, every rotation): the model decides only with WebGPU.
+      const gpu = (navigator as { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+      if (!(await gpu?.requestAdapter().catch(() => null))) throw new Error("it needs WebGPU, and this browser has no WebGPU adapter");
       // onnxruntime-web comes with the page; its WebAssembly from its CDN (one bundled file has none beside it).
       const ort = await import("onnxruntime-web/webgpu");
       const ensemble = buildBrowserEnsemble({
@@ -143,7 +157,10 @@ const decisionModel = new DecisionModel({
         allowHosted: false,
         onnxruntime: ort,
         onnxWasm: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`,
-        onCacheProblem: (key, e) => tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` }),
+        onCacheProblem: (key, e) => {
+          decisionModel.cacheProblem(e instanceof Error ? e.message : String(e));
+          tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
+        },
       });
       // A member that fails to load says why; the ensemble only says none is available.
       return ensemble.resolve(task, kind).catch((e: unknown) => {
@@ -152,15 +169,21 @@ const decisionModel = new DecisionModel({
     },
   },
   onChange: () => {
+    // A visit whose download the browser would not keep does not start the next one on its own.
+    if (decisionModel.phase() === "ready") {
+      const unkept = decisionModel.unkept;
+      if (unkept === undefined) store.remove(NOT_KEPT);
+      else store.set(NOT_KEPT, unkept);
+    }
     tracer.record({ kind: "host", name: "decision model", detail: decisionModel.status() });
     sync();
     // Which model decides is part of the harness's state (~/AGENTS.md).
     void resyncHarness?.().then(refreshFiles);
   },
 });
-/** Load the decision model when it is wanted (once). */
-const wantDecisionModel = () => {
-  if (settings.decide === "model") decisionModel.load();
+/** Load the decision model when it is wanted: at boot when chosen before and kept, and whenever /decide model asks. */
+const wantDecisionModel = (asked: boolean) => {
+  if (settings.decide === "model" && (asked || store.get(NOT_KEPT) === undefined)) decisionModel.load();
 };
 
 // ---- controls ---------------------------------------------------------------------------
@@ -670,7 +693,12 @@ async function boot() {
     bash,
     tracer,
     instructions: async () => (await bash.fs.readFile(`${AGENT}/instructions.md`).catch(() => INSTRUCTIONS)).trim() || INSTRUCTIONS,
-    afterTurn: syncHarness,
+    afterTurn: () => {
+      // A decision the model left to the lexical judge shows in the pill.
+      decisionModel.fellBack(engine.lastProblems);
+      sync();
+      return syncHarness();
+    },
     models: { templates: engine.model(), shell: shellModel(), claude },
     tools: engine.tools(),
     toolApproval: (name) => engine.approval(name),
@@ -694,7 +722,7 @@ async function boot() {
     store: templateStore,
     decider: decisionModel,
     onChange: () => {
-      wantDecisionModel();
+      wantDecisionModel(true);
       sync();
       pageSaver?.request();
       void syncHarness().then(refreshFiles);
@@ -732,7 +760,7 @@ async function boot() {
     write(promptFor(shell.cwd));
     sync();
     term.focus();
-    wantDecisionModel();
+    wantDecisionModel(false);
     document.documentElement.dataset["booted"] = "restored";
     await claudeReady;
     return;
@@ -750,7 +778,7 @@ async function boot() {
   sync();
   saveAll();
   term.focus();
-  wantDecisionModel();
+  wantDecisionModel(false);
   document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }

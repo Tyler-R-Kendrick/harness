@@ -39,12 +39,15 @@ model at all. Only the parts nobody can decide need a generator.
   page uses a lexical decision model: TF-IDF cosine similarity between the request and
   each option, a fixed floor for `none`, and a softmax (`lexicalJudge`, no inference).
 - **The page's decision model is the catalog's local classification judge for a browser**
-  (Julia 1, ADR 0016), loaded at boot through the browser host (614 MB once, kept in the
-  Cache API, on WebGPU when there is one; onnxruntime-web's WebAssembly from its CDN).
-  Deciders are asked in order: the model once it is ready, the lexical judge always last,
-  so a call the model fails is decided lexically and the turn's metadata says so.
-  `/decide lexical` leaves the lexical judge alone; the header's pill and `/decide` say
-  how the model is doing, and `~/AGENTS.md` which one decides.
+  (Julia 1, ADR 0016), loaded through the browser host when asked (`/decide model`: 614
+  MB once, kept in the Cache API; onnxruntime-web's WebAssembly from its CDN), and again
+  from the cache at each visit after that; a visit whose files the browser would not keep
+  (its storage quota) does not start the next download on its own. It decides only with
+  WebGPU: on WebAssembly alone a decision takes seconds (a row per option, in every
+  rotation). Deciders are asked in order: the model once it is ready, the lexical judge
+  always last, so a call the model fails is decided lexically, the turn's metadata says
+  so, and so does the header's pill. `/decide lexical` leaves the lexical judge alone;
+  `/decide` and `~/AGENTS.md` say which one decides and how the model is doing.
 - **A model is asked as it was trained, and in every order.** Julia 1 was measured on the
   seed templates with 26 requests, 16 that a seed answers and 10 that none does:
   - Asked "which reply template answers this request?" with each template's description

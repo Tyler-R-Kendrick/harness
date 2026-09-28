@@ -3,6 +3,7 @@
  * is generated from this parser): when a decision is taken, how the lexical decision
  * model scores, when a template retires, and what generators are asked.
  */
+import { ProbabilitySchema } from "@harness/cognitive";
 import { z } from "zod";
 
 const Prompt = z.string().min(1);
@@ -11,7 +12,7 @@ const EngineSettingsSchema = z.strictObject({
   $schema: z.string().optional(),
   decision: z.strictObject({
     /** The probability a decision model's choice needs before its template answers. */
-    accept: z.number().gt(0).lt(1),
+    accept: ProbabilitySchema,
     /** Options per question the decision model takes (none included); more templates are narrowed lexically first. */
     maxOptions: z.number().int().min(2),
     question: Prompt,
@@ -22,7 +23,7 @@ const EngineSettingsSchema = z.strictObject({
   }),
   lexical: z.strictObject({
     /** The probability the lexical decision model's choice needs before its template answers. */
-    accept: z.number().gt(0).lt(1),
+    accept: ProbabilitySchema,
     /** The similarity the `none` option scores, so a request unlike every template is none. */
     none: z.number().min(0).max(1),
     /** Softmax temperature over similarities. */

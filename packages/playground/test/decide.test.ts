@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { experimental_evaluate } from "ai";
 import type { Experimental_EvaluationModelV4 as EvaluationModelV4 } from "@ai-sdk/provider";
+import { probability } from "@harness/cognitive";
 import { chooseTemplate, lexicalDecider, lexicalJudge, modelDecider, resolveHoles } from "../src/decide.ts";
 import { parseEngineSettings } from "../src/engine-settings.ts";
 import { parseTemplate } from "../src/templates.ts";
@@ -9,6 +10,8 @@ import { parseTemplate } from "../src/templates.ts";
 const settings = parseEngineSettings(JSON.parse(readFileSync(new URL("../data/templates.json", import.meta.url), "utf8")));
 const judge = lexicalJudge(settings.lexical);
 const lexical = [lexicalDecider(settings.lexical)];
+/** The settings with a model asked once, in the options' order, as tests about names and thresholds need. */
+const once = { ...settings, decision: { ...settings.decision, rotate: false } };
 
 const template = (id: string, description: string, examples: string[], body = "x\n", holes = "") =>
   parseTemplate(id, `---\ndescription: ${description}\nexamples: ${JSON.stringify(examples)}\n${holes}---\n${body}`);
@@ -71,7 +74,7 @@ describe("choosing a template", () => {
     expect((await chooseTemplate([lexicallySure(settings.lexical.accept + 0.05)], "anything", [listFiles], settings)).template?.id).toBe("list-files");
     // Each kind of decider has its own threshold.
     const modelSure = (p: number) => modelDecider(fixed({ "list-files": p, none: 1 - p }));
-    const strict = { ...settings, decision: { ...settings.decision, accept: 0.9 } };
+    const strict = { ...once, decision: { ...once.decision, accept: probability(0.9) } };
     expect((await chooseTemplate([modelSure(0.8)], "anything", [listFiles], strict)).template).toBeUndefined();
     expect((await chooseTemplate([lexicallySure(0.8)], "anything", [listFiles], strict)).template?.id).toBe("list-files");
     expect((await chooseTemplate([modelSure(0.91)], "anything", [listFiles], strict)).template?.id).toBe("list-files");
@@ -80,7 +83,7 @@ describe("choosing a template", () => {
 
   it("DC2.4 a model is asked what the user asks for, with each template's description alone; the lexical judge reads names, descriptions and examples", async () => {
     const model = fixed({ none: 1, "list-files": 0, today: 0 });
-    await chooseTemplate([modelDecider(model)], "anything", [listFiles, date], settings);
+    await chooseTemplate([modelDecider(model)], "anything", [listFiles, date], once);
     expect(model.asked[0]!["q0"]).toEqual({ type: "choice", instructions: settings.decision.question, criteria: { none: settings.decision.none, "list-files": listFiles.description, today: date.description } });
     const words = fixed({ none: 1, "list-files": 0 });
     await chooseTemplate([{ ...lexicalDecider(settings.lexical), judge: words }], "anything", [listFiles], settings);
@@ -98,8 +101,9 @@ describe("choosing a template", () => {
       doEvaluate: async ({ questions }) => ({
         answers: Object.fromEntries(
           Object.entries(questions).map(([id, q]) => {
-            const keys = Object.keys((q as { criteria: object }).criteria);
-            asked.push(keys);
+            const criteria = (q as { criteria: Record<string, string> }).criteria;
+            asked.push(Object.values(criteria));
+            const keys = Object.keys(criteria);
             return [id, { type: "choice" as const, choice: keys[0]!, probabilities: Object.fromEntries(keys.map((k, i) => [k, i === 0 ? 0.9 : 0.1 / (keys.length - 1)])) }];
           }),
         ),
@@ -107,17 +111,48 @@ describe("choosing a template", () => {
       }),
     };
     const decision = await chooseTemplate([modelDecider(firstWins)], "anything", [listFiles, date], settings);
+    const [n, l, d] = [settings.decision.none, listFiles.description, date.description];
     expect(asked).toEqual([
-      ["none", "list-files", "today"],
-      ["list-files", "today", "none"],
-      ["today", "none", "list-files"],
+      [n, l, d],
+      [l, d, n],
+      [d, n, l],
     ]);
     // Each option was first once: an even spread, below the threshold.
     expect(decision.template).toBeUndefined();
     for (const p of Object.values(decision.probabilities)) expect(p).toBeCloseTo(1 / 3, 6);
     asked.length = 0;
-    await chooseTemplate([modelDecider(firstWins)], "anything", [listFiles, date], { ...settings, decision: { ...settings.decision, rotate: false } });
+    await chooseTemplate([modelDecider(firstWins)], "anything", [listFiles, date], once);
     expect(asked).toHaveLength(1);
+  });
+
+  it("DC2.7 rotating works for any option names: the model sees each rotation in its own order, integer-like names included, and answers come back by name", async () => {
+    const orders: unknown[][] = [];
+    const firstWins: EvaluationModelV4 = {
+      specificationVersion: "v4",
+      provider: "test",
+      modelId: "first",
+      supportedQuestionTypes: ["choice"],
+      doEvaluate: async ({ questions }) => ({
+        answers: Object.fromEntries(
+          Object.entries(questions).map(([id, q]) => {
+            const criteria = (q as { criteria: Record<string, unknown> }).criteria;
+            orders.push(Object.values(criteria));
+            const keys = Object.keys(criteria);
+            return [id, { type: "choice" as const, choice: keys[0]!, probabilities: Object.fromEntries(keys.map((k, i) => [k, i === 0 ? 0.8 : 0.1])) }];
+          }),
+        ),
+        warnings: [],
+      }),
+    };
+    const t = parseTemplate("pick", "---\ndescription: d\nholes:\n  n: { description: which, source: choice, options: [b, '10', '2'] }\n---\n{{n}}");
+    const resolved = await resolveHoles(t, "x", {}, [modelDecider(firstWins)], settings);
+    expect(orders).toEqual([
+      ["b", "10", "2"],
+      ["10", "2", "b"],
+      ["2", "b", "10"],
+    ]);
+    // Each was first once, so none wins outright; the answer is one of the names, not a stand-in key.
+    expect(["b", "10", "2"]).toContain(resolved.values["n"]);
   });
 
   it("DC2.5 deciders are asked in order: one that fails hands the decision to the next, which says who decided and why the others did not", async () => {
@@ -178,7 +213,7 @@ holes:
   it("DC3.3 a choice hole goes to the first decider that answers, asked the hole's description with the options as they are", async () => {
     const t = parseTemplate("pick", "---\ndescription: d\nholes:\n  file: { description: the file to show, source: choice, fact: files }\n---\n{{file}}");
     const model = fixed({ "README.md": 0.1, "notes/todo.md": 0.9 });
-    const resolved = await resolveHoles(t, "open my todo list", facts, [modelDecider(failing("offline")), modelDecider(model), ...lexical]);
+    const resolved = await resolveHoles(t, "open my todo list", facts, [modelDecider(failing("offline")), modelDecider(model), ...lexical], once);
     expect(resolved).toMatchObject({ values: { file: "notes/todo.md" }, problems: ["test/down: offline"] });
     expect(model.asked[0]!["q0"]).toEqual({ type: "choice", instructions: "the file to show", criteria: { "README.md": null, "notes/todo.md": null } });
   });

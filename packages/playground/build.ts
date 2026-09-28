@@ -1,8 +1,10 @@
 /**
- * Builds the playground into one self-contained HTML file: the page's markup and styles
- * (page.html), then the whole app (harness, terminal, shell) bundled into one inline
- * module script. That file is what gets published as an artifact, which allows no
- * scripts from other hosts, so nothing is left to load.
+ * Builds the playground into one HTML file: the page's markup and styles (page.html),
+ * then the whole app (harness, terminal, shell) bundled into one inline module script.
+ * That file is what gets published as an artifact. Everything is in it except the
+ * decision model's runtime and weights: onnxruntime-web's WebAssembly comes from its
+ * CDN and the model's files from Hugging Face, and only when the page loads the model
+ * (`/decide model`).
  *
  *   node packages/playground/build.ts [out.html]
  */
@@ -23,6 +25,8 @@ export async function buildPlayground(options: { readonly minify?: boolean } = {
       configFile: false,
       logLevel: "warn",
       resolve: {
+        // One onnxruntime-web, whichever package asks for it.
+        dedupe: ["onnxruntime-web", "onnxruntime-common"],
         alias: [
           // Each package's entry; its other exports (a package's data files) resolve as files.
           ...HARNESS.map((name) => ({ find: new RegExp(`^@harness/${name}$`), replacement: join(packages, name, "src/index.ts") })),

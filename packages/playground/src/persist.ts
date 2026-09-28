@@ -73,7 +73,7 @@ const turnReport = z.object({
 const pageState = z.object({
   version: z.literal(1),
   sessionId: z.string().optional(),
-  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z.enum(GENERATIONS).default("ask"), decide: z.enum(DECIDE).default("model") }),
+  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z.enum(GENERATIONS).default("ask"), decide: z.enum(DECIDE).default("lexical") }),
   turns: z.array(z.object({ prompt: z.string(), report: turnReport })),
 });
 

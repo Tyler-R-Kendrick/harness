@@ -10,8 +10,8 @@
       "properties": {
         "accept": {
           "type": "number",
-          "exclusiveMinimum": 0,
-          "exclusiveMaximum": 1
+          "minimum": 0,
+          "maximum": 1
         },
         "maxOptions": {
           "type": "integer",
@@ -44,8 +44,8 @@
       "properties": {
         "accept": {
           "type": "number",
-          "exclusiveMinimum": 0,
-          "exclusiveMaximum": 1
+          "minimum": 0,
+          "maximum": 1
         },
         "none": {
           "type": "number",

@@ -23,22 +23,28 @@ export class DecisionModel {
   readonly #model: Pick<ModelDescriptor, "id" | "name" | "downloadBytes"> | undefined;
   readonly #ensemble: { resolve(task: "classification", kind: "judge"): Promise<{ readonly port: EvaluationModelV4 }> };
   readonly #onChange: () => void;
+  readonly #notKept: string | undefined;
   #state: State = { kind: "idle" };
+  #unkept: string | undefined;
+  #fellBack: readonly string[] = [];
 
   constructor(options: {
     readonly model: Pick<ModelDescriptor, "id" | "name" | "downloadBytes"> | undefined;
     readonly ensemble: { resolve(task: "classification", kind: "judge"): Promise<{ readonly port: EvaluationModelV4 }> };
     /** Called when the model starts loading, is ready, or fails. */
     readonly onChange: () => void;
+    /** Why this browser did not keep the model's files last time, if it did not. */
+    readonly notKept?: string;
   }) {
     this.#model = options.model;
     this.#ensemble = options.ensemble;
     this.#onChange = options.onChange;
+    this.#notKept = options.notKept;
   }
 
-  /** Start loading the model (once). */
+  /** Start loading the model: when asked (a download), and again after it failed. */
   load(): void {
-    if (!this.#model || this.#state.kind !== "idle") return;
+    if (!this.#model || this.#state.kind === "loading" || this.#state.kind === "ready") return;
     this.#state = { kind: "loading" };
     this.#onChange();
     void this.#ensemble.resolve("classification", "judge").then(
@@ -56,10 +62,34 @@ export class DecisionModel {
     const model = this.#model;
     if (!model) return "none for a browser in the catalog; the lexical judge decides";
     const state = this.#state;
-    if (state.kind === "idle") return `${model.name}: not loaded`;
-    if (state.kind === "loading") return `${model.name}: loading (${Math.round(model.downloadBytes / 1e6)} MB, once; kept in this browser)`;
-    if (state.kind === "ready") return `${model.name}: ready`;
+    const size = `${Math.round(model.downloadBytes / 1e6)} MB`;
+    if (state.kind === "idle") {
+      return this.#notKept === undefined
+        ? `${model.name}: not downloaded (${size}, once; kept in this browser): /decide model loads it`
+        : `${model.name}: not kept in this browser last time (${this.#notKept}): /decide model downloads it again (${size})`;
+    }
+    if (state.kind === "loading") return `${model.name}: loading (${size}, once; kept in this browser)`;
+    if (state.kind === "ready") {
+      const kept = this.#unkept === undefined ? "" : ` (not kept in this browser: ${this.#unkept}; it downloads again next visit)`;
+      const fell = this.#fellBack.length === 0 ? "" : `; the last decision fell back to the lexical judge (${this.#fellBack.join("; ")})`;
+      return `${model.name}: ready${kept}${fell}`;
+    }
     return `${model.name}: could not load (${state.reason}); the lexical judge decides`;
+  }
+
+  /** The browser would not keep one of the model's files (its storage quota): the next visit downloads it again. */
+  cacheProblem(reason: string): void {
+    this.#unkept ??= reason;
+  }
+
+  /** Whether the files were kept, for the next visit: why not, if they were not. */
+  get unkept(): string | undefined {
+    return this.#unkept;
+  }
+
+  /** What the last decision's decision models failed with, if the lexical judge took it over. */
+  fellBack(problems: readonly string[]): void {
+    this.#fellBack = problems;
   }
 
   /** Who decides, in order: the model when it is ready and wanted, the lexical judge always last. */

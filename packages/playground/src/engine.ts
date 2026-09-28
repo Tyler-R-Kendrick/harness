@@ -77,6 +77,8 @@ export class TemplateEngine {
   readonly #id = createIdGenerator({ prefix: "tpl" });
   /** The template that answered last, for feedback. */
   last: { readonly templateId: string; readonly request: string } | undefined;
+  /** What the decision models failed with in the last decision (and its holes), when a later one decided. */
+  lastProblems: readonly string[] = [];
 
   constructor(options: EngineOptions) {
     this.#options = options;
@@ -144,6 +146,7 @@ export class TemplateEngine {
   async #decide(request: string): Promise<Reply> {
     const { store, settings, deciders } = this.#options;
     const decision = await chooseTemplate(deciders(), request, (await store.list()).templates, settings);
+    this.lastProblems = decision.problems ?? [];
     const meta = { template: decision.template?.id ?? null, by: decision.by, probability: decision.probability, ...(decision.problems ? { problems: [...decision.problems] } : {}) };
     const generation = this.#options.generation();
     const template = decision.template;
@@ -162,6 +165,7 @@ export class TemplateEngine {
     const values = { ...resolved.values, ...written };
     const missing = resolved.missing.filter((h) => values[h] === undefined);
     const problems = [...((meta["problems"] as string[] | undefined) ?? []), ...resolved.problems];
+    this.lastProblems = problems;
     const holes = { ...meta, ...(problems.length > 0 ? { problems } : {}), holes: Object.fromEntries(Object.keys(values).map((h) => [h, written[h] === undefined ? holeOf(template, h, facts).source : "generated"])) };
     if (missing.length > 0) {
       if (Object.keys(written).length > 0 || this.#options.generation() === "off") return { text: `Template ${template.id} needs text for ${missing.join(", ")}, and generation is off or did not write it: /generate ask lets a generator fill it.`, meta: holes };

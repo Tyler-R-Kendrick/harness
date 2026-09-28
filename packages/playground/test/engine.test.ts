@@ -72,9 +72,10 @@ describe("the template engine: answers from templates before inference", () => {
 
   it("TE1.11 a decision model that fails leaves the decision to the next one, and the turn's metadata says who decided and why the other did not", async () => {
     const down = modelDecider({ specificationVersion: "v4", provider: "test", modelId: "down", supportedQuestionTypes: ["choice"], doEvaluate: () => Promise.reject(new Error("still loading")) });
-    const { ask } = setup({ deciders: () => [down, lexicalDecider(settings.lexical)] });
+    const { ask, engine } = setup({ deciders: () => [down, lexicalDecider(settings.lexical)] });
     const listed = await ask("list the files here");
     expect(listed.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "list-files", by: "harness.lexical/tf-idf", problems: ["test/down: still loading"] } });
+    expect(engine.lastProblems).toEqual(["test/down: still loading"]);
     // A choice hole asks the deciders too, and its problems join the decision's.
     const shown = await ask("show me the readme");
     expect(shown.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "show-file", problems: ["test/down: still loading"] } });
