@@ -1285,7 +1285,12 @@ As built. A resolver rule may route instead of naming a graph (plan §8.1).
   graph; other sessions resolve as before, without reading the pin. The router's answers
   are kept per session by request, so a session routed to no graph is not asked again for
   the same prompt; a router that throws is asked again at the next turn. Harness turns
-  (`turn`) route the same way.
+  (`turn`) route the same way. `core(scope)`, which composition asks for a turn's tools
+  before its first step, routes by `scope.messages` (the turn's conversation): workers'
+  per-turn `tools` are told it (`TurnToolsContext`), and `sessionTools` passes it on
+  (`TurnToolsScope`), so a routed session is offered the workflows of the graph it is
+  routed to (PW1.92, PC1.53, AW1.18). Without the messages a routing session has no graph
+  for that turn. A step's usage record (`end`) finds a routed session's graph by its pin.
 - Native host: `nativeProceduralStep({ …, router?: LanguageModel })` wraps it in
   `modelGraphRouter` with the host's settings. With the cognitive core, `main.ts` passes
   the ensemble's `languageModel("tool-calling", "router")`; without it a routing rule

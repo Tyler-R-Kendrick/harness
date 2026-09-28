@@ -11,7 +11,7 @@
  * Portable: the host brings the files, the code mode and the model that answers `tools.ask`.
  */
 import { asSchema } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import type { SnapshotStorage } from "@harness/core";
 import { WorkflowHost } from "@harness/workflows";
 import type { CodeMode, Effects, ToolSpec, WorkflowLibrary } from "@harness/workflows";
@@ -19,6 +19,9 @@ import { revisionTools, StagingLibrary } from "./compose.ts";
 import type { CompositionSettings } from "./compose.ts";
 import type { Composer } from "./dream-runner.ts";
 import type { ProceduralStepHook, StepScope } from "./step.ts";
+
+/** A turn as its tools see it: the session's scope and, when the worker gives it, the turn's conversation (a routing session is routed by its first prompt). */
+export type TurnToolsScope = StepScope & { readonly messages?: readonly ModelMessage[] };
 
 /**
  * Where a host keeps staged workflows, with a journal per run (a directory of its own
@@ -67,8 +70,8 @@ export async function composer(options: { readonly settings: CompositionSettings
 export function sessionTools(options: {
   readonly step: Pick<ProceduralStepHook, "core">;
   readonly staging: Staging;
-  readonly base?: ToolSet | ((scope: StepScope) => ToolSet | Promise<ToolSet>);
-}): (scope: StepScope) => Promise<ToolSet> {
+  readonly base?: ToolSet | ((scope: TurnToolsScope) => ToolSet | Promise<ToolSet>);
+}): (scope: TurnToolsScope) => Promise<ToolSet> {
   const { step, base = {} } = options;
   return async (scope) => {
     const tools = typeof base === "function" ? await base(scope) : base;
@@ -81,7 +84,7 @@ export function sessionTools(options: {
 export interface HostComposition {
   readonly staging: Staging;
   /** A session worker's per-turn tools (`sessionTools`). */
-  readonly tools: (scope: StepScope) => Promise<ToolSet>;
+  readonly tools: (scope: TurnToolsScope) => Promise<ToolSet>;
   /** Dream's composer over the base tools as they are when it is called: once per dream. */
   readonly composer: () => Promise<Composer>;
   /** Dream's tool catalog: the base tools' names, when it is called. */

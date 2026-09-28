@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import { tool } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { sessionOf, stateContent, usage } from "@harness/cognitive";
@@ -277,9 +277,27 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     await worker.run({ type: "prompt", sessionId: "s2", turnId: "t1", prompt: [{ type: "text", text: "second" }], cwd: "/repo", sessionMeta: { team: "a" } }, () => {});
     expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([[], ["learned"]]);
     expect(scopes).toEqual([
-      { sessionId: "s1", turnId: "t1", cwd: "/", report: expect.any(Function) },
-      { sessionId: "s2", turnId: "t1", cwd: "/repo", sessionMeta: { team: "a" }, report: expect.any(Function) },
+      { sessionId: "s1", turnId: "t1", cwd: "/", report: expect.any(Function), messages: expect.any(Array) },
+      { sessionId: "s2", turnId: "t1", cwd: "/repo", sessionMeta: { team: "a" }, report: expect.any(Function), messages: expect.any(Array) },
     ]);
+  });
+
+  it("AW1.18 tools given anew each turn are told the turn's conversation, ending with its prompt, so a routing step hook can route by it", async () => {
+    const told: (readonly ModelMessage[])[] = [];
+    const model = scripted([...text("one"), finish()], [...text("two"), finish()]);
+    const worker = new AgentWorker({
+      agent: sessionAgent({
+        model,
+        tools: (turn) => {
+          told.push([...turn.messages]);
+          return {};
+        },
+      }),
+    });
+    await run(worker, [{ type: "text", text: "first" }]).done;
+    await run(worker, [{ type: "text", text: "second" }], "s1", "t2").done;
+    expect(told.map((m) => m.filter((x) => x.role === "user").length)).toEqual([1, 2]);
+    expect(told.map((m) => JSON.stringify(m.at(-1)?.content))).toEqual([expect.stringContaining("first"), expect.stringContaining("second")]);
   });
 
   it("AW1.12 an ACP prompt becomes AI SDK user content: text and image blocks, other blocks left out", () => {

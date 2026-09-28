@@ -48,6 +48,11 @@ export interface TurnContext extends TurnScope {
   readonly tools: readonly string[];
 }
 
+/** A turn as per-turn tools see it: its scope and its conversation, ending with the turn's prompt. */
+export interface TurnToolsContext extends TurnScope {
+  readonly messages: readonly ModelMessage[];
+}
+
 /** A step that ended, as AI SDK `onStepEnd` sees it: its number and its model call's usage. */
 export interface StepEndContext extends TurnScope {
   /** The AI SDK step number (it restarts with the stream after an approval round). */
@@ -178,10 +183,11 @@ export function sessionAgent(options: {
   readonly instructions?: string;
   /**
    * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
-   * grows as learning builds tools), told the turn's scope so a session can get tools of
-   * its own (e.g. the workflows its pinned procedural core binds).
+   * grows as learning builds tools), told the turn's scope and conversation so a session
+   * can get tools of its own (e.g. the workflows its pinned procedural core binds, where a
+   * routing resolver reads the first prompt).
    */
-  readonly tools?: ToolSet | ((turn: TurnScope) => ToolSet | Promise<ToolSet>);
+  readonly tools?: ToolSet | ((turn: TurnToolsContext) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -215,7 +221,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools(scopeOf(turn)) : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: call.messages ?? [] }) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {

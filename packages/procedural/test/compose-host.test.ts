@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { jsonSchema, tool } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { z } from "zod";
 import { MemoryLibrary, parseWorkflow, quickjsCodeMode } from "@harness/workflows";
 import type { Workflow } from "@harness/workflows";
 import { MemoryStorage } from "@harness/testkit";
 import { compilePath, composeCandidate, composer, composition, NodeNameSchema, parseGraph, sessionTools, staging, StagingLibrary, toolSpecs, workflowBinding } from "@harness/procedural";
-import type { ProceduralGraph, StagingFiles, StepScope } from "@harness/procedural";
+import type { ProceduralGraph, StagingFiles, StepScope, TurnToolsScope } from "@harness/procedural";
 import { chain, PATH, RUNS, settings, SPECS } from "./compose-fixtures.ts";
 
 /** Staging files in memory: a library with a journal per run, as a host keeps them. */
@@ -104,6 +104,16 @@ describe("composition on a host", () => {
     // A staged workflow whose code no longer hashes to the binding is not offered.
     await store.put({ ...w, code: `${w.code}// changed\n` });
     expect(Object.keys(await tools(scope("fresh")))).toEqual(["search"]);
+  });
+
+  it("PC1.53 sessionTools hands the turn's conversation to core and to per-turn base tools, so a routing session is routed by its first prompt", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const told: (readonly ModelMessage[] | undefined)[] = [];
+    const step = { core: async (sc: TurnToolsScope) => (told.push(sc.messages), undefined) };
+    const messages: ModelMessage[] = [{ role: "user", content: "fetch the page" }];
+    const tools = sessionTools({ step, staging: s, base: (sc) => (told.push(sc.messages), {}) });
+    await tools({ ...scope("s1"), messages });
+    expect(told).toEqual([messages, messages]);
   });
 
   it("PC1.40 composition is what a host hands out: a session's per-turn tools, and for each dream a composer and a tool catalog over the base tools as they are then", async () => {
