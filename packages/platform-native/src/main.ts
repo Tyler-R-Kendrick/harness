@@ -11,7 +11,7 @@ import { AgentWorker, dialogueMiddleware, DialogueWorker, EchoWorker, rememberTu
 import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
-import type { ApprovalNotice, GraphId } from "@harness/procedural";
+import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/procedural";
 import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
 import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
@@ -21,7 +21,21 @@ import { conversationsDir, fileConversations, FileStorage } from "./file-storage
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { daemonSessions, hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativeProceduralStep, nativeStepEvictions, nativeTaskEvaluator, proceduralStore } from "./procedural-host.ts";
+import {
+  daemonSessions,
+  describePlanRun,
+  hookNotifier,
+  hostAuthorizer,
+  nativeComposition,
+  nativeDream,
+  nativeDreamSchedule,
+  nativeLiveLearner,
+  nativePlanRunner,
+  nativeProceduralStep,
+  nativeStepEvictions,
+  nativeTaskEvaluator,
+  proceduralStore,
+} from "./procedural-host.ts";
 import { lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
@@ -129,8 +143,15 @@ const proceduralPolicy = values["procedural-policy"] === undefined ? undefined :
 // The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
 // The approvals inbox announces proposals and decisions on the daemon's hook bus, once it is up.
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
-const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; schedule?: ReturnType<typeof nativeDreamSchedule>; notify?: (notice: ApprovalNotice) => void } = {};
-const notify = (notice: ApprovalNotice) => live.notify?.(notice);
+// Plan runs (`procedural.run`) start with the daemon too: the runner needs the session model and tools, made below.
+const live: {
+  learner?: ReturnType<typeof nativeLiveLearner>;
+  dream?: ReturnType<typeof nativeDream>;
+  schedule?: ReturnType<typeof nativeDreamSchedule>;
+  plans?: PlanRunner;
+  notify?: (notice: ApprovalNotice | PlanNotice) => void;
+} = {};
+const notify = (notice: ApprovalNotice | PlanNotice) => live.notify?.(notice);
 // One process owns a store file: the daemon holds the directory's lock while it runs, and
 // refuses to start while another process (another daemon, or harness-procedural) holds it.
 // A CLI that finds it held sends its operations to this daemon's socket instead.
@@ -160,6 +181,8 @@ const cognitive =
                 feedback: async (session: string, turn: string, score: number) => live.learner?.learner.feedback(session, turn, score),
                 dream: async (graph: GraphId) => live.dream?.(graph),
                 notify,
+                // Set below, before the daemon serves anything.
+                plans: { run: (graph, plan) => live.plans!.run(graph, plan) },
               },
             }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
@@ -196,6 +219,19 @@ const composition =
         ...(values.workflows === undefined ? {} : { shared: values.workflows }),
       })
     : undefined;
+// Plans run on the session model (the ensemble's chat model, or else the gateway model), their tasks calling the
+// session tools plus the workflows the graph's head binds. Runs under way are kept in the procedural directory
+// (plan-runs.json), and the daemon resumes any that a stopped daemon left once it is up.
+if (procedural && cognitive) {
+  const workflowBase = cognitive.workflowHost ? () => workflowTools(cognitive.workflowHost!) : () => ({});
+  live.plans = nativePlanRunner({
+    dir: values.procedural!,
+    ...procedural,
+    model: cognitive.ensemble.languageModel("chat"),
+    tools: (context) => (composition ? composition.planTools(context.view?.core) : workflowBase()),
+    notify,
+  });
+}
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 // Agent workers keep each session's conversation (a file each) beside the daemon's state, so
 // a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
@@ -323,6 +359,14 @@ if (procedural && generator) {
   const composing = composition ? { composer: composition.composer, tools: composition.catalog } : {};
   live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, model: generator, sessions: async () => daemonSessions(host.daemon), inbox: approvalInbox(notify) }));
   live.schedule = nativeDreamSchedule({ runtime: host.runtime, ...procedural, dream: live.dream, log: (message) => void process.stderr.write(`${message}\n`) });
+}
+
+// Plan runs a stopped daemon left are resumed, one after another, each end logged (and announced on the hook bus).
+if (live.plans) {
+  void live.plans
+    .resume()
+    .then((outcomes) => outcomes.forEach((outcome) => void process.stderr.write(`${describePlanRun(outcome)}\n`)))
+    .catch((e: unknown) => void process.stderr.write(`procedural: resuming plan runs failed: ${e instanceof Error ? e.message : String(e)}\n`));
 }
 
 // The step hook forgets each session the daemon detaches (its pinned view and guidance cache).

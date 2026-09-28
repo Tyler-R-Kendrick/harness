@@ -95,7 +95,7 @@ export interface NativeEnsembleOptions {
     readonly settings?: ProceduralSettings;
     /** The store to serve, when the host already opened the one in `dir` (for dream, the step hook and the learner). */
     readonly store?: ProceduralStore;
-  } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback" | "notify">;
+  } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback" | "notify" | "plans">;
   readonly workflows?: {
     readonly dir: string;
     /** Tools beyond the library's own workflows. */

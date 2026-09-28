@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -50,6 +50,34 @@ describe("procedural graphs on the native daemon", () => {
     second.child.stdin.end();
     expect(await second.exited).toBe(0);
     expect(await proceduralStore(join(dir, "procedural")).heads.get(GraphIdSchema.parse("team/search"))).toEqual({ revision: revisionId(seedGraph()), history: [] });
+  });
+
+  it("PX2.129 the daemon serves procedural.plan and procedural.run, and at startup resumes the plan runs a stopped daemon left in plan-runs.json, logging each end", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const store = join(dir, "procedural");
+    mkdirSync(store, { recursive: true });
+    const done = { plan: { nodes: [], edges: [] }, outcomes: {} };
+    writeFileSync(
+      join(store, "plan-runs.json"),
+      JSON.stringify({
+        runs: [
+          { id: "00000000000000a1", graph: "team/search", state: done },
+          { id: "00000000000000a2", graph: "team/search", state: { ...done, outcomes: { ghost: { ok: true, output: 1 } } } },
+        ],
+      }),
+    );
+    const d = launch(dir);
+    await d.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    for (let i = 0; i < 400 && !d.stderr().includes("00000000000000a2"); i++) await new Promise((r) => setTimeout(r, 10));
+    expect(d.stderr()).toContain("procedural: plan run 00000000000000a1 on team/search succeeded: no tasks\n");
+    expect(d.stderr()).toContain("procedural: plan run 00000000000000a2 on team/search could not be resumed and was dropped: task ghost is not in the plan\n");
+    expect(await invoke(d.client, "procedural.import", { graph: "team/search" })).toMatchObject({ status: "head" });
+    expect(await invoke(d.client, "procedural.plan", { graph: "team/search", from: "Start", to: "End" })).toMatchObject({ status: "ok", plan: { nodes: [], edges: [] } });
+    expect(await invoke(d.client, "procedural.run", { graph: "team/search", from: "Start", to: "End" })).toMatchObject({ graph: "team/search", status: "succeeded", tasks: [] });
+    expect(await invoke(d.client, "procedural.run", { graph: "team/search", from: "End", to: "Start" })).toMatchObject({ status: "invalid", diagnostics: [{ code: "unreachable" }] });
+    d.child.stdin.end();
+    expect(await d.exited).toBe(0);
+    expect(JSON.parse(readFileSync(join(store, "plan-runs.json"), "utf8"))).toEqual({ runs: [] });
   });
 
   it("PX2.51 without the cognitive core --procedural still starts (sessions are guided), and procedural.* is not served", async () => {

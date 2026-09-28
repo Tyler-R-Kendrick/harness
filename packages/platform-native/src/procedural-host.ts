@@ -2,7 +2,24 @@ import { getRandomValues } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, composition, DreamSchedule, LiveLearner, logTrajectories, modelGraphRouter, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, staging, taskSuiteEvaluator } from "@harness/procedural";
+import {
+  authorize,
+  composition,
+  DreamSchedule,
+  LiveLearner,
+  logTrajectories,
+  modelGraphRouter,
+  modelRefiner,
+  modelTasks,
+  planRunner,
+  presetOf,
+  proceduralStep,
+  runDream,
+  SnapshotPlanRuns,
+  SnapshotProceduralStore,
+  staging,
+  taskSuiteEvaluator,
+} from "@harness/procedural";
 import type {
   AccessPolicy,
   Action,
@@ -17,6 +34,11 @@ import type {
   Evaluator,
   GraphId,
   HostComposition,
+  InvalidPlanRun,
+  PlanNotice,
+  PlanRunner,
+  PlanRunOutcome,
+  PlanTaskContext,
   ProceduralStepHook,
   ProceduralStore,
   Reflector,
@@ -305,14 +327,49 @@ export function nativeComposition(options: {
 }
 
 /**
- * The approvals inbox's notices on the daemon's hook bus, published by this host under
- * source `procedural` (a peer can never pick it), and saved with the daemon's snapshot.
- * Plugins subscribe to `procedural.approval.*`.
+ * Procedural notices on the daemon's hook bus, published by this host under source
+ * `procedural` (a peer can never pick it), and saved with the daemon's snapshot: the
+ * approvals inbox's (`procedural.approval.*`) and the ends of plan runs
+ * (`procedural.plan.completed`). Plugins subscribe to them.
  */
 export const hookNotifier =
   (runtime: Pick<DaemonRuntime, "publish">) =>
-  (notice: ApprovalNotice): void =>
+  (notice: ApprovalNotice | PlanNotice): void =>
     void runtime.publish({ source: "procedural", type: notice.type, payload: notice.payload });
+
+/** The runs under way in the procedural directory: `plan-runs.json` beside the store, saved atomically after every change. */
+export function planRunsStore(dir: string): SnapshotPlanRuns {
+  return new SnapshotPlanRuns(new FileStorage(join(dir, "plan-runs.json")));
+}
+
+/**
+ * Plans on this host (`procedural.run`): `planRunner` over the store, each task
+ * `modelTask` on `model` (the session model) with `tools` for the run's graph (the
+ * session tools plus the workflows the graph's head binds, `HostComposition.planTools`;
+ * none when not given). Runs are kept in `plan-runs.json` in `dir` (the `--procedural`
+ * directory, whose lock covers it) until they end, so the next runner over the directory
+ * resumes one a stopped daemon left (`resume`). Each end goes to `notify`.
+ */
+export function nativePlanRunner(options: {
+  readonly dir: string;
+  readonly store: ProceduralStore;
+  readonly settings: Settings;
+  readonly model: LanguageModel;
+  readonly tools?: ToolSet | ((context: PlanTaskContext) => ToolSet | Promise<ToolSet>);
+  readonly notify?: (notice: PlanNotice) => void | Promise<void>;
+}): PlanRunner {
+  const { dir, store, settings, model, tools = {}, notify } = options;
+  return planRunner({ store, runs: planRunsStore(dir), settings, entropy: hostPorts.entropy, task: modelTasks({ model, tools, settings }), ...(notify === undefined ? {} : { notify }) });
+}
+
+/** A plan run's end, in a line. */
+export function describePlanRun(outcome: PlanRunOutcome | InvalidPlanRun): string {
+  const what = `procedural: plan run ${outcome.run} on ${outcome.graph}`;
+  if (outcome.status === "invalid") return `${what} could not be resumed and was dropped: ${outcome.reason}`;
+  const counts = new Map<string, number>();
+  for (const t of outcome.tasks) counts.set(t.status, (counts.get(t.status) ?? 0) + 1);
+  return `${what} ${outcome.status}: ${[...counts].map(([status, n]) => `${n} ${status}`).join(", ") || "no tasks"}`;
+}
 
 /**
  * An approver that asks on a terminal (the CLI's permission flow): it names the graph,
