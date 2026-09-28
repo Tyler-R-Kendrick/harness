@@ -44,7 +44,7 @@ import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
 import { Tracer, tracingMiddleware } from "./trace.ts";
 import type { TraceEvent, TraceKind } from "./trace.ts";
-import { HOME, vfsTools, walk } from "./vfs.ts";
+import { HOME, SHELL_ENV, vfsTools, walk } from "./vfs.ts";
 import type { FileEntry, VfsDiff } from "./vfs.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -702,7 +702,7 @@ async function boot() {
     renderTurns();
   }
   const promptFor = (cwd: string) => `\x1b[36mharness\x1b[0m:\x1b[34m${cwd.replace(HOME, "~") || "/"}\x1b[0m$ `;
-  const shell = (late.shell = new BashShell({ files: savedVfs ? {} : SAMPLE_FILES, cwd: HOME, greeting: GREETING, prompt: promptFor }));
+  const shell = (late.shell = new BashShell({ files: savedVfs ? {} : SAMPLE_FILES, cwd: HOME, env: { ...SHELL_ENV }, greeting: GREETING, prompt: promptFor }));
   await shell.attach(write);
   const bash = shell.bash!;
   bashRef = bash;
@@ -730,7 +730,7 @@ async function boot() {
     trial: async (script) => {
       const copy = new Bash({ cwd: HOME });
       await restoreVfs(copy.fs, HOME, await snapshotVfs(bash.fs, HOME));
-      return copy.exec(script, { cwd: HOME, env: { PWD: HOME }, signal: AbortSignal.timeout(engineSettings.generation.trialMs) });
+      return copy.exec(script, { cwd: HOME, env: { ...SHELL_ENV }, signal: AbortSignal.timeout(engineSettings.generation.trialMs) });
     },
   });
   // The harness as an Eve agent in its own filesystem (~/AGENTS.md, ~/agent/), kept in sync with its state.

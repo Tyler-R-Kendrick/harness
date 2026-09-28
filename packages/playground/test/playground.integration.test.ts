@@ -131,7 +131,8 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await terminalText(page)).toContain("README.md");
     await page.click("#tab-timeline");
     expect(await page.locator("#events").innerText()).toContain("decision model");
-    await type(page, "cat AGENTS.md | grep -c 'could not load'");
+    // ~ is home in the terminal too.
+    await type(page, "cat ~/AGENTS.md | grep -c 'could not load'");
     await page.waitForFunction(() => /\n1\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
     expect(errors).toEqual([]);
     await page.close();

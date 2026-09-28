@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import { diffVfs, vfsApproval, vfsTools, walk } from "../src/vfs.ts";
+import { diffVfs, SHELL_ENV, vfsApproval, vfsTools, walk } from "../src/vfs.ts";
 
 const HOME = "/home/user";
 const opts = { toolCallId: "t", messages: [], context: undefined };
@@ -15,6 +15,12 @@ describe("the agent's tools on the shared virtual filesystem", () => {
     const tools = vfsTools(bash);
     expect(await tools.bash.execute!({ command: "pwd && cat a.txt" }, opts)).toEqual({ stdout: `${HOME}\nalpha\n`, stderr: "", exitCode: 0 });
     expect(await tools.bash.execute!({ command: "cat missing" }, opts)).toMatchObject({ exitCode: 1, stderr: expect.stringContaining("missing") });
+  });
+
+  it("VF1.5 ~ is the home directory in the agent's bash, as in the terminal (SHELL_ENV)", async () => {
+    const bash = shell({ [`${HOME}/a.txt`]: "alpha\n" });
+    expect(await vfsTools(bash).bash.execute!({ command: "echo ~ && cat ~/a.txt" }, opts)).toEqual({ stdout: `${HOME}\nalpha\n`, stderr: "", exitCode: 0 });
+    expect(SHELL_ENV).toEqual({ HOME, PWD: HOME });
   });
 
   it("VF1.2 a long output is cut to the limit and says so", async () => {
