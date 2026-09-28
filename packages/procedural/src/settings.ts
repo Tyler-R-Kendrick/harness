@@ -23,6 +23,7 @@ export const PLACEHOLDERS = {
   refiner: REFINER_SLOTS,
   dream: [...REFINER_SLOTS, "overlay_entries_block", "cautioned_edges_block", "rejection_reasons_block"],
   reflection: ["graph_context", "trajectory"],
+  route: ["graphs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Gates dream can apply (plan §7.4). An evaluator gate with a trailing `?` applies only when the graph has an evaluator. */
@@ -30,6 +31,29 @@ export const GATES = ["structure", "evidence", "evaluator-at-least-retained", "e
 const EVALUATOR_GATES = ["evaluator-at-least-retained", "evaluator-anchored-noninferiority"] as const;
 const GateSchema = z.union([z.enum(GATES), z.templateLiteral([z.enum(EVALUATOR_GATES), "?"])]);
 export type Gate = z.output<typeof GateSchema>;
+
+const DURATION = /^(?=\d)(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/;
+const DURATION_FORMAT = "a duration such as 90s, 15m, 6h, 1d or 1h30m";
+const UNIT_MS = [86_400_000, 3_600_000, 60_000, 1_000] as const;
+
+/**
+ * A length of time, written as days, hours, minutes and seconds in that order (`1d`,
+ * `6h`, `1h30m`), parsed into a positive whole number of milliseconds. A number is
+ * already milliseconds, so parsed settings parse again to themselves.
+ */
+const DurationTextSchema = z
+  .string()
+  .regex(DURATION, DURATION_FORMAT)
+  .transform((text) => DURATION.exec(text)!.slice(1).reduce((ms, part, i) => ms + Number(part ?? 0) * UNIT_MS[i]!, 0));
+export const DurationSchema = z.union([DurationTextSchema, z.int()], { error: DURATION_FORMAT }).pipe(z.int().positive().brand<"Duration">());
+export type Duration = z.output<typeof DurationSchema>;
+
+/** Parse a duration (see `DurationSchema`); anything else is a `RangeError`. */
+export function duration(text: string): Duration {
+  const parsed = DurationSchema.safeParse(text);
+  if (!parsed.success) throw new RangeError(`invalid duration "${text}": ${DURATION_FORMAT}, and longer than zero`);
+  return parsed.data;
+}
 
 const LiveSettingsSchema = z
   .strictObject({
@@ -65,6 +89,14 @@ const DreamSettingsSchema = z
      * rounds, or the runner's `DEFAULT_SELECT`.
      */
     stride: z.int().positive().exactOptional(),
+    /**
+     * The schedule (plan §7.1): a dream is due once this long has passed since the last
+     * one (or, before any, since the head was set). With `afterTurns` too, whichever
+     * comes first. Unset with `afterTurns` unset: dream runs on demand only.
+     */
+    every: DurationSchema.exactOptional(),
+    /** A dream is due once the live learner has observed this many turns since the last one; needs an overlay. */
+    afterTurns: z.int().positive().exactOptional(),
     /** After the rounds, one more: compose a well-trodden path into a workflow node (plan §7.6), gated as any candidate. */
     compose: z.boolean().exactOptional(),
     /** The cycle policy c of App. B.6. */
@@ -95,19 +127,34 @@ const DreamSettingsSchema = z
   });
 export type DreamSettings = z.output<typeof DreamSettingsSchema>;
 
+/** Where guidance goes: `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
+const PlacementSchema = z.enum(["system", "trailing-message"]);
+
+/**
+ * How guidance is delivered: where it goes (`to`), and which tools a step offers
+ * (`activeTools`): `all`, or only the tools of the active node's successor actions, a
+ * strict ablation (AI SDK `activeTools`). A placement alone is that placement with every tool.
+ */
+const DeliverySchema = z.union([
+  PlacementSchema.transform((to) => ({ to, activeTools: "all" as const })),
+  z.strictObject({ to: PlacementSchema, activeTools: z.enum(["all", "successors"]).default("all") }),
+]);
+export type Delivery = z.output<typeof DeliverySchema>;
+
 const PresetSchema = z
   .strictObject({
     /** Learn a dynamic layer from live traffic. */
     overlay: z.boolean(),
-    /** `exact` is the paper's written Match. */
-    match: z.enum(["exact", "case-insensitive"]),
+    /** `exact` is the paper's written Match; `state-tracker` also reads a node the tool's result declares and bindings' argument predicates (plan §5.2). */
+    match: z.enum(["exact", "case-insensitive", "state-tracker"]),
     /** `start` resets to Start at each turn (the paper); `carry` keeps the previous turn's last action. */
     turnBoundary: z.enum(["start", "carry"]),
-    /** `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
-    delivery: z.enum(["system", "trailing-message"]),
+    delivery: DeliverySchema,
     /** Which guidance prompt: the paper's, or the harness variant (plan §9). */
     guidancePrompt: z.enum(["paper", "harness"]),
     guidanceCache: z.boolean(),
+    /** What a hop of the horizon counts: an `edge` (the paper), or an `action`, running through reasoning and status nodes to the next action node. */
+    hopUnit: z.enum(["edge", "action"]).default("edge"),
     /** Re-read the overlay at each turn boundary, or freeze it for the session (plan §5.1). */
     overlayRefresh: z.enum(["turn", "session"]).default("turn"),
     /** When dream moves the head mid-session: re-pin at the next turn, or keep the old core. */
@@ -117,6 +164,7 @@ const PresetSchema = z
   })
   .superRefine((p, ctx) => {
     if (p.overlay && p.live === undefined) ctx.addIssue({ code: "custom", message: "an overlay needs live settings", path: ["live"] });
+    if (!p.overlay && p.dream.afterTurns !== undefined) ctx.addIssue({ code: "custom", message: "observed turns need an overlay: without one the live learner observes none", path: ["dream", "afterTurns"] });
   });
 export type Preset = z.output<typeof PresetSchema>;
 
@@ -135,10 +183,14 @@ const PromptsSchema = z
     dream: text,
     /** Live reflection: proposes overlay entries (plan §6.2). */
     reflection: text,
+    /** The graph router's tool description: choose a candidate graph for the session's first prompt (a resolver's route rule). */
+    route: text,
+    /** The question a task suite's `judge` scorer asks about an answer (the state holds the task, the expected answer and the answer). */
+    taskJudge: text.exactOptional(),
   })
   .superRefine((prompts, ctx) => {
     for (const [name, slots] of Object.entries(PLACEHOLDERS)) {
-      const missing = slots.filter((slot) => !prompts[name as keyof typeof prompts].includes(`{${slot}}`));
+      const missing = slots.filter((slot) => !prompts[name as keyof typeof PLACEHOLDERS].includes(`{${slot}}`));
       if (missing.length > 0) ctx.addIssue({ code: "custom", message: `missing placeholders ${missing.map((s) => `{${s}}`).join(", ")}`, path: [name] });
     }
   });

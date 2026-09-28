@@ -5,6 +5,6 @@ export type { ConversationStore, Turn, TurnOptions } from "./agent.ts";
 export { harnessSessions } from "./harness.ts";
 export type { HarnessSessions, HarnessStore } from "./harness.ts";
 export { rememberTurns, sessionAgent } from "./session-agent.ts";
-export type { SessionMemory, StepContext, StepEndContext, StepHook, TurnContext, TurnLearning, TurnScope } from "./session-agent.ts";
+export type { LastCall, SessionMemory, StepContext, StepEndContext, StepHook, ToolContext, TurnContext, TurnLearning, TurnScope } from "./session-agent.ts";
 export { promptText, textChunk } from "./worker.ts";
 export type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } from "./worker.ts";

@@ -1,12 +1,37 @@
 import { getRandomValues } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
+import { authorize, composition, DreamSchedule, LiveLearner, logTrajectories, modelGraphRouter, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, staging, taskSuiteEvaluator } from "@harness/procedural";
+import type {
+  AccessPolicy,
+  Action,
+  ApprovalInbox,
+  ApprovalNotice,
+  Approver,
+  Composer,
+  CompositionSettings,
+  DreamPorts,
+  DreamResult,
+  DreamRun,
+  Evaluator,
+  GraphId,
+  HostComposition,
+  ProceduralStepHook,
+  ProceduralStore,
+  Reflector,
+  Resolver,
+  ScheduledDream,
+  SessionLog,
+  Settings,
+  TaskSuite,
+} from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
-import type { LanguageModel } from "ai";
+import type { Effects } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
+import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel, ToolSet } from "ai";
 import { FileStorage } from "./file-storage.ts";
+import { WorkflowFiles } from "./workflow-files.ts";
 
 /** This host's clock and entropy, for pinning and the step hook. */
 export const hostPorts = {
@@ -19,7 +44,9 @@ export const hostPorts = {
  * graph through the resolver (the host's principal as the owner), is let through by the
  * access policy when there is one, and is pinned by P9's
  * `pinSession`. It goes to `sessionAgent({ step })` and, with a guidance model,
- * `harnessSessions({ step })`.
+ * `harnessSessions({ step })`. A resolver rule that routes asks `router` (the ensemble's
+ * tool router) to choose the graph by the session's first prompt; without one such a
+ * session has no graph.
  */
 export function nativeProceduralStep(options: {
   readonly store: ProceduralStore;
@@ -31,8 +58,10 @@ export function nativeProceduralStep(options: {
   readonly preset?: string;
   /** The guidance model; a step's own model when not given. Turn-level guidance (harness workers) needs one. */
   readonly model?: LanguageModel;
+  /** The routing model route rules ask (`modelGraphRouter`), such as the ensemble's `tool-calling` router. */
+  readonly router?: LanguageModel;
 }): ProceduralStepHook {
-  const { store, settings, resolver, principal, policy, preset, model } = options;
+  const { store, settings, resolver, principal, policy, preset, model, router } = options;
   return proceduralStep({
     store,
     settings,
@@ -42,6 +71,7 @@ export function nativeProceduralStep(options: {
     ...hostPorts,
     ...(preset === undefined ? {} : { preset }),
     ...(model === undefined ? {} : { model }),
+    ...(router === undefined ? {} : { router: modelGraphRouter({ model: router, settings }) }),
   });
 }
 
@@ -52,7 +82,7 @@ export const hostAuthorizer =
     authorize(policy, action, graph, { principal });
 
 /** The procedural store kept in `dir`: one file, saved atomically after every change. One process owns it. */
-export function proceduralStore(dir: string): ProceduralStore {
+export function proceduralStore(dir: string): SnapshotProceduralStore {
   return new SnapshotProceduralStore(new FileStorage(join(dir, "procedural.json")));
 }
 
@@ -198,9 +228,10 @@ export function snapshotSessions(snapshot: unknown): { id: string; entries: LogE
  * Dream on this host (plan §7.1, P6): `runDream` over the store with real ports. The
  * refiner is `modelRefiner` on the given generator, trajectories are the turns of the
  * session logs `sessions` returns (`logTrajectories`), and time and ids come from this
- * host. An evaluator, an approver and a composer are optional: without an approver a
- * candidate that needs approval is rejected, and without a composer there is no
- * composition round. The run holds the graph's lease as `holder` (default `native-host`),
+ * host. An evaluator, an approver, an approvals inbox and a composer are optional: a
+ * candidate that needs approval is asked about when there is an approver, waits in the
+ * inbox when there is an inbox (the daemon's: no one can be asked outside a session's
+ * turn), and is rejected otherwise; without a composer there is no composition round. The run holds the graph's lease as `holder` (default `native-host`),
  * so a dream another process holds is `busy`.
  */
 export function nativeDream(options: {
@@ -211,13 +242,16 @@ export function nativeDream(options: {
   readonly sessions: () => Promise<readonly SessionLog[]>;
   readonly evaluator?: Evaluator;
   readonly approver?: Approver;
-  readonly composer?: Composer;
+  readonly inbox?: ApprovalInbox;
+  /** A composer, or how to make one for each dream (`nativeComposition`'s, over the session tools as they are then). */
+  readonly composer?: Composer | (() => Promise<Composer>);
   readonly task?: string;
-  readonly tools?: readonly string[];
+  /** The session tool catalog, or how to list it for each dream (`nativeComposition`'s `catalog`). */
+  readonly tools?: readonly string[] | (() => Promise<readonly string[]>);
   readonly sideEffectFree?: readonly string[];
   readonly holder?: string;
 }): (graph: GraphId) => Promise<DreamResult> {
-  const { store, settings, model, sessions, evaluator, approver, composer, task, tools, sideEffectFree, holder = "native-host" } = options;
+  const { store, settings, model, sessions, evaluator, approver, inbox, composer, task, tools, sideEffectFree, holder = "native-host" } = options;
   const preset = presetOf(settings, options.preset ?? "harness");
   const ports: DreamPorts = {
     refiner: modelRefiner({ model, settings }),
@@ -225,20 +259,60 @@ export function nativeDream(options: {
     ...hostPorts,
     ...(evaluator === undefined ? {} : { evaluator }),
     ...(approver === undefined ? {} : { approver }),
-    ...(composer === undefined ? {} : { composer }),
+    ...(inbox === undefined ? {} : { inbox }),
   };
-  return (graph) =>
+  return async (graph) =>
     runDream({
       store,
       graph,
       settings: preset,
-      ports,
+      ports: composer === undefined ? ports : { ...ports, composer: typeof composer === "function" ? await composer() : composer },
       holder,
       ...(task === undefined ? {} : { task }),
-      ...(tools === undefined ? {} : { tools }),
+      ...(tools === undefined ? {} : { tools: typeof tools === "function" ? await tools() : tools }),
       ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
     });
 }
+
+/**
+ * Composition on this host (plan §7.6). Dream stages the workflows it compiles in
+ * `<dir>/staging` (the `--procedural` directory's: one file per workflow, run journals
+ * under `.runs/`), a library of its own: the shared workflow library (`shared`, the
+ * `--workflows` directory) is never written, and may not be the same directory. Staged
+ * workflows run in AI SDK code mode, `ask` answering their questions.
+ *
+ * - `tools` is a session worker's per-turn tools (`sessionAgent({ tools })`): the host's
+ *   `base` tools plus exactly the workflows the core the session reads this turn binds
+ *   (`step.core`), each only while its staged code hashes to the binding.
+ * - `composer` makes dream's composer (`nativeDream({ composer })`) over the specs of the
+ *   base tools as they are when a dream starts, and `catalog` lists them as dream's tool
+ *   catalog (`nativeDream({ tools })`), which the harness preset enforces.
+ */
+export function nativeComposition(options: {
+  readonly dir: string;
+  readonly settings: CompositionSettings;
+  readonly step: Pick<ProceduralStepHook, "core">;
+  readonly ask: Effects["ask"];
+  /** The session tools a compiled path calls: the same for every session of this host. */
+  readonly base?: () => ToolSet | Promise<ToolSet>;
+  /** The shared workflow library's directory, if the host has one. */
+  readonly shared?: string;
+}): HostComposition {
+  const { settings, step, ask, base } = options;
+  const dir = join(options.dir, "staging");
+  if (options.shared !== undefined && resolve(options.shared) === resolve(dir)) throw new Error(`the shared workflow library (${options.shared}) cannot be procedural's staging library`);
+  return composition({ staging: staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask }), settings, step, ...(base === undefined ? {} : { base }) });
+}
+
+/**
+ * The approvals inbox's notices on the daemon's hook bus, published by this host under
+ * source `procedural` (a peer can never pick it), and saved with the daemon's snapshot.
+ * Plugins subscribe to `procedural.approval.*`.
+ */
+export const hookNotifier =
+  (runtime: Pick<DaemonRuntime, "publish">) =>
+  (notice: ApprovalNotice): void =>
+    void runtime.publish({ source: "procedural", type: notice.type, payload: notice.payload });
 
 /**
  * An approver that asks on a terminal (the CLI's permission flow): it names the graph,
@@ -257,4 +331,55 @@ export function terminalApprover(input: NodeJS.ReadableStream, output: NodeJS.Wr
       }
     },
   };
+}
+
+/** A scheduled dream's outcome, in a line. */
+function describeScheduled(run: ScheduledDream): string {
+  const what = `procedural: scheduled dream of ${run.graph}${run.reason === undefined ? "" : ` (${run.reason})`}`;
+  if ("error" in run) return `${what} failed: ${run.error}`;
+  const { result } = run;
+  if (result.status !== "done") return `${what}: ${result.status}`;
+  return `${what}: done, ${result.rounds.length} rounds, head ${result.head === result.initial ? "unchanged" : `now ${result.head.slice(0, 12)}`}`;
+}
+
+/**
+ * Dream on a schedule on this host (plan §7.1): the preset's `dream.every` and
+ * `dream.afterTurns` checked on every tick of the daemon runtime, for every graph the
+ * store holds, with `dream` (the host's `nativeDream`, behind `exclusiveDream` so the
+ * `procedural.dream` operation and the schedule never run one graph twice). Each outcome
+ * is logged in a line. `close()` stops it.
+ */
+export function nativeDreamSchedule(options: {
+  readonly runtime: Pick<DaemonRuntime, "onTick">;
+  readonly store: ProceduralStore & { graphs(): Promise<readonly GraphId[]> };
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly dream: DreamRun;
+  readonly log?: (message: string) => void;
+}): { schedule: DreamSchedule; close(): void } {
+  const { runtime, store, settings, dream, log = () => {} } = options;
+  const schedule = new DreamSchedule({ store, settings: presetOf(settings, options.preset ?? "harness"), graphs: () => store.graphs(), dream, clock: hostPorts.clock });
+  const close = runtime.onTick(async () => {
+    for (const run of await schedule.tick()) log(describeScheduled(run));
+  });
+  return { schedule, close };
+}
+
+/**
+ * Dream's evaluator on this host (plan §10): a user's task suite (`--procedural-eval`)
+ * run by `taskSuiteEvaluator` with the host's clock and entropy. `model` solves the tasks
+ * (guided by the candidate graph, and guiding itself unless `guidance` is given), `judge`
+ * scores them when the suite's scorer is `judge` (the catalog's judgment model), and
+ * `tools` are the host tools the suite may name.
+ */
+export function nativeTaskEvaluator(options: {
+  readonly suite: TaskSuite;
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly model: LanguageModel;
+  readonly guidance?: LanguageModel;
+  readonly judge?: () => EvaluationModel | Promise<EvaluationModel>;
+  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+}): Evaluator {
+  return taskSuiteEvaluator({ ...options, ...hostPorts });
 }

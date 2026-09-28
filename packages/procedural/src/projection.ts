@@ -18,6 +18,8 @@ import { z } from "zod";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { EntryIdSchema, GraphIdSchema, NodeNameSchema, RevisionIdSchema, TrajectoryIdSchema } from "./graph.ts";
 import type { EntryId, GraphId, NodeName, RevisionId, Score } from "./graph.ts";
+import { declaredNode } from "./locate.ts";
+import type { ObservedAction } from "./locate.ts";
 import type { ScoredTrajectory } from "./trajectory.ts";
 
 /** What a session log entry needs to be for projection: the daemon's `LogEntry` is one. */
@@ -44,8 +46,11 @@ export interface ProjectionContext {
   readonly from?: number | undefined;
   /** The pair to use when the turn holds no step record (the session's pin). */
   readonly pin?: VersionPair | undefined;
-  /** The node an action (a tool name) matches, as guidance matched it. Without it every action is unmatched. */
-  readonly locate?: ((action: string) => NodeName | undefined) | undefined;
+  /**
+   * The node an action matches, as guidance matched it: the tool's name, the call's raw
+   * input as its arguments, and the node its result declared. Without it every action is unmatched.
+   */
+  readonly locate?: ((action: ObservedAction) => NodeName | undefined) | undefined;
   /**
    * The terminal an edge from a node leads to (`terminalAfter` on the graph the session
    * saw). A turn that ends with a final answer where it stood walks on to that terminal.
@@ -172,9 +177,11 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   const span = window(entries, turnId);
   if (span === undefined) return undefined;
   const steps: Step[] = [];
-  const actions: string[] = [];
+  const actions: ObservedAction[] = [];
   /** Tool call ids seen (undefined for calls without one, which never repeat). */
   const calls = new Set<string | undefined>();
+  /** Each call's action by its id, so its result can say where it left the agent. */
+  const byId = new Map<string | undefined, number>();
   const records: StepRecord[] = [];
   /** The turn's model tokens, from its steps' usage records. */
   const model = { inputTokens: 0, outputTokens: 0 };
@@ -221,14 +228,19 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
       const input = field(update, "rawInput");
       const args = isRecord(input) ? input : input === undefined ? {} : { input };
       steps.push({ role: "assistant", content: "", call: { name, arguments: args } });
-      actions.push(name);
+      if (id !== undefined) byId.set(id, actions.length);
+      actions.push({ name, arguments: input });
       answered = false;
     } else if (kind === "tool_call_update") {
       const status = field(update, "status");
-      if (status === "completed" || status === "failed") {
-        steps.push({ role: "tool", content: render(field(update, "rawOutput")) });
-        answered = false;
-      }
+      if (status !== "completed" && status !== "failed") continue;
+      const output = field(update, "rawOutput");
+      steps.push({ role: "tool", content: render(output) });
+      answered = false;
+      const index = byId.get(text(field(update, "toolCallId")));
+      const declared = declaredNode(output);
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent; an undefined declared node names no node, and an undefined index is never read
+      if (index !== undefined && declared !== undefined) actions[index] = { ...actions[index]!, declared };
     }
   }
 
@@ -242,7 +254,7 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   let at = start;
   for (const action of actions) {
     at = context.locate?.(action);
-    if (at === undefined) unmatched.push(action);
+    if (at === undefined) unmatched.push(action.name);
     else path.push(at);
   }
   const stopReason = field(field(entries[span.end]?.payload, "data"), "stopReason");

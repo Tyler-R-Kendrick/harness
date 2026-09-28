@@ -40,7 +40,7 @@ improves over time, without retraining:
 
 - running benchmarks or ingestion;
 - choosing a scoping policy for users;
-- hard action constraints (an ablation hook at most);
+- hard action constraints (an ablation hook at most: `delivery.activeTools: "successors"`, §5.2);
 - replacing lessons, memory or the task graph;
 - a write-ahead runtime, which is a separate decision (§6.5).
 
@@ -252,7 +252,10 @@ Learning's `Trajectory` has no score and no revision, so this type wraps its ste
 
 The paper's prompts (App. B.5) are stored verbatim. Hops (`h = 2`), window (`w = 3`) and
 the full-graph fallback are constants, taken from the paper, until an ablation is
-scheduled. A `?` on a gate means it applies only when the graph has an evaluator.
+scheduled. What a hop counts is a setting: `hopUnit: "edge"` (the paper, both presets) or
+`"action"`, where a hop runs through reasoning and status nodes to the next action node,
+so that nodes which are never active cannot hide the next tool. A `?` on a gate means it
+applies only when the graph has an evaluator.
 
 ## 5. The live path
 
@@ -295,7 +298,8 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
    - `"carry"` keeps the previous turn's last action.
 2. **Match.** It resolves `u_t` against the **effective graph**. `exact` is the paper's
    written definition. `case-insensitive` is an option, because the paper's own excerpt
-   pairs `First_Hop_Retrieve` with `first_hop_retrieve`.
+   pairs `First_Hop_Retrieve` with `first_hop_retrieve`. `state-tracker` also reads the
+   node the last call's result declared and bindings' argument predicates (below).
 3. **Build `G_t`:** the `h`-hop neighborhood, or the full effective graph when nothing
    matches.
 4. **Serialize.** The paper's text format (App. B.5), with overlay content labeled. An
@@ -315,6 +319,9 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
      `providerOptions.harness`, replacing the previous tagged message. This keeps the
      system prompt stable for prefix caching, and keeps text derived from tool output out
      of system authority.
+   - `activeTools: "successors"` is the hard-constraint ablation (off in both presets):
+     a step offers only the tools of the active node's successor actions, through AI SDK
+     `activeTools`, and every tool when nothing matches or no successor's tool is offered.
 7. **Record.** `TurnOptions.report(update)` is `AgentWorker`'s own `update`, passed
    through `runtimeContext`.
    - The step record is a notice with
@@ -326,7 +333,11 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
 **Opaque harness workers** (`harnessSessions`) have no `prepareStep`. They get
 turn-level guidance, prepended to the prompt in `harnessSessions.stream` and localized
 from the previous turn's last `tool_call`. Their coarse tool names (Bash, Read, Edit)
-localize poorly with exact `Match`. A `state-tracker` match mode is future work.
+localize poorly with exact `Match`. The `state-tracker` match mode addresses this (built,
+off in both presets): a tool's result, or an environment wrapping tools, may declare the
+active node under `_meta.harness.procedural.node`, and a tool binding may carry an argument
+predicate (a JSON Schema over the call's arguments), so `Bash` running `npm test` can be
+`Run_Tests`. Match takes the declared node first, then the binding, then the id.
 
 ## 6. The dynamic layer: learning from live traffic
 
@@ -469,7 +480,7 @@ Dream is a separate process that runs out of band, away from the request path:
 | `evaluator-at-least-retained` (paper) | an evaluator | the mean validation score is at least the retained head's cached score; ties are accepted |
 | `evaluator-anchored-noninferiority` | an evaluator | paired per-task scores show the candidate is superior, or non-inferior *and* smaller in (nodes + edges, attribute characters); non-inferior to `G_0` within `totalLoss`; δ is sized by power, so equal candidates pass with probability at least 0.8, and when δ exceeds `totalLoss` only superiority is accepted |
 | `evidence` | overlay statistics | every *removed* core edge has a caution or poor statistics with at least `minSupport` distinct sessions; every *added* structure corresponds to an active overlay entry or to a transition with at least `minSupport` support |
-| `approval` | an approver | an approver accepts through the daemon's permission flow (MX3), bound to the candidate id; by default only edits that route into tools with side effects need it |
+| `approval` | an approver, or the approvals inbox | an approver accepts through the daemon's permission flow (MX3), bound to the candidate id; where no one can be asked (a dream outside any session's turn), the candidate waits in the approvals inbox until an operator approves it (the structure and evidence gates re-run against the head then) or declines it; by default only edits that route into tools with side effects need it |
 
 - **With an evaluator,** dream is the paper's Algorithm 1, and can also gate on it.
 - **Without one** (the common case in production), dream is conservative:
@@ -507,8 +518,11 @@ Dream is a separate process that runs out of band, away from the request path:
   pinned core binds.
 - **Journals.** A workflow run's journal links to its session's `tool_call` by run id
   (`tool/<toolCallId>`), so a compiled node's inner steps remain evidence.
-- **Task graph.** Instantiating a `TaskGraph` from a subgraph waits for task-graph
-  payloads and serialization.
+- **Task graph.** `planFromSubgraph(graph, from, to)` instantiates a `TaskGraph` from the
+  subgraph between two nodes: its action nodes become tasks whose payload holds the node
+  and its binding, `PROVIDES_INPUT_FOR` becomes data edges and `LEADS_TO`/`TRIGGERS` control
+  edges, and a cycle through a task is refused with a diagnostic. Task graphs have
+  payloads and JSON serialization.
 
 ## 8. Scoping, merging and access are configuration
 
@@ -532,6 +546,12 @@ A rule may match on anything in the session context:
 
 A rule names a graph by a template. Per user, per team, per repository, per project, one
 shared graph, or no graph at all are all resolver files. None is architecture.
+
+A rule may instead route: `{ "route": { "candidates": ["repo/harness", {"graph": "team/web",
+"description": "…"}], "minConfidence": 0.8 } }` asks the cognitive router (its `route`, with
+calibrated confidence) to choose among the candidates by the session's first prompt. A
+choice below `minConfidence`, no choice, or no router is no graph, and a session pinned to
+a candidate keeps it.
 
 ### 8.2 Merging
 
@@ -622,8 +642,8 @@ prefixes are:
 | P9 | Resolver and `authorize` policy (data + schema); pinning and revert re-pin | PX1.x | done |
 | P10 | Worker: `prepareStep` (localization from messages, effective graph, delivery, `report`, step records with exposure); turn-level mode for harness workers | PW1.x (scripted AI SDK harness: no reset after an approval round; guidance never stacks; one version pair per step; pins survive a restart) | done; the hook resolves with the host's principal, and harness workers are guided once per turn through `harnessSessions({ step })` |
 | P11 | Live learner: bus actor with a cursor; log projection; statistics; missing transitions; cautions; probation with randomized exposure; promotion, retirement and decay; optional reflection | PL1.x; PL1.P (support counts distinct sessions; exposure draws come only from `Entropy`) | done; feedback is a re-observation (`rescore`), and reflection was wired in the finalization (a `Reflector` port, `reflectionBatch` for `batch`) |
-| P12 | Extension operations and CLI: `graph`, `history`, `feedback`, `dream`, `revert`, `import` (seed), `export` (JSON and Mermaid) | PX2.x | done; `procedural.dream` runs `nativeDream` on the ensemble's generator, the CLI's `dream` refines with `--model` or else the ensemble's reasoning model, and the daemon has no approver; a lock gives each store directory one owner, and the CLI reaches a daemon that holds it over its socket |
-| P13 | Composition in dream: `compilePath`, staging library, per-revision tools | PC1.x on the scripted environment | done as a library: dream composes in one round after its refine rounds when a host gives it a composer (none does yet), and no worker takes `revisionTools` yet; PC1.x use their own fixtures, not the testkit environment |
+| P12 | Extension operations and CLI: `graph`, `history`, `feedback`, `dream`, `revert`, `import` (seed), `export` (JSON and Mermaid) | PX2.x | done; `procedural.dream` runs `nativeDream` on the ensemble's generator, the CLI's `dream` refines with `--model` or else the ensemble's reasoning model; candidates that need approval wait in an approvals inbox (`procedural.approvals`, `approve`, `decline`, announced on the hook bus); dream also runs on the preset's schedule from the runtime's tick (PD4.x), and `--procedural-eval` gives it a task-suite evaluator (PD3.7–PD3.17); a lock gives each store directory one owner, and the CLI reaches a daemon that holds it over its socket |
+| P13 | Composition in dream: `compilePath`, staging library, per-revision tools | PC1.x on the scripted environment | done: dream composes in one round after its refine rounds; the native host (agent workers) and the browser host (`browserComposition`) give it a composer over the session tools and a durable staging library of their own, and sessions get their base tools plus exactly the workflows their pinned core binds (`sessionTools`, PX2.92–PX2.98); PC1.x use their own fixtures, not the testkit environment |
 
 ## 12. Changes from earlier revisions
 

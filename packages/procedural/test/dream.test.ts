@@ -578,6 +578,39 @@ describe("gates beyond the paper", () => {
     expect(pending(noEval, "reject").record.evidence).toMatchObject({ gates: [{ gate: "evaluator-at-least-retained", pass: false }] });
     expect(() => dreamStep(s, { command: pending(s, "approve").id, at: 1, kind: "recorded" })).toThrow("command 2 (approve) cannot finish with a recorded event");
   });
+
+  describe("the approvals inbox", () => {
+    const toTool = edits({ add_edges: [{ source: "Bridge_Extract", target: "First_Hop_Retrieve", relation: "LEADS_TO", condition: null, guidance: "Retrieve again.", pitfalls: "" }] });
+    const support = foldAll(G0_ID, Array.from({ length: 3 }, (_, i) => observed(`s${i}/t`, ["Bridge_Extract", "First_Hop_Retrieve"], null)));
+    const inboxed = (overrides: Partial<DreamInput> = {}) => harness({ inbox: true, overlay: { state: support, live: harnessLive }, settings: { ...harnessDream, cycles: "allowed", rounds: 2 }, ...overrides });
+    const refinedTo = (i: DreamInput, at = 1000) => answer(answer(dreamStart(i), selected(1)).state, { kind: "refined", result: { edits: toTool, raw: "{}" } }, at).state;
+
+    it("PD1.79 without an approver, a candidate that needs approval is proposed to the inbox as pending-approval, naming its gate and tools, and the dream moves on without it", () => {
+      const s = refinedTo(inboxed(), 1234);
+      const propose = pending(s, "propose");
+      expect(propose.tools).toEqual(["first_hop_retrieve"]);
+      expect(propose.record).toMatchObject({ graph: GRAPH, parents: [G0_ID], origin: "dream", dream: DREAM, decision: { kind: "pending-approval" }, at: 1234, edits: toTool });
+      expect(propose.record.evidence).toMatchObject({ gates: [{ gate: "evidence", pass: true }], approval: { gate: "approval-for-side-effects", tools: ["first_hop_retrieve"] } });
+      expect(RevisionRecordSchema.parse(propose.record).id).toBe(propose.record.id);
+      const next = answer(s, { kind: "proposed" }).state;
+      expect(next.rounds).toEqual([{ round: 1, outcome: "pending-approval", revision: propose.record.id, gate: "approval-for-side-effects" }]);
+      // The retained graph is still G₀, the candidate is not a rejection, and round 2 selects again.
+      expect(next.retained.revision).toBe(G0_ID);
+      expect(next.rejections).toEqual([]);
+      expect(pending(next, "select")).toMatchObject({ revision: G0_ID });
+      const end = answer(answer(answer(next, selected(1)).state, { kind: "refined", result: { edits: toTool, raw: "{}" } }).state, { kind: "proposed" }).state;
+      expect(pending(end, "done").result).toMatchObject({ head: G0_ID, rounds: [{ outcome: "pending-approval" }, { outcome: "pending-approval" }] });
+    });
+
+    it("PD1.80 an approver, when there is one, is asked instead; without either the candidate is rejected as before; a proposal finishes only with a proposed event", () => {
+      expect(pending(refinedTo(inboxed({ approver: true })), "approve").tools).toEqual(["first_hop_retrieve"]);
+      expect(pending(refinedTo(inboxed({ inbox: false })), "reject").record.decision).toEqual({ kind: "rejected-gate", gate: "approval-for-side-effects", reason: "approval needed, and no approver is configured" });
+      const s = refinedTo(inboxed());
+      expect(() => dreamStep(s, { command: pending(s, "propose").id, at: 1, kind: "recorded" })).toThrow("command 2 (propose) cannot finish with a recorded event");
+      // A candidate that needs no approval commits, inbox or not.
+      expect(pending(refinedTo(inboxed({ sideEffectFree: ["first_hop_retrieve"] })), "commit")).toBeDefined();
+    });
+  });
 });
 
 describe("composition in dream (plan §7.6)", () => {

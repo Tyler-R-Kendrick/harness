@@ -61,9 +61,58 @@ export const END = "End";
 
 const toolName = z.string().min(1).max(200);
 
-/** What a node runs. A binding names a tool; it never grants one (plan §9). Only dream writes bindings (I5). */
+/**
+ * A state tracker's test on a call (plan §5.2): a JSON Schema over the call's arguments,
+ * declared an object. It is compiled by zod's JSON Schema converter, which reads a
+ * keyword only under a declared `type`; a schema that does not compile is refused.
+ */
+export const ArgumentPredicateSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((schema, ctx) => {
+    if (schema["type"] !== "object") {
+      ctx.addIssue({ code: "custom", message: 'an argument predicate is an object schema: its type must be "object"' });
+      return;
+    }
+    try {
+      z.fromJSONSchema(schema as z.core.JSONSchema.JSONSchema);
+    } catch (e) {
+      // zod's converter throws only Errors.
+      ctx.addIssue({ code: "custom", message: `an argument predicate must compile: ${(e as Error).message}` });
+    }
+  })
+  .brand<"ArgumentPredicate">();
+export type ArgumentPredicate = z.output<typeof ArgumentPredicateSchema>;
+
+/** Compiled predicates, by the predicate object a parsed document holds. */
+const compiled = new WeakMap<ArgumentPredicate, z.ZodType>();
+
+/** Whether a call's arguments satisfy a binding's argument predicate. */
+export function acceptsArguments(predicate: ArgumentPredicate, args: unknown): boolean {
+  let parser = compiled.get(predicate);
+  // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent; the cache only saves compiling a predicate again
+  if (parser === undefined) {
+    parser = z.fromJSONSchema(predicate as z.core.JSONSchema.JSONSchema);
+    // Stryker disable next-line CallExpression: equivalent; the cache only saves compiling a predicate again
+    compiled.set(predicate, parser);
+  }
+  return parser.safeParse(args).success;
+}
+
+/**
+ * What a node runs. A binding names a tool; it never grants one (plan §9). Only dream
+ * writes bindings (I5). A tool binding's `arguments`, when given, narrows it to the calls
+ * whose arguments satisfy it (the `state-tracker` match mode reads it).
+ */
 export const BindingSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("tool"), name: toolName }).readonly(),
+  z
+    .strictObject({
+      kind: z.literal("tool"),
+      name: toolName,
+      arguments: ArgumentPredicateSchema.exactOptional(),
+      /** The core trusts this tool's results to declare the active node (`_meta.harness.procedural.node`) under `state-tracker`; only dream, a seed or an import sets it. */
+      declares: z.literal(true).exactOptional(),
+    })
+    .readonly(),
   z.strictObject({ kind: z.literal("workflow"), name: toolName, code: Sha256Schema }).readonly(),
   z.strictObject({ kind: z.literal("skill"), name: toolName, content: Sha256Schema }).readonly(),
 ]);
@@ -115,6 +164,7 @@ export const DIAGNOSTIC_CODES = [
   "missing-start",
   "no-terminal",
   "cycle",
+  "unreachable",
   "tool-not-in-catalog",
   "binding-not-allowed",
   "filtered",
@@ -325,6 +375,8 @@ export const DecisionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("rejected-structure"), diagnostics: z.array(DiagnosticSchema) }),
   z.strictObject({ kind: z.literal("rejected-gate"), gate: z.string().min(1), reason: z.string() }),
   z.strictObject({ kind: z.literal("pending-approval") }),
+  /** Approved from the approvals inbox and committed as another revision: its edits on a later head. */
+  z.strictObject({ kind: z.literal("approved"), revision: RevisionIdSchema }),
 ]);
 export type Decision = z.output<typeof DecisionSchema>;
 

@@ -170,6 +170,11 @@ export class MemoryProceduralStore implements ProceduralStore {
     },
   };
 
+  /** Every graph with a head, in the order each got its first (for hosts that tend every graph, such as dream's schedule). */
+  async graphs(): Promise<readonly GraphId[]> {
+    return [...this.#heads.keys()];
+  }
+
   overlay(graph: GraphId): AppendLog<OverlayEvent> {
     return logOf(this.#overlay, graph);
   }

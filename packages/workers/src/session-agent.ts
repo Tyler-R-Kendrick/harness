@@ -15,6 +15,16 @@ export interface TurnScope {
   readonly report: (update: SessionUpdate) => void;
 }
 
+/** What tools given anew each turn are told: the turn's scope and its conversation so far. */
+export interface ToolContext extends TurnScope {
+  /**
+   * The call's conversation (a prompt given as text is one user message): a new prompt
+   * last, or, for a stream restarted in its turn (after an approval round), what the turn
+   * did so far.
+   */
+  readonly messages: readonly ModelMessage[];
+}
+
 /** One step of an agent's loop, as AI SDK `prepareStep` sees it. */
 export interface StepContext extends TurnScope {
   /** Everything the step's model call would get: the conversation so far, this turn's tool calls and results included. */
@@ -29,12 +39,21 @@ export interface StepContext extends TurnScope {
   readonly tools: readonly string[];
 }
 
+/** A harness's tool call as a turn hook is told it. */
+export interface LastCall {
+  readonly name: string;
+  readonly input: unknown;
+  readonly output?: unknown;
+}
+
 /** A turn of an opaque harness, which has no steps to prepare: only its prompt can carry guidance. */
 export interface TurnContext extends TurnScope {
   /** The conversation the worker holds, ending with the turn's prompt. */
   readonly messages: readonly ModelMessage[];
   /** The last tool the harness called in an earlier turn of the session. */
   readonly lastAction: string | undefined;
+  /** That call with its input and, once the harness reported it, its result's output (what a state tracker reads). */
+  readonly lastCall?: LastCall;
   /** The names of the tools the harness offers. */
   readonly tools: readonly string[];
 }
@@ -50,12 +69,14 @@ export interface StepEndContext extends TurnScope {
 /**
  * Per-step guidance (e.g. procedural graphs): `prepare` may replace a step's
  * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
- * messages. `turn`, when given, guides an opaque harness's turn: its text is prepended
- * to the prompt. `end`, when given, is told each step's model usage once the step ends
- * (an agent's steps and a harness's alike), e.g. to record it in the session log.
+ * messages, and may limit the tools that step offers the model (AI SDK `activeTools`;
+ * the next step offers every tool again unless the hook limits it too). `turn`, when
+ * given, guides an opaque harness's turn: its text is prepended to the prompt. `end`,
+ * when given, is told each step's model usage once the step ends (an agent's steps and
+ * a harness's alike), e.g. to record it in the session log.
  */
 export interface StepHook {
-  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[] } | undefined>;
+  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[]; readonly activeTools?: readonly string[] } | undefined>;
   turn?(context: TurnContext): Promise<string | undefined>;
   end?(context: StepEndContext): Promise<void>;
 }
@@ -75,7 +96,11 @@ function preparing(hook: StepHook, turn: TurnOptions, tools: readonly string[]):
   return async ({ messages, initialInstructions, stepNumber, model }) => {
     try {
       const prepared = await hook.prepare({ ...scope, messages, initialInstructions, stepNumber, model, tools });
-      return { ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }), ...(prepared?.messages ? { messages: [...prepared.messages] } : {}) };
+      return {
+        ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }),
+        ...(prepared?.messages ? { messages: [...prepared.messages] } : {}),
+        ...(prepared?.activeTools ? { activeTools: [...prepared.activeTools] } : {}),
+      };
     } catch (e) {
       scope.report({ sessionUpdate: "notice", severity: "warning", title: "Step guidance failed", description: messageOf(e) });
       return {};
@@ -146,6 +171,10 @@ export interface TurnLearning {
   recall(task: string): Promise<{ readonly playbook: string }>;
 }
 
+/** A call's conversation: its messages, or its prompt (text is one user message). */
+const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
+  call.messages ?? (typeof call.prompt === "string" ? [{ role: "user", content: call.prompt }] : (call.prompt ?? []));
+
 const lastUser = (messages: readonly ModelMessage[]) => [...messages].reverse().find((m) => m.role === "user");
 const textOf = (m: ModelMessage | undefined) => (m === undefined ? "" : typeof m.content === "string" ? m.content : m.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"));
 const hasImage = (m: ModelMessage | undefined) => m !== undefined && typeof m.content !== "string" && m.content.some((p) => p.type === "file" || p.type === "image");
@@ -161,8 +190,13 @@ export function sessionAgent(options: {
   /** Takes turns that send images, when given. */
   readonly vision?: LanguageModel;
   readonly instructions?: string;
-  /** Tools, or a function giving them anew each turn (e.g. a workflow library's, which grows as learning builds tools). */
-  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+  /**
+   * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
+   * grows as learning builds tools), told the turn's scope and conversation so a session
+   * can get tools of its own (e.g. the workflows its pinned procedural core binds, where a
+   * routing resolver reads the first prompt).
+   */
+  readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -183,7 +217,8 @@ export function sessionAgent(options: {
     maxRetries: 0,
     callOptionsSchema: TurnOptionsSchema,
     prepareCall: async ({ options: turn, ...call }) => {
-      const user = lastUser(call.messages ?? []);
+      const messages = call.messages ?? [];
+      const user = lastUser(messages);
       const said = textOf(user);
       const playbook = options.learning && said ? await options.learning.recall(said).then((r) => r.playbook, () => "") : "";
       const memories = options.memory && said ? await options.memory.recall(said, { excludeSession: turn.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];
@@ -196,7 +231,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools() : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: conversationOf(call) }) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {

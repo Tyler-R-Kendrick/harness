@@ -132,6 +132,16 @@ describe("pathCandidates", () => {
     expect(pathCandidates(g, redelivered, settings())[0]!.meanScore).toBe(1);
   });
 
+  it("PC1.35 feedback counts: a turn's score is its latest re-observation's (by seq, so a redelivered older one changes nothing), and a re-observation of a turn never observed counts nothing", () => {
+    const rescored = (turnKey: string, score: number, seq: number, previous: number | null) =>
+      OverlayEventSchema.parse({ kind: "observed", turnKey, path: PATH, unmatched: [], score, exposure: [], rescore: { seq, previous, observedAt: 1 } });
+    // Observed unscored (no scorer), then scored by feedback: the path is a candidate on the feedback's scores.
+    const events = [observed("s1/t1", PATH, null), observed("s2/t1", PATH, null), rescored("s1/t1", 0.9, 1, null), rescored("s2/t1", 0.4, 1, null), rescored("s2/t1", 0.7, 2, 0.4), rescored("s2/t1", 0.4, 1, null)];
+    expect(pathCandidates(g, events, settings())).toEqual([{ path: [...PATH], support: 2, turns: 2, meanScore: 0.8 }]);
+    // A re-observation alone is not a traversal.
+    expect(pathCandidates(g, [observed("s1/t1", PATH, 1), rescored("s2/t1", 1, 1, null)], settings())).toEqual([]);
+  });
+
   it("PC1.12 candidates come longest first, then by support, then by mean score, then by path", () => {
     const doc = chainDoc();
     doc.nodes.push({ id: "archive", type: "ACTION", description: "Archive." }, { id: "notify", type: "ACTION", description: "Notify." }, { id: "zip", type: "ACTION", description: "Zip." });
@@ -182,6 +192,16 @@ describe("recordedRuns", () => {
     const t = turn(g, "s1", shouted);
     expect(recordedRuns(g, [t], names(PATH), "exact")).toEqual([]);
     expect(recordedRuns(g, [t], names(PATH), "case-insensitive")).toEqual([shouted]);
+  });
+
+  it("PC1.52 under a state tracker a call is matched with its arguments: a node whose argument predicate rejects them is not its node", () => {
+    const markdown = { type: "object", properties: { format: { type: "string", enum: ["md"] } }, required: ["format"] };
+    const doc = chainDoc();
+    const narrow = graphOf({ ...doc, nodes: doc.nodes.map((n) => (n.id === "Fetch_Page" ? { ...n, binding: { kind: "tool", name: "fetch", arguments: markdown } } : n)) });
+    const html = RUNS[1]!.map((c) => (c.name === "fetch" ? { ...c, arguments: { ...c.arguments, format: "html" } } : c));
+    const turns = [turn(narrow, "s1", RUNS[0]!), turn(narrow, "s2", html)];
+    expect(recordedRuns(narrow, turns, names(PATH), "state-tracker")).toEqual([RUNS[0]]);
+    expect(recordedRuns(narrow, turns, names(PATH), "exact")).toEqual([RUNS[0], html]);
   });
 });
 

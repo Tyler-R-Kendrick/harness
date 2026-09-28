@@ -729,6 +729,8 @@ As built (P9). These are additions; nothing above changed meaning.
     A graph pattern's `*` is any run of characters (`globMatches(pattern, text)`).
   - `authorize(policy: AccessPolicy | undefined, …)`: no policy allows everything; else
     the first matching rule decides, then the default.
+  - `ACTIONS` also has `approve`: deciding the candidates in a graph's approvals inbox
+    (listing them included), so a policy can give that to fewer principals than `dream`.
 - `pinning.ts`:
   - `PinRequest` also takes `overlayRefresh?: "turn" | "session"` (default `"turn"`):
     with the core kept, `"turn"` moves the pin to the overlay's latest version on that
@@ -934,10 +936,13 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `dream.cycles`) and `clock: { now(): number }`;
   - `authorize?: (action: ProceduralAction, graph: GraphId) => boolean`, the policy bound
     by the host (P9's `authorize(policy, action, graph, context)` with its context), which
-    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
+    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import" | "approve"`;
   - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
     `feedback?: (session, turn, score) => Promise<LearnerResult | undefined>` (P11's
-    `LiveLearner.feedback`; undefined while no learner runs).
+    `LiveLearner.feedback`; undefined while no learner runs);
+  - `notify?: (notice: ApprovalNotice) => void | Promise<void>`, where the host publishes
+    the approvals inbox's notices (an import proposal is `requested`, a decision
+    `decided`).
 
   It takes no resolver: `feedback` finds the graph from the session's pin, and answers
   what the learner did with the score: `recorded` for `observed`, `rescored` and
@@ -959,6 +964,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
   | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
   | `revert` | `{graph, to?}` | revert | `RevertResult` |
   | `import` | `{graph, document?}` | import | `ImportResult` |
+  | `approvals` | `{graph}` | approve | `ApprovalList` |
+  | `approve` | `{graph, candidate}` | approve | `ApprovalResult`, or `missing` for an id the graph has no record of |
+  | `decline` | `{graph, candidate}` | approve | `ApprovalResult`, or `missing` for an id the graph has no record of |
 
 - `import-export.ts` holds the operations over a store, which the CLI shares:
   - `importGraph({store, graph, document?, clock, cycles?})`: no document is `seedGraph()`.
@@ -1021,7 +1029,7 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `pumpHookEvents` as plugin `procedural-learner` on `turn.ended`; `main.ts` starts it
     with the daemon, and the extension's `feedback` goes to `learner.feedback`.
   - `main.ts` takes `--procedural <dir>` with `--procedural-settings`,
-    `--procedural-resolver` and `--procedural-policy` files. The step hook goes to
+    `--procedural-resolver`, `--procedural-policy` and (P13) `--procedural-composition` files. The step hook goes to
     `sessionAgent` for the model and ensemble workers (guided by the session's own model)
     and to `harnessWorker({ step })` for harness workers (guided by the ensemble's chat
     model, or the gateway model). With the cognitive core, `procedural.*` is served under the
@@ -1048,6 +1056,10 @@ As built (P12). These refine the shapes above; no name another phase uses change
   file, `revert` `--to`, and `dream` `--model` (a gateway id) or else `--model-cache`,
   `--llama-server` and `--no-hosted` (the ensemble's reasoning model), and `--state`. A
   result a caller handles (a dream that did not finish included) exits 1, bad usage 2.
+  `harness-procedural approvals <graph>`, `approve <graph> <candidate>` and
+  `decline <graph> <candidate>`
+  run the inbox's operations; a dream without a terminal leaves candidates that need
+  approval in the inbox (saying so on stderr) instead of rejecting them.
 - Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
   extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
 
@@ -1065,6 +1077,9 @@ As built (P13). The names above keep their meaning; these are the refinements.
 - `pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[]`.
   The overlay's `observed` events are the statistics, because support counts distinct
   sessions per path, which `EdgeStats` does not keep. A redelivered turn counts once.
+  A turn's score is its latest re-observation's (feedback's `rescore`, by `seq`), so a
+  turn scored only by `procedural.feedback` after it was observed counts; a
+  re-observation of a turn never observed counts nothing.
   - `PathCandidate = { path: NodeName[]; support: number; turns: number; meanScore: Score }`.
   - `CompositionSettings = { support, minScore: Score, maxLength }`, parsed by
     `parseCompositionSettings`, with `data/composition.json` and a drift-tested
@@ -1149,8 +1164,9 @@ their meaning.
     model (`--model-cache`, `--llama-server`, `--no-hosted`; it loads only when the refiner
     is asked), over the session logs of the daemon state file `--state` names, with the
     terminal approver when stdin is a terminal; a dream that is `busy`, `no-head` or
-    `lease-lost` exits 1. The daemon has no approver: the
-    permission flow is per session, and dream runs outside any session.
+    `lease-lost` exits 1. The daemon has no approver (the permission flow is per session,
+    and dream runs outside any session): its dream has the approvals inbox instead (see
+    "Approvals inbox").
 - **P6's notes.**
   - `DreamSettings.stride?` is the paper's S; `runDream`'s `stride` option overrides it.
   - `DreamInput.tokenizer?` and `runDream`'s `tokenizer?` (`Tokenizer = {encode, decode}`)
@@ -1162,16 +1178,411 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Localization extensions (plan §5.2's later list)
+
+As built. These are additions; the paper preset keeps the paper's mechanism exactly.
+
+- **Action hops.** `neighborhood(g, node, hops, unit?: HopUnit)` with
+  `type HopUnit = "edge" | "action"` (default `edge`, the paper's). In `action` hops a
+  step ends only at an `ACTION` node: the outgoing edges of a non-action node a hop
+  reaches first belong to that same hop (breadth first), and the action nodes it reaches
+  start the next. Two reasoning nodes after an action (research §2.2 item 3) then no
+  longer hide the next tool: from `Retrieve → Scan_Index → Decide_Capital → Answer_Lookup`,
+  hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
+  two units agree. `Preset.hopUnit: "edge" | "action"` (default `edge`; both shipped
+  presets say `edge`) is the unit `proceduralStep` passes; `h` stays `HOPS`.
+- **Argument predicates.** A tool binding may carry `arguments: ArgumentPredicate`, a
+  JSON Schema over the call's arguments (`{kind: "tool", name: "Bash", arguments: {type: "object", properties: {command: {type: "string", pattern: "^npm test"}}}}`).
+  `ArgumentPredicateSchema` refuses a schema whose top-level `type` is not `"object"` or
+  that zod's `z.fromJSONSchema` cannot compile (a `malformed` diagnostic at
+  `nodes[i].binding.arguments`). The converter reads a keyword only under a declared
+  `type`. `acceptsArguments(predicate, args)` tests a call, compiling each predicate once.
+  The predicate is part of the document, so of its revision id; like any binding, only
+  seeding, import or dream's composition writes it (I5).
+- **State tracker.** `MatchMode` gains `"state-tracker"`, and `match` takes
+  `string | ObservedAction | undefined`, where
+  `ObservedAction = {name; arguments?; declared?}`: the tool called, the call's
+  arguments, and the node the tool's result declared active. Under `state-tracker` the
+  rules are, in order, each exact and each the first node in document order: the declared
+  node, when the graph has it; a node bound to the tool whose argument predicate accepts
+  the arguments; a node bound to the tool without a predicate; a node whose id is the
+  tool's name. A node whose predicate rejects the call is never matched by its binding.
+  `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
+  `Preset.match` accepts `"state-tracker"`; both shipped presets stay `exact`.
+  A result's declared node counts only when the core binds the calling tool with
+  `declares: true` (a tool binding field that only dream, a seed or an import can set;
+  neither the refiner nor the overlay writes bindings). A tool that passes outside
+  content through, such as a fetched page, therefore cannot steer localization,
+  successor-only tools or the learner's projected path (PG3.37).
+- **The step hook as a state tracker.** `proceduralStep` observes the last action with its
+  call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
+  string) of the call's own result (the `tool-result` with its `toolCallId` in a later
+  tool message, `json` or `error-json` output). A tool, an MCP server (whose
+  `CallToolResult._meta` is where the AI SDK puts it) or an environment wrapping tools
+  declares the state this way. The step record's `action` is still the tool name.
+- **Harness turns as a state tracker.** The workers' `TurnContext` gains
+  `lastCall?: LastCall` (`{name, input, output?}`): `harnessSessions` remembers the
+  session's last tool call from `onStepEnd` with its id, and pairs it with the result a
+  later step reports (a host-executed tool's result arrives in the next step); a call
+  whose result never came has no `output`. `lastAction` is its name, as before.
+  `TurnInput.lastCall` is the same; the turn variant observes `{name, arguments: input,
+  declared: _meta.harness.procedural.node of output}`, and falls back to `lastAction`
+  alone without it.
+- **Learning and composition locate as guidance did.** `declaredNode(result)` (in
+  `locate.ts`) is the one reader of `_meta.harness.procedural.node`. `ProjectionContext.locate`
+  takes an `ObservedAction`: each `tool_call` is `{name: title, arguments: rawInput}`, and a
+  `completed` or `failed` `tool_call_update` with the same `toolCallId` adds the node its
+  `rawOutput` declared (results may arrive in any order; one of no call in view declares
+  nothing). `unmatched` still lists names. The live learner locates with the preset's
+  mode over these, so a state tracker's paths are the ones guidance saw. `recordedRuns`
+  matches each recorded call with its arguments; recorded steps keep a tool's result as
+  text, so a declared node is not read there (a path through a declared node that its
+  calls' names and arguments do not reach has no recorded run, and composition reports
+  it as not composable).
+- **Successor-only tools (an ablation).** `Preset.delivery` is now
+  `Delivery = {to: "system" | "trailing-message"; activeTools: "all" | "successors"}`
+  (`activeTools` defaults to `all`; a bare placement string still parses, as that
+  placement with every tool). Both shipped presets say `all`. Under `successors`,
+  `prepare` also returns `activeTools`: for each `ACTION` node an edge of hop 1 of the
+  neighborhood reaches (so under action hops the first actions past reasoning and status
+  nodes), the first of its binding's name and its id that the step's `tools` offer (the
+  first, when the tools are unknown), once each. With no matched node, or none of these
+  offered, it returns none, and every tool stays offered. The step record then carries
+  `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
+  may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
+  step only. The turn variant cannot limit a harness's tools and ignores the setting.
+
+## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
+
+As built. A resolver rule may route instead of naming a graph (plan §8.1).
+
+- A rule is `{ when, graph }` or `{ when, route }`, never both or neither.
+  `route = { candidates: (GraphId | { graph: GraphId; description: string })[]; minConfidence: Probability }`
+  (`RouteSchema`), with at least one candidate, each named once. `data/resolver.schema.json`
+  is regenerated.
+- `ResolveContext` gains `prompt?` (the session's first prompt) and `pinned?: GraphId`
+  (the graph the session is pinned to).
+- `GraphRouter = (request: RouteRequest) => Promise<RouteAnswer>`, where
+  `RouteRequest = { prompt; candidates: RouteCandidate[] }` (`{ graph, description? }`) and
+  `RouteAnswer = { graph: GraphId | undefined; confidence: Probability }`.
+- `explainRoute(resolver, context, router?): Promise<Resolution>` and
+  `routeGraph(…)`: template rules resolve as in `explainResolve`. For a route rule:
+  - a session pinned to a candidate keeps it without asking the router, so a session is
+    routed once and keeps its graph across restarts;
+  - otherwise no router, or no prompt yet (empty or blank), is no graph;
+  - the router's choice is the graph when it is a candidate chosen at `minConfidence` or
+    above; below it, no choice, a choice outside the candidates, or a router that throws
+    is no graph, with the reason (the rule still decides: no fall-through).
+- `explainResolve` (synchronous) gives a route rule the pinned candidate, or no graph with
+  "needs the router".
+- `modelGraphRouter({ model, settings }): GraphRouter` calls cognitive's `route` (the
+  cascade's router step, with its calibrated confidence from provider metadata
+  `harness.confidence`, 0 without it) with the first prompt as input and one tool,
+  `GRAPH_TOOL` (`choose_graph`). The tool's description is `settings.prompts.route` with
+  `{graphs}` filled by one line per candidate (`- id` or `- id: description`); its input
+  schema is `{ graph: { enum: candidates } }`, the constraint. A valid call names the
+  choice; no call chooses none. `settings.json` gains `prompts.route`
+  (`PLACEHOLDERS.route = ["graphs"]`).
+- `routes(resolver, context): boolean` says whether the deciding rule routes.
+- The step hook: `ProceduralStepDeps.router?: GraphRouter`. At a turn boundary a session
+  whose rule routes is resolved with `explainRoute`, its prompt the first user message of
+  the conversation (system and advisory messages aside) and `pinned` its stored pin's
+  graph; other sessions resolve as before, without reading the pin. The router's answers
+  are kept per session by request, so a session routed to no graph is not asked again for
+  the same prompt; a router that throws is asked again at the next turn. Harness turns
+  (`turn`) route the same way. `core(scope)`, which composition asks for a turn's tools
+  before its first step, routes by `scope.messages` (the turn's conversation): workers'
+  per-turn `tools` are told it (`ToolContext`), and `sessionTools` passes it on
+  (`ToolsScope`), so a routed session is offered the workflows of the graph it is
+  routed to (PW1.92, PC1.53, AW1.22). Without the messages a routing session has no graph
+  for that turn. A step's usage record (`end`) finds a routed session's graph by its pin.
+- Native host: `nativeProceduralStep({ …, router?: LanguageModel })` wraps it in
+  `modelGraphRouter` with the host's settings. With the cognitive core, `main.ts` passes
+  the ensemble's `languageModel("tool-calling", "router")`; without it a routing rule
+  gives no graph, and an ensemble with no router member fails the route (no graph) at
+  each turn until one serves.
+
+## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
+
+As built. Plan §7.6's task-graph item and ADR 0011's "the task graph gains payloads".
+
+- Core's `TaskGraph<P = unknown>`:
+  - `NodeSpec<P>` gains `payload?: P`, opaque to the graph; `payload(id): P | undefined`.
+  - `toJSON(): TaskGraphData<P>` is `{ nodes: TaskNodeData<P>[]; edges: TaskEdgeData[] }`
+    in the order added (`TaskNodeData = { id, join, resources, awaits, status, sealed, payload? }`,
+    `TaskEdgeData = { from, to, kind }`). The revision is not stored: it is the count of
+    structural changes, which rebuilding repeats.
+  - `static fromJSON<P>(data: unknown, payload?: (raw: unknown) => P): TaskGraph<P>`
+    rebuilds nodes, edges and seals through `addNode`, `addEdge` and `seal`, so restored
+    data obeys every rule they enforce, then sets statuses and refuses any no execution
+    reaches: a running, succeeded or failed node that was never ready (its join unmet or
+    an awaited group unsealed), or a skipped node that can still be satisfied. `payload`
+    checks each payload (its error is named); without it payloads are kept as given.
+    Anything invalid throws an `Error` saying what and where.
+- `planFromSubgraph(graph: EffectiveGraph, from: string, to: string, options?: PlanOptions): PlanResult`:
+  - The subgraph is every node on some path from `from` to `to` (both included), over
+    edges whose relation is a dependency.
+  - Its `ACTION` nodes become tasks, in the graph's node order, each with
+    `PlanPayload = { node: { id, type, description }; binding: Binding | null }`
+    (`PlanPayloadSchema`).
+  - `PlanOptions.relations: PlanRelations` maps each relation to a `DependencyKind` or
+    null (no dependency). The default `PLAN_RELATIONS` makes `PROVIDES_INPUT_FOR` data and
+    `LEADS_TO`, `TRIGGERS` and `CONVERGES_TO` control. An edge whose relation it does not
+    name is an `unknown-relation` diagnostic (at `edges[i]`), so a custom vocabulary says
+    what its relations mean.
+  - Reasoning and status nodes contract away: a task depends on every task it reaches
+    through them, nearest first. Such a dependency is data only when every edge on the way
+    is data (the same kind when they agree, else control); two ways of different kinds
+    give an edge of each kind.
+  - `PlanResult = { ok: true; plan: TaskGraph<PlanPayload> } | { ok: false; diagnostics }`.
+    Diagnostics: `missing-endpoint` (at `from` or `to`), `unreachable` (a new
+    `DiagnosticCode`: `to` is not reachable from `from`) and `cycle`, for a cycle through a
+    task, which the task graph refuses (a plan runs each task once, though the paper allows
+    cycles). A loop among reasoning and status nodes alone contracts away.
+  - `parsePlan(data): TaskGraph<PlanPayload>` is `TaskGraph.fromJSON` with every payload
+    parsed by `PlanPayloadSchema`.
+  - Nothing runs plans yet: the task graph is a library the daemon does not drive, and
+    dream does not emit plans.
+
+## Scheduled dream and the task-suite evaluator
+
+As built. These close the gap "dream runs on demand only; no host configures an
+evaluator"; the names above keep their meaning.
+
+- **The schedule is data.** `DreamSettings` gains `every?: Duration` and `afterTurns?`
+  (a positive count). `Duration` is a refined type (`DurationSchema`, `duration(text)`):
+  days, hours, minutes and seconds in that order (`90s`, `15m`, `6h`, `1d`, `1h30m`),
+  parsed into positive whole milliseconds; a number is milliseconds already, so parsed
+  settings parse again to themselves. `afterTurns` counts observed turns, so a preset
+  without an overlay refuses it. The harness preset dreams every `7d` or after `50`
+  observed turns, whichever comes first; the paper preset has no schedule.
+- **The runner.** A dream's `started` entry records the Clock's time as `at` (entries
+  written before have none and still replay); `DreamLogEntrySchema` (and `DreamLogEntry`)
+  parses the dream log's entries for readers such as the schedule. A run that throws
+  releases its lease (its epoch, so a lease another run took is left alone): the log
+  keeps every finished command, so any holder resumes the dream.
+- **Graphs of a store.** `MemoryProceduralStore.graphs()` and
+  `SnapshotProceduralStore.graphs()` name every graph with a head, in the order each got
+  its first. It is not on the `ProceduralStore` port: a host that tends every graph (the
+  schedule) takes the list from its own store.
+- **The schedule (`dream-schedule.ts`).** `new DreamSchedule({store, settings: Preset, graphs, dream: DreamRun, clock})`,
+  where `DreamRun = (graph) => Promise<DreamResult>` is the host's `runDream` under its
+  lease holder. `due(graph)` returns `DreamDue = {due, reason?: "every" | "afterTurns", last, turns, overlay}`:
+  `last` is the latest time in the graph's dream log (a `started` entry's `at` or an
+  event's), or the head record's `at` before any dream; `turns` counts the overlay log's
+  `observed` events without `rescore` from the offset the last dream started from; an
+  unset condition never holds, and a graph with no head is never due. `tick()` checks
+  every graph `graphs()` names and dreams those due, and resolves with a
+  `ScheduledDream` per graph it acted on (`{graph, reason, result}`, or `{graph, reason?, error}`
+  for a dream that threw or a dream log that does not parse); it never throws. A graph
+  whose scheduled dream is running is skipped, a tick while another is still checking
+  does nothing, and a preset without a schedule reads nothing (`enabled` is false). The
+  dream log is read incrementally; the schedule also remembers when it started each
+  graph's dream (and the overlay head then), so a dream that throws before it logs
+  anything waits until it is due again. Everything else it reads is in the store, so a
+  restarted host keeps the schedule.
+- **`exclusiveDream(run)`** runs one dream per graph at a time in a process: a call for a
+  graph whose dream is running answers `busy` at once and leaves the lease alone (a
+  holder may take its own lease again, which would strand the running dream). Another
+  process's dream holds the lease, so `runDream` answers `busy`.
+- **The runtime's tick (`packages/runtime`).** `DaemonRuntime.onTick(listener)` runs a
+  listener on every `tick()`, after the daemon's own, and returns a function that removes
+  it; listeners are not awaited, a failure (thrown or rejected) is logged as
+  `tick listener failed: …`, and `close()` removes them all. Hosts already call `tick()`
+  from their ticker, so periodic host work needs no timer of its own.
+- **The schedule on the native host.** `nativeDreamSchedule({runtime, store, settings, preset?, dream, log?})`
+  builds a `DreamSchedule` over the preset (default `harness`), every graph
+  `store.graphs()` names and the host's clock, and runs its `tick()` on every tick of
+  the runtime (`onTick`); it returns `{schedule, close}`. Each outcome is one line:
+  `procedural: scheduled dream of <graph> (<reason>): done, <n> rounds, head unchanged|now <id>`,
+  `…: busy|no-head|lease-lost`, or `… failed: <why>`. `proceduralStore(dir)` now returns
+  its `SnapshotProceduralStore`. `main.ts` wraps `nativeDream` in `exclusiveDream` and
+  gives the same function to `procedural.dream` and to the schedule, whose lines go to
+  stderr; `--procedural` alone turns the schedule on, with the preset's `every` and
+  `afterTurns` (a deployment's `--procedural-settings` may unset both for on-demand only).
+- **Task suites (`task-suite.ts`).** A user's task file parses with `parseTaskSuite(json)`
+  into a branded `TaskSuite` (`TaskSuiteSchema`; its JSON Schema is
+  `data/task-suite.schema.json`, drift-tested, from `taskSuiteJsonSchema()`):
+  `{$schema?, description?, instructions?, scorer, judge?: {instructions}, tools?: [{name, description?}], tasks: [{id, prompt, expected?, split: "train" | "validation"}]}`.
+  `scorer` is one of `TASK_SCORERS` (`exact`, `normalized-exact`, `f1`, `judge`). Task
+  ids and tool names are unique, every task has `expected` unless the scorer is `judge`,
+  and there is at least one validation task. `description` is the refiner's
+  `{task_description}`, `instructions` the solver's. The metrics: `normalizeAnswer`
+  (SQuAD's: lower case, no punctuation, no articles `a`/`an`/`the`, single spaces),
+  `f1Score(answer, expected)` (token F1 over normalized tokens, repeats counted; two
+  empty answers agree), and `scoreAnswer(metric, answer, expected)` (`exact` compares
+  trimmed text).
+- **The task-suite evaluator (`task-evaluator.ts`).** `taskSuiteEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?, clock, entropy})`
+  is an `Evaluator`. `tasks(split)` lists the split's ids in file order. `evaluate(graph, split, batch?)`
+  holds the candidate as the only head (graph `candidate`) of a `MemoryProceduralStore`
+  of its own, so it never touches the host's graphs, and runs each task, one after
+  another, on a `sessionAgent` (`@harness/workers`, now a dependency) with the
+  `proceduralStep` hook over that store (the preset named, `harness` by default; the
+  guidance model, or the solver's), the suite's `instructions`, and the suite's tools:
+  those `tools` (a `ToolSet`, or a function called once per evaluation) names, with the
+  suite's descriptions where it gives them; nothing else is offered, and a name the host
+  lacks rejects the evaluation. The final text is the answer: a metric scores it, or the
+  judge (resolved once per evaluation) is asked with `experimental_evaluate` the boolean
+  question `correct` (the suite's `judge.instructions`, else the settings' new optional
+  `prompts.taskJudge`) about `{task, expected?, answer}`, and its probability is the
+  score. Validation returns `{task, score}`; training also `query` (the prompt) and
+  `steps` (`trajectorySteps`, now exported from `step.ts`, over the prompt and every
+  step's response messages). Building one refuses a `judge` scorer without a judge or a
+  question; an unknown batch id is a `RangeError`, and a failing solver names its task.
+  `evaluatorContract` (PD3.1–PD3.4) runs against it on scripted models.
+- **The evaluator on the native host.** `loadTaskSuite(file)` reads and parses a task
+  file; `nativeTaskEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?})`
+  is `taskSuiteEvaluator` with the host's clock and entropy. `main.ts` takes
+  `--procedural-eval <tasks.json>` (with `--procedural`): the solver is the ensemble's
+  `chat` model with the cognitive core, else the gateway `--model`; the judge is the
+  catalog's (`ensemble.resolve("judgment", "judge")`, resolved when a judge-scored suite
+  runs); the tools are the workflow library's (`workflowTools`, with `--workflows`);
+  and `nativeDream` gets the evaluator and the suite's `description` as its task, for
+  `procedural.dream` and the schedule alike. It refuses to start (exit 2) without
+  `--procedural`, with a file that does not parse, with a judge-scored suite and no
+  cognitive core, or with a suite naming tools and no workflow library.
+  `harness-procedural dream <graph> --procedural-eval <tasks.json>` does the same from
+  the CLI: the solver is the `--model` gateway model, or else the ensemble's `chat`
+  model, and the judge the catalog's; it refuses (exit 2) a malformed file, a
+  judge-scored suite with `--model` (no ensemble to judge), and a suite naming tools
+  (the CLI has no workflow library).
+
+## Approvals inbox
+
+As built. Candidates that need approval no longer need someone to ask during the dream;
+the names above keep their meaning.
+
+- **Dream proposes (P6).** `DreamInput.inbox?: boolean` (the runner sets it when
+  `DreamPorts.inbox` is given). When an approval gate applies and there is no approver,
+  the reducer issues `propose {record, tools}` instead of rejecting: the record is the
+  candidate with decision `pending-approval` and `evidence.approval = {gate, tools}`. The
+  runner answers `proposed`, and the round's outcome is
+  `{outcome: "pending-approval", revision, gate}`. The retained graph stays, the candidate
+  is not a rejection (nothing is remembered against it), and the next round starts. An
+  approver, when there is one, is still asked instead; with neither, the candidate is
+  rejected as before.
+- **The runner stores and announces.** `ApprovalInbox = {pending({graph, candidate, tools})}`.
+  `propose` puts the record unless its id already holds a record that is not a rejection
+  (one already waiting, from an earlier round, a replay or an import, is not announced
+  again; a head's record stays), then calls `inbox.pending`.
+- **The inbox (`approvals.ts`).** Every record of a graph with decision `pending-approval`
+  waits: a dream's proposals and import proposals alike.
+  - `listApprovals({store, graph})` returns `ApprovalList = {graph, head?, approvals}`,
+    oldest first, each an `ApprovalSummary`: `{candidate, graph, origin, parent, onHead,
+    dream?, at, edits, gate?, tools}` (the gate and tools from `evidence.approval`).
+  - `approveCandidate({store, record, preset, clock})` re-runs, against the current head,
+    the gates that need no evaluator. Structure: on the head it was proposed on (and for
+    an import) the document as it is under the preset's cycle policy; on a later head the
+    candidate's edits applied there by `prepareCandidate`, leaving out additions the head
+    already has (the same node, or the same edge the deletions leave) and carrying the
+    workflow bindings of the nodes it adds (a composition). Evidence, when the preset
+    lists it and the candidate has edits: `evidenceGate` over the overlay folded from the
+    graph's first head, which must be on the current head (`no live evidence yet: …`
+    otherwise; a preset without an overlay fails as in dream); a composition's
+    `evidence.composition` support counts. An import has no live evidence to show, and
+    approving it is the decision. Then the revision (parents: the head; the candidate's
+    origin, dream, edits and evidence plus `approved: {candidate, on, gates}`) commits by
+    compare-and-set and the overlay is rebased onto it (`absorbedEntries`), as a dream
+    commit is. A candidate rebased onto a later head commits under its new id, and its own
+    record's decision becomes `{kind: "approved", revision}`, a new `Decision` kind; one
+    whose edits the head already has is `unchanged` and marked approved as the head.
+  - `ApprovalResult` is `committed {revision, previous}`, `unchanged {head}`, `declined`,
+    or `refused {reason, gate?}` where `gate` is `structure`, `evidence` or `head` (a lost
+    compare-and-set: the id's earlier record is put back, or the rebased candidate is
+    remembered as rejected by `head`, as a dream's lost race is). A candidate that is not
+    waiting, is redacted, or whose graph has no readable head is refused. A refused
+    candidate keeps waiting.
+  - `declineCandidate({store, record})` records `rejected-gate` under the gate that asked
+    (`approval` for an import) with the approval gate's reason, `declined by the
+    approver`, so a dream with deduplication remembers it.
+  - Notices for the host's hook bus: `ApprovalNotice` is
+    `procedural.approval.requested {graph, candidate, origin, parent, dream?, gate?, tools}`
+    (`requestedNotice(record)`) or `procedural.approval.decided {graph, candidate,
+    decision: "approved" | "declined", revision?}` (`decidedNotice(result)`, none for a
+    refusal). `approvalInbox(notify)` is dream's `ApprovalInbox` over a notifier.
+  - Records are keyed by graph and id (a candidate id is its document's hash, and two
+    graphs may hold the same one), so `procedural.approve` and `procedural.decline` name
+    the graph with the candidate; the policy is checked on that graph before the record
+    is looked up, and a candidate recorded only under another graph is `missing`
+    (PX2.113).
+- **Hosts.** `DaemonRuntime.publish(input)` is core's host publish API through the
+  runtime, which saves the snapshot (hook events are part of it). On the native host,
+  `hookNotifier(runtime)` publishes each `ApprovalNotice` under source `procedural`;
+  `nativeDream` takes `inbox?: ApprovalInbox`, and `buildNativeEnsemble`'s `procedural`
+  takes `notify`. `main.ts` gives both the host's notifier once the daemon is up, so its
+  dream proposes to the inbox and plugins subscribed to `procedural.approval.*` hear of
+  proposals and decisions. `browserProcedural` takes `notify` too; a page publishes the
+  notices where it likes.
+
+## Composition in the daemon
+
+As built. Hosts give dream a composer and sessions their revision's workflows; the names
+above keep their meaning.
+
+- **The step hook's core (P10).** `ProceduralStepHook.core(scope)` returns the core
+  revision (`ProceduralGraph`) the session reads this turn, or undefined without a graph.
+  It resolves and pins at a turn boundary exactly as a step does, so the tools built from
+  it and the turn's guidance read one core (I3). Without a turn id every call is a
+  boundary.
+- **Host pieces (`compose-host.ts`, portable).** The host brings files, a code mode and a
+  model for `tools.ask`:
+  - `StagingFiles` is a `WorkflowLibrary` with `journal(run): SnapshotStorage`, the
+    host's durable store of its own (never the shared library).
+  - `staging({files, codeMode, ask}): Staging` is `{library: StagingLibrary over the files,
+    host(tools): WorkflowHost}`; `host` runs staged workflows on a session's base tools,
+    journaled in the files.
+  - `toolSpecs(tools)` is each tool's input JSON Schema (and description): what
+    `compilePath` types a compiled workflow's inputs and questions by.
+  - `composer({settings, staging, tools, runs?})` is dream's `Composer` over those specs
+    and the staging library.
+  - `sessionTools({step, staging, base?})` is a worker's per-turn tools
+    (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
+    or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
+    `staging.host(base)` running the workflows; without a graph, the base.
+  - `composition({staging, settings, step, base?}): HostComposition` is what a host whose
+    sessions share one set of base tools hands out: `{staging, tools, composer(),
+    catalog()}`, `composer` and `catalog` reading `base` anew each time (once per dream).
+- **Workers (`@harness/workers`).** `sessionAgent({ tools })` given a function calls it
+  each turn with the turn's scope (`TurnScope`: session, turn, cwd, meta, report), so a
+  session gets tools of its own. Opaque harness workers keep their harness's own tools,
+  so they get no workflow tools (and their dream no composer).
+- **Native host.**
+  - `loadProceduralComposition(file?)` reads `data/composition.json`, or a deployment's
+    copy (`--procedural-composition`).
+  - `nativeComposition({dir, settings, step, ask, base?, shared?})` is `composition` with
+    staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow, run journals under
+    `.runs/`) on AI SDK code mode; `shared` (the `--workflows` directory) is never written
+    and may not be that directory (it throws). `base` is the host's session tools, the
+    same for every session.
+  - `nativeDream`'s `composer` and `tools` may be functions, called at the start of each
+    dream.
+  - `main.ts`, for `--worker model` and `--worker ensemble` with `--procedural`: the
+    worker's tools are `composition.tools` (base: none for the model worker, the shared
+    library's `workflowTools` for the ensemble worker), `ask` is the ensemble's default
+    model or the gateway model, and the daemon's dream gets `composer` and `catalog` as
+    its tool catalog (so `enforceToolCatalog` sees the session tools).
+  - `harness-procedural dream` runs outside the daemon and does not know which worker's
+    tools its sessions had, so it refines without a composition round; the daemon's
+    `procedural.dream` composes.
+- **Browser host.** `browserComposition(ensemble, {settings, step, base?, name?, shared?,
+  factory?, codeMode?})` is `composition` with staging in an IndexedDB database of its own
+  (`IndexedDbWorkflows`, `harness-procedural-staging` by default; the shared library's,
+  `harness-workflows` by default, may not be the same one), on QuickJS by default, the
+  ensemble's default model answering `tools.ask`. The page, which runs its own dream and
+  workers, hands `tools` to `sessionAgent` and `composer` and `catalog` to `runDream`.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
-the evaluator contract and scripted environment, rejection records). A1 resolved the
-store and log plumbing (records keyed by graph and id with a v1 migration, reverts that
-write no record, `Daemon.readLog`, one owner per store directory). Still open:
+the evaluator contract and scripted environment, rejection records), and the sections
+above gave dream a schedule, a configured evaluator and an approvals inbox. A1 resolved
+the store and log plumbing (records keyed by graph and id with a v1 migration, reverts
+that write no record, `Daemon.readLog`, one owner per store directory), and
+`procedural.feedback` answers what the learner did with the score. Still open:
 
-- P6 × P12: dream on the daemon has no approver (the permission flow, MX3, is per
-  session and dream runs outside any session), no configured `Evaluator`, and no session
-  tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
-  `approval-for-side-effects` see no real tools there; the gates do what the preset says
-  for their absence. The CLI approves on a terminal.
+- P6 × P12: dream on the daemon has no tools declared free of side effects
+  (`sideEffectFree`), so `approval-for-side-effects` treats every tool as having them;
+  with a harness worker it also has no tool catalog (the harness's tools are its own), so
+  `enforceToolCatalog` sees none there. With an agent worker the session tools are its
+  catalog. Candidates that need approval wait in the approvals inbox.

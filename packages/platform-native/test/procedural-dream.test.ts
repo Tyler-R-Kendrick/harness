@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
@@ -5,9 +8,10 @@ import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { usage } from "@harness/cognitive";
 import { ScriptedEnvironment } from "@harness/testkit";
 import { EchoWorker } from "@harness/workers";
-import { FORMAT, GraphIdSchema, MemoryProceduralStore, parseCompositionSettings, parseGraph, revisionId, RevisionRecordSchema } from "@harness/procedural";
-import type { RevisionRecord } from "@harness/procedural";
-import { loadProceduralSettings, nativeDream, NodeHost, snapshotSessions, terminalApprover } from "@harness/platform-native";
+import type { HookEvent } from "@harness/core";
+import { approvalInbox, applyEdits, EditSetSchema, FORMAT, GraphIdSchema, MemoryProceduralStore, parseCompositionSettings, parseGraph, revisionId, RevisionRecordSchema } from "@harness/procedural";
+import type { ApprovalNotice, RevisionRecord } from "@harness/procedural";
+import { buildNativeEnsemble, hookNotifier, loadProceduralSettings, nativeDream, NodeHost, pumpHookEvents, snapshotSessions, terminalApprover } from "@harness/platform-native";
 
 const settings = loadProceduralSettings();
 const graph = GraphIdSchema.parse("team/search");
@@ -132,7 +136,60 @@ describe("dream on the native host", () => {
     expect((bare as { rounds: unknown[] }).rounds).toHaveLength(3);
   });
 
-  it("PX2.116 the daemon's and the CLI's dream give no tool catalog, so the harness preset enforces none and a candidate over action nodes can commit", async () => {
+  it("PX2.111 in the native daemon, a dream with no approver leaves a candidate needing approval in the inbox and announces it on the hook bus; procedural.approve over ACP commits it on the head and announces the decision", async () => {
+    const store = new MemoryProceduralStore();
+    await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
+    await store.heads.set(graph, undefined, revisionId(seed));
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({ content: [{ type: "text", text: JSON.stringify(shorter) }], finishReason: { unified: "stop", raw: undefined }, usage: usage(1, 1), warnings: [] }),
+    });
+    // As main.ts wires it: the extension and dream announce through the host, which starts after them.
+    const live: { notify?: (notice: ApprovalNotice) => void } = {};
+    const notify = (notice: ApprovalNotice) => live.notify?.(notice);
+    const dream = nativeDream({ store, settings, model, sessions: async () => [], tools: ["search"], inbox: approvalInbox(notify) });
+    const dir = mkdtempSync(join(tmpdir(), "harness-approvals-"));
+    const cognitive = buildNativeEnsemble({ cacheDir: join(dir, "models"), allowHosted: false, procedural: { dir, store, settings, dream, notify } });
+    const host = await NodeHost.start({ worker: new EchoWorker(), identity: { principal: "me", kind: "human" }, cognitive: cognitive.ensemble, tickMs: 60_000 });
+    live.notify = hookNotifier(host.runtime);
+    const events: HookEvent[] = [];
+    const watcher = pumpHookEvents(host.runtime, { plugin: "approvals-watcher", types: ["procedural.approval.*"], onEvent: async (e) => void events.push(e), intervalMs: 60_000 });
+
+    const replies = new Map<number, { result?: unknown; error?: { message: string } }>();
+    const client = host.runtime.connect({ principal: "me", kind: "human" }, (m) => void replies.set((m as { id: number }).id, m as { result?: unknown }));
+    let next = 0;
+    const invoke = async (op: string, input: unknown): Promise<unknown> => {
+      const id = (next += 1);
+      client.receive({ jsonrpc: "2.0", id, method: "_harness/cognitive/invoke", params: { op, input } });
+      for (let i = 0; i < 2_000 && !replies.has(id); i++) await new Promise((r) => setTimeout(r, 5));
+      const reply = replies.get(id)!;
+      if (reply.error) throw new Error(reply.error.message);
+      return reply.result;
+    };
+    client.receive({ jsonrpc: "2.0", id: 0, method: "initialize", params: { protocolVersion: 1 } });
+
+    const candidate = revisionId(applyEdits(seed, EditSetSchema.parse(shorter)));
+    expect(await invoke("procedural.dream", { graph })).toMatchObject({
+      status: "done",
+      result: { status: "done", head: revisionId(seed), rounds: [{ round: 1, outcome: "pending-approval", revision: candidate, gate: "approval-for-side-effects" }, { outcome: "pending-approval" }, { outcome: "pending-approval" }] },
+    });
+    expect(await invoke("procedural.approvals", { graph })).toMatchObject({ head: revisionId(seed), approvals: [{ candidate, origin: "dream", onHead: true, gate: "approval-for-side-effects", tools: ["search"] }] });
+    await watcher.drain();
+    expect(events.map((e) => [e.type, e.source, e.payload])).toEqual([["procedural.approval.requested", "procedural", expect.objectContaining({ graph, candidate, tools: ["search"] })]]);
+
+    expect(await invoke("procedural.approve", { graph, candidate })).toEqual({ status: "committed", graph, candidate, revision: candidate, previous: revisionId(seed) });
+    expect(await store.heads.get(graph)).toEqual({ revision: candidate, history: [revisionId(seed)] });
+    expect((await invoke("procedural.approvals", { graph })) as { approvals: unknown[] }).toMatchObject({ approvals: [] });
+    await watcher.drain();
+    expect(events.at(-1)).toMatchObject({ type: "procedural.approval.decided", source: "procedural", payload: { graph, candidate, decision: "approved", revision: candidate } });
+    // The notices are in the daemon's snapshot, so they survive a restart.
+    expect(JSON.stringify(host.daemon.snapshot())).toContain("procedural.approval.decided");
+    watcher.close();
+    client.disconnect();
+    await host.close();
+    await cognitive.close();
+  });
+
+  it("PX2.116 a dream given no tool catalog (the CLI's, or the daemon's without composition) enforces none under the harness preset, so a candidate over action nodes can commit", async () => {
     const store = new MemoryProceduralStore();
     await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
     await store.heads.set(graph, undefined, revisionId(seed));

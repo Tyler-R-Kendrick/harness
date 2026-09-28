@@ -12,6 +12,20 @@ describe("SnapshotProceduralStore", () => {
     expect(storage.loads).toBe(1);
   });
 
+  it("PS1.58 graphs are read from the saved store in issue order, and reading them saves nothing", async () => {
+    const storage = new ProbeStorage();
+    const store = new SnapshotProceduralStore(storage);
+    const r = record([]);
+    await store.revisions.put(r);
+    const listed = store.graphs();
+    await store.heads.set(graphA, undefined, r.id);
+    expect(await listed).toEqual([]);
+    const saves = storage.saves;
+    expect(await store.graphs()).toEqual([graphA]);
+    expect(storage.saves).toBe(saves);
+    expect(await new SnapshotProceduralStore(storage).graphs()).toEqual([graphA]);
+  });
+
   it("PS1.59 a guidance text already kept under its id (every cached step puts it again) saves nothing; another text under it saves", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);

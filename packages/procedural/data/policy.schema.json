@@ -40,7 +40,8 @@
                     "write",
                     "dream",
                     "revert",
-                    "import"
+                    "import",
+                    "approve"
                   ]
                 }
               },

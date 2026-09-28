@@ -206,8 +206,10 @@ strongest objection, and what we do about it.
    on tool calls, a node like `Scan_Index` or `Decide_Capital` would never be active. It
    would only be visible as a hop target, and with `h = 2` two such nodes after an action
    would hide the next tool node. Rule 6's "state tracker" suggests the implementation
-   localizes more than tool names (§1.2). So `exact` and `case-insensitive` matching are
-   both settings, and a state-tracker mode is future work.
+   localizes more than tool names (§1.2). So `exact`, `case-insensitive` and
+   `state-tracker` matching are settings (the last reads a node a tool's result declares
+   and argument predicates on bindings), and the horizon can be counted in action hops, so
+   reasoning nodes cannot hide the next tool. Both presets keep `exact` and edge hops.
 4. **Relations are unused at inference.** The serializer drops the labels, so their only
    role is structural. We keep the vocabulary, because the refiner is told to use it and a
    later serializer may print it. But no code branches on relation labels until an
