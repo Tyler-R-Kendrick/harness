@@ -172,6 +172,24 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     expect(tracer.events().some((e) => e.kind === "tool" && e.name === "note")).toBe(true);
   });
 
+  it("PG1.13 instructions are read each turn, and what the harness writes after a turn (its own files) is in that turn's diff", async () => {
+    let said = "first";
+    const seen: string[] = [];
+    const model = new MockLanguageModelV4({
+      doStream: async ({ prompt }) => {
+        seen.push(String(prompt[0]!.content));
+        return { stream: convertArrayToReadableStream<LanguageModelV4StreamPart>([{ type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: "ok" }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usageOf() }]) };
+      },
+    });
+    const { playground, bash } = await start({ models: { m: model }, worker: () => "m", instructions: async () => said, afterTurn: () => bash.fs.writeFile(`${HOME}/AGENTS.md`, `after ${said}`) });
+    const first = await playground.prompt("one", turn().handlers);
+    expect(first.diff.added).toEqual([`${HOME}/AGENTS.md`]);
+    said = "second";
+    const second = await playground.prompt("two", turn().handlers);
+    expect(second.diff.modified).toEqual([`${HOME}/AGENTS.md`]);
+    expect(seen).toEqual(["first", "second"]);
+  });
+
   it("PG1.9 what the host cannot hand to anyone (a snapshot that fails to save) shows up in the trace", async () => {
     const { playground, tracer } = await start({ worker: () => "echo", storage: { load: async () => undefined, save: async () => Promise.reject(new Error("disk full")) } });
     await playground.prompt("hi", turn().handlers);

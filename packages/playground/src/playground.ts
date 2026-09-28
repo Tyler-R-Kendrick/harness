@@ -39,7 +39,10 @@ export interface PlaygroundOptions {
   readonly storage?: SnapshotStorage;
   /** Where the agent workers keep each session's conversation, so it continues after a reload. */
   readonly conversations?: ConversationStore;
-  readonly instructions?: string;
+  /** The agents' instructions, or a function giving them anew each turn (a file the person edits). */
+  readonly instructions?: string | (() => string | Promise<string>);
+  /** Run after each turn, before its effect on the files is taken: what it writes is part of the turn's diff. */
+  readonly afterTurn?: () => Promise<void>;
   /** More tools for the agent workers, beside the filesystem's. */
   readonly tools?: ToolSet;
   /** The approval a tool needs, when this says (else the approval policy decides). */
@@ -214,6 +217,7 @@ export class Playground {
       this.#routes.update = undefined;
       this.#routes.permission = undefined;
     }
+    await this.#options.afterTurn?.();
     const files = await walk(bash.fs, HOME, { previous: before });
     this.#files = files;
     const diff = diffVfs(before, files);

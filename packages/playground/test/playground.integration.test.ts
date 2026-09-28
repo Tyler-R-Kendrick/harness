@@ -78,7 +78,7 @@ async function type(page: Page, line: string) {
 }
 
 describe("the playground page in Chromium", { timeout: 60_000 }, () => {
-  it("PI1.1 boots in one file under the artifact size limit: the daemon runs a first turn (a template answers it) that changes a file, every panel shows it, and the seed templates are files", async () => {
+  it("PI1.1 boots in one file under the artifact size limit: the daemon runs a first turn (a template answers it) that changes a file, every panel shows it, and the harness is in its own files (AGENTS.md, an Eve agent under agent/)", async () => {
     expect(size).toBeLessThan(16 * 1024 * 1024);
     const { page, errors } = await open();
     expect(await terminalText(page)).toContain("ran a turn through the daemon");
@@ -86,7 +86,10 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#worker button[data-worker=claude]").isDisabled()).toBe(true);
     await page.click("#tab-files");
     expect(await page.locator("#tree").innerText()).toMatch(/~\s*todo\.md/);
-    expect(await page.locator("#tree").innerText()).toContain("run-command.md");
+    const tree = await page.locator("#tree").innerText();
+    for (const file of ["run-command.md", "AGENTS.md", "agent.ts", "instructions.md", "bash.ts", "write_template.ts", "terminal.md", "show-file.sh"]) expect(tree).toContain(file);
+    await type(page, "cat AGENTS.md | grep -c 'Worker: templates'");
+    await page.waitForFunction(() => /\n1\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.click("#tab-daemon");
     expect(await page.locator("#daemon").innerText()).toContain("turn.ended");
     await page.click("#tab-timeline");
