@@ -130,4 +130,28 @@ describe("harness-procedural CLI", () => {
     await expect(cli("approvals", "team/search", "extra")).rejects.toMatchObject({ code: 2 });
     // Fourteen CLI processes: about 9 s alone, and more than the default 20 s beside the other suites.
   }, 60_000);
+
+  it("PX2.130 plan prints the plan between two nodes of a graph's head, and with --run runs it on the model given, keeping the run beside the store while it runs; a plan that cannot be built or a run that fails exits 1, and plan needs a graph and both ends", async () => {
+    const { dir, cli, json } = await setup();
+    const file = join(dir, "graph.json");
+    await writeFile(file, JSON.stringify(expert));
+    await json("import", "team/search", file);
+    const planned = await json("plan", "team/search", "Start", "End");
+    expect(planned).toMatchObject({ status: "ok", revision: revisionId(CandidateDocumentSchema.parse(expert)), overlay: 0, plan: { nodes: [{ id: "search", status: "pending" }], edges: [] } });
+    await expect(cli("plan", "team/search", "End", "Start")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"unreachable"') });
+    // The search task runs on the model given, which cannot be reached here: the task fails, and so does the run.
+    const failed = await cli("plan", "team/search", "Start", "End", "--run", "--model", "provider/model").then(
+      () => undefined,
+      (e: { code: number; stdout: string }) => e,
+    );
+    expect(failed?.code).toBe(1);
+    expect(JSON.parse(failed!.stdout)).toMatchObject({ graph: "team/search", status: "failed", tasks: [{ id: "search", status: "failed" }] });
+    expect(JSON.parse(await readFile(join(dir, "store", "plan-runs.json"), "utf8"))).toEqual({ runs: [] });
+    await json("import", "team/empty");
+    expect(await json("plan", "team/empty", "Start", "End", "--run", "--model", "provider/model")).toMatchObject({ graph: "team/empty", status: "succeeded", tasks: [] });
+    await expect(cli("plan", "team/search", "Start")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("plan", "team/search")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("history", "team/search", "--run")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("plan", "team/search", "Start", "End", "extra")).rejects.toMatchObject({ code: 2 });
+  }, 60_000);
 });
