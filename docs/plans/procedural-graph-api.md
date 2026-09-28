@@ -1113,6 +1113,16 @@ evaluator"; the names above keep their meaning.
   it; listeners are not awaited, a failure (thrown or rejected) is logged as
   `tick listener failed: …`, and `close()` removes them all. Hosts already call `tick()`
   from their ticker, so periodic host work needs no timer of its own.
+- **The schedule on the native host.** `nativeDreamSchedule({runtime, store, settings, preset?, dream, log?})`
+  builds a `DreamSchedule` over the preset (default `harness`), every graph
+  `store.graphs()` names and the host's clock, and runs its `tick()` on every tick of
+  the runtime (`onTick`); it returns `{schedule, close}`. Each outcome is one line:
+  `procedural: scheduled dream of <graph> (<reason>): done, <n> rounds, head unchanged|now <id>`,
+  `…: busy|no-head|lease-lost`, or `… failed: <why>`. `proceduralStore(dir)` now returns
+  its `SnapshotProceduralStore`. `main.ts` wraps `nativeDream` in `exclusiveDream` and
+  gives the same function to `procedural.dream` and to the schedule, whose lines go to
+  stderr; `--procedural` alone turns the schedule on, with the preset's `every` and
+  `afterTurns` (a deployment's `--procedural-settings` may unset both for on-demand only).
 
 ## Open issues
 

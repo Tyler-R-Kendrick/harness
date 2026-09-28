@@ -2,8 +2,8 @@ import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
+import { authorize, DreamSchedule, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
+import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, DreamRun, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, ScheduledDream, SessionLog, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
 import { FileStorage } from "./file-storage.ts";
@@ -48,7 +48,7 @@ export const hostAuthorizer =
     authorize(policy, action, graph, { principal });
 
 /** The procedural store kept in `dir`: one file, saved atomically after every change. One process owns it. */
-export function proceduralStore(dir: string): ProceduralStore {
+export function proceduralStore(dir: string): SnapshotProceduralStore {
   return new SnapshotProceduralStore(new FileStorage(join(dir, "procedural.json")));
 }
 
@@ -227,4 +227,36 @@ export function terminalApprover(input: NodeJS.ReadableStream, output: NodeJS.Wr
       }
     },
   };
+}
+
+/** A scheduled dream's outcome, in a line. */
+function describeScheduled(run: ScheduledDream): string {
+  const what = `procedural: scheduled dream of ${run.graph}${run.reason === undefined ? "" : ` (${run.reason})`}`;
+  if ("error" in run) return `${what} failed: ${run.error}`;
+  const { result } = run;
+  if (result.status !== "done") return `${what}: ${result.status}`;
+  return `${what}: done, ${result.rounds.length} rounds, head ${result.head === result.initial ? "unchanged" : `now ${result.head.slice(0, 12)}`}`;
+}
+
+/**
+ * Dream on a schedule on this host (plan §7.1): the preset's `dream.every` and
+ * `dream.afterTurns` checked on every tick of the daemon runtime, for every graph the
+ * store holds, with `dream` (the host's `nativeDream`, behind `exclusiveDream` so the
+ * `procedural.dream` operation and the schedule never run one graph twice). Each outcome
+ * is logged in a line. `close()` stops it.
+ */
+export function nativeDreamSchedule(options: {
+  readonly runtime: Pick<DaemonRuntime, "onTick">;
+  readonly store: ProceduralStore & { graphs(): Promise<readonly GraphId[]> };
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly dream: DreamRun;
+  readonly log?: (message: string) => void;
+}): { schedule: DreamSchedule; close(): void } {
+  const { runtime, store, settings, dream, log = () => {} } = options;
+  const schedule = new DreamSchedule({ store, settings: presetOf(settings, options.preset ?? "harness"), graphs: () => store.graphs(), dream, clock: hostPorts.clock });
+  const close = runtime.onTick(async () => {
+    for (const run of await schedule.tick()) log(describeScheduled(run));
+  });
+  return { schedule, close };
 }
