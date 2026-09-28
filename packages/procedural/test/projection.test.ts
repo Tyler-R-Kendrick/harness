@@ -282,8 +282,12 @@ describe("projecting a turn from the session log", () => {
     // Text before a later call or result is not the final answer.
     expect(path(body(said("Checking."), call("c2", "Bridge_Extract"), ended("t1")))).toEqual(["Bridge_Extract", "Bridge_Extract"]);
     expect(path([started("t1"), user("q"), call("c1", "Bridge_Extract"), said("Nolan."), result("c1", "Nolan"), ended("t1")])).toEqual(["Bridge_Extract"]);
-    // The last action matched nothing: where the turn answered from is unknown.
-    expect(path(body(call("c2", "grep"), result("c2", "x"), said("Nolan."), ended("t1")))).toEqual(["Bridge_Extract"]);
+    // The last action matched nothing: where the turn answered from is unknown, even to a terminal that would take any node.
+    const anywhere = () => NodeNameSchema.parse("End");
+    expect(path(body(call("c2", "grep"), result("c2", "x"), said("Nolan."), ended("t1")), { terminal: anywhere })).toEqual(["Bridge_Extract"]);
+    expect(path([started("t1"), user("q"), said("Nolan."), ended("t1")], { terminal: anywhere })).toEqual([]);
+    // A turn that says nothing gave no answer.
+    expect(path([started("t1"), user("q"), record({ node: "Bridge_Extract" }), ended("t1")])).toEqual(["Bridge_Extract"]);
     // A turn that was cancelled, refused or cut off, or whose end is not in view, did not answer.
     for (const reason of ["cancelled", "refusal", "max_tokens"]) expect(path(body(said("Nolan."), ended("t1", reason)))).toEqual(["Bridge_Extract"]);
     expect(path(body(said("Nolan.")))).toEqual(["Bridge_Extract"]);

@@ -297,6 +297,16 @@ describe("transitions into a terminal", () => {
   });
 });
 
+describe("transitions into a terminal, without the core", () => {
+  it("PL1.75 a turn whose core revision the store lacks walks into no terminal: the path is where its record began", async () => {
+    const t = setup({ withCore: false });
+    t.pin("s1");
+    t.add("s1", [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")]);
+    expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed" });
+    expect(observedOf(t.store.events()).map((e) => e.path)).toEqual([["Bridge_Extract"]]);
+  });
+});
+
 describe("the live learner on logs it did not write", () => {
   it("PL1.47 a stray re-observation of a turn never observed does not make that turn a duplicate", async () => {
     const t = setup();

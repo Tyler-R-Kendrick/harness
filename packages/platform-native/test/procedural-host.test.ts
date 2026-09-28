@@ -218,6 +218,8 @@ describe("procedural guidance and access on the native host", () => {
     await step.prepare(input(3));
     expect(notices.map((n) => n._meta.harness.procedural.step.cached)).toEqual([false, true, true, false]);
     evictions.close();
+    // With the pump's own interval, and a log.
+    nativeStepEvictions({ runtime: host.runtime, step, log: () => undefined }).close();
     await host.close();
   });
 
