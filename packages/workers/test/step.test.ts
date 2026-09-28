@@ -146,6 +146,16 @@ describe("sessionAgent's step hook: a per-step AI SDK prepareStep for procedural
     expect(lastAssistant.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "tool-call", toolName: "deploy" })]));
   });
 
+  it("PW1.71 the active tools the hook returns are the only tools that step's model call is offered; without them every tool is", async () => {
+    const tools = { weather: tool({ inputSchema: z.object({}), execute: async () => "ok" }), deploy: tool({ inputSchema: z.object({}), execute: async () => "ok" }) };
+    const offered = (o: LanguageModelV4CallOptions) => (o.tools ?? []).map((t) => t.name);
+    let step = 0;
+    const narrowing: StepHook = { prepare: async () => (step++ === 0 ? { activeTools: ["weather"] } : undefined) };
+    const model = scripted([call("weather", {}), finish("tool-calls")], [...text("ok"), finish()]);
+    await run(new AgentWorker({ agent: sessionAgent({ model, tools, step: narrowing }) }), "hi").done;
+    expect(model.doStreamCalls.map(offered)).toEqual([["weather"], ["weather", "deploy"]]);
+  });
+
   it("PW1.22 the hook is told the names of the tools the turn offers, whether given once or anew each turn", async () => {
     const tools = { weather: tool({ inputSchema: z.object({}), execute: async () => "ok" }), deploy: tool({ inputSchema: z.object({}), execute: async () => "ok" }) };
     const fixed = recording();

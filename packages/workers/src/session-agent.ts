@@ -51,11 +51,12 @@ export interface TurnContext extends TurnScope {
 /**
  * Per-step guidance (e.g. procedural graphs): `prepare` may replace a step's
  * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
- * messages. `turn`, when given, guides an opaque harness's turn: its text is prepended
- * to the prompt.
+ * messages, and may limit the tools that step offers the model (AI SDK `activeTools`;
+ * the next step offers every tool again unless the hook limits it too). `turn`, when
+ * given, guides an opaque harness's turn: its text is prepended to the prompt.
  */
 export interface StepHook {
-  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[] } | undefined>;
+  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[]; readonly activeTools?: readonly string[] } | undefined>;
   turn?(context: TurnContext): Promise<string | undefined>;
 }
 
@@ -74,7 +75,11 @@ function preparing(hook: StepHook, turn: TurnOptions, tools: readonly string[]):
   return async ({ messages, initialInstructions, stepNumber, model }) => {
     try {
       const prepared = await hook.prepare({ ...scope, messages, initialInstructions, stepNumber, model, tools });
-      return { ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }), ...(prepared?.messages ? { messages: [...prepared.messages] } : {}) };
+      return {
+        ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }),
+        ...(prepared?.messages ? { messages: [...prepared.messages] } : {}),
+        ...(prepared?.activeTools ? { activeTools: [...prepared.activeTools] } : {}),
+      };
     } catch (e) {
       scope.report({ sessionUpdate: "notice", severity: "warning", title: "Step guidance failed", description: messageOf(e) });
       return {};
