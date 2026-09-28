@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, TOMBSTONE } from "@harness/procedural";
+import { MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, STORE_FORMAT_V1, TOMBSTONE } from "@harness/procedural";
 import { graphA, record } from "./store-fixtures.ts";
 
 describe("MemoryProceduralStore", () => {
@@ -47,7 +47,8 @@ describe("MemoryProceduralStore", () => {
 describe("redactRecord", () => {
   it("PS1.48 the tombstone and the store format are fixed strings", () => {
     expect(TOMBSTONE).toBe("[redacted]");
-    expect(STORE_FORMAT).toBe("harness.procedural-store/v1");
+    expect(STORE_FORMAT).toBe("harness.procedural-store/v2");
+    expect(STORE_FORMAT_V1).toBe("harness.procedural-store/v1");
   });
 
   it("PS1.39 texts become the tombstone, an unconditional edge stays unconditional, and absent edits stay absent", () => {

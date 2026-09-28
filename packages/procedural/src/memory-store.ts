@@ -11,7 +11,11 @@ import type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 /** What replaces every text of a redacted revision. */
 export const TOMBSTONE = "[redacted]";
 
-export const STORE_FORMAT = "harness.procedural-store/v1";
+/** The saved document's format. v2 keys revision records by graph and id. */
+export const STORE_FORMAT = "harness.procedural-store/v2";
+
+/** The format before v2, whose records were keyed by id alone; the snapshot store migrates it on load. */
+export const STORE_FORMAT_V1 = "harness.procedural-store/v1";
 
 /** The whole store as plain JSON, in insertion order: what a snapshot saves and a store is rebuilt from. */
 export interface ProceduralStoreDocument {

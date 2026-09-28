@@ -661,6 +661,15 @@ As built (A1). These change P7's keys; every other name keeps its meaning.
   (PX2.68).
 - `redact(id)` is by content: it tombstones every graph's record of the id, and a record
   put under that id later, in any graph, is stored redacted (PS1.50).
+- The saved document's format is `harness.procedural-store/v2` (`STORE_FORMAT`). The
+  snapshot store still loads a `v1` document (`STORE_FORMAT_V1`,
+  `ProceduralStoreDocumentV1Schema`, checked like v2) through
+  `migrateStoreDocument(v1): ProceduralStoreDocument`, and its first change saves v2
+  (PS1.51). The migration turns each v1 `revert` record back into the record it replaced
+  (`evidence.replaces`, through reverts of reverts; a redacted one, which no longer
+  parses, stays) (PS1.53), and gives a graph whose head or earlier head has no record of
+  its own a copy of the record another graph wrote last (PS1.52). A malformed v1 store is
+  rejected like a malformed v2 one, never migrated or overwritten (PS1.54).
 
 ## P8: core, generic (`packages/core`, `packages/protocol`)
 

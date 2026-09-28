@@ -12,7 +12,7 @@ export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "
 export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
 export { LiveLearner, type LearnerEvent, type LearnerResult, type LiveLearnerDeps } from "./learner.ts";
 export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate.ts";
-export { MemoryProceduralStore, redactRecord, STORE_FORMAT, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
+export { MemoryProceduralStore, redactRecord, STORE_FORMAT, STORE_FORMAT_V1, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
 export { exportMermaid } from "./mermaid.ts";
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
@@ -27,7 +27,7 @@ export { modelReflector, reflect, reflectionJsonSchema, type Reflector, type Ref
 export { explainResolve, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, WhenSchema, type Resolution, type ResolveContext, type Resolver, type When } from "./resolver.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
-export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
+export { migrateStoreDocument, PinSchema, ProceduralStoreDocumentSchema, ProceduralStoreDocumentV1Schema, SnapshotProceduralStore, type ProceduralStoreDocumentV1 } from "./snapshot-store.ts";
 export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepRecord, type StepScope, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";
