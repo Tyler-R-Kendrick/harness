@@ -7,7 +7,7 @@
  * the next call, exactly as with any other provider.
  */
 import type { LanguageModelV4, LanguageModelV4CallOptions, LanguageModelV4Prompt, LanguageModelV4StreamPart, LanguageModelV4ToolResultOutput } from "@ai-sdk/provider";
-import { parsePartialJson } from "ai";
+import { createIdGenerator, parsePartialJson } from "ai";
 import { collectParts, finishReason, usage } from "@harness/cognitive";
 
 export type ModelTier = "quick" | "default" | "complex";
@@ -34,10 +34,28 @@ export interface Reply {
   readonly toolCalls: readonly { readonly toolName: string; readonly input: Record<string, unknown> }[];
 }
 
+/**
+ * The reply's shape. `sample` takes no schema or grammar (its `json` mode only notes that
+ * the reply is machine-parsed, and rejects a reply cut short), so the schema is sent in
+ * the request, the strongest constraint the capability allows (ADR 0011).
+ */
+export const REPLY_SCHEMA = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    toolCalls: { type: "array", items: { type: "object", properties: { toolName: { type: "string" }, input: { type: "object" } }, required: ["toolName", "input"] } },
+  },
+  required: ["text", "toolCalls"],
+  additionalProperties: false,
+} as const;
+
 const FORMAT = [
-  'Reply with only one JSON object: {"text": string, "toolCalls": [{"toolName": string, "input": object}]}.',
+  `Reply with only one JSON object matching this JSON Schema: ${JSON.stringify(REPLY_SCHEMA)}`,
   '"text" is what you say to the person. To use tools, list the calls in "toolCalls" and stop: their results come back in the next turn, and you continue from there. When you need no tool, "toolCalls" is [].',
 ].join("\n");
+
+/** Tool-call ids unique across page loads, since a conversation outlives the model that wrote it. */
+const callId = createIdGenerator({ prefix: "call" });
 
 const record = (v: unknown): Record<string, unknown> | undefined => (typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 
@@ -111,8 +129,8 @@ function tryJson(text: string): unknown {
   }
 }
 
-/** A reply, read tolerantly: the whole reply as JSON, else a fenced block, else the object inside it; otherwise plain text. */
-export function parseReply(raw: string): Reply {
+/** A reply, read tolerantly: the whole reply as JSON, else a fenced block, else the object inside it; undefined when none is a reply. */
+function readReply(raw: string): Reply | undefined {
   const fenced = /```(?:json)?\s*\n([\s\S]*?)```/.exec(raw)?.[1];
   const start = raw.indexOf("{");
   const candidates = [raw, fenced, start < 0 ? undefined : raw.slice(start, raw.lastIndexOf("}") + 1)];
@@ -120,7 +138,12 @@ export function parseReply(raw: string): Reply {
     const reply = c === undefined ? undefined : asReply(tryJson(c));
     if (reply) return reply;
   }
-  return { text: raw, toolCalls: [] };
+  return undefined;
+}
+
+/** A reply, read tolerantly (see `readReply`); otherwise plain text. */
+export function parseReply(raw: string): Reply {
+  return readReply(raw) ?? { text: raw, toolCalls: [] };
 }
 
 /** The `text` field of a reply still being written, if it has started. */
@@ -141,15 +164,22 @@ function sampleError(e: unknown): Error {
 
 /** Claude through the artifact's `sample` capability, as an AI SDK language model. */
 export function sampleLanguageModel(sample: Sample, settings: { readonly tier?: () => ModelTier } = {}): LanguageModelV4 {
-  let calls = 0;
   const run = async (options: LanguageModelV4CallOptions, emit: (part: LanguageModelV4StreamPart) => void) => {
     emit({ type: "stream-start", warnings: [] });
+    let block = 0;
+    let open = false;
     let shown = "";
     const show = (text: string) => {
       if (text.length <= shown.length || !text.startsWith(shown)) return;
-      if (shown === "") emit({ type: "text-start", id: "0" });
-      emit({ type: "text-delta", id: "0", delta: text.slice(shown.length) });
+      if (!open) emit({ type: "text-start", id: String(block) });
+      open = true;
+      emit({ type: "text-delta", id: String(block), delta: text.slice(shown.length) });
       shown = text;
+    };
+    const close = () => {
+      if (open) emit({ type: "text-end", id: String(block++) });
+      open = false;
+      shown = "";
     };
     // Partial parses finish in order, so the text only ever grows.
     let parsing = Promise.resolve();
@@ -163,16 +193,19 @@ export function sampleLanguageModel(sample: Sample, settings: { readonly tier?: 
       throw sampleError(e);
     });
     await parsing;
-    const reply = parseReply(result.text);
+    // A reply that is not the format (one cut short, say) is the text it had written, else plain text.
+    const reply = readReply(result.text) ?? { text: (await partialText(result.text)) ?? result.text, toolCalls: [] };
+    // The final text is the answer: when it does not continue what streamed, it follows in a block of its own.
+    if (!reply.text.startsWith(shown)) close();
     show(reply.text);
-    if (shown !== "") emit({ type: "text-end", id: "0" });
-    for (const call of reply.toolCalls) emit({ type: "tool-call", toolCallId: `call-${++calls}`, toolName: call.toolName, input: JSON.stringify(call.input) });
+    close();
+    for (const call of reply.toolCalls) emit({ type: "tool-call", toolCallId: callId(), toolName: call.toolName, input: JSON.stringify(call.input) });
     emit({ type: "finish", finishReason: finishReason(result.truncated ? "length" : reply.toolCalls.length ? "tool-calls" : "stop"), usage: usage() });
   };
   return {
     specificationVersion: "v4",
     provider: "claude.sample",
-    modelId: "claude",
+    modelId: "sample",
     supportedUrls: {},
     doGenerate: async (options) => {
       const parts: LanguageModelV4StreamPart[] = [];

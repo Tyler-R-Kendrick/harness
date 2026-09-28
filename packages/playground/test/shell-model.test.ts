@@ -34,4 +34,12 @@ describe("the shell model: a deterministic model that runs what it is told", () 
     const result = await generateText({ model: shellModel(), prompt: "$ x", tools: { bash: bash(() => "plain") }, stopWhen: () => false });
     expect(result.text).toBe('"plain"');
   });
+
+  it("SH1.5 tool-call ids never repeat, across models too (a reloaded page starts a new model on a kept conversation)", async () => {
+    const ids: string[] = [];
+    for (const model of [shellModel(), shellModel()]) {
+      for (const prompt of ["$ a", "$ b"]) ids.push(...(await generateText({ model, prompt, tools: { bash: bash(() => "ok") } })).toolCalls.map((c) => c.toolCallId));
+    }
+    expect(new Set(ids).size).toBe(4);
+  });
 });
