@@ -115,6 +115,24 @@ describe("running plans (runPlan)", () => {
     };
     await expect(runPlan({ plan: planOf(["a", "b"], [["a", "b", "control"]]), task: echo(log), settings: settings(), save })).rejects.toThrow("disk full");
     expect(log.map((t) => t.id)).toEqual(["a"]);
+    // A task still running when a save fails finishes unsaved: nothing is saved after the failure.
+    let calls = 0;
+    let slowDone!: () => void;
+    const finished = new Promise<void>((r) => (slowDone = r));
+    const task: PlanTask = async (input) => {
+      if (input.id === "slow") {
+        await new Promise((r) => setTimeout(r, 5));
+        slowDone();
+      }
+      return { ok: true, output: input.id };
+    };
+    const failing = async () => {
+      if (++calls === 3) throw new Error("disk full");
+    };
+    await expect(runPlan({ plan: planOf(["fast", "slow"], []), task, settings: settings(2), save: failing })).rejects.toThrow("disk full");
+    await finished;
+    await new Promise((r) => setTimeout(r, 1));
+    expect(calls).toBe(3);
   });
 
   it("PC1.60 a restored run continues from its statuses: finished tasks are not run again and their outputs feed their dependents; a task restored as running runs again", async () => {
