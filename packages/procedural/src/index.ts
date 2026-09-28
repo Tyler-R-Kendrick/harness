@@ -23,6 +23,7 @@ export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldO
 export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES, type PinRequest } from "./pinning.ts";
 export { parsePlanRun, runPlan, TaskOutcomeSchema, type PlanRunResult, type PlanRunState, type PlanTask, type PlanTaskInput, type PlanTaskReport, type RestoredPlanRun, type RunPlanOptions, type TaskOutcome } from "./plan-run.ts";
 export { modelTask, type ModelTaskOptions } from "./plan-task.ts";
+export { modelTasks, PlanRunIdSchema, PlanRunRecordSchema, planRunner, SnapshotPlanRuns, type InvalidPlanRun, type PlanNotice, type PlanRunId, type PlanRunner, type PlanRunnerOptions, type PlanRunOutcome, type PlanRunRecord, type PlanRunStore, type PlanTaskContext } from "./plan-runner.ts";
 export { parsePlan, PLAN_RELATIONS, planFromSubgraph, PlanPayloadSchema, type PlanOptions, type PlanPayload, type PlanRelations, type PlanResult } from "./plan.ts";
 export { AccessPolicySchema, ACTIONS, authorize, globMatches, parsePolicy, policyJsonSchema, type AccessPolicy, type Action } from "./policy.ts";
 export { projectTurn, turnProjection, type LogEntryLike, type LogGap, type ProjectionContext, type ScoreSource, type TurnProjection, type VersionPair } from "./projection.ts";
