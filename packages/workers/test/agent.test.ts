@@ -260,6 +260,28 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([[], ["learned"]]);
   });
 
+  it("AW1.17 tools given anew each turn are told the turn's session, turn, cwd and meta, so a session can get tools of its own", async () => {
+    const scopes: unknown[] = [];
+    const learned = tool({ description: "A tool of session s2.", inputSchema: z.object({}), execute: async () => "ok" });
+    const model = scripted([...text("one"), finish()]);
+    const worker = new AgentWorker({
+      agent: sessionAgent({
+        model,
+        tools: (turn) => {
+          scopes.push(turn);
+          return turn.sessionId === "s2" ? { learned } : {};
+        },
+      }),
+    });
+    await run(worker, [{ type: "text", text: "first" }]).done;
+    await worker.run({ type: "prompt", sessionId: "s2", turnId: "t1", prompt: [{ type: "text", text: "second" }], cwd: "/repo", sessionMeta: { team: "a" } }, () => {});
+    expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([[], ["learned"]]);
+    expect(scopes).toEqual([
+      { sessionId: "s1", turnId: "t1", cwd: "/", report: expect.any(Function) },
+      { sessionId: "s2", turnId: "t1", cwd: "/repo", sessionMeta: { team: "a" }, report: expect.any(Function) },
+    ]);
+  });
+
   it("AW1.12 an ACP prompt becomes AI SDK user content: text and image blocks, other blocks left out", () => {
     expect(userContent([{ type: "text", text: "a" }, { type: "image", data: "AQ==", mimeType: "image/png" }, { type: "resource" }, { type: "image", data: 1 }, null, "x"])).toEqual({
       content: [{ type: "text", text: "a" }, { type: "file", data: new Uint8Array([1]), mediaType: "image/png" }],

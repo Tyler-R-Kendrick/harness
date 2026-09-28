@@ -107,8 +107,12 @@ export function sessionAgent(options: {
   /** Takes turns that send images, when given. */
   readonly vision?: LanguageModel;
   readonly instructions?: string;
-  /** Tools, or a function giving them anew each turn (e.g. a workflow library's, which grows as learning builds tools). */
-  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+  /**
+   * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
+   * grows as learning builds tools), told the turn's scope so a session can get tools of
+   * its own (e.g. the workflows its pinned procedural core binds).
+   */
+  readonly tools?: ToolSet | ((turn: TurnScope) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -142,7 +146,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools() : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools(scopeOf(turn)) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {
