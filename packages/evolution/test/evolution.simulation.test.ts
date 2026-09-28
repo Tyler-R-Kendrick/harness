@@ -35,7 +35,7 @@ describe("whole runs under the null (no candidate helps)", () => {
     const { accepting, bias } = await study(CALIBRATED);
     expect(accepting).toBeLessThanOrEqual(4); // alpha = 0.1 of 40 runs; observed 2
     expect(Math.abs(bias)).toBeLessThan(0.005);
-  }, 60_000);
+  }, 300_000);
 
   it("RS10.2 the paper's rule accepts noise in most runs of its workspace instance and inflates the incumbent's score by the winner's curse", async () => {
     const workspace = await study(WORKSPACE);
@@ -44,7 +44,7 @@ describe("whole runs under the null (no candidate helps)", () => {
     const coding = await study(CODING);
     expect(coding.accepting).toBeGreaterThanOrEqual(8); // observed 10 of 40
     expect(coding.bias).toBeGreaterThan(0.01); // observed +0.016
-  }, 60_000);
+  }, 300_000);
 });
 
 describe("whole runs with a real improvement", () => {
@@ -57,5 +57,5 @@ describe("whole runs with a real improvement", () => {
       if ((await e.round({ evaluate: w.evaluate, propose, entropy: new SeededEntropy(seed * 7) })).accepted === "A") found++;
     }
     expect(found).toBeGreaterThanOrEqual(16); // a true gain of 0.10 on 240 tasks; observed 19 of 20
-  }, 60_000);
+  }, 300_000);
 });

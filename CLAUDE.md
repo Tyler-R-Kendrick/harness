@@ -76,6 +76,10 @@ Test kinds (filename suffix decides the kind):
 - `*.test.ts`: atomic unit tests, one behavior each.
 - `*.property.test.ts`: fast-check properties/fuzzing. Model-based tests for state machines.
 - `*.contract.test.ts`: a suite from `@harness/testkit` run against every implementation of a port.
+- `*.simulation.test.ts`: studies of whole runs over seeded simulated worlds (error rates
+  under the null, power, evaluations saved). Their counts were measured once and are
+  pinned with slack; they are excluded from mutation testing (too slow per mutant), so
+  the atomic tests must kill mutants on their own.
 - `*.integration.test.ts`: real processes and transports (e.g. the official ACP SDK client
   talking to the native host over stdio, or the browser host bundled and run in Chromium
   through `playwright-core`; install its browser with `npx playwright-core install chromium`).

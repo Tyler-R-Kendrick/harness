@@ -12,6 +12,9 @@ const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native",
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
 //   *.property.test.ts     property/fuzz tests (fast-check); seeds are reported on failure
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
+//   *.simulation.test.ts   studies of whole runs over seeded simulated worlds (error rates,
+//                          power, savings); counts measured once and pinned, too slow to
+//                          run per mutant, so not in the mutation suite
 //   *.integration.test.ts  real processes/transports (e.g. ACP SDK client over stdio)
 //   *.model.test.ts        real model weights (downloads); run by `npm run test:models`
 //                          (vitest.models.config.ts) and the CI "models" job, not here
