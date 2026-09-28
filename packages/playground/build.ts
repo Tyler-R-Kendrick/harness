@@ -43,7 +43,9 @@ export async function buildPlayground(options: { readonly minify?: boolean } = {
     });
     const js = readdirSync(out).filter((f) => f.endsWith(".js"));
     if (js.length !== 1) throw new Error(`expected one script, got ${js.join(", ")}`);
-    const script = readFileSync(join(out, js[0]!), "utf8").replace(/<\/script/gi, "<\\/script");
+    // A literal U+FFFD (libraries' decoders compare against it) is written as its escape, which means the same inside
+    // the strings, template literals and regular expressions it appears in: the artifact service refuses the raw character.
+    const script = readFileSync(join(out, js[0]!), "utf8").replace(/<\/script/gi, "<\\/script").replaceAll("\uFFFD", "\\uFFFD");
     return `${readFileSync(join(here, "page.html"), "utf8")}\n<script type="module">\n${script}\n</script>\n`;
   } finally {
     rmSync(out, { recursive: true, force: true });

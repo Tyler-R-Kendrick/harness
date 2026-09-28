@@ -11,10 +11,12 @@ let server: Server;
 let origin: string;
 let browser: Browser;
 let size = 0;
+let replacementCharacters = 0;
 
 beforeAll(async () => {
   const html = await buildPlayground();
   size = html.length;
+  replacementCharacters = [...html.matchAll(/\uFFFD/g)].length;
   const page = `<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body>${html}</body></html>`;
   server = createServer((_req, res) => void res.writeHead(200, { "content-type": "text/html" }).end(page));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
@@ -80,6 +82,8 @@ async function type(page: Page, line: string) {
 describe("the playground page in Chromium", { timeout: 60_000 }, () => {
   it("PI1.1 boots in one file under the artifact size limit: the daemon runs a first turn (a template answers it) that changes a file, every panel shows it, and the harness is in its own files (AGENTS.md, an Eve agent under agent/)", async () => {
     expect(size).toBeLessThan(16 * 1024 * 1024);
+    // No raw U+FFFD, which the artifact service takes for text lost in an edit.
+    expect(replacementCharacters).toBe(0);
     const { page, errors } = await open();
     expect(await terminalText(page)).toContain("ran a turn through the daemon");
     expect(await page.locator("#claude-pill").textContent()).toBe("Claude: not reachable here");
