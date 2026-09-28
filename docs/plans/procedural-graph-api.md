@@ -870,9 +870,12 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `dream.cycles`) and `clock: { now(): number }`;
   - `authorize?: (action: ProceduralAction, graph: GraphId) => boolean`, the policy bound
     by the host (P9's `authorize(policy, action, graph, context)` with its context), which
-    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
+    allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import" | "approve"`;
   - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
-    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`);
+  - `notify?: (notice: ApprovalNotice) => void | Promise<void>`, where the host publishes
+    the approvals inbox's notices (an import proposal is `requested`, a decision
+    `decided`).
 
   It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
   parses its input (malformed input throws `invalid procedural.<op> input`), then checks
@@ -888,6 +891,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
   | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
   | `revert` | `{graph, to?}` | revert | `RevertResult` |
   | `import` | `{graph, document?}` | import | `ImportResult` |
+  | `approvals` | `{graph}` | approve | `ApprovalList` |
+  | `approve` | `{candidate}` | approve (on the candidate's graph) | `ApprovalResult`, or `missing` for an unknown id |
+  | `decline` | `{candidate}` | approve (on the candidate's graph) | `ApprovalResult`, or `missing` for an unknown id |
 
 - `import-export.ts` holds the operations over a store, which the CLI shares:
   - `importGraph({store, graph, document?, clock, cycles?})`: no document is `seedGraph()`.
