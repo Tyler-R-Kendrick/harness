@@ -1,4 +1,6 @@
-# 0012: Answers from templates first: decide, fill, and generate only what cannot be decided
+# 0014: Answers from templates first: decide, fill, and generate only what cannot be decided
+
+First merged as 0012, alongside the scripted dialogue's ADR 0012 from a parallel change; renumbered 0014. ADR 0012 puts scripts in front of a session's model in the daemon; this one is the playground's template engine.
 
 ## Context
 
