@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import { Coalesced, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
+import { Coalesced, parsePageState, parseTrace, storableEvent, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
 import { HOME, walk } from "../src/vfs.ts";
 
 describe("the filesystem across reloads", () => {
@@ -89,7 +89,7 @@ describe("coalesced saves", () => {
         started();
         await new Promise<void>((r) => (release = r));
       }
-    });
+    }, () => {});
     saver.request();
     await running;
     state = 1;
@@ -128,5 +128,29 @@ describe("coalesced saves", () => {
     await saver.flush();
     expect(seen).toEqual(["saved"]);
     expect(errors).toEqual(["save failed: once", "save failed: odd"]);
+  });
+});
+
+describe("the timeline across reloads", () => {
+  const event = { seq: 3, at: 1000, kind: "acp" as const, name: "result #1", direction: "out" as const, sessionId: "s", detail: { jsonrpc: "2.0", id: 1, result: {} } };
+
+  it("PS6.1 an event is stored as plain data: bytes are named by their size, and a detail too large to keep is cut to a preview", () => {
+    expect(storableEvent(event)).toEqual(event);
+    expect(storableEvent({ ...event, detail: { image: new Uint8Array(3) } }).detail).toEqual({ image: "[3 bytes]" });
+    const big = storableEvent({ ...event, detail: "x".repeat(50) }, { maxDetail: 20 });
+    expect(big.detail).toEqual({ cut: "52 characters", preview: `"${"x".repeat(19)}` });
+    expect(storableEvent({ seq: 1, at: 0, kind: "host", name: "no detail" })).toEqual({ seq: 1, at: 0, kind: "host", name: "no detail" });
+  });
+
+  it("PS6.2 a detail that cannot be written as JSON is kept as a note; one JSON has no value for is left out", () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+    expect(storableEvent({ ...event, detail: circular }).detail).toEqual({ unstorable: expect.stringMatching(/circular/i) });
+    expect("detail" in storableEvent({ ...event, detail: () => 1 })).toBe(false);
+  });
+
+  it("PS6.3 a stored timeline is parsed back; anything else, or an event of the wrong shape, is no timeline", () => {
+    expect(parseTrace({ version: 1, events: [event] })).toEqual([event]);
+    for (const bad of [undefined, { version: 2, events: [] }, { version: 1, events: [{ ...event, kind: "nope" }] }, { version: 1, events: [{ ...event, seq: "3" }] }]) expect(parseTrace(bad)).toBeUndefined();
   });
 });
