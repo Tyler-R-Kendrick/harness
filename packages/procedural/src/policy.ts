@@ -10,8 +10,8 @@ import type { GraphId } from "./graph.ts";
 import { matches, WhenSchema } from "./resolver.ts";
 import type { ResolveContext } from "./resolver.ts";
 
-/** The operations a policy can allow or deny. */
-export const ACTIONS = ["read", "write", "dream", "revert", "import", "approve"] as const;
+/** The operations a policy can allow or deny; `run` runs plans from a graph (`procedural.run`). */
+export const ACTIONS = ["read", "write", "dream", "revert", "import", "approve", "run"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 const PolicyRuleSchema = z.strictObject({

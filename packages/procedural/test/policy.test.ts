@@ -7,7 +7,7 @@ const policy = (rules: unknown[], fallback?: "allow" | "deny") => parsePolicy(fa
 describe("the access policy (plan §8.3)", () => {
   it("PX1.20 without a policy every action on every graph is allowed", () => {
     for (const action of ACTIONS) expect(authorize(undefined, action, g("any/graph"), {})).toBe(true);
-    expect(ACTIONS).toEqual(["read", "write", "dream", "revert", "import", "approve"]);
+    expect(ACTIONS).toEqual(["read", "write", "dream", "revert", "import", "approve", "run"]);
   });
 
   it("PX1.21 a policy no rule matches falls back to its default, which is allow", () => {
@@ -90,6 +90,18 @@ describe("the access policy (plan §8.3)", () => {
     expect(authorize(p, "dream", g("team/web"), { principal: "dev" })).toBe(true);
     const schema = JSON.stringify(policyJsonSchema());
     expect(schema).toContain('"approve"');
+  });
+
+  it("PX1.60 run is an action of its own: a rule can let a principal run plans from a graph it may read, and refuse everyone else; the JSON Schema names it", () => {
+    const p = policy([
+      { when: { principal: "ops", actions: ["run"], graph: "team/*" }, allow: true },
+      { when: { actions: ["run"] }, allow: false },
+    ]);
+    expect(authorize(p, "run", g("team/web"), { principal: "ops" })).toBe(true);
+    expect(authorize(p, "run", g("other/web"), { principal: "ops" })).toBe(false);
+    expect(authorize(p, "run", g("team/web"), { principal: "dev" })).toBe(false);
+    expect(authorize(p, "read", g("team/web"), { principal: "dev" })).toBe(true);
+    expect(JSON.stringify(policyJsonSchema())).toContain('"run"');
   });
 
   it("PX1.59 a policy file's JSON Schema is generated from the parser (data/policy.schema.json), for the file's $schema", async () => {
