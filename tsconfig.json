@@ -26,6 +26,9 @@
       "path": "packages/dialogue-standards"
     },
     {
+      "path": "packages/evolution"
+    },
+    {
       "path": "packages/workflows"
     },
     {

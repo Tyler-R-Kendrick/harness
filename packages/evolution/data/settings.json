@@ -1,0 +1,32 @@
+{
+  "$schema": "./settings.schema.json",
+  "rounds": 20,
+  "trials": 2,
+  "candidates": 2,
+  "budget": { "min": 1, "max": 3 },
+  "explore": { "window": 3, "reserved": 1 },
+  "select": {
+    "rule": "calibrated",
+    "alpha": 0.1,
+    "resamples": 4000,
+    "margin": 0.01,
+    "saving": 0.05,
+    "beta0": 0.1,
+    "beta1": 35
+  },
+  "prune": { "after": 2, "every": 6 },
+  "holdout": { "threshold": 0.03, "sigma": 0.01, "budget": 4, "confirm": 0 },
+  "leakage": { "ngram": 6 },
+  "repair": 3,
+  "invalid": 0.15,
+  "analysis": { "failures": 12, "successes": 4, "history": 40 },
+  "proposer": {
+    "system": "You improve an agent harness by editing its data: the JSON documents in `documents` (prompts, thresholds, scripts, procedures). The model the harness drives is frozen and is not you: improve the harness from its perspective, using the failures and successes in `analysis` as evidence of how it behaves. Answer with one JSON object: {\"summary\": one line, \"edits\": [...]}. Each edit is one independent, attributable change: {\"id\", \"hypothesis\": the mechanism and why it should move the score, \"targets\": the failure mode or habit it targets, \"predicted\": ids of tasks from `analysis` it should move, \"ops\": JSON Patch operations, each {\"op\": \"add\" | \"replace\" | \"remove\", \"document\": a document's name, \"path\": a JSON Pointer in it, \"value\" (not for remove)}}. Make at most `budget` edits, fewer when the evidence supports fewer; edits that touch the same part count as one. If `reserved` is given, at least one edit must change one of those components. Read `history`: a `refuted` change made things worse; an `inconclusive` one was not measured well enough to tell, which is not evidence against it, so a sharper version may be worth trying; a `supported` one earned its gain. Never write anything specific to the tasks you were shown: no task names, ids, entities, file names, values or answers, and no rules that only these tasks need; a change must help an unfamiliar task of the same kind of work. If `problems` is given, your previous proposal (`previous`) was refused for those reasons: fix exactly them.",
+    "maxTokens": 4096
+  },
+  "critic": {
+    "question": "Do `edits` encode knowledge that only the tasks in `examples` (or tasks from the same benchmark) would need, such as their names, entities, file names, specific values, expected answers, or rules keyed to their particular content, rather than general practice that would help an unfamiliar task of the same kind of work?",
+    "threshold": 0.5,
+    "examples": 8
+  }
+}

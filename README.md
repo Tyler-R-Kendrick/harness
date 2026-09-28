@@ -152,6 +152,22 @@ node packages/platform-native/src/dialogue-cli.ts import ./alice --book ~/.harne
 node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
 ```
 
+### Regularized self-improvement (a library)
+
+`@harness/evolution` evolves the harness's own data (prompts, thresholds, procedures: the
+JSON documents it is configured by) against a task suite, after RRSI (Xia et al., 2026):
+each round a proposer model drafts candidates as JSON Patch edits within an annealed edit
+budget, a leakage screen and a critic refuse task-specific ones before any evaluation, and
+at most one candidate is accepted. Acceptance is where this differs from the paper
+(ADR 0014, which critiques it): candidates are measured with the incumbent in the same
+window, a change is accepted as a gain only when a paired randomization test bounds its
+gain above zero at a run-wide error rate, cost is paid for by that lower bound, accepted
+mechanisms are pruned by ablation, and a holdout confirms gains through Thresholdout. With
+no candidate that helps, the paper's rule accepts noise in 33 of 40 seeded runs of its
+workspace instance; this one in 2. The paper's rule is kept (`select.rule: "paper"`) to
+compare against. Settings are in `packages/evolution/data/settings.json`; no host drives a
+run yet.
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
@@ -341,5 +357,6 @@ reported as `blocked`, never as a pass.
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
 | `packages/dialogue` | Scripted dialogue: scripts answer turns without inference, IVR-style forms, scripts induced and drafted from the model's answers and verified in shadow (pure) |
+| `packages/evolution` | Regularized self-improvement of the harness's data: RRSI's loop with calibrated acceptance, pruning by ablation, a reusable holdout (pure) |
 | `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |
