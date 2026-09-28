@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { streamText } from "ai";
+import { experimental_evaluate, streamText } from "ai";
+import * as ortNode from "onnxruntime-node";
 import { bytes, constrain, parseCatalog, route, sha256 } from "@harness/cognitive";
 import type { ModelDescriptor, Runtime } from "@harness/cognitive";
 import { MemoryByteCache } from "@harness/models";
 import { buildBrowserEnsemble, CacheStorageByteCache, xgrammarFromSource } from "@harness/platform-browser";
 import type { CacheStorageLike } from "@harness/platform-browser";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
+import { decisionFiles } from "../../models/test/decision-fixture.ts";
 import { loadXGrammar } from "../../constrained/test/xgrammar.ts";
 
 const data = (file: string) => JSON.parse(readFileSync(new URL(`../../cognitive/data/${file}`, import.meta.url), "utf8")) as unknown;
@@ -175,6 +177,46 @@ describe("the browser host's cognitive core", () => {
     expect(await held.text).toBe("ab");
     // masked by the constraint: a, then b, then only the end token
     expect(steps().slice(3)).toEqual([1, 2, 0]);
+  });
+
+  /** The catalog's decision model on tiny files (its weights as a separate file), and onnxruntime-web stood in for by onnxruntime-node, recording how sessions are made. */
+  function decider() {
+    const base = byRuntime("onnxruntime-decision");
+    const run = { ...base.run, data: "weights.data" };
+    const served: Record<string, Uint8Array> = { ...decisionFiles(run), "weights.data": new Uint8Array([1, 2, 3]) };
+    const m = { ...base, run, artifact: { ...base.artifact!, files: Object.entries(served).map(([path, b]) => ({ path, bytes: bytes(b.length), sha256: sha256(sha(b)) })) } };
+    const created: { model: unknown; options: unknown }[] = [];
+    const runtime = {
+      ...ortNode,
+      env: { wasm: {} as { wasmPaths?: string } },
+      InferenceSession: { create: async (model: Uint8Array, options?: object) => (created.push({ model, options }), ortNode.InferenceSession.create(model)) },
+    };
+    const fetch = (async (url: string | URL | Request) => {
+      const path = Object.keys(served).find((p) => String(url).endsWith(`/${p}`));
+      return path ? new Response(served[path] as Uint8Array<ArrayBuffer>) : new Response("missing", { status: 404 });
+    }) as typeof globalThis.fetch;
+    return { m, run, served, created, runtime, fetch };
+  }
+  const classify = (ensemble: ReturnType<typeof buildBrowserEnsemble>) =>
+    experimental_evaluate({ model: ensemble.evaluationModel("classification"), maxRetries: 0, state: "a b", questions: { pick: { type: "choice", instructions: "which?", criteria: { first: "a", last: "b" } } } });
+
+  it("BE1.12 a decision model loads its verified files, its weights as external data, onto onnxruntime-web on WebGPU (then WebAssembly), and classifies", async () => {
+    const d = decider();
+    const ensemble = buildBrowserEnsemble({ catalog: { models: [d.m], preferences: {} }, cache: new MemoryByteCache(), fetch: d.fetch, device: "webgpu", onnxruntime: d.runtime, onnxWasm: "https://cdn.example/ort/" });
+    expect((await classify(ensemble)).answers.pick.choice).toBe("last");
+    expect(d.created).toEqual([{ model: d.served[d.run.model], options: { executionProviders: ["webgpu", "wasm"], externalData: [{ path: "weights.data", data: d.served["weights.data"] }] } }]);
+    expect(d.runtime.env.wasm.wasmPaths).toBe("https://cdn.example/ort/");
+  });
+
+  it("BE1.13 on WebAssembly when asked, or when the page has no WebGPU; a model with no weights file gets no external data", async () => {
+    const d = decider();
+    const plain = { ...d.m, run: (({ data: _, ...rest }) => rest)(d.run) };
+    await classify(buildBrowserEnsemble({ catalog: { models: [plain], preferences: {} }, cache: new MemoryByteCache(), fetch: d.fetch, device: "wasm", onnxruntime: d.runtime }));
+    expect(d.created.at(-1)!.options).toEqual({ executionProviders: ["wasm"] });
+    // No device asked for: WebGPU if the page has it (Node has no navigator.gpu).
+    await classify(buildBrowserEnsemble({ catalog: { models: [plain], preferences: {} }, cache: new MemoryByteCache(), fetch: d.fetch, onnxruntime: d.runtime }));
+    expect(d.created.at(-1)!.options).toEqual({ executionProviders: ["wasm"] });
+    expect(d.runtime.env.wasm.wasmPaths).toBeUndefined();
   });
 
   it("BE1.11 an XGrammar loader from source evaluates it once, and again only when asked for a fresh instance", async () => {

@@ -64,6 +64,94 @@
       }
     },
     {
+      "id": "SupersonicLabs/Julia-1",
+      "name": "Julia 1",
+      "publisher": "Supersonic Labs",
+      "tasks": [
+        "classification"
+      ],
+      "ports": [
+        "judge"
+      ],
+      "locality": "local",
+      "runtime": "onnxruntime-decision",
+      "run": {
+        "model": "model.onnx",
+        "data": "model.onnx.data",
+        "tokenizer": "tokenizer.json",
+        "tokenizerConfig": "tokenizer_config.json",
+        "head": "{type} question: {question}",
+        "option": " {option}",
+        "types": {
+          "choice": {
+            "id": 0,
+            "name": "choice"
+          },
+          "score": {
+            "id": 1,
+            "name": "score"
+          },
+          "boolean": {
+            "id": 2,
+            "name": "noul"
+          }
+        },
+        "json": {
+          "item": ", ",
+          "key": ": "
+        },
+        "limits": {
+          "tokens": 8192,
+          "head": 512,
+          "option": 48,
+          "options": {
+            "min": 2,
+            "max": 20
+          },
+          "cut": {
+            "head": 8,
+            "budget": 16,
+            "option": 4
+          }
+        },
+        "strict": true,
+        "padTo": 8
+      },
+      "platforms": [
+        "native",
+        "browser"
+      ],
+      "license": "Apache-2.0",
+      "downloadBytes": 614135099,
+      "notes": "A 144.3M-parameter decision model on mmBERT-small: a state, a question and 2 to 20 options in, a probability per option out (choice, ordered score, or boolean). The artifact is its publisher's full FP32 ONNX export of SupersonicLabs/Julia-1 at a85b1273 (both repos' provenance name the same weights, sha256 df853bf7), run on WebGPU in a browser (WebAssembly without it) and on the CPU natively. Encoding and limits follow its inference policy (strict, 8,192 tokens, a 512-token question head). It compares the options it is given; its publisher does not establish knowledge or multi-step reasoning, so it classifies and routes here and does not grade answers.",
+      "artifact": {
+        "repo": "SupersonicLabs/Julia-1-ONNX",
+        "revision": "82a2fadf8fccfccdc5fd4e1009ba8f1a265eb7a8",
+        "files": [
+          {
+            "path": "model.onnx",
+            "bytes": 2988923,
+            "sha256": "97141d0cfb1da6204e9f8f24d581af72eaeb82cda21149d83eaa6df7160fbcd9"
+          },
+          {
+            "path": "model.onnx.data",
+            "bytes": 576782336,
+            "sha256": "fd915be810d7ebfb80fb05a48dd33c9484d17ae1b6bcb9e1f544cbaaa913ded1"
+          },
+          {
+            "path": "tokenizer.json",
+            "bytes": 34363188,
+            "sha256": "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"
+          },
+          {
+            "path": "tokenizer_config.json",
+            "bytes": 652,
+            "sha256": "6b069e57db0ce0794c22547725275f22618809c4ef4249307337e651a0dfef8c"
+          }
+        ]
+      }
+    },
+    {
       "id": "Cactus-Compute/needle3",
       "name": "Needle 3 (20 layers)",
       "publisher": "Cactus Compute",
@@ -459,6 +547,7 @@
       "ornith-ai/Ornith-1.5-9B"
     ],
     "classification": [
+      "SupersonicLabs/Julia-1",
       "typesafe-ai/jev",
       "Contrastive-LM/CLM-v0.1-8B",
       "Cactus-Compute/needle3"

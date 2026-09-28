@@ -19,3 +19,7 @@ export { OnnxSteerableSession } from "./onnx-session.ts";
 export type { DecoderConfig, OrtLike, OrtTensorLike } from "./onnx-session.ts";
 export { instantiateEmscripten, portableLoaders } from "./loaders.ts";
 export type { Constrainer, LoaderHost, RuntimeLoaders } from "./loaders.ts";
+export { collateDecisions, decisionModel, DecisionRequestError, encodeDecision, loadDecisionModel, OnnxDecisionSession, writeJson } from "./decision.ts";
+export type { DecisionBatch, DecisionFormat, DecisionRequest, DecisionSession, EncodedDecision } from "./decision.ts";
+export { decisionTokenizer, faithfulTokenizer } from "./tokenizers.ts";
+export type { DecisionTokenizer } from "./tokenizers.ts";

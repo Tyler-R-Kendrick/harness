@@ -28,6 +28,8 @@ const vocab = z.enum(["byte_level", "byte_fallback", "raw"]);
 /** Chat-template options passed through to the model's template (e.g. turning thinking off). */
 const template = z.record(z.string(), z.unknown());
 const env = z.record(z.string(), z.string());
+/** A decision model's id for a question type, and the type's name in its question head. */
+const questionType = z.strictObject({ id: z.int().min(0), name: id });
 
 /** How each runtime runs a model; file names refer to the model's artifact. */
 const RUN = {
@@ -69,6 +71,41 @@ const RUN = {
     template: template.exactOptional(),
     vocab: vocab.exactOptional(),
   }),
+  /**
+   * An ONNX decision model: one sequence per typed question (the question head, each
+   * option behind the tokenizer's mask token, then the state), whose options the model
+   * scores at their markers. Inputs input_ids, attention_mask, marker_pos, marker_mask and
+   * qtype; output logits, one per option. `data` is the weights file beside the model;
+   * the tokenizer config names the mask, start (cls), separator (sep) and padding tokens.
+   * `head` writes the question ({type} is the model's name for the question type) and
+   * `option` each option; a JSON state is written with `json`'s separators. A boolean
+   * question's options go false first. Strict encoding refuses a request that would be
+   * cut; otherwise the model's own cuts apply (`limits.cut`).
+   */
+  "onnxruntime-decision": z.strictObject({
+    model: id,
+    data: id.exactOptional(),
+    tokenizer: id,
+    tokenizerConfig: id,
+    head: id,
+    option: id,
+    types: z.strictObject({ choice: questionType, score: questionType, boolean: questionType }),
+    json: z.strictObject({ item: z.string(), key: z.string() }),
+    limits: z.strictObject({
+      /** The whole sequence. */
+      tokens: z.int().positive(),
+      /** The question and its options. */
+      head: z.int().positive(),
+      /** One option, after its marker. */
+      option: z.int().positive(),
+      options: z.strictObject({ min: z.int().min(2), max: z.int().min(2) }),
+      /** What the model keeps when a request does not fit: at least this much question, this much room before options are cut, and this much of each cut option. */
+      cut: z.strictObject({ head: z.int().positive(), budget: z.int().positive(), option: z.int().positive() }),
+    }),
+    strict: z.boolean(),
+    /** Sequence lengths are padded to a multiple of this. */
+    padTo: z.int().positive(),
+  }),
 } satisfies Record<(typeof RUNTIMES)[number], z.ZodType>;
 
 /** What an embedding model expects: prompt templates ({text}, and optional {task}/{title}) and the sizes it can truncate to (native first). */
@@ -103,6 +140,7 @@ const Model = z
     Base.extend({ runtime: z.literal("transformers.js"), run: RUN["transformers.js"] }),
     Base.extend({ runtime: z.literal("llama.cpp-server"), run: RUN["llama.cpp-server"] }),
     Base.extend({ runtime: z.literal("onnxruntime"), run: RUN.onnxruntime }),
+    Base.extend({ runtime: z.literal("onnxruntime-decision"), run: RUN["onnxruntime-decision"] }),
   ])
   .superRefine((m, ctx) => {
     const issue = (message: string, ...path: string[]) => ctx.addIssue({ code: "custom", message, path });
@@ -125,8 +163,18 @@ const Model = z
     if (m.runtime === "transformers.js" && (m.ports.includes("generator") || m.ports.includes("document-parser")) !== (m.run.modelClass !== undefined)) {
       issue("a transformers.js generator or document parser, and only those, names its model class", "run", "modelClass");
     }
+    if (m.runtime === "onnxruntime-decision") {
+      const { run } = m;
+      if (m.ports.length !== 1 || m.ports[0] !== "judge") issue("a decision model serves the judge port, and only it", "ports");
+      if (new Set(Object.values(run.types).map((t) => t.id)).size !== 3) issue("question types have distinct ids", "run", "types");
+      if (!run.head.includes("{type}") || !run.head.includes("{question}")) issue("head names {type} and {question}", "run", "head");
+      if (!run.option.includes("{option}")) issue("option names {option}", "run", "option");
+      if (run.limits.options.max < run.limits.options.min) issue("at least min options fit", "run", "limits", "options");
+      if (run.limits.head + 4 >= run.limits.tokens) issue("room for the state beyond the question head", "run", "limits", "head");
+      if (run.limits.option >= run.limits.head) issue("an option fits in the question head", "run", "limits", "option");
+    }
     const files = new Set(m.artifact?.files.map((f) => f.path));
-    for (const key of ["loader", "wasm", "weights", "model", "projector"] as const) {
+    for (const key of ["loader", "wasm", "weights", "model", "projector", "data", "tokenizer", "tokenizerConfig"] as const) {
       const file = (m.run as Record<string, unknown>)[key];
       if (typeof file === "string" && m.runtime !== "ai-gateway" && m.runtime !== "typesafe-api" && !files.has(file)) issue(`${file} is not a file of the artifact`, "run", key);
     }

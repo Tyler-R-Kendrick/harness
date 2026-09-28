@@ -96,7 +96,7 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
   });
 
   it("CT1.6 browser models run on browser runtimes; server and patched-ONNX runtimes stay native", () => {
-    for (const m of MODEL_CATALOG.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "cactus-wasm"], m.id).toContain(m.runtime);
+    for (const m of MODEL_CATALOG.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "cactus-wasm", "onnxruntime-decision"], m.id).toContain(m.runtime);
     for (const m of MODEL_CATALOG.filter((x) => x.runtime === "llama.cpp-server" || x.runtime === "onnxruntime")) expect(m.platforms, m.id).toEqual(["native"]);
   });
 
@@ -106,6 +106,25 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
       const tied = ids.filter((id) => ranked.includes(id) && MODEL_CATALOG.find((m) => m.id === id)!.benchmarks.every((b) => b.task !== task));
       expect(ranked.filter((id) => tied.includes(id)), task).toEqual(tied);
     }
+  });
+
+  it("CT1.12 a decision model names files of its artifact, question types with distinct ids, limits that leave room for the state, and serves judgments", () => {
+    const decision = (c: typeof catalogFile) => byRuntime(c, "onnxruntime-decision");
+    const run = (c: typeof catalogFile) => decision(c)["run"] as Record<string, Record<string, unknown>>;
+    for (const file of ["model", "data", "tokenizer", "tokenizerConfig"]) {
+      refused((c) => ((run(c) as Record<string, unknown>)[file] = "missing.bin")).toThrow(new RegExp(`missing.bin is not a file of the artifact[\\s\\S]*${file}`));
+    }
+    refused((c) => (run(c)["types"]!["score"] = { id: 0, name: "score" })).toThrow(/question types have distinct ids/);
+    refused((c) => (run(c)["limits"]!["options"] = { min: 5, max: 4 })).toThrow(/at least min options/);
+    refused((c) => (run(c)["limits"]!["options"] = { min: 1, max: 4 })).toThrow(/options/);
+    refused((c) => (run(c)["limits"]!["head"] = run(c)["limits"]!["tokens"])).toThrow(/room for the state beyond the question head/);
+    refused((c) => (run(c)["limits"]!["option"] = run(c)["limits"]!["head"])).toThrow(/an option fits in the question head/);
+    refused((c) => ((run(c) as Record<string, unknown>)["head"] = "question: {question}")).toThrow(/head names \{type\} and \{question\}/);
+    refused((c) => ((run(c) as Record<string, unknown>)["head"] = "{type}: the question")).toThrow(/head names \{type\} and \{question\}/);
+    refused((c) => ((run(c) as Record<string, unknown>)["option"] = "an option")).toThrow(/option names \{option\}/);
+    refused((c) => (decision(c)["ports"] = ["router"])).toThrow(/a decision model serves the judge port, and only it/);
+    refused((c) => (decision(c)["ports"] = ["judge", "router"])).toThrow(/a decision model serves the judge port, and only it/);
+    refused((c) => ((run(c)["limits"] as Record<string, unknown>)["cut"] = { head: 0, budget: 16, option: 4 })).toThrow(/cut/);
   });
 
   it("CT1.9 steered chat is served only by local models on the steerable ONNX runtime", () => {

@@ -57,6 +57,8 @@ import { afterEach } from "vitest";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { fakeTransformers } from "../../models/test/fake-transformers.ts";
 import { encodeModel } from "../../models/test/onnx-builder.ts";
+import { decisionFiles } from "../../models/test/decision-fixture.ts";
+import * as onnxruntime from "onnxruntime-node";
 import { compilePack, defineGraph } from "@harness/behavior";
 import { keywordRouterModel, scriptedModel } from "@harness/testkit";
 
@@ -261,6 +263,25 @@ require("node:http").createServer((req, res) => {
     };
     return { runtime: { Tensor, InferenceSession: { create: async (path: string) => (created.push(path), session) } }, created, steers };
   }
+
+  it("CH2.8 a decision model loads its verified files onto onnxruntime, its weights file beside the model, and classifies as a judge", async () => {
+    const cacheDir = await tempDir("cache-");
+    const base = byRuntime("onnxruntime-decision");
+    const run = { ...base.run, data: "weights.data" };
+    const files = { ...decisionFiles(run), "weights.data": new Uint8Array([1, 2, 3]) };
+    const m = withFakeFiles(base, files, run);
+    const created: unknown[] = [];
+    const runtime = { ...onnxruntime, InferenceSession: { create: async (model: string, o?: object) => (created.push(model), onnxruntime.InferenceSession.create(model, o ?? {})) } };
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir, allowHosted: false, catalog: only(m), fetch: fakeHub(files), onnxruntime: runtime });
+    const { answers } = await experimental_evaluate({ model: ensemble.evaluationModel("classification"), maxRetries: 0, state: "a b", questions: { pick: { type: "choice", instructions: "which?", criteria: { first: "a", last: "b" } } } });
+    expect(answers.pick.choice).toBe("last");
+    // The model is opened from disk, so onnxruntime finds the weights file in the same folder.
+    expect(created).toHaveLength(1);
+    const model = created[0] as string;
+    const { readFile } = await import("node:fs/promises");
+    expect(new Uint8Array(await readFile(join(model, "..", "weights.data")))).toEqual(files["weights.data"]);
+    await close();
+  });
 
   it("CH2.5 the steerable kernel patches its verified export once, and serves steered chat", async () => {
     const cacheDir = await tempDir("cache-");

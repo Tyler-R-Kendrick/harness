@@ -3,10 +3,10 @@ import { encodeNode, encodeValueInfo, int, lengthDelimited, str } from "@harness
 /** Encode a small ONNX model for tests (only what the steering patch and onnxruntime need). */
 export function encodeModel(m: {
   opsets: Record<string, number>;
-  inputs: { name: string; elemType: number; dims: number[] }[];
-  outputs: { name: string; elemType: number; dims: number[] }[];
+  inputs: { name: string; elemType: number; dims: (number | string)[] }[];
+  outputs: { name: string; elemType: number; dims: (number | string)[] }[];
   initializers: { name: string; dims: number[]; floats: number[] }[];
-  nodes: { name: string; opType: string; domain?: string; inputs: string[]; outputs: string[]; floatAttributes?: Record<string, number> }[];
+  nodes: { name: string; opType: string; domain?: string; inputs: string[]; outputs: string[]; floatAttributes?: Record<string, number>; intAttributes?: Record<string, number> }[];
 }): Uint8Array {
   const cat = (xs: Uint8Array[]) => {
     const out = new Uint8Array(xs.reduce((s, x) => s + x.length, 0));
@@ -33,7 +33,10 @@ export function encodeModel(m: {
         1,
         encodeNode({
           ...n,
-          attributes: Object.entries(n.floatAttributes ?? {}).map(([k, v]) => cat([str(1, k), fixed32(2, v), int(20, 1)])),
+          attributes: [
+            ...Object.entries(n.floatAttributes ?? {}).map(([k, v]) => cat([str(1, k), fixed32(2, v), int(20, 1)])),
+            ...Object.entries(n.intAttributes ?? {}).map(([k, v]) => cat([str(1, k), int(3, v), int(20, 2)])),
+          ],
         }),
       ),
     ),

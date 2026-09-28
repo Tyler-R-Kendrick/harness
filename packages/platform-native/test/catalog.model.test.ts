@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import sharp from "sharp";
 import { afterAll, describe, expect, it } from "vitest";
 import { cosineSimilarity, embedMany, experimental_evaluate, generateText, streamText } from "ai";
@@ -12,11 +13,12 @@ import { modelCacheDir } from "./models-env.ts";
 // checked follows from the model's category, its ports and tasks, never its name, so a
 // model swapped into the catalog is held to the same bar. llama.cpp-server models need
 // LLAMA_SERVER (CI downloads the release); without it their tests fail, not pass.
-// Dedicated judges (served apart from the host) are checked by the evals, a generator
-// that also judges here, and the steerable kernel by steered.model.test.ts.
+// Judges served apart from the host (a TypeSafe API server) are checked by the evals;
+// judges the host runs (a generator that also judges, a decision model) here; and the
+// steerable kernel by steered.model.test.ts.
 
 const models = [...loadCatalog().models, ...loadCatalog({ package: "@harness/memory" }).models].filter(
-  (m) => m.platforms.includes("native") && m.locality === "local" && m.ports.some((p) => p !== "judge") && !m.tasks.includes("steered-chat"),
+  (m) => m.platforms.includes("native") && m.locality === "local" && m.runtime !== "typesafe-api" && !m.tasks.includes("steered-chat"),
 );
 // One host per model, so a model's ports share what it loads (one llama-server for a
 // generator that also judges): two copies of a large model can exhaust the runner's memory.
@@ -175,14 +177,20 @@ for (const m of models) {
   }
 
   if (m.ports.includes("judge")) {
-    const judge = port(m, "judgment", "judge");
+    // A judge that grades serves judgment; one that only compares the options it is given serves classification.
+    const judge = port(m, m.tasks.includes("judgment") ? "judgment" : "classification", "judge");
     describe(`judge ${label}`, () => {
-      it("RW6.1 judges a right answer right and a wrong one wrong, with calibrated probabilities, and routes a ticket", async () => {
-        const correct = { correct: { type: "boolean" as const, instructions: "Does `reply` correctly answer `question`?" } };
-        const right = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "42" }, questions: correct });
-        const wrong = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "43" }, questions: correct });
-        expect(right.answers.correct.probability).toBeGreaterThan(0.8);
-        expect(wrong.answers.correct.probability).toBeLessThan(0.2);
+      if (m.tasks.includes("judgment")) {
+        it("RW6.1 judges a right answer right and a wrong one wrong, with calibrated probabilities", async () => {
+          const correct = { correct: { type: "boolean" as const, instructions: "Does `reply` correctly answer `question`?" } };
+          const right = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "42" }, questions: correct });
+          const wrong = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: { question: "What is 17 + 25?", reply: "43" }, questions: correct });
+          expect(right.answers.correct.probability).toBeGreaterThan(0.8);
+          expect(wrong.answers.correct.probability).toBeLessThan(0.2);
+        });
+      }
+
+      it("RW6.2 routes a ticket to the team its description fits, rates a clear review, and answers a yes-or-no question about the state", async () => {
         const routed = await experimental_evaluate({
           model: await judge(),
           maxRetries: 0,
@@ -191,7 +199,38 @@ for (const m of models) {
         });
         expect(routed.answers.department.choice).toBe("billing");
         expect(routed.answers.department.probabilities!.billing).toBeGreaterThan(0.6);
+        const review = async (text: string) =>
+          experimental_evaluate({ model: await judge(), maxRetries: 0, state: { review: text }, questions: { stars: { type: "score", instructions: "How positive is `review`?", criteria: ["very negative", "negative", "neutral", "positive", "very positive"] } } });
+        expect((await review("Absolutely wonderful. Best purchase I have made in years, it works perfectly.")).answers.stars.score).toBeGreaterThan(2.5);
+        expect((await review("Terrible. It broke on the first day and support never answered.")).answers.stars.score).toBeLessThan(1.5);
+        // Two specific descriptions, as a decision model is asked (a catch-all like "something else" is not a description).
+        const money = { true: "The message is about a payment, a charge or a refund", false: "The message is about delivery or shipping" };
+        const asked = async (state: string) => experimental_evaluate({ model: await judge(), maxRetries: 0, state, questions: { money: { type: "boolean", instructions: "Is the message about money?", criteria: money } } });
+        expect((await asked("Please refund the second charge on my card.")).answers.money.probability).toBeGreaterThan(0.5);
+        expect((await asked("How do I change my delivery address?")).answers.money.probability).toBeLessThan(0.5);
       });
+
+      if (m.runtime === "onnxruntime-decision") {
+        it("RW6.3 a decision model reproduces its publisher's reference: the same option wins in every case, with the reference's probabilities", async () => {
+          // Reference logits recorded from the checkpoint the export was made from, per artifact (new weights need new ones).
+          const file = new URL(`./fixtures/decision-parity/${m.artifact!.repo.replace("/", "--")}.json`, import.meta.url);
+          const parity = JSON.parse(readFileSync(file, "utf8")) as { artifact: string; cases: { request: { state: string; question: string; options: string[]; type: "choice" }; logits: number[] }[] };
+          expect(parity.artifact).toBe(`${m.artifact!.repo}@${m.artifact!.revision}`);
+          const softmax = (z: number[]) => {
+            const e = z.map((x) => Math.exp(x - Math.max(...z)));
+            return e.map((x) => x / e.reduce((a, b) => a + b, 0));
+          };
+          let worst = 0;
+          for (const { request, logits } of parity.cases) {
+            const criteria = Object.fromEntries(request.options.map((o, i) => [String(i), o]));
+            const { answers } = await experimental_evaluate({ model: await judge(), maxRetries: 0, state: request.state, questions: { q: { type: request.type, instructions: request.question, criteria } } });
+            const want = softmax(logits);
+            expect(answers.q.choice, request.question).toBe(String(want.indexOf(Math.max(...want))));
+            for (const [i, p] of want.entries()) worst = Math.max(worst, Math.abs(answers.q.probabilities![String(i)]! - p));
+          }
+          expect(worst).toBeLessThan(1e-3);
+        });
+      }
     });
     judgeContract(label, judge);
   }

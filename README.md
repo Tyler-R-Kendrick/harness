@@ -47,6 +47,7 @@ The shipped catalog currently lists:
 |---|---|---|
 | Jev (TypeSafe) | judge | hosted, AI Gateway |
 | CLM 8B (Contrastive-LM) | judge (the local fallback without a key or budget) | TypeSafe-API server (clm-serve) |
+| Julia 1 (Supersonic Labs) | decision model: classification and routing, never grading | onnxruntime (WebGPU in a page), its publisher's ONNX export |
 | Needle 3 (Cactus) | tool router | Cactus WASM |
 | LLMLingua-2 | compressor | transformers.js |
 | Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
