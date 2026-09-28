@@ -16,7 +16,7 @@ import {
   sha256Hex,
   StepRecordSchema,
 } from "@harness/procedural";
-import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
+import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, StepUsageNotice } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
@@ -487,6 +487,25 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
     const late = proceduralStep({ ...s.deps, settings: withPreset("harness", { repinOnDream: "never", overlayRefresh: "session" }) });
     await late.prepare(input(s, [user("q")], { sessionId: "s9" }));
     expect(s.records[2]).toMatchObject({ core: s.records[0]!.core, overlay: 0, exposure: [] });
+  });
+});
+
+describe("step usage", () => {
+  it("PW1.67 a step's model usage is reported, once the step ends, as a usage record of a session with a graph; a session without one reports nothing", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    const usages: StepUsageNotice[] = [];
+    const scope = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n) };
+    await hook.end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    await hook.end({ ...scope, stepNumber: 1, usage: { inputTokens: undefined } });
+    expect(usages).toEqual([
+      { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "40 input and 7 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 40, outputTokens: 7 } } } } },
+      { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "0 input and 0 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 0, outputTokens: 0 } } } } },
+    ]);
+    await hook.end({ ...scope, sessionMeta: { procedural: "off" }, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    expect(usages).toHaveLength(2);
+    // Nothing is read or pinned for it.
+    expect(await s.store.pins.get("s1")).toBeUndefined();
   });
 });
 

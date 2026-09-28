@@ -28,6 +28,6 @@ export { explainResolve, matches, parseResolver, ResolverSchema, resolveGraph, r
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
 export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
-export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepRecord, type StepScope, type TurnInput } from "./step.ts";
+export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, StepUsageSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepEndInput, type StepInput, type StepNotice, type StepRecord, type StepScope, type StepUsage, type StepUsageNotice, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";

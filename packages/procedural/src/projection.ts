@@ -6,8 +6,9 @@
  *
  * The entries are the daemon's own log entries, `{update}` (an ACP `SessionUpdate`) and
  * `{event, data}` payloads. A turn runs from its `turn.started` event to its
- * `turn.ended`. A tool call's title is the tool name (as `AgentWorker` emits it), and a
- * step record is any update carrying `_meta.harness.procedural.step`.
+ * `turn.ended`. A tool call's title is the tool name (as `AgentWorker` emits it), a
+ * step record is any update carrying `_meta.harness.procedural.step`, and a step's model
+ * usage any update carrying `_meta.harness.procedural.usage`.
  *
  * Logs are compacted and read in ranges, so a turn may arrive without its start or with
  * holes: the projection never throws, it reports the missing offsets as gaps, and it
@@ -97,6 +98,8 @@ const StepRecordSchema = z.object({
   usage: z.object({ inputTokens: tokens, outputTokens: tokens }).optional().catch(undefined),
 });
 type StepRecord = z.output<typeof StepRecordSchema>;
+/** A step's model usage, reported once the step ended (`StepUsageSchema` in step.ts). */
+const UsageRecordSchema = z.object({ inputTokens: count, outputTokens: count });
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const field = (x: unknown, key: string): unknown => (isRecord(x) ? x[key] : undefined);
@@ -173,6 +176,8 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   /** Tool call ids seen (undefined for calls without one, which never repeat). */
   const calls = new Set<string | undefined>();
   const records: StepRecord[] = [];
+  /** The turn's model tokens, from its steps' usage records. */
+  const model = { inputTokens: 0, outputTokens: 0 };
   let start: NodeName | undefined;
   /** Whether the turn's latest update of substance is a final answer: agent text after its last tool call and result. */
   let answered = false;
@@ -183,7 +188,17 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   };
   for (const entry of entries.slice(span.begin, span.end)) {
     const update = field(entry.payload, "update");
-    const step = field(field(field(field(update, "_meta"), "harness"), "procedural"), "step");
+    const procedural = field(field(field(update, "_meta"), "harness"), "procedural");
+    const used = field(procedural, "usage");
+    if (used !== undefined) {
+      const parsed = UsageRecordSchema.safeParse(used);
+      if (parsed.success) {
+        model.inputTokens += parsed.data.inputTokens;
+        model.outputTokens += parsed.data.outputTokens;
+      }
+      continue;
+    }
+    const step = field(procedural, "step");
     if (step !== undefined) {
       const parsed = StepRecordSchema.safeParse(step);
       if (!parsed.success) continue;
@@ -257,7 +272,7 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
     score: score?.score ?? null,
     scoreSource: score?.source ?? null,
     localization,
-    usage: { steps: steps.length, inputTokens: 0, outputTokens: 0, guidanceTokens },
+    usage: { steps: steps.length, ...model, guidanceTokens },
   };
   // The turn's entries with the boundary before them (its start, or another turn's), so a hole there counts;
   // with no boundary in view, the read's start is where the turn could have begun.

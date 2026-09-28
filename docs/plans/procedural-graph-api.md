@@ -785,7 +785,14 @@ changed.
     probationary entries (entry ids recomputed from the shown items) among the nodes and
     edges the guidance model was shown: the whole graph, or the neighborhood's edges, its
     active node and their endpoints. `inert` is true when the tools are known and the
-    active node is an `ACTION` that neither its id nor its binding's name offers.
+    active node is an `ACTION` that neither its id nor its binding's name offers. A
+    record's `usage` is the guidance model's.
+  - The step's own model usage is known only once the step ends, after its record, so
+    `end(StepEndInput)` (the workers' `end`) reports it as a second notice for any session
+    that resolves to a graph: `StepUsageNotice`, `{ sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description, _meta: { harness: { procedural: { usage: StepUsage } } } }`
+    with `StepUsageSchema` `{ inputTokens, outputTokens }` (ints ≥ 0; an undefined count
+    is 0). It reads no store. `StepScope<N = StepNotice>` names what a scope reports;
+    `StepEndInput = StepScope<StepUsageNotice> & { stepNumber; usage }`.
 
 ## P11: live learner (`learner.ts`, `projection.ts`)
 
@@ -823,8 +830,9 @@ As built (P11). These refine the above; the names keep their meaning.
     (other fields ignored; a record failing this is skipped). The first record gives the
     version pair; with none, `context.pin` does; with neither the result is undefined.
     `localization` counts records (`inert`, else `matched`, else `fallback`);
-    `usage.guidanceTokens` sums their usage. The log holds no turn usage, so
-    `inputTokens`/`outputTokens` are 0.
+    `usage.guidanceTokens` sums their usage. `usage.inputTokens`/`outputTokens` sum the
+    turn's step usage records (`_meta.harness.procedural.usage`, `{inputTokens, outputTokens}`,
+    reported by the step hook's `end`), which are no steps; a malformed one is skipped.
   - `path` is the first record's node (when the turn started in view, it matched, and no
     tool call preceded it), then `locate(title)` for each tool call in emission order;
     `unmatched` lists the titles `locate` did not match. `shown` is the union of the

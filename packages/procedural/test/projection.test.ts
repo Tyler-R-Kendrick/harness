@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coreView, GraphIdSchema, match, NodeNameSchema, projectTurn, RevisionIdSchema, ScoreSchema, sha256Hex, terminalAfter, turnProjection } from "@harness/procedural";
 import type { NodeName, ProjectionContext } from "@harness/procedural";
-import { call, CORE, ended, GRAPH, logOf, record, result, said, started, thought, user } from "./learner-fixtures.ts";
+import { call, CORE, ended, GRAPH, logOf, record, result, said, started, thought, used, user } from "./learner-fixtures.ts";
 import { core, hexId } from "./overlay-fixtures.ts";
 
 const view = coreView(core());
@@ -289,6 +289,17 @@ describe("projecting a turn from the session log", () => {
     expect(path(body(said("Nolan.")))).toEqual(["Bridge_Extract"]);
     // An end that names no stop reason is taken as a finished turn.
     expect(path(body(said("Nolan."), { event: "turn.ended", data: { turnId: "t1" } }))).toEqual(["Bridge_Extract", "End"]);
+  });
+
+  it("PL1.74 the trajectory's input and output tokens sum the turn's step usage records, which are no steps; malformed ones are skipped", () => {
+    const withUsage = [...turn().slice(0, -1), used({ inputTokens: 40, outputTokens: 7 }), used({ inputTokens: 55, outputTokens: 3 }), used({ inputTokens: -1, outputTokens: 2 }), used({ inputTokens: 5 }), used("none"), ended("t1")];
+    const p = turnProjection(logOf(withUsage), ctx())!;
+    expect(p.trajectory.usage).toEqual({ steps: 7, inputTokens: 95, outputTokens: 10, guidanceTokens: 360 });
+    expect(p.trajectory.steps).toEqual(turnProjection(logOf(turn()), ctx())!.trajectory.steps);
+    // Records of another turn do not count.
+    const other = [started("t0"), used({ inputTokens: 1000, outputTokens: 1000 }), ended("t0"), ...withUsage];
+    expect(turnProjection(logOf(other), ctx())!.trajectory.usage).toMatchObject({ inputTokens: 95, outputTokens: 10 });
+    expect(turnProjection(logOf(turn()), ctx())!.trajectory.usage).toMatchObject({ inputTokens: 0, outputTokens: 0 });
   });
 
   it("PL1.26 projectTurn is the projection's trajectory", () => {
