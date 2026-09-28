@@ -9,7 +9,7 @@ export { buildNativeEnsemble } from "./cognitive-host.ts";
 export type { NativeEnsembleOptions } from "./cognitive-host.ts";
 export { steerableModel } from "./steerable-model.ts";
 export { loadCatalog, loadLearningSettings, loadPluginSettings, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
-export { hostAuthorizer, hostPorts, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, pumpHookEvents, sessionLogReader, snapshotSessions, terminalApprover, type HookPump } from "./procedural-host.ts";
+export { daemonSessions, hostAuthorizer, hostPorts, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, pumpHookEvents, sessionLogReader, snapshotSessions, terminalApprover, type HookPump } from "./procedural-host.ts";
 export { WorkflowFiles } from "./workflow-files.ts";
 export { daemonSocket } from "./daemon-link.ts";
 export { dockerSandbox } from "./docker-sandbox.ts";

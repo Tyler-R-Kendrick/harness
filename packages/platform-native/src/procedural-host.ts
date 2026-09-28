@@ -146,15 +146,17 @@ export function nativeLiveLearner(options: {
 }
 
 /**
- * A session's log entries in `[from, to)`, read from the daemon's snapshot: the daemon has
- * no host-side log read yet, so this copies every session's log (plan §6.5). Entries
- * compacted into the log's snapshot are gone; an unknown session has none.
+ * A session's log entries in `[from, to)`, read through the daemon's host-side
+ * `readLog`, which copies no other session's log. Entries compacted into the log's
+ * snapshot are gone; an unknown session has none.
  */
-export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to?: number) => Promise<LogEntry<unknown>[]> {
-  return async (sessionId, from, to = Number.POSITIVE_INFINITY) => {
-    const session = snapshotSessions(daemon.snapshot()).find((s) => s.id === sessionId);
-    return (session?.entries ?? []).filter((e) => e.offset >= from && e.offset < to);
-  };
+export function sessionLogReader(daemon: Pick<Daemon, "readLog">): (sessionId: string, from: number, to?: number) => Promise<readonly LogEntry<unknown>[]> {
+  return async (sessionId, from, to) => daemon.readLog(sessionId, from, to);
+}
+
+/** Every session's log in the live daemon (dream's session logs), each read through `readLog`: no snapshot is copied. */
+export function daemonSessions(daemon: Pick<Daemon, "sessionIds" | "readLog">): SessionLog[] {
+  return daemon.sessionIds().map((id) => ({ id, entries: daemon.readLog(id) }));
 }
 
 /** Every session's log in a daemon snapshot (the daemon's, or the one saved in its state file); a snapshot of another shape has none. */

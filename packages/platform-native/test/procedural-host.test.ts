@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
@@ -12,6 +12,7 @@ import type { RevisionId } from "@harness/procedural";
 import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
+  daemonSessions,
   harnessWorker,
   hostAuthorizer,
   hostPorts,
@@ -150,6 +151,20 @@ describe("procedural host plumbing", () => {
     expect((await read(sessionId, 1, 3)).map((e) => e.offset)).toEqual([1, 2]);
     expect(await read(sessionId, 2)).toEqual(all.slice(2));
     expect(await read("absent", 0, 10)).toEqual([]);
+    await host.close();
+  });
+
+  it("PX2.66 the log reader reads one session through Daemon.readLog and never copies the daemon's snapshot", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    await prompt("hello");
+    const snapshot = vi.spyOn(host.daemon, "snapshot");
+    const readLog = vi.spyOn(host.daemon, "readLog");
+    const read = sessionLogReader(host.daemon);
+    expect((await read(sessionId, 1, 3)).map((e) => e.offset)).toEqual([1, 2]);
+    expect(await read(sessionId, 2)).toEqual(host.daemon.readLog(sessionId, 2));
+    expect(readLog).toHaveBeenCalledWith(sessionId, 1, 3);
+    expect(readLog).toHaveBeenCalledWith(sessionId, 2, undefined);
+    expect(snapshot).not.toHaveBeenCalled();
     await host.close();
   });
 
@@ -295,6 +310,20 @@ describe("dream's trajectories and lease on the native host", () => {
     expect(await source.select({ graph, revision: RevisionIdSchema.parse("a".repeat(64)), limit: 10 })).toEqual([]);
     const empty = { version: 1, sessions: [{ id: sessionId, cwd: "/", owner: "me", log: {}, tree: {} }], hooks: {} };
     expect(await logTrajectories({ store, sessions: async () => snapshotSessions(empty) }).select({ graph, revision, limit: 5 })).toEqual([]);
+    await host.close();
+  });
+
+  it("PX2.67 dream's session logs from the live daemon are every session's log, read through readLog without a snapshot", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    await prompt("one");
+    const snapshot = vi.spyOn(host.daemon, "snapshot");
+    const logs = daemonSessions(host.daemon);
+    snapshot.mockClear();
+    expect(logs).toEqual([{ id: sessionId, entries: host.daemon.readLog(sessionId) }]);
+    expect(logs[0]!.entries.length).toBeGreaterThan(2);
+    expect(snapshot).not.toHaveBeenCalled();
+    snapshot.mockRestore();
+    expect(logs).toEqual(snapshotSessions(host.daemon.snapshot()));
     await host.close();
   });
 

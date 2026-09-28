@@ -16,7 +16,7 @@ import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { daemonSessions, hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -187,7 +187,7 @@ const host = await NodeHost.start({
 if (procedural && generator) {
   live.learner = nativeLiveLearner({ runtime: host.runtime, ...procedural, reflect: modelReflector({ model: generator, settings: procedural.settings }), log: (message) => void process.stderr.write(`${message}\n`) });
   // Dream refines with the generator, on trajectories from the daemon's session logs.
-  live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()) });
+  live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => daemonSessions(host.daemon) });
 }
 
 const shutdown = async () => {

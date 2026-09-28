@@ -946,7 +946,8 @@ As built (P12). These refine the shapes above; no name another phase uses change
   - `pumpHookEvents(runtime, {plugin, types, onEvent, intervalMs?, log?})` is an in-process
     plugin connection with a durable hook-bus cursor, acknowledging each event after its
     handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
-    `[from, to?)` from the daemon's snapshot.
+    `[from, to?)` through the daemon's host-side `readLog`, which copies no other
+    session's log (PX2.66).
   - `nativeDream(…)` runs P6's `runDream` on this host; its shape and ports are under
     "Dream from the host" in the finalization's notes below.
   - `nativeLiveLearner({runtime, store, settings, preset?, intervalMs?, log?})` is P11's
@@ -1056,8 +1057,9 @@ their meaning.
     returns `(graph) => runDream(…)` with `modelRefiner` on the model, `logTrajectories`
     and the host's clock and entropy, holding the graph's lease as `holder` (default
     `native-host`; the CLI's is `harness-procedural`), so a dream another process holds
-    is `busy`. `snapshotSessions(snapshot)` reads the session logs
-    of a daemon snapshot (the daemon's, or its state file's). `terminalApprover(input, output)`
+    is `busy`. `daemonSessions(daemon)` reads every session's log from the live daemon
+    through `sessionIds` and `readLog` (PX2.67), and `snapshotSessions(snapshot)` reads
+    the session logs of a saved daemon snapshot (its state file's). `terminalApprover(input, output)`
     asks `[y/N]` on a terminal. With the cognitive core, `main.ts` serves `procedural.dream`
     with the ensemble's `reasoning` generator over the daemon's logs; the live learner gets
     `modelReflector` on the same generator (the gateway `--model` without the core). `harness-procedural dream <graph>`
@@ -1093,9 +1095,6 @@ the evaluator contract and scripted environment, rejection records). Still open:
   `graph` is whichever wrote last), and a revert replaces its target's record;
   `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by
   `(graph, id)` in the store would remove both.
-- P12: `sessionLogReader` and `snapshotSessions` (dream's session logs) read logs from
-  `Daemon.snapshot()`, which copies every session's log per read. A host-side
-  `Daemon.readLog(sessionId, from, to)` in core would avoid the copy.
 - P12: `harness-procedural` opens the store file itself, so it must not run while a
   daemon holds the same `--procedural` directory (one owner per store file). Routing the
   CLI through a running daemon's `_harness/cognitive/invoke` would lift that.
