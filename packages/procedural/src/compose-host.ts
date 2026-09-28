@@ -111,7 +111,7 @@ export interface HostComposition {
   readonly tools: (scope: ToolsScope) => Promise<ToolSet>;
   /** Dream's composer over the base tools as they are when it is called: once per dream. */
   readonly composer: () => Promise<Composer>;
-  /** Dream's tool catalog: the base tools' names, when it is called. */
+  /** Dream's tool catalog: the builtins' names and the base tools', when it is called. */
   readonly catalog: () => Promise<string[]>;
 }
 
@@ -119,19 +119,21 @@ export interface HostComposition {
  * Composition on a host whose sessions share one set of base tools (the host's own, read
  * anew each time): each session's per-turn tools, and for each dream its composer and its
  * tool catalog, so dream compiles paths of the tools sessions have and its catalog check
- * sees them.
+ * sees them. `builtins` names tools sessions have that the host does not run (an opaque
+ * harness's own): they are in the catalog, but a compiled path cannot call them.
  */
 export function composition(options: {
   readonly staging: Staging;
   readonly settings: CompositionSettings;
   readonly step: Pick<ProceduralStepHook, "core">;
   readonly base?: () => ToolSet | Promise<ToolSet>;
+  readonly builtins?: readonly string[];
 }): HostComposition {
-  const { staging: s, settings, step, base = () => ({}) } = options;
+  const { staging: s, settings, step, base = () => ({}), builtins = [] } = options;
   return {
     staging: s,
     tools: sessionTools({ step, staging: s, base }),
     composer: async () => composer({ settings, staging: s, tools: await base() }),
-    catalog: async () => Object.keys(await base()),
+    catalog: async () => [...new Set([...builtins, ...Object.keys(await base())])],
   };
 }
