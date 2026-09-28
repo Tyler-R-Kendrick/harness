@@ -1545,28 +1545,46 @@ above keep their meaning.
     (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
     or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
     `staging.host(base)` running the workflows; without a graph, the base.
-  - `composition({staging, settings, step, base?}): HostComposition` is what a host whose
-    sessions share one set of base tools hands out: `{staging, tools, composer(),
-    catalog()}`, `composer` and `catalog` reading `base` anew each time (once per dream).
+  - `composition({staging, settings, step, base?, builtins?}): HostComposition` is what a
+    host whose sessions share one set of base tools hands out: `{staging, tools,
+    composer(), catalog()}`, `composer` and `catalog` reading `base` anew each time (once
+    per dream). `builtins` names tools sessions have that the host does not run (an opaque
+    harness's own): `catalog` lists them first, once each, but they are neither session
+    tools nor in the composer's specs, so a compiled path calls host tools only (PC1.55).
 - **Workers (`@harness/workers`).** `sessionAgent({ tools })` given a function calls it
   each turn with the turn's scope (`TurnScope`: session, turn, cwd, meta, report), so a
-  session gets tools of its own. Opaque harness workers keep their harness's own tools,
-  so they get no workflow tools (and their dream no composer).
+  session gets tools of its own. `harnessSessions({ tools })` does the same for opaque
+  harness workers (HS1.12–HS1.14): the turn's tools reach the harness as host-executed
+  user tools, in place of the agent's own, through the call options and the agent's
+  `prepareCall: harnessTurnTools` (the AI SDK harness freezes a turn's tools for its
+  continuations, so a turn resumed after an approval round keeps them); the harness's
+  builtin tools stay its own. The turn hook is told the harness's tools and the turn's.
 - **Native host.**
   - `loadProceduralComposition(file?)` reads `data/composition.json`, or a deployment's
     copy (`--procedural-composition`).
-  - `nativeComposition({dir, settings, step, ask, base?, shared?})` is `composition` with
-    staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow, run journals under
-    `.runs/`) on AI SDK code mode; `shared` (the `--workflows` directory) is never written
-    and may not be that directory (it throws). `base` is the host's session tools, the
-    same for every session.
+  - `nativeComposition({dir, settings, step, ask, base?, shared?, builtins?})` is
+    `composition` with staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow,
+    run journals under `.runs/`) on AI SDK code mode; `shared` (the `--workflows`
+    directory) is never written and may not be that directory (it throws). `base` is the
+    host's session tools, the same for every session; `builtins` a harness adapter's
+    builtin tool names (PX2.121).
+  - `harnessWorker({harness, …, tools?})` builds its `HarnessAgent` with
+    `prepareCall: harnessTurnTools` and gives `harnessSessions` the tools (PX2.120).
   - `nativeDream`'s `composer` and `tools` may be functions, called at the start of each
     dream.
-  - `main.ts`, for `--worker model` and `--worker ensemble` with `--procedural`: the
-    worker's tools are `composition.tools` (base: none for the model worker, the shared
-    library's `workflowTools` for the ensemble worker), `ask` is the ensemble's default
-    model or the gateway model, and the daemon's dream gets `composer` and `catalog` as
-    its tool catalog (so `enforceToolCatalog` sees the session tools).
+  - `main.ts`, for `--worker model`, `--worker ensemble` and `--worker harness` with
+    `--procedural`: the worker's tools are `composition.tools` (base: none for the model
+    worker, the shared library's `workflowTools` for the ensemble and harness workers),
+    `ask` is the ensemble's default model or the gateway model, and the daemon's dream
+    gets `composer` and `catalog` as its tool catalog (so `enforceToolCatalog` sees the
+    session tools, and for a harness worker its adapter's builtins too, PX2.125). Without
+    `--procedural`, a harness worker's turns get the shared library's workflows, as the
+    ensemble worker's do.
+  - `loadProceduralTools(file?)` reads `data/tools.json` (`{sideEffectFree: string[]}`,
+    parsed by `parseToolDeclarations`, its schema generated from zod; none by default,
+    PGR1.58–PGR1.59), or a deployment's copy (`--procedural-tools`, on the daemon and on
+    `harness-procedural dream`), whose tools dream's `approval-for-side-effects` gate lets
+    a candidate route into without approval (PX2.122–PX2.124).
   - `harness-procedural dream` runs outside the daemon and does not know which worker's
     tools its sessions had, so it refines without a composition round; the daemon's
     `procedural.dream` composes.
@@ -1585,10 +1603,21 @@ the evaluator contract and scripted environment, rejection records), and the sec
 above gave dream a schedule, a configured evaluator and an approvals inbox. A1 resolved
 the store and log plumbing (records keyed by graph and id with a v1 migration, reverts
 that write no record, `Daemon.readLog`, one owner per store directory), and
-`procedural.feedback` answers what the learner did with the score. Still open:
+`procedural.feedback` answers what the learner did with the score. The last cross-phase
+item, P6 × P12, is resolved too: the tools a deployment declares free of side effects are
+data (`data/tools.json`, `--procedural-tools`) handed to dream, and a harness worker's
+sessions get the workflow tools their pinned core binds, its dream a composer and a tool
+catalog of the harness's builtins and the host tools. None is open.
 
-- P6 × P12: dream on the daemon has no tools declared free of side effects
-  (`sideEffectFree`), so `approval-for-side-effects` treats every tool as having them;
-  with a harness worker it also has no tool catalog (the harness's tools are its own), so
-  `enforceToolCatalog` sees none there. With an agent worker the session tools are its
-  catalog. Candidates that need approval wait in the approvals inbox.
+Limits of the AI SDK harness that stay, by design rather than as open work:
+
+- A harness runs its own steps, so successor-only tools limit a harness turn as a whole,
+  and only its host tools: the harness's builtins stay offered (`HarnessAgent` fixes
+  `activeTools` when it is built, and filtering builtins needs the adapter's support).
+- A compiled workflow calls host tools only: a path of a harness's builtin calls (which
+  its runtime executes, not the host) has no input schema on the host and is not composed.
+- A turn suspended with host tools and resumed in another process continues with the
+  agent's own tools (`HarnessAgent` re-reads its settings there, not the turn's), so a
+  turn tool it had is missing. The daemon never continues a turn across a restart (it
+  marks a turn in flight interrupted, and the next is a new prompt), so this does not
+  arise there.
