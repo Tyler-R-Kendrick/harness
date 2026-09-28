@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,5 +26,13 @@ describe("FileStorage", () => {
     const storage = new FileStorage(join(d, "state.json"));
     await Promise.all([1, 2, 3].map((n) => storage.save({ n })));
     expect(readdirSync(d)).toEqual(["state.json"]);
+  });
+
+  it("FS1.4 bytes survive a save and a load, kept in the JSON as tagged base64; objects that only look tagged are left alone", async () => {
+    const path = join(dir(), "state.json");
+    const value = { image: new Uint8Array([0, 1, 255]), nested: [{ data: new Uint8Array([7]) }], lookalike: { "$bytes": 3 }, text: "plain" };
+    await new FileStorage(path).save(value);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ image: { "$bytes": "AAH/" }, text: "plain" });
+    expect(await new FileStorage(path).load()).toEqual(value);
   });
 });

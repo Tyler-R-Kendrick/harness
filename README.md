@@ -145,6 +145,10 @@ Run the daemon as a background service on a user-private socket:
 node packages/platform-native/src/main.ts --socket ~/.harness.sock --state ~/.harness/state.json
 ```
 
+With `--state`, sessions survive a restart, and agent workers (`--worker model` or
+`ensemble`) keep each session's conversation beside it (`state.conversations.json`, or
+`--conversations <file>`), so a restored session continues where it stopped.
+
 Or on a WebSocket on this machine's loopback, for clients that cannot use a Unix socket
 (browser pages need their origin allowed; every client presents the token kept in
 `--ws-token-file`, as a bearer header or the subprotocol `harness.token.<token>`):
