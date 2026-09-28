@@ -1082,6 +1082,109 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Scheduled dream and the task-suite evaluator
+
+As built. These close the gap "dream runs on demand only; no host configures an
+evaluator"; the names above keep their meaning.
+
+- **The schedule is data.** `DreamSettings` gains `every?: Duration` and `afterTurns?`
+  (a positive count). `Duration` is a refined type (`DurationSchema`, `duration(text)`):
+  days, hours, minutes and seconds in that order (`90s`, `15m`, `6h`, `1d`, `1h30m`),
+  parsed into positive whole milliseconds; a number is milliseconds already, so parsed
+  settings parse again to themselves. `afterTurns` counts observed turns, so a preset
+  without an overlay refuses it. The harness preset dreams every `7d` or after `50`
+  observed turns, whichever comes first; the paper preset has no schedule.
+- **The runner.** A dream's `started` entry records the Clock's time as `at` (entries
+  written before have none and still replay); `DreamLogEntrySchema` (and `DreamLogEntry`)
+  parses the dream log's entries for readers such as the schedule. A run that throws
+  releases its lease (its epoch, so a lease another run took is left alone): the log
+  keeps every finished command, so any holder resumes the dream.
+- **Graphs of a store.** `MemoryProceduralStore.graphs()` and
+  `SnapshotProceduralStore.graphs()` name every graph with a head, in the order each got
+  its first. It is not on the `ProceduralStore` port: a host that tends every graph (the
+  schedule) takes the list from its own store.
+- **The schedule (`dream-schedule.ts`).** `new DreamSchedule({store, settings: Preset, graphs, dream: DreamRun, clock})`,
+  where `DreamRun = (graph) => Promise<DreamResult>` is the host's `runDream` under its
+  lease holder. `due(graph)` returns `DreamDue = {due, reason?: "every" | "afterTurns", last, turns, overlay}`:
+  `last` is the latest time in the graph's dream log (a `started` entry's `at` or an
+  event's), or the head record's `at` before any dream; `turns` counts the overlay log's
+  `observed` events without `rescore` from the offset the last dream started from; an
+  unset condition never holds, and a graph with no head is never due. `tick()` checks
+  every graph `graphs()` names and dreams those due, and resolves with a
+  `ScheduledDream` per graph it acted on (`{graph, reason, result}`, or `{graph, reason?, error}`
+  for a dream that threw or a dream log that does not parse); it never throws. A graph
+  whose scheduled dream is running is skipped, a tick while another is still checking
+  does nothing, and a preset without a schedule reads nothing (`enabled` is false). The
+  dream log is read incrementally; the schedule also remembers when it started each
+  graph's dream (and the overlay head then), so a dream that throws before it logs
+  anything waits until it is due again. Everything else it reads is in the store, so a
+  restarted host keeps the schedule.
+- **`exclusiveDream(run)`** runs one dream per graph at a time in a process: a call for a
+  graph whose dream is running answers `busy` at once and leaves the lease alone (a
+  holder may take its own lease again, which would strand the running dream). Another
+  process's dream holds the lease, so `runDream` answers `busy`.
+- **The runtime's tick (`packages/runtime`).** `DaemonRuntime.onTick(listener)` runs a
+  listener on every `tick()`, after the daemon's own, and returns a function that removes
+  it; listeners are not awaited, a failure (thrown or rejected) is logged as
+  `tick listener failed: …`, and `close()` removes them all. Hosts already call `tick()`
+  from their ticker, so periodic host work needs no timer of its own.
+- **The schedule on the native host.** `nativeDreamSchedule({runtime, store, settings, preset?, dream, log?})`
+  builds a `DreamSchedule` over the preset (default `harness`), every graph
+  `store.graphs()` names and the host's clock, and runs its `tick()` on every tick of
+  the runtime (`onTick`); it returns `{schedule, close}`. Each outcome is one line:
+  `procedural: scheduled dream of <graph> (<reason>): done, <n> rounds, head unchanged|now <id>`,
+  `…: busy|no-head|lease-lost`, or `… failed: <why>`. `proceduralStore(dir)` now returns
+  its `SnapshotProceduralStore`. `main.ts` wraps `nativeDream` in `exclusiveDream` and
+  gives the same function to `procedural.dream` and to the schedule, whose lines go to
+  stderr; `--procedural` alone turns the schedule on, with the preset's `every` and
+  `afterTurns` (a deployment's `--procedural-settings` may unset both for on-demand only).
+- **Task suites (`task-suite.ts`).** A user's task file parses with `parseTaskSuite(json)`
+  into a branded `TaskSuite` (`TaskSuiteSchema`; its JSON Schema is
+  `data/task-suite.schema.json`, drift-tested, from `taskSuiteJsonSchema()`):
+  `{$schema?, description?, instructions?, scorer, judge?: {instructions}, tools?: [{name, description?}], tasks: [{id, prompt, expected?, split: "train" | "validation"}]}`.
+  `scorer` is one of `TASK_SCORERS` (`exact`, `normalized-exact`, `f1`, `judge`). Task
+  ids and tool names are unique, every task has `expected` unless the scorer is `judge`,
+  and there is at least one validation task. `description` is the refiner's
+  `{task_description}`, `instructions` the solver's. The metrics: `normalizeAnswer`
+  (SQuAD's: lower case, no punctuation, no articles `a`/`an`/`the`, single spaces),
+  `f1Score(answer, expected)` (token F1 over normalized tokens, repeats counted; two
+  empty answers agree), and `scoreAnswer(metric, answer, expected)` (`exact` compares
+  trimmed text).
+- **The task-suite evaluator (`task-evaluator.ts`).** `taskSuiteEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?, clock, entropy})`
+  is an `Evaluator`. `tasks(split)` lists the split's ids in file order. `evaluate(graph, split, batch?)`
+  holds the candidate as the only head (graph `candidate`) of a `MemoryProceduralStore`
+  of its own, so it never touches the host's graphs, and runs each task, one after
+  another, on a `sessionAgent` (`@harness/workers`, now a dependency) with the
+  `proceduralStep` hook over that store (the preset named, `harness` by default; the
+  guidance model, or the solver's), the suite's `instructions`, and the suite's tools:
+  those `tools` (a `ToolSet`, or a function called once per evaluation) names, with the
+  suite's descriptions where it gives them; nothing else is offered, and a name the host
+  lacks rejects the evaluation. The final text is the answer: a metric scores it, or the
+  judge (resolved once per evaluation) is asked with `experimental_evaluate` the boolean
+  question `correct` (the suite's `judge.instructions`, else the settings' new optional
+  `prompts.taskJudge`) about `{task, expected?, answer}`, and its probability is the
+  score. Validation returns `{task, score}`; training also `query` (the prompt) and
+  `steps` (`trajectorySteps`, now exported from `step.ts`, over the prompt and every
+  step's response messages). Building one refuses a `judge` scorer without a judge or a
+  question; an unknown batch id is a `RangeError`, and a failing solver names its task.
+  `evaluatorContract` (PD3.1–PD3.4) runs against it on scripted models.
+- **The evaluator on the native host.** `loadTaskSuite(file)` reads and parses a task
+  file; `nativeTaskEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?})`
+  is `taskSuiteEvaluator` with the host's clock and entropy. `main.ts` takes
+  `--procedural-eval <tasks.json>` (with `--procedural`): the solver is the ensemble's
+  `chat` model with the cognitive core, else the gateway `--model`; the judge is the
+  catalog's (`ensemble.resolve("judgment", "judge")`, resolved when a judge-scored suite
+  runs); the tools are the workflow library's (`workflowTools`, with `--workflows`);
+  and `nativeDream` gets the evaluator and the suite's `description` as its task, for
+  `procedural.dream` and the schedule alike. It refuses to start (exit 2) without
+  `--procedural`, with a file that does not parse, with a judge-scored suite and no
+  cognitive core, or with a suite naming tools and no workflow library.
+  `harness-procedural dream <graph> --procedural-eval <tasks.json>` does the same from
+  the CLI: the solver is the `--model` gateway model, or else the ensemble's `chat`
+  model, and the judge the catalog's; it refuses (exit 2) a malformed file, a
+  judge-scored suite with `--model` (no ensemble to judge), and a suite naming tools
+  (the CLI has no workflow library).
+
 ## Approvals inbox
 
 As built. Candidates that need approval no longer need someone to ask during the dream;
@@ -1205,13 +1308,14 @@ above keep their meaning.
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
-the evaluator contract and scripted environment, rejection records). Still open:
+the evaluator contract and scripted environment, rejection records), and the sections
+above gave dream a schedule, a configured evaluator and an approvals inbox. Still open:
 
-- P6 × P12: dream on the daemon has no configured `Evaluator` and no tools declared free
-  of side effects (`sideEffectFree`), so `approval-for-side-effects` treats every tool as
-  having them; with a harness worker it also has no tool catalog (the harness's tools are
-  its own), so `enforceToolCatalog` sees none there. With an agent worker the session
-  tools are its catalog. Candidates that need approval wait in the approvals inbox.
+- P6 × P12: dream on the daemon has no tools declared free of side effects
+  (`sideEffectFree`), so `approval-for-side-effects` treats every tool as having them;
+  with a harness worker it also has no tool catalog (the harness's tools are its own), so
+  `enforceToolCatalog` sees none there. With an agent worker the session tools are its
+  catalog. Candidates that need approval wait in the approvals inbox.
 - P12: content-id keying means two graphs holding the same document share one record (its
   `graph` is whichever wrote last), and a revert replaces its target's record;
   `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by

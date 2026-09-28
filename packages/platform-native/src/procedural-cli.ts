@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { approvalInbox, proceduralExtension } from "@harness/procedural";
-import { loadProceduralSettings } from "./catalog-files.ts";
+import { loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
-import { nativeDream, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
+import { nativeDream, nativeTaskEvaluator, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
 
 // harness-procedural <history|export|import|revert|dream|approvals> <graph> [options]
 // harness-procedural <approve|decline> <candidate> [options]
@@ -21,9 +21,11 @@ const USAGE =
   "       harness-procedural import <graph> [<graph.json>]   (without a file: the scratch skeleton)\n" +
   "       harness-procedural revert <graph> [--to <revision>]\n" +
   "       harness-procedural dream <graph> [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]] [--state <daemon state file>]\n" +
+  "                                [--procedural-eval <tasks.json>]\n" +
   "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
   "          daemon's saved session logs; asks for approval on a terminal, and otherwise leaves the\n" +
-  "          candidate in the approvals inbox)\n" +
+  "          candidate in the approvals inbox; gates on the task suite, solved by the gateway model or\n" +
+  "          else the ensemble's chat model, and judged by the catalog's judge)\n" +
   "       harness-procedural approvals <graph>                (the candidates waiting for approval)\n" +
   "       harness-procedural approve <candidate>              (commit it on the head, if its gates pass there)\n" +
   "       harness-procedural decline <candidate>\n" +
@@ -45,6 +47,7 @@ const { values, positionals } = parseArgs({
     "model-cache": { type: "string" },
     "llama-server": { type: "string" },
     "no-hosted": { type: "boolean", default: false },
+    "procedural-eval": { type: "string" },
   },
 });
 // The second positional is the graph, or for approve and decline the candidate's revision id.
@@ -53,6 +56,23 @@ const COMMANDS = ["history", "export", "import", "revert", "dream", "approvals",
 const decides = command === "approve" || command === "decline";
 if (!COMMANDS.includes(command) || graph === undefined || (file !== undefined && command !== "import")) {
   process.stderr.write(USAGE);
+  process.exit(2);
+}
+
+// The task suite dream gates on: the CLI has no workflow library to offer tools from, and judges only with the ensemble.
+let taskSuite: ReturnType<typeof loadTaskSuite> | undefined;
+try {
+  taskSuite = values["procedural-eval"] === undefined || command !== "dream" ? undefined : loadTaskSuite(values["procedural-eval"]);
+} catch (e) {
+  process.stderr.write(`--procedural-eval ${values["procedural-eval"]}: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
+if (taskSuite?.tools !== undefined && taskSuite.tools.length > 0) {
+  process.stderr.write("the task suite names tools, and harness-procedural offers none: run the dream in the daemon (--cognitive --workflows <dir>)\n");
+  process.exit(2);
+}
+if (taskSuite?.scorer === "judge" && values.model !== undefined) {
+  process.stderr.write("the task suite's judge scorer needs the catalog's judge: leave out --model to use the ensemble\n");
   process.exit(2);
 }
 
@@ -72,6 +92,16 @@ const cognitive =
     : undefined;
 const model = values.model === undefined ? cognitive?.ensemble.languageModel("reasoning") : gateway(values.model);
 const state = values.state;
+const evaluator =
+  taskSuite &&
+  model &&
+  nativeTaskEvaluator({
+    suite: taskSuite,
+    settings,
+    ...preset,
+    model: values.model === undefined ? cognitive!.ensemble.languageModel("chat") : gateway(values.model),
+    ...(cognitive === undefined ? {} : { judge: async () => (await cognitive.ensemble.resolve("judgment", "judge")).port }),
+  });
 const dream =
   command !== "dream" || model === undefined
     ? undefined
@@ -82,6 +112,7 @@ const dream =
         model,
         sessions: async () => snapshotSessions(state === undefined ? undefined : await new FileStorage(state).load()),
         holder: "harness-procedural",
+        ...(evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {}),
         // Without a terminal, a candidate that needs approval waits in the inbox (`approvals`, `approve`, `decline`).
         ...(process.stdin.isTTY
           ? { approver: terminalApprover(process.stdin, process.stderr) }

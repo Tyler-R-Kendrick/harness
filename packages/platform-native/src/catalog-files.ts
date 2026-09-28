@@ -7,8 +7,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
-import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings } from "@harness/procedural";
-import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings } from "@harness/procedural";
+import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings, parseTaskSuite } from "@harness/procedural";
+import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings, TaskSuite } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -50,4 +50,9 @@ export function loadProceduralComposition(file: string = require.resolve("@harne
 /** Read and parse a procedural access policy (who may read, write, dream, revert or import which graph). */
 export function loadProceduralPolicy(file: string): AccessPolicy {
   return parsePolicy(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse a user's task suite (tasks, scorer, tools; see procedural's data/task-suite.schema.json), dream's evaluator. */
+export function loadTaskSuite(file: string): TaskSuite {
+  return parseTaskSuite(JSON.parse(readFileSync(file, "utf8")));
 }

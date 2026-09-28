@@ -50,7 +50,7 @@ const generated = (text: string) => ({ content: [{ type: "text" as const, text }
 const finish = (unified: "stop" | "tool-calls"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage(1, 1) });
 
 describe("composition data on the native host", () => {
-  it("PX2.84 composition settings load from procedural's data file by default, or from a deployment's copy; an invalid file throws", () => {
+  it("PX2.92 composition settings load from procedural's data file by default, or from a deployment's copy; an invalid file throws", () => {
     expect(loadProceduralComposition()).toEqual({ $schema: "./composition.schema.json", support: 3, minScore: 0.7, maxLength: 6 });
     const file = join(mkdtempSync(join(tmpdir(), "procedural-")), "composition.json");
     writeFileSync(file, JSON.stringify({ support: 2, minScore: 0.5, maxLength: 3 }));
@@ -61,7 +61,7 @@ describe("composition data on the native host", () => {
 });
 
 describe("composition on the native host", () => {
-  it("PX2.85 staging lives in the procedural directory's staging/ (a file per workflow, run journals beside them), never in the shared workflow library, which may not be the same directory", async () => {
+  it("PX2.93 staging lives in the procedural directory's staging/ (a file per workflow, run journals beside them), never in the shared workflow library, which may not be the same directory", async () => {
     const dir = mkdtempSync(join(tmpdir(), "procedural-"));
     const shared = join(dir, "workflows");
     const step = { core: async () => undefined };
@@ -86,7 +86,7 @@ describe("composition on the native host", () => {
     expect(await composition.catalog()).toEqual([]);
   });
 
-  it("PX2.86 nativeDream takes a composer and a tool catalog made for each dream, so it sees the session tools as they are then", async () => {
+  it("PX2.94 nativeDream takes a composer and a tool catalog made for each dream, so it sees the session tools as they are then", async () => {
     const store = proceduralStore(mkdtempSync(join(tmpdir(), "procedural-")));
     await importGraph({ store, graph, clock: hostPorts.clock });
     let made = 0;
@@ -104,7 +104,7 @@ describe("composition on the native host", () => {
     expect(prompts.at(-1)).toContain("lookup_2");
   });
 
-  it("PX2.87 end to end in the daemon: a dream composes a path sessions walked, and once approved the next session, pinned to the new head, is offered the workflow and runs it; a session on the old head is not, nor is anyone once the staged code no longer matches", async () => {
+  it("PX2.95 end to end in the daemon: a dream composes a path sessions walked, and once approved the next session, pinned to the new head, is offered the workflow and runs it; a session on the old head is not, nor is anyone once the staged code no longer matches", async () => {
     const dir = mkdtempSync(join(tmpdir(), "procedural-"));
     const store = proceduralStore(join(dir, "procedural"));
     await importGraph({ store, graph, document: DOCUMENT, clock: hostPorts.clock });

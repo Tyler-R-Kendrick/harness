@@ -8,15 +8,15 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
-import { approvalInbox, modelReflector } from "@harness/procedural";
+import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
 import type { ApprovalNotice, GraphId } from "@harness/procedural";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
-import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
+import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativeProceduralStep, nativeTaskEvaluator, proceduralStore, snapshotSessions } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -40,6 +40,7 @@ const { values } = parseArgs({
     "procedural-resolver": { type: "string" },
     "procedural-policy": { type: "string" },
     "procedural-composition": { type: "string" },
+    "procedural-eval": { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -61,7 +62,8 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
-      "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>] [--procedural-composition <composition.json>]]\n",
+      "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>]\n" +
+      "                                 [--procedural-eval <tasks.json>] [--procedural-composition <composition.json>]]\n",
   );
   process.exit(2);
 }
@@ -86,6 +88,27 @@ const saved = await memoryFile?.load();
 const learningFile = values.learning === undefined ? undefined : new FileStorage(values.learning);
 const learned = await learningFile?.load();
 
+// Dream's evaluator: a user's task suite, run on the session model guided by each candidate graph.
+if (values["procedural-eval"] !== undefined && values.procedural === undefined) {
+  process.stderr.write("--procedural-eval needs --procedural: the task suite scores that directory's graphs when they dream\n");
+  process.exit(2);
+}
+let taskSuite: ReturnType<typeof loadTaskSuite> | undefined;
+try {
+  taskSuite = values["procedural-eval"] === undefined ? undefined : loadTaskSuite(values["procedural-eval"]);
+} catch (e) {
+  process.stderr.write(`--procedural-eval ${values["procedural-eval"]}: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
+if (taskSuite?.scorer === "judge" && !values.cognitive && values.worker !== "ensemble") {
+  process.stderr.write("the task suite's judge scorer needs --cognitive: the catalog's judge scores the answers\n");
+  process.exit(2);
+}
+if (taskSuite?.tools !== undefined && taskSuite.tools.length > 0 && (values.workflows === undefined || (!values.cognitive && values.worker !== "ensemble"))) {
+  process.stderr.write("the task suite names tools, and this host offers only its workflow library's (--cognitive --workflows <dir>)\n");
+  process.exit(2);
+}
+
 // Procedural graphs keep one store in their directory: sessions are guided by the graph the
 // resolver names, and the cognitive core serves the operations as `procedural.*`, under the policy.
 const principal = userInfo().username;
@@ -94,7 +117,7 @@ const proceduralPolicy = values["procedural-policy"] === undefined ? undefined :
 // The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
 // The approvals inbox announces proposals and decisions on the daemon's hook bus, once it is up.
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
-const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; notify?: (notice: ApprovalNotice) => void } = {};
+const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; schedule?: ReturnType<typeof nativeDreamSchedule>; notify?: (notice: ApprovalNotice) => void } = {};
 const notify = (notice: ApprovalNotice) => live.notify?.(notice);
 const proceduralFiles = values.procedural === undefined ? undefined : proceduralStore(values.procedural);
 const cognitive =
@@ -207,21 +230,30 @@ const host = await NodeHost.start({
 if (procedural) live.notify = hookNotifier(host.runtime);
 if (procedural && generator) {
   live.learner = nativeLiveLearner({ runtime: host.runtime, ...procedural, reflect: modelReflector({ model: generator, settings: procedural.settings }), log: (message) => void process.stderr.write(`${message}\n`) });
-  // Dream refines with the generator, on trajectories from the daemon's session logs. No one can be
+  // Dream refines with the generator, on trajectories from the daemon's session logs; one dream per graph at a time,
+  // whether `procedural.dream` or the preset's schedule (checked on the runtime's ticks) starts it. No one can be
   // asked for approval outside a session's turn: candidates that need it wait in the approvals inbox
   // (`procedural.approvals`, `procedural.approve`, `procedural.decline`).
+  // With a task suite, dream gates on it: the session model solves its tasks, guided by each candidate, and the catalog's judge scores them when the suite asks.
+  const evaluator =
+    taskSuite &&
+    nativeTaskEvaluator({
+      suite: taskSuite,
+      settings: procedural.settings,
+      model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model),
+      ...(cognitive ? { judge: async () => (await cognitive.ensemble.resolve("judgment", "judge")).port } : {}),
+      ...(cognitive?.workflowHost ? { tools: () => workflowTools(cognitive.workflowHost!) } : {}),
+    });
+  const evaluation = evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {};
   // With composition, a dream ends with a composition round over the session tools, which are its tool catalog.
-  live.dream = nativeDream({
-    ...procedural,
-    model: generator,
-    sessions: async () => snapshotSessions(host.daemon.snapshot()),
-    inbox: approvalInbox(notify),
-    ...(composition ? { composer: composition.composer, tools: composition.catalog } : {}),
-  });
+  const composing = composition ? { composer: composition.composer, tools: composition.catalog } : {};
+  live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()), inbox: approvalInbox(notify) }));
+  live.schedule = nativeDreamSchedule({ runtime: host.runtime, ...procedural, dream: live.dream, log: (message) => void process.stderr.write(`${message}\n`) });
 }
 
 const shutdown = async () => {
   live.learner?.close();
+  live.schedule?.close();
   await host.close();
   await harness?.close();
   await cognitive?.close();

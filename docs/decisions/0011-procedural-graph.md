@@ -166,8 +166,15 @@ The decision held; these details moved.
   edits there when the head moved) and commits by compare-and-set. Proposals and
   decisions are announced on the hook bus through the host publish API. The CLI still
   asks on a terminal when it has one.
-- **Dream runs on demand.** `procedural.dream` and `harness-procedural dream` start it;
-  there is no schedule or trigger in the daemon.
+- **Dream runs on demand and on a schedule.** `procedural.dream` and
+  `harness-procedural dream` start it, and the preset's schedule (`dream.every`, a
+  duration, or `dream.afterTurns`, observed turns since the last dream) starts it from
+  the daemon runtime's tick. The schedule reads the last run from the dream log, so it
+  survives restarts, and one process never runs a graph's dream twice at once.
+- **The evaluator is a task suite.** A user brings replayable tasks as a JSON file
+  (`--procedural-eval`): each task runs on a session agent guided by the candidate graph,
+  and a metric or the catalog's judge (its probability) scores the answer. Datasets stay
+  the user's; the framework ships the evaluator, its contract and the metrics.
 - **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
   event with `rescore`, which moves the turn's score without a new traversal.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host

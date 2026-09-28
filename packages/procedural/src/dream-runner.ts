@@ -11,7 +11,8 @@
  *   re-issued rejection puts the same record again.
  * - **The lease.** A run acquires the graph's lease and renews it before every command
  *   and before appending every event, so a run whose epoch went stale stops before it
- *   writes anything: a stale epoch cannot commit.
+ *   writes anything: a stale epoch cannot commit. A run that throws releases the lease
+ *   (the log keeps what finished, so any holder resumes it).
  * - **Commits** put the record, then move the head by compare-and-set. When another
  *   writer moved the head meanwhile, the record is put again as rejected by `head`, and
  *   the dream ends.
@@ -29,7 +30,7 @@ import { foldAll, rebaseOverlay } from "./overlay.ts";
 import { refine } from "./refine.ts";
 import type { RefineResult } from "./refine.ts";
 import type { Preset, Settings } from "./settings.ts";
-import type { ProceduralStore } from "./store.ts";
+import type { Lease, ProceduralStore } from "./store.ts";
 import type { ScoredTrajectory } from "./trajectory.ts";
 
 /** Scores a graph on a replayable task set (plan §10): the paper's Rollout and Evaluate. */
@@ -126,9 +127,13 @@ const StartedSchema = z.strictObject({
   rejections: z.array(RevisionIdSchema),
   train: z.array(z.string()),
   stride: z.int().positive(),
+  /** The Clock's time the dream started (absent in logs written before the schedule read it). */
+  at: z.int().min(0).exactOptional(),
 });
 type Started = z.output<typeof StartedSchema>;
-const EntrySchema = z.discriminatedUnion("kind", [StartedSchema, z.strictObject({ kind: z.literal("event"), dream: DreamIdSchema, event: DreamEventSchema })]);
+/** An entry of a graph's dream log: a dream's `started` entry, or one of its events. */
+export const DreamLogEntrySchema = z.discriminatedUnion("kind", [StartedSchema, z.strictObject({ kind: z.literal("event"), dream: DreamIdSchema, event: DreamEventSchema })]);
+export type DreamLogEntry = z.output<typeof DreamLogEntrySchema>;
 
 const isRejection = (r: RevisionRecord): boolean => r.decision.kind === "rejected-structure" || r.decision.kind === "rejected-gate";
 
@@ -154,10 +159,22 @@ type Body = DreamEvent extends infer E ? (E extends DreamEvent ? Omit<E, "comman
 
 /** Run (or resume) a dream on a graph to its end. */
 export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
-  const { store, graph, settings, ports } = options;
+  const { store, graph } = options;
   const holder = options.holder ?? "dream";
   const lease = await store.lease.acquire(graph, holder);
   if (lease === undefined) return { status: "busy", graph };
+  try {
+    return await leased(options, holder, lease);
+  } catch (e) {
+    // The log holds every finished command, so any holder resumes the dream; a stale epoch releases nothing.
+    await store.lease.release(graph, holder, lease.epoch);
+    throw e;
+  }
+}
+
+/** The dream under a lease just acquired: replay or start, then drive the reducer to its end. */
+async function leased(options: RunDreamOptions, holder: string, lease: Lease): Promise<DreamResult> {
+  const { store, graph, settings, ports } = options;
   const holds = (): Promise<boolean> => store.lease.renew(graph, holder, lease.epoch);
   const log = store.dreams(graph);
   const overlayLog = store.overlay(graph);
@@ -259,6 +276,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       rejections,
       train,
       stride: options.stride ?? settings.dream.stride ?? (ports.evaluator === undefined ? DEFAULT_SELECT : Math.max(1, Math.ceil(train.length / settings.dream.rounds))),
+      at: ports.clock.now(),
     };
     await log.append([started]);
     return started;
@@ -310,14 +328,14 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
     }
   }
 
-  const entries = (await log.read(0)).map((e) => EntrySchema.parse(e.event));
+  const entries = (await log.read(0)).map((e) => DreamLogEntrySchema.parse(e.event));
   const lastStart = entries.map((e) => e.kind).lastIndexOf("started");
   let started = lastStart < 0 ? undefined : StartedSchema.parse(entries[lastStart]);
   let state: DreamState | undefined;
   if (started !== undefined) {
     const dream = started.dream;
     // Every entry after the last `started` one is an event.
-    const events = entries.slice(lastStart + 1) as Extract<z.output<typeof EntrySchema>, { kind: "event" }>[];
+    const events = entries.slice(lastStart + 1) as Extract<DreamLogEntry, { kind: "event" }>[];
     state = events.reduce((s, e) => (e.dream === dream ? dreamStep(s, e.event).state : s), dreamStart(await inputOf(started)));
   }
   // Stryker disable next-line OptionalChaining: equivalent; a dream always has a pending command

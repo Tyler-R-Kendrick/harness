@@ -2,7 +2,7 @@ import { getRandomValues } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, composition, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, staging } from "@harness/procedural";
+import { authorize, composition, DreamSchedule, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, staging, taskSuiteEvaluator } from "@harness/procedural";
 import type {
   AccessPolicy,
   Action,
@@ -13,6 +13,7 @@ import type {
   CompositionSettings,
   DreamPorts,
   DreamResult,
+  DreamRun,
   Evaluator,
   GraphId,
   HostComposition,
@@ -20,13 +21,15 @@ import type {
   ProceduralStore,
   Reflector,
   Resolver,
+  ScheduledDream,
   SessionLog,
   Settings,
+  TaskSuite,
 } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { Effects } from "@harness/workflows";
 import { aiCodeMode } from "@harness/workflows/node";
-import type { LanguageModel, ToolSet } from "ai";
+import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel, ToolSet } from "ai";
 import { FileStorage } from "./file-storage.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
 
@@ -70,7 +73,7 @@ export const hostAuthorizer =
     authorize(policy, action, graph, { principal });
 
 /** The procedural store kept in `dir`: one file, saved atomically after every change. One process owns it. */
-export function proceduralStore(dir: string): ProceduralStore {
+export function proceduralStore(dir: string): SnapshotProceduralStore {
   return new SnapshotProceduralStore(new FileStorage(join(dir, "procedural.json")));
 }
 
@@ -293,4 +296,55 @@ export function terminalApprover(input: NodeJS.ReadableStream, output: NodeJS.Wr
       }
     },
   };
+}
+
+/** A scheduled dream's outcome, in a line. */
+function describeScheduled(run: ScheduledDream): string {
+  const what = `procedural: scheduled dream of ${run.graph}${run.reason === undefined ? "" : ` (${run.reason})`}`;
+  if ("error" in run) return `${what} failed: ${run.error}`;
+  const { result } = run;
+  if (result.status !== "done") return `${what}: ${result.status}`;
+  return `${what}: done, ${result.rounds.length} rounds, head ${result.head === result.initial ? "unchanged" : `now ${result.head.slice(0, 12)}`}`;
+}
+
+/**
+ * Dream on a schedule on this host (plan §7.1): the preset's `dream.every` and
+ * `dream.afterTurns` checked on every tick of the daemon runtime, for every graph the
+ * store holds, with `dream` (the host's `nativeDream`, behind `exclusiveDream` so the
+ * `procedural.dream` operation and the schedule never run one graph twice). Each outcome
+ * is logged in a line. `close()` stops it.
+ */
+export function nativeDreamSchedule(options: {
+  readonly runtime: Pick<DaemonRuntime, "onTick">;
+  readonly store: ProceduralStore & { graphs(): Promise<readonly GraphId[]> };
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly dream: DreamRun;
+  readonly log?: (message: string) => void;
+}): { schedule: DreamSchedule; close(): void } {
+  const { runtime, store, settings, dream, log = () => {} } = options;
+  const schedule = new DreamSchedule({ store, settings: presetOf(settings, options.preset ?? "harness"), graphs: () => store.graphs(), dream, clock: hostPorts.clock });
+  const close = runtime.onTick(async () => {
+    for (const run of await schedule.tick()) log(describeScheduled(run));
+  });
+  return { schedule, close };
+}
+
+/**
+ * Dream's evaluator on this host (plan §10): a user's task suite (`--procedural-eval`)
+ * run by `taskSuiteEvaluator` with the host's clock and entropy. `model` solves the tasks
+ * (guided by the candidate graph, and guiding itself unless `guidance` is given), `judge`
+ * scores them when the suite's scorer is `judge` (the catalog's judgment model), and
+ * `tools` are the host tools the suite may name.
+ */
+export function nativeTaskEvaluator(options: {
+  readonly suite: TaskSuite;
+  readonly settings: Settings;
+  readonly preset?: string;
+  readonly model: LanguageModel;
+  readonly guidance?: LanguageModel;
+  readonly judge?: () => EvaluationModel | Promise<EvaluationModel>;
+  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+}): Evaluator {
+  return taskSuiteEvaluator({ ...options, ...hostPorts });
 }

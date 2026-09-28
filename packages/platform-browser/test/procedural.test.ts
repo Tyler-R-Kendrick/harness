@@ -30,7 +30,7 @@ describe("procedural graphs in the browser host", () => {
     expect(await store.heads.get(GraphIdSchema.parse("g"))).toEqual({ revision: revisionId(seedGraph()), history: [] });
   });
 
-  it("PX2.89 composition in the browser: dream stages in an IndexedDB database of its own, never the shared workflow library's (which may not be the same one), and runs staged workflows on QuickJS", async () => {
+  it("PX2.97 composition in the browser: dream stages in an IndexedDB database of its own, never the shared workflow library's (which may not be the same one), and runs staged workflows on QuickJS", async () => {
     const factory = new IDBFactory();
     const ensemble = new Ensemble({ platform: "browser" });
     const next = tool({ inputSchema: jsonSchema({ type: "object" }), execute: async () => 7 });
@@ -52,7 +52,7 @@ describe("procedural graphs in the browser host", () => {
     expect(await named.composer()).toMatchObject({ settings: composition, toolSpecs: { next: { inputSchema: { type: "object" } } } });
   });
 
-  it("PX2.90 a page's sessions get their base tools plus the workflows their pinned core binds, and a workflow's questions go to the ensemble's model", async () => {
+  it("PX2.98 a page's sessions get their base tools plus the workflows their pinned core binds, and a workflow's questions go to the ensemble's model", async () => {
     const ensemble = new Ensemble({ platform: "browser" });
     const asked: string[] = [];
     const generator = scriptedModel((o) => (asked.push(JSON.stringify(o.prompt)), "because"));

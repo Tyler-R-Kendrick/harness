@@ -95,6 +95,11 @@ export class SnapshotProceduralStore implements ProceduralStore {
     set: (graph, expected, next) => this.#run((s) => s.heads.set(graph, expected, next), (moved) => moved),
   };
 
+  /** Every graph with a head, in the order each got its first. */
+  graphs(): Promise<readonly GraphId[]> {
+    return this.#run((s) => s.graphs(), never);
+  }
+
   overlay(graph: GraphId): ReturnType<ProceduralStore["overlay"]> {
     return this.#log((s) => s.overlay(graph));
   }

@@ -415,6 +415,32 @@ describe("DaemonRuntime", () => {
     await rt.close();
   });
 
+  it("RT1.11 tick listeners run after the daemon's tick, in order, until removed; a failing one is logged and the rest still run", async () => {
+    const { rt, logged } = await runtime();
+    const seen: string[] = [];
+    const removeA = rt.onTick(() => void seen.push("a"));
+    rt.onTick(() => {
+      seen.push("b");
+      throw new Error("b broke");
+    });
+    rt.onTick(async () => {
+      seen.push("c");
+      throw "c rejected";
+    });
+    rt.onTick(async () => void seen.push("d"));
+    rt.tick();
+    expect(seen).toEqual(["a", "b", "c", "d"]);
+    await new Promise((r) => setTimeout(r, 1));
+    expect(logged).toEqual(["tick listener failed: b broke", "tick listener failed: c rejected"]);
+    removeA();
+    removeA();
+    rt.tick();
+    expect(seen.slice(4)).toEqual(["b", "c", "d"]);
+    await rt.close();
+    rt.tick();
+    expect(seen).toHaveLength(7);
+  });
+
   it("RT3.9 once closed, the runtime stops following the ensemble", async () => {
     const embedder: ModelDescriptor = { id: "embedder-f", name: "Embedder F", publisher: "t", tasks: ["text-embedding"], ports: ["embedder"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["browser"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] };
     const ensemble = new Ensemble({ platform: "browser" });

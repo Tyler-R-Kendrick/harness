@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
-import { CandidateDocumentSchema, FORMAT, GraphIdSchema, revisionId, seedGraph } from "@harness/procedural";
+import { CandidateDocumentSchema, FORMAT, GraphIdSchema, revisionId, RevisionRecordSchema, seedGraph } from "@harness/procedural";
 import { proceduralStore } from "@harness/platform-native";
 
 const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
@@ -64,7 +64,7 @@ describe("procedural graphs on the native daemon", () => {
     expect(await client.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] })).toMatchObject({ stopReason: "end_turn" });
   });
 
-  it("PX2.88 an agent worker's daemon gives dream a composer: procedural.dream runs with it; a --workflows directory that is procedural's staging library, or an invalid --procedural-composition file, keeps the daemon from starting", async () => {
+  it("PX2.96 an agent worker's daemon gives dream a composer: procedural.dream runs with it; a --workflows directory that is procedural's staging library, or an invalid --procedural-composition file, keeps the daemon from starting", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     const daemon = launch(dir, "--worker", "model");
     await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
@@ -80,6 +80,54 @@ describe("procedural graphs on the native daemon", () => {
     const invalid = launch(dir, "--worker", "model", "--procedural-composition", file);
     expect(await invalid.exited).not.toBe(0);
     expect(invalid.stderr()).toContain("invalid composition settings");
+  });
+
+  it("PX2.89 the daemon dreams on the preset's schedule from its ticks, gating on the --procedural-eval task suite", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    // A graph whose head was set long ago: the harness preset's weekly dream is due at the first tick.
+    const store = proceduralStore(join(dir, "procedural"));
+    const seed = seedGraph();
+    await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph: "team/search", parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
+    await store.heads.set(GraphIdSchema.parse("team/search"), undefined, revisionId(seed));
+    const tasks = join(dir, "tasks.json");
+    writeFileSync(tasks, JSON.stringify({ scorer: "exact", tasks: [{ id: "v0", prompt: "Capital of France?", expected: "Paris", split: "validation" }] }));
+    // No gateway credential: the suite's solver (the gateway model) fails, and the scheduled dream says so.
+    const { AI_GATEWAY_API_KEY: _key, VERCEL_OIDC_TOKEN: _oidc, ...env } = process.env;
+    const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", "--procedural", join(dir, "procedural"), "--procedural-eval", tasks], { env: { ...env, NODE_OPTIONS: "" } });
+    children.push(child);
+    let stderr = "";
+    child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    for (let i = 0; i < 600 && !stderr.includes("procedural: scheduled dream"); i++) await new Promise((r) => setTimeout(r, 25));
+    expect(stderr).toMatch(/procedural: scheduled dream of team\/search \(every\) failed: task v0 failed: /);
+    child.stdin.end();
+    await new Promise((resolve) => child.on("exit", resolve));
+    // The attempt is in the store: the dream started, so a restart waits a week.
+    const entries = await proceduralStore(join(dir, "procedural")).dreams(GraphIdSchema.parse("team/search")).read(0);
+    expect(entries[0]?.event).toMatchObject({ kind: "started", head: revisionId(seed), train: [] });
+  });
+
+  it("PX2.90 --procedural-eval is refused at startup when it cannot work: no --procedural, a malformed file, a judge or tools the host lacks", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const file = (name: string, content: unknown) => {
+      const path = join(dir, name);
+      writeFileSync(path, typeof content === "string" ? content : JSON.stringify(content));
+      return path;
+    };
+    const valid = { scorer: "exact", tasks: [{ id: "v0", prompt: "p", expected: "e", split: "validation" }] };
+    const run = async (...args: string[]) => {
+      const child = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", ...args], { env: { ...process.env, NODE_OPTIONS: "" } });
+      children.push(child);
+      let stderr = "";
+      child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      const code = await new Promise<number | null>((resolve) => child.on("exit", resolve));
+      return { code, stderr };
+    };
+    const procedural = ["--procedural", join(dir, "procedural")];
+    expect(await run("--procedural-eval", file("a.json", valid))).toEqual({ code: 2, stderr: "--procedural-eval needs --procedural: the task suite scores that directory's graphs when they dream\n" });
+    expect(await run(...procedural, "--procedural-eval", file("b.json", { ...valid, scorer: "bleu" }))).toMatchObject({ code: 2, stderr: expect.stringMatching(/^--procedural-eval .*b\.json: invalid task suite[\s\S]*at scorer/) });
+    expect(await run(...procedural, "--procedural-eval", file("c.json", { ...valid, scorer: "judge" }))).toEqual({ code: 2, stderr: "the task suite's judge scorer needs --cognitive: the catalog's judge scores the answers\n" });
+    expect(await run(...procedural, "--procedural-eval", file("d.json", { ...valid, tools: [{ name: "lookup" }] }))).toEqual({ code: 2, stderr: "the task suite names tools, and this host offers only its workflow library's (--cognitive --workflows <dir>)\n" });
+    expect(await run(...procedural, "--workflows", join(dir, "wf"), "--procedural-eval", file("e.json", { ...valid, tools: [{ name: "lookup" }] }))).toMatchObject({ code: 2 });
   });
 
   it("PX2.79 the approvals inbox over ACP: an import proposal waits and is announced on the hook bus, procedural.approve commits it, procedural.decline rejects another, each decision announced; the policy's approve action guards them", async () => {
