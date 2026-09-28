@@ -54,8 +54,18 @@ export interface TurnContext extends TurnScope {
   readonly lastAction: string | undefined;
   /** That call with its input and, once the harness reported it, its result's output (what a state tracker reads). */
   readonly lastCall?: LastCall;
-  /** The names of the tools the harness offers. */
+  /** The names of the tools the harness offers: its own, and the turn's. */
   readonly tools: readonly string[];
+}
+
+/**
+ * A harness turn's guidance: text prepended to its prompt, and optionally the only host
+ * tools of the turn's own (`harnessSessions({ tools })`) it offers. The harness's builtin
+ * tools stay offered: a turn cannot limit them.
+ */
+export interface TurnGuidance {
+  readonly text?: string;
+  readonly activeTools?: readonly string[];
 }
 
 /** A step that ended, as AI SDK `onStepEnd` sees it: its number and its model call's usage. */
@@ -71,13 +81,14 @@ export interface StepEndContext extends TurnScope {
  * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
  * messages, and may limit the tools that step offers the model (AI SDK `activeTools`;
  * the next step offers every tool again unless the hook limits it too). `turn`, when
- * given, guides an opaque harness's turn: its text is prepended to the prompt. `end`,
+ * given, guides an opaque harness's turn: its text is prepended to the prompt, and its
+ * active tools, when it gives them, are the only host tools of the turn's own it offers. `end`,
  * when given, is told each step's model usage once the step ends (an agent's steps and
  * a harness's alike), e.g. to record it in the session log.
  */
 export interface StepHook {
   prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[]; readonly activeTools?: readonly string[] } | undefined>;
-  turn?(context: TurnContext): Promise<string | undefined>;
+  turn?(context: TurnContext): Promise<string | TurnGuidance | undefined>;
   end?(context: StepEndContext): Promise<void>;
 }
 
@@ -171,8 +182,8 @@ export interface TurnLearning {
   recall(task: string): Promise<{ readonly playbook: string }>;
 }
 
-/** A call's conversation: its messages, or its prompt (text is one user message). */
-const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
+/** A call's conversation: its messages, or its prompt as messages (a text prompt is one user message). */
+export const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
   call.messages ?? (typeof call.prompt === "string" ? [{ role: "user", content: call.prompt }] : (call.prompt ?? []));
 
 const lastUser = (messages: readonly ModelMessage[]) => [...messages].reverse().find((m) => m.role === "user");

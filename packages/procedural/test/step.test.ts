@@ -467,11 +467,22 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
       };
       expect(await through("edge")).not.toHaveProperty("activeTools");
       expect(await through("action")).toMatchObject({ activeTools: ["lookup"] });
-      // A harness turn cannot limit its harness's tools: it is guided as usual, and its record names no limit.
-      const s = await setup("custom", { settings: successors({}, "harness") });
-      await proceduralStep(s.deps).turn({ ...input(s, [user("q")], { tools: OFFERED }), lastAction: undefined });
-      expect(s.records[0]).toMatchObject({ node: "Start" });
+      // A harness turn under a shipped preset is guided by text alone.
+      const s = await setup("harness");
+      expect(await proceduralStep(s.deps).turn({ ...input(s, [user("q")], { tools: OFFERED }), lastAction: undefined })).toBe(`${GUIDANCE_LABEL}advice 0`);
       expect(s.records[0]).not.toHaveProperty("activeTools");
+    });
+
+    it("PW1.99 a harness turn under successor-only delivery offers only the tools of the successors of its last call, and its record says so; with none it offers every tool", async () => {
+      const s = await setup("custom", { settings: successors({}, "harness") });
+      const hook = proceduralStep(s.deps);
+      const turn = (turnId: string, lastAction: string | undefined) => hook.turn({ ...input(s, [user("q")], { turnId, tools: OFFERED }), lastAction });
+      expect(await turn("t1", undefined)).toEqual({ text: `${GUIDANCE_LABEL}advice 0`, activeTools: ["first_hop_retrieve"] });
+      expect(s.records[0]).toMatchObject({ node: "Start", activeTools: ["first_hop_retrieve"] });
+      expect(await turn("t2", "first_hop_retrieve")).toEqual({ text: `${GUIDANCE_LABEL}advice 1`, activeTools: ["Scan_Index"] });
+      // grep matches no node: the whole graph, every tool.
+      expect(await turn("t3", "grep")).toBe(`${GUIDANCE_LABEL}advice 2`);
+      expect(s.records[2]).not.toHaveProperty("activeTools");
     });
   });
 

@@ -110,6 +110,43 @@ describe("procedural graphs on the native daemon", () => {
     expect(invalid.stderr()).toContain("invalid composition settings");
   });
 
+  it("PX2.125 a harness worker's daemon gives dream a composer too: procedural.dream runs with it; a --workflows directory that is procedural's staging library keeps it from starting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const harness = ["--worker", "harness", "--harness", "codex", "--harness-state", join(dir, "harness.json"), "--sandboxes", join(dir, "sandboxes")];
+    const daemon = launch(dir, ...harness);
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    expect(await invoke(daemon.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+    const shared = launch(dir, ...harness, "--workflows", join(dir, "procedural", "staging"));
+    expect(await shared.exited).not.toBe(0);
+    expect(shared.stderr()).toContain("cannot be procedural's staging library");
+  });
+
+  it("PX2.123 --procedural-tools gives the daemon's dream the tools a deployment declares free of side effects: a valid file starts it and procedural.dream runs; an invalid one, or one without --procedural, keeps it from starting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const file = (name: string, content: unknown) => {
+      const path = join(dir, name);
+      writeFileSync(path, JSON.stringify(content));
+      return path;
+    };
+    const daemon = launch(dir, "--procedural-tools", file("tools.json", { sideEffectFree: ["search"] }));
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    expect(await invoke(daemon.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+
+    const invalid = launch(dir, "--procedural-tools", file("bad.json", { sideEffectFree: [""] }));
+    expect(await invalid.exited).toBe(2);
+    expect(invalid.stderr()).toMatch(/^--procedural-tools .*bad\.json: invalid tool declarations/);
+    const alone = spawn(process.execPath, [MAIN, "--stdio", "--worker", "echo", "--procedural-tools", join(dir, "tools.json")], { env: { ...process.env, NODE_OPTIONS: "" } });
+    children.push(alone);
+    let stderr = "";
+    alone.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+    expect(await new Promise((resolve) => alone.on("exit", resolve))).toBe(2);
+    expect(stderr).toBe("--procedural-tools needs --procedural: it declares the tools that directory's graphs dream over\n");
+  });
+
   it("PX2.89 the daemon dreams on the preset's schedule from its ticks, gating on the --procedural-eval task suite", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     // A graph whose head was set long ago: the harness preset's weekly dream is due at the first tick.

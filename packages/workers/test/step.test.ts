@@ -9,7 +9,7 @@ import { usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
 import { nullSandbox, scriptedHarness } from "@harness/testkit";
 import type { ScriptedTurn } from "@harness/testkit";
-import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
+import { AgentWorker, harnessSessions, harnessTurnTools, sessionAgent } from "@harness/workers";
 import type { StepContext, StepEndContext, StepHook, TurnContext } from "@harness/workers";
 
 const finish = (unified: "stop" | "tool-calls" = "stop", used = usage()): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: used });
@@ -361,5 +361,29 @@ describe("harnessSessions' turn hook: turn-level guidance for opaque harness wor
     const sessions = harnessSessions(new HarnessAgent({ harness: guided }), { sandboxSession: nullSandbox, step: { prepare: async () => undefined, turn: async () => "Guidance." } });
     const { text: reply } = await sessions.generate({ prompt: "ping", options: { sessionId: "s9" } });
     expect(reply).toBe("saw ping");
+  });
+
+  it("PW1.98 the turn hook is told the harness's tools and the turn's own; the active tools it returns are the only host tools the turn offers, and its text still guides the prompt", async () => {
+    const other = tool({ description: "Another tool.", inputSchema: jsonSchema<Record<string, never>>({ type: "object" }), execute: async () => "other" });
+    const harness = scriptedHarness((p) => `saw ${p}`);
+    const seen: (readonly string[])[] = [];
+    const answers: Awaited<ReturnType<NonNullable<StepHook["turn"]>>>[] = [{ text: "Check the sky.", activeTools: ["weather", "Bash"] }, { text: "Anything.", activeTools: [] }, { text: "No limit." }, "Plain."];
+    const turn: StepHook["turn"] = async (c) => (seen.push(c.tools), answers.shift());
+    const agent = new HarnessAgent({ harness, tools: { mine: other }, prepareCall: harnessTurnTools });
+    const worker = new AgentWorker({ agent: harnessSessions(agent, { sandboxSession: nullSandbox, step: { prepare: async () => undefined, turn }, tools: async () => ({ weather, other }) }) });
+    for (const [i, prompt] of ["weather?", "next", "again", "last"].entries()) await run(worker, prompt, { turnId: `t${i}` }).done;
+    expect(seen[0]).toEqual(["mine", "weather", "other"]);
+    expect(harness.log.turns.map((t) => [t.tools, (t.prompt as { content: { text: string }[] }).content[0]!.text])).toEqual([
+      [["weather"], "Check the sky.\n\n"],
+      [[], "Anything.\n\n"],
+      [["weather", "other"], "No limit.\n\n"],
+      [["weather", "other"], "Plain.\n\n"],
+    ]);
+    // Without tools of the turn's own, the agent's stay offered: a turn cannot tell them from the harness's builtins.
+    const own = scriptedHarness((p) => `saw ${p}`);
+    const limited: StepHook["turn"] = async () => ({ text: "Only weather.", activeTools: ["weather"] });
+    const plain = new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness: own, tools: { weather, other } }), { sandboxSession: nullSandbox, step: { prepare: async () => undefined, turn: limited } }) });
+    await run(plain, "hi").done;
+    expect(own.log.turns.map((t) => t.tools)).toEqual([["weather", "other"]]);
   });
 });

@@ -39,5 +39,6 @@ export { migrateStoreDocument, PinSchema, ProceduralStoreDocumentSchema, Procedu
 export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, StepUsageSchema, trajectorySteps, type ProceduralStepDeps, type ProceduralStepHook, type StepEndInput, type StepInput, type StepNotice, type StepRecord, type StepScope, type StepUsage, type StepUsageNotice, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
 export { taskSuiteEvaluator, type TaskSuiteEvaluatorOptions } from "./task-evaluator.ts";
+export { parseToolDeclarations, ToolDeclarationsSchema, toolDeclarationsJsonSchema, type ToolDeclarations } from "./tool-declarations.ts";
 export { f1Score, normalizeAnswer, parseTaskSuite, scoreAnswer, SuiteTaskSchema, TASK_SCORERS, TaskSuiteSchema, taskSuiteJsonSchema, type SuiteTask, type TaskMetric, type TaskScorer, type TaskSuite } from "./task-suite.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";

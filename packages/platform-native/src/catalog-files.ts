@@ -9,8 +9,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
-import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings, parseTaskSuite } from "@harness/procedural";
-import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings, TaskSuite } from "@harness/procedural";
+import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings, parseTaskSuite, parseToolDeclarations } from "@harness/procedural";
+import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings, TaskSuite, ToolDeclarations } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -52,6 +52,11 @@ export function loadProceduralResolver(file: string = require.resolve("@harness/
 /** Read and parse dream's composition settings (which paths compile into workflows) at startup: procedural's own data file by default, or a deployment's. */
 export function loadProceduralComposition(file: string = require.resolve("@harness/procedural/data/composition.json")): CompositionSettings {
   return parseCompositionSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse what a deployment declares about its session tools (which are free of side effects) at startup: procedural's own data file (none) by default, or a deployment's. */
+export function loadProceduralTools(file: string = require.resolve("@harness/procedural/data/tools.json")): ToolDeclarations {
+  return parseToolDeclarations(JSON.parse(readFileSync(file, "utf8")));
 }
 
 /** Read and parse a procedural access policy (who may read, write, dream, revert or import which graph). */

@@ -163,4 +163,13 @@ describe("composition on a host", () => {
     expect(Object.keys(await c.planTools(bound(w)))).toEqual([w.name]);
     expect(await composition({ staging: s, settings: settings(), step: { core: async () => undefined } }).planTools(undefined)).toEqual({});
   });
+
+  it("PC1.55 a harness's own tools (builtins, which the host does not run) are in dream's tool catalog, once each, but neither a session's host tools nor the composer's specs", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const search = tool({ description: "Search.", inputSchema: jsonSchema({ type: "object" }), execute: async () => [] });
+    const c = composition({ staging: s, settings: settings(), step: { core: async () => undefined }, base: () => ({ search }), builtins: ["Bash", "Read", "search"] });
+    expect(await c.catalog()).toEqual(["Bash", "Read", "search"]);
+    expect(Object.keys(await c.tools(scope("s1")))).toEqual(["search"]);
+    expect(Object.keys((await c.composer()).toolSpecs)).toEqual(["search"]);
+  });
 });

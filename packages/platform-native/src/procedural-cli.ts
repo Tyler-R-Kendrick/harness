@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { approvalInbox, proceduralExtension } from "@harness/procedural";
 import { askModel } from "@harness/workflows";
-import { loadProceduralComposition, loadProceduralSettings, loadTaskSuite } from "./catalog-files.ts";
+import { loadProceduralComposition, loadProceduralSettings, loadProceduralTools, loadTaskSuite } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { invokeDaemon } from "./daemon-link.ts";
@@ -26,11 +26,12 @@ const USAGE =
   "       harness-procedural import <graph> [<graph.json>]   (without a file: the scratch skeleton)\n" +
   "       harness-procedural revert <graph> [--to <revision>]\n" +
   "       harness-procedural dream <graph> [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]] [--state <daemon state file>]\n" +
-  "                                [--procedural-eval <tasks.json>]\n" +
+  "                                [--procedural-eval <tasks.json>] [--procedural-tools <tools.json>]\n" +
   "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
   "          daemon's saved session logs; asks for approval on a terminal, and otherwise leaves the\n" +
   "          candidate in the approvals inbox; gates on the task suite, solved by the gateway model or\n" +
-  "          else the ensemble's chat model, and judged by the catalog's judge)\n" +
+  "          else the ensemble's chat model, and judged by the catalog's judge; the tools declared free of\n" +
+  "          side effects, procedural's data/tools.json by default, route candidates without approval)\n" +
   "       harness-procedural approvals <graph>                (the candidates waiting for approval)\n" +
   "       harness-procedural approve <graph> <candidate>      (commit it on the head, if its gates pass there)\n" +
   "       harness-procedural decline <graph> <candidate>\n" +
@@ -59,6 +60,7 @@ const { values, positionals } = parseArgs({
     "no-hosted": { type: "boolean", default: false },
     "procedural-eval": { type: "string" },
     run: { type: "boolean", default: false },
+    "procedural-tools": { type: "string" },
   },
 });
 // The second positional is the graph; the third is import's file, for approve and decline the candidate's revision id,
@@ -79,6 +81,14 @@ try {
   taskSuite = values["procedural-eval"] === undefined || command !== "dream" ? undefined : loadTaskSuite(values["procedural-eval"]);
 } catch (e) {
   process.stderr.write(`--procedural-eval ${values["procedural-eval"]}: ${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
+// The tools a deployment declares free of side effects: a candidate routing only into them needs no approval.
+let sideEffectFree: readonly string[] | undefined;
+try {
+  sideEffectFree = command !== "dream" ? undefined : loadProceduralTools(...(values["procedural-tools"] === undefined ? [] : [values["procedural-tools"]])).sideEffectFree;
+} catch (e) {
+  process.stderr.write(`--procedural-tools ${values["procedural-tools"]}: ${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(2);
 }
 if (taskSuite?.tools !== undefined && taskSuite.tools.length > 0) {
@@ -137,7 +147,7 @@ if (lock.status === "held") {
     process.stderr.write(`the procedural store in ${dir} is in use by ${holder} (pid ${pid})${advice}\n`);
     process.exit(1);
   }
-  const local = ["settings", "preset", "model", "model-cache", "llama-server", "state", "procedural-eval"].filter((name) => values[name as keyof typeof values] !== undefined);
+  const local = ["settings", "preset", "model", "model-cache", "llama-server", "state", "procedural-eval", "procedural-tools"].filter((name) => values[name as keyof typeof values] !== undefined);
   if (values["no-hosted"]) local.push("no-hosted");
   if (local.length > 0) process.stderr.write(`${holder} (pid ${pid}) holds ${dir}: sending ${command} to it on ${socket}, which runs it with its own settings and models (ignoring --${local.join(", --")})\n`);
   try {
@@ -192,6 +202,7 @@ async function runHere(): Promise<void> {
           model,
           sessions: async () => snapshotSessions(state === undefined ? undefined : await new FileStorage(state).load()),
           holder: "harness-procedural",
+          ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
           ...(evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {}),
           // Without a terminal, a candidate that needs approval waits in the inbox (`approvals`, `approve`, `decline`).
           ...(process.stdin.isTTY
