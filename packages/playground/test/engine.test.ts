@@ -5,7 +5,8 @@ import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { Bash } from "just-bash";
 import { usage } from "@harness/cognitive";
-import { lexicalJudge } from "../src/decide.ts";
+import { lexicalDecider, modelDecider } from "../src/decide.ts";
+import type { Decider } from "../src/decide.ts";
 import { TemplateEngine } from "../src/engine.ts";
 import type { Generation } from "../src/engine.ts";
 import { parseEngineSettings } from "../src/engine-settings.ts";
@@ -31,7 +32,7 @@ function generator(...replies: unknown[]) {
   return model;
 }
 
-function setup(options: { files?: Record<string, string>; generation?: Generation; generators?: MockLanguageModelV4[] } = {}) {
+function setup(options: { files?: Record<string, string>; generation?: Generation; generators?: MockLanguageModelV4[]; deciders?: () => Decider[] } = {}) {
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "# hello\n", ...SEEDS, ...options.files } });
   const store = new TemplateStore(bash.fs, { retireMargin: settings.curation.retireMargin });
   let generation = options.generation ?? "auto";
@@ -39,7 +40,7 @@ function setup(options: { files?: Record<string, string>; generation?: Generatio
     store,
     settings,
     facts: { cwd: () => HOME, files: () => "README.md", date: () => "2026-09-28", templates: () => "list-files: Lists the files" },
-    judge: () => lexicalJudge(settings.lexical),
+    deciders: options.deciders ?? (() => [lexicalDecider(settings.lexical)]),
     generators: () => options.generators ?? [],
     generation: () => generation,
   });
@@ -67,6 +68,16 @@ describe("the template engine: answers from templates before inference", () => {
     expect(writer.doGenerateCalls).toHaveLength(0);
     expect(result.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "list-files", by: "harness.lexical/tf-idf", probability: expect.any(Number) } });
     expect(engine.last).toEqual({ templateId: "list-files", request: "list the files here" });
+  });
+
+  it("TE1.11 a decision model that fails leaves the decision to the next one, and the turn's metadata says who decided and why the other did not", async () => {
+    const down = modelDecider({ specificationVersion: "v4", provider: "test", modelId: "down", supportedQuestionTypes: ["choice"], doEvaluate: () => Promise.reject(new Error("still loading")) });
+    const { ask } = setup({ deciders: () => [down, lexicalDecider(settings.lexical)] });
+    const listed = await ask("list the files here");
+    expect(listed.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "list-files", by: "harness.lexical/tf-idf", problems: ["test/down: still loading"] } });
+    // A choice hole asks the deciders too, and its problems join the decision's.
+    const shown = await ask("show me the readme");
+    expect(shown.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "show-file", problems: ["test/down: still loading"] } });
   });
 
   it("TE1.2 a script template runs through the bash tool (a choice hole picked by the decision model), and the reply is its outcome", async () => {

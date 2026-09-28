@@ -3,10 +3,12 @@
   "decision": {
     "accept": 0.6,
     "maxOptions": 20,
-    "question": "Which reply template answers this request?",
-    "none": "None of these templates answers this request"
+    "question": "Which intent does the user's message express?",
+    "none": "Something else: a question none of these answers",
+    "rotate": true
   },
   "lexical": {
+    "accept": 0.6,
     "none": 0.2,
     "temperature": 0.08,
     "stopwords": [

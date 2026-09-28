@@ -25,19 +25,28 @@
         "none": {
           "type": "string",
           "minLength": 1
+        },
+        "rotate": {
+          "type": "boolean"
         }
       },
       "required": [
         "accept",
         "maxOptions",
         "question",
-        "none"
+        "none",
+        "rotate"
       ],
       "additionalProperties": false
     },
     "lexical": {
       "type": "object",
       "properties": {
+        "accept": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
         "none": {
           "type": "number",
           "minimum": 0,
@@ -56,6 +65,7 @@
         }
       },
       "required": [
+        "accept",
         "none",
         "temperature",
         "stopwords"

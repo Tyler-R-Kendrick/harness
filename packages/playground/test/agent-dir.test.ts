@@ -23,7 +23,7 @@ function state(overrides: Partial<HarnessState> = {}): HarnessState {
       bash: tool({ description: "Run a bash command", inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string" } }, required: ["command"] }) }),
     },
     approval: (name) => (name === "bash" ? "asks first (/approve ask)" : "runs on its own"),
-    settings: { worker: "templates", tier: "default", approval: "ask", generate: "ask" },
+    settings: { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: "model" },
     decisionModel: "harness.lexical/tf-idf",
     generators: ["claude.sample/sample"],
     templates: [showFile, listFiles],
@@ -95,7 +95,7 @@ describe("the harness as an Eve agent directory in the filesystem", () => {
     const bash = new Bash({ cwd: HOME, files: {} });
     await syncAgentDir(bash.fs, state());
     expect((await syncAgentDir(bash.fs, state())).written).toEqual([]);
-    const changed = await syncAgentDir(bash.fs, state({ templates: [listFiles], settings: { worker: "echo", tier: "default", approval: "ask", generate: "off" } }));
+    const changed = await syncAgentDir(bash.fs, state({ templates: [listFiles], settings: { worker: "echo", tier: "default", approval: "ask", generate: "off", decide: "model" } }));
     expect(changed.written.sort()).toEqual([`${HOME}/AGENTS.md`, `${AGENT}/.generated`, `${AGENT}/agent.ts`].sort());
     expect(changed.removed).toEqual([`${AGENT}/workflows/show-file.sh`]);
     expect(await bash.fs.exists(`${AGENT}/workflows/show-file.sh`)).toBe(false);

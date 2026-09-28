@@ -7,7 +7,10 @@ import wtermCss from "@wterm/dom/css?inline";
 import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
-import { IndexedDbStorage } from "@harness/platform-browser";
+import { parseCatalog } from "@harness/cognitive";
+import { buildBrowserEnsemble, IndexedDbStorage } from "@harness/platform-browser";
+import benchmarksFile from "@harness/cognitive/data/benchmarks.json?raw";
+import catalogFile from "@harness/cognitive/data/catalog.json?raw";
 import { storedConversations } from "@harness/workers";
 import settingsFile from "../data/templates.json?raw";
 import helpSeed from "../data/templates/help.md?raw";
@@ -17,7 +20,8 @@ import showFileSeed from "../data/templates/show-file.md?raw";
 import todaySeed from "../data/templates/today.md?raw";
 import { AGENT, syncAgentDir } from "./agent-dir.ts";
 import type { HarnessState } from "./agent-dir.ts";
-import { lexicalJudge } from "./decide.ts";
+import { lexicalDecider } from "./decide.ts";
+import { DecisionModel, pickDecisionModel } from "./decision-model.ts";
 import { TemplateEngine } from "./engine.ts";
 import { parseEngineSettings } from "./engine-settings.ts";
 import { TEMPLATES, TemplateStore } from "./templates.ts";
@@ -87,11 +91,12 @@ const GREETING = [
   "  \x1b[36m/ask\x1b[0m <prompt>         answered from a template (~/agent/templates) before any inference",
   "  \x1b[36m/ask\x1b[0m $ <command>      runs a command through the agent's bash tool and its approval",
   "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether writing one asks first",
+  "  \x1b[36m/decide\x1b[0m               which decision model picks templates, and how it is doing",
   "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
-const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask" };
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: "model" };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -124,6 +129,40 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   void resyncHarness?.().then(refreshFiles);
 });
 
+// ---- the decision model: the catalog's local one for a browser (Julia 1), on WebGPU --------
+
+const decidingModel = pickDecisionModel(parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile)));
+const decisionModel = new DecisionModel({
+  model: decidingModel,
+  ensemble: {
+    resolve: async (task, kind) => {
+      // onnxruntime-web comes with the page; its WebAssembly from its CDN (one bundled file has none beside it).
+      const ort = await import("onnxruntime-web/webgpu");
+      const ensemble = buildBrowserEnsemble({
+        catalog: { models: decidingModel ? [decidingModel] : [], preferences: {} },
+        allowHosted: false,
+        onnxruntime: ort,
+        onnxWasm: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`,
+        onCacheProblem: (key, e) => tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` }),
+      });
+      // A member that fails to load says why; the ensemble only says none is available.
+      return ensemble.resolve(task, kind).catch((e: unknown) => {
+        throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
+      });
+    },
+  },
+  onChange: () => {
+    tracer.record({ kind: "host", name: "decision model", detail: decisionModel.status() });
+    sync();
+    // Which model decides is part of the harness's state (~/AGENTS.md).
+    void resyncHarness?.().then(refreshFiles);
+  },
+});
+/** Load the decision model when it is wanted (once). */
+const wantDecisionModel = () => {
+  if (settings.decide === "model") decisionModel.load();
+};
+
 // ---- controls ---------------------------------------------------------------------------
 
 function sync() {
@@ -141,6 +180,11 @@ function sync() {
   const pill = $("claude-pill");
   pill.dataset["state"] = claudeState;
   pill.textContent = claudeState === "ready" ? "Claude: ready" : claudeState === "off" ? "Claude: not reachable here" : "Claude: checking";
+  const decides = $("decide-pill");
+  const phase = settings.decide === "lexical" ? "lexical" : decisionModel.phase();
+  decides.dataset["state"] = phase === "ready" ? "ready" : phase === "loading" || phase === "idle" ? "checking" : "off";
+  decides.textContent = `Decides: ${phase === "ready" ? (decidingModel?.name ?? "model") : phase === "loading" ? `loading ${decidingModel?.name ?? "model"}` : "lexical"}`;
+  decides.title = settings.decide === "lexical" ? "The lexical judge picks templates (/decide model for a decision model)" : decisionModel.status();
   $("session-line").textContent = playground?.sessionId ? `session ${short(playground.sessionId)}` : "no session yet";
 }
 
@@ -573,7 +617,7 @@ async function boot() {
   if (savedVfs) await restoreVfs(bash.fs, HOME, savedVfs);
 
   const templateStore = new TemplateStore(bash.fs, { retireMargin: engineSettings.curation.retireMargin });
-  const judge = lexicalJudge(engineSettings.lexical);
+  const lexical = lexicalDecider(engineSettings.lexical);
   const facts = {
     cwd: () => HOME,
     files: () => [...files.keys()].filter((f) => !f.startsWith(`${HOME}/agent/`)).map((f) => f.slice(HOME.length + 1)).join("\n"),
@@ -586,7 +630,7 @@ async function boot() {
     store: templateStore,
     settings: engineSettings,
     facts,
-    judge: () => judge,
+    deciders: () => decisionModel.deciders(settings.decide, lexical),
     generators: () => (claudeState === "ready" ? [claude] : []),
     generation: () => settings.generate,
   });
@@ -609,7 +653,10 @@ async function boot() {
     tools: { ...vfsTools(bash), ...engine.tools() },
     approval: approvalOf,
     settings,
-    decisionModel: `${judge.provider}/${judge.modelId}`,
+    decisionModel:
+      settings.decide === "lexical"
+        ? "the lexical judge (harness.lexical/tf-idf) alone (/decide lexical)"
+        : `${decisionModel.name ?? "none for a browser"}: ${decisionModel.status()}; the lexical judge (harness.lexical/tf-idf) behind it`,
     generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
     templates: (await templateStore.list()).templates,
     facts: Object.keys(facts),
@@ -645,7 +692,9 @@ async function boot() {
     workers: ["templates", "echo", "shell", "claude"],
     engine,
     store: templateStore,
+    decider: decisionModel,
     onChange: () => {
+      wantDecisionModel();
       sync();
       pageSaver?.request();
       void syncHarness().then(refreshFiles);
@@ -683,6 +732,7 @@ async function boot() {
     write(promptFor(shell.cwd));
     sync();
     term.focus();
+    wantDecisionModel();
     document.documentElement.dataset["booted"] = "restored";
     await claudeReady;
     return;
@@ -700,6 +750,7 @@ async function boot() {
   sync();
   saveAll();
   term.focus();
+  wantDecisionModel();
   document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }

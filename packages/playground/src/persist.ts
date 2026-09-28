@@ -9,6 +9,7 @@
 import type { IFileSystem } from "just-bash";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
+import { DECIDE } from "./decide.ts";
 import { GENERATIONS } from "./engine.ts";
 import type { TraceEvent } from "./trace.ts";
 
@@ -72,7 +73,7 @@ const turnReport = z.object({
 const pageState = z.object({
   version: z.literal(1),
   sessionId: z.string().optional(),
-  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z.enum(GENERATIONS).default("ask") }),
+  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z.enum(GENERATIONS).default("ask"), decide: z.enum(DECIDE).default("model") }),
   turns: z.array(z.object({ prompt: z.string(), report: turnReport })),
 });
 

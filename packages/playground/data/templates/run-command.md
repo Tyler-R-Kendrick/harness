@@ -1,5 +1,5 @@
 ---
-description: Runs the shell command given after a $ sign
+description: To run the shell command given after a $ sign
 examples:
   - $ ls -la
   - $ cat README.md

@@ -28,12 +28,12 @@ afterAll(async () => {
   await new Promise((resolve) => server?.close(resolve));
 });
 
-/** The page, with fonts left out (no network in tests) and its errors collected. */
+/** The page, with fonts and model downloads left out (no network in tests: the decision model cannot load) and its errors collected. */
 async function open(init?: () => void): Promise<{ page: Page; errors: string[] }> {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
+  await page.route(/fonts\.(googleapis|gstatic)\.com|huggingface\.co|cdn\.jsdelivr\.net/, (route) => route.abort());
   if (init) await page.addInitScript(init);
   await page.goto(origin);
   await booted(page, errors);
@@ -94,6 +94,28 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#daemon").innerText()).toContain("turn.ended");
     await page.click("#tab-timeline");
     expect(Number(await page.locator("#count-timeline").textContent())).toBeGreaterThan(10);
+    expect(errors).toEqual([]);
+    await page.close();
+  });
+
+  it("PI1.5 the decision model (the catalog's one for a browser) starts loading at boot; when it cannot load, the page says why and the lexical judge keeps deciding; /decide lexical turns it off", async () => {
+    const { page, errors } = await open();
+    await page.waitForFunction(() => document.getElementById("decide-pill")?.dataset["state"] === "off", undefined, { timeout: 30_000 });
+    expect(await page.locator("#decide-pill").textContent()).toBe("Decides: lexical");
+    expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/could not load .*; the lexical judge decides/);
+    await type(page, "/decide");
+    await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("decision model: "));
+    expect(await terminalText(page)).toMatch(/model \(one of model, lexical\)\s+decision model: .+: could not load/);
+    // The template still answers, decided lexically, and the timeline says the model did not load.
+    await type(page, "/ask what files are here?");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    expect(await terminalText(page)).toContain("README.md");
+    await page.click("#tab-timeline");
+    expect(await page.locator("#events").innerText()).toContain("decision model");
+    await type(page, "/decide lexical");
+    await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.startsWith("The lexical judge picks templates"));
+    await type(page, "cat AGENTS.md | grep -c 'lexical judge (harness.lexical/tf-idf) alone'");
+    await page.waitForFunction(() => /\n1\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
     expect(errors).toEqual([]);
     await page.close();
   });

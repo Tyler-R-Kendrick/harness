@@ -24,7 +24,8 @@ export async function buildPlayground(options: { readonly minify?: boolean } = {
       logLevel: "warn",
       resolve: {
         alias: [
-          ...HARNESS.map((name) => ({ find: `@harness/${name}`, replacement: join(packages, name, "src/index.ts") })),
+          // Each package's entry; its other exports (a package's data files) resolve as files.
+          ...HARNESS.map((name) => ({ find: new RegExp(`^@harness/${name}$`), replacement: join(packages, name, "src/index.ts") })),
           // just-bash's browser bundle names node:zlib for gzip commands the page never runs.
           { find: /^node:zlib$/, replacement: join(here, "zlib-stub.ts") },
         ],
@@ -35,7 +36,8 @@ export async function buildPlayground(options: { readonly minify?: boolean } = {
         target: "es2022",
         minify: options.minify ?? true,
         modulePreload: false,
-        assetsInlineLimit: Number.MAX_SAFE_INTEGER,
+        // Everything is inlined but WebAssembly: onnxruntime-web's (tens of MB each) is fetched from its CDN at run time (`onnxWasm`).
+        assetsInlineLimit: (file: string) => !file.endsWith(".wasm"),
         rollupOptions: { input: join(here, "src/app.ts"), output: { format: "es", entryFileNames: "app.js", codeSplitting: false } },
       },
     });

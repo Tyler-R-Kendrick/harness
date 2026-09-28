@@ -8,6 +8,8 @@
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import { cac } from "cac";
 import type { Bash, BashExecResult, ExecOptions } from "just-bash";
+import { DECIDE } from "./decide.ts";
+import type { Decide } from "./decide.ts";
 import { GENERATIONS } from "./engine.ts";
 import type { Generation, TemplateEngine } from "./engine.ts";
 import type { Playground, TurnReport } from "./playground.ts";
@@ -23,6 +25,8 @@ export interface Settings {
   approval: ApprovalPolicy;
   /** Whether generating (spending inference on a template) asks first, runs on auto, or is off. */
   generate: Generation;
+  /** Whether a decision model picks templates (the lexical one standing in until it is ready), or the lexical one alone. */
+  decide: Decide;
 }
 
 const TIERS: readonly ModelTier[] = ["quick", "default", "complex"];
@@ -175,6 +179,8 @@ export interface ShellContext {
   /** The template engine `/ask` answers from, and its templates, for `/templates` and `/rate`. */
   readonly engine?: TemplateEngine;
   readonly store?: TemplateStore;
+  /** How the decision model is doing (loading, ready and where, or why not), for `/decide` and `/status`. */
+  readonly decider?: { status(): string };
 }
 
 /** A path under home as the terminal shows it. */
@@ -322,6 +328,11 @@ export class SlashCommands {
     cli.command("tier [tier]", "Show or pick Claude's tier: quick, default or complex").action((v: string | undefined) => choose("tier", v, TIERS, () => settings.tier, (t) => (settings.tier = t)));
     cli.command("approve [policy]", "Ask before commands and writes, or run them on auto").action((v: string | undefined) => choose("policy", v, POLICIES, () => settings.approval, (p) => (settings.approval = p)));
     cli.command("generate [mode]", "Whether writing a template (inference) asks first, runs on auto, or is off").action((v: string | undefined) => choose("generate", v, GENERATIONS, () => settings.generate, (g) => (settings.generate = g)));
+    cli.command("decide [mode]", "Whether a decision model picks templates (lexical until it is ready), or the lexical one alone").action((v: string | undefined) => {
+      const status = this.#ctx.decider?.status();
+      if (v === undefined && status !== undefined) return ok(`${settings.decide} (one of ${DECIDE.join(", ")})\ndecision model: ${status}\n`);
+      return choose("decide", v, DECIDE, () => settings.decide, (d) => (settings.decide = d));
+    });
     cli.command("templates", "The templates /ask answers from, with their feedback (files in ~/agent/templates)").action(async () => {
       const { store } = this.#ctx;
       if (!store) return fail("no template engine here\n", 1);
@@ -355,6 +366,7 @@ export class SlashCommands {
         ["tier", settings.tier],
         ["approve", settings.approval],
         ["generate", settings.generate],
+        ["decide", settings.decide === "model" && this.#ctx.decider ? `model: ${this.#ctx.decider.status()}` : settings.decide],
         ["hook events", hooks],
         ["trace events", tracer.events().length],
         ["capabilities", playground.host.daemon.capabilities().map((c) => c.name).join(", ")],

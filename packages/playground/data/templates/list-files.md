@@ -1,5 +1,5 @@
 ---
-description: Lists the files in the working directory
+description: A list of the files in the working directory
 examples:
   - what files are here?
   - list the files
