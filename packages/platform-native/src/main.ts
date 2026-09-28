@@ -16,7 +16,7 @@ import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, nativeStepEvictions, proceduralStore, snapshotSessions } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -190,7 +190,11 @@ if (procedural && generator) {
   live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()) });
 }
 
+// The step hook forgets each session the daemon detaches (its pinned view and guidance cache).
+const evictions = step && nativeStepEvictions({ runtime: host.runtime, step, log: (message) => void process.stderr.write(`${message}\n`) });
+
 const shutdown = async () => {
+  evictions?.close();
   live.learner?.close();
   await host.close();
   await harness?.close();

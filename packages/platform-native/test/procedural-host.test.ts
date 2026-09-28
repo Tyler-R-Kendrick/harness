@@ -21,6 +21,7 @@ import {
   loadProceduralResolver,
   loadProceduralSettings,
   nativeProceduralStep,
+  nativeStepEvictions,
   NodeHost,
   pumpHookEvents,
   sessionLogReader,
@@ -40,7 +41,7 @@ function client(host: NodeHost) {
     for (let i = 0; i < 400 && !replies.has(mine); i++) await new Promise((r) => setTimeout(r, 5));
     return replies.get(mine)!["result"] as Record<string, unknown>;
   };
-  return { request };
+  return { request, disconnect: () => connection.disconnect() };
 }
 
 async function withSession() {
@@ -49,7 +50,7 @@ async function withSession() {
   await c.request("initialize", { protocolVersion: 1 });
   const { sessionId } = (await c.request("session/new", { cwd: "/", mcpServers: [] })) as { sessionId: string };
   const prompt = (text: string) => c.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
-  return { host, sessionId, prompt };
+  return { host, sessionId, prompt, leave: c.disconnect };
 }
 
 describe("procedural host plumbing", () => {
@@ -199,6 +200,25 @@ describe("procedural guidance and access on the native host", () => {
     const text = events.flatMap((e) => (e.type === "update" && e.update.sessionUpdate === "agent_message_chunk" && e.update.content.type === "text" ? [e.update.content.text] : [])).join("");
     expect(text).toMatch(/^got .*Search first\.[\s\S]*one$/);
     await harness.close();
+  });
+
+  it("PX2.68 the step hook forgets a session the daemon detaches: its next step is guided afresh", async () => {
+    const { host, sessionId, leave } = await withSession();
+    const store = await seeded();
+    const notices: { _meta: { harness: { procedural: { step: { cached: boolean } } } } }[] = [];
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine, principal: "me" });
+    const evictions = nativeStepEvictions({ runtime: host.runtime, step, intervalMs: 60_000 });
+    const input = (stepNumber: number) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber, model: scriptedModel(() => "Start by searching."), report: (n: unknown) => void notices.push(n as (typeof notices)[number]) });
+    await step.prepare(input(0));
+    await step.prepare(input(1));
+    await evictions.drain();
+    await step.prepare(input(2));
+    leave();
+    await evictions.drain();
+    await step.prepare(input(3));
+    expect(notices.map((n) => n._meta.harness.procedural.step.cached)).toEqual([false, true, true, false]);
+    evictions.close();
+    await host.close();
   });
 
   it("PX2.55 the policy file binds to the host's principal; the resolver loads from procedural's data file by default", () => {
