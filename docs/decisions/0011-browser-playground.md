@@ -16,16 +16,26 @@ no scripts from other hosts, no network.
   `ClientSideConnection`) over a `MessageChannel`, exactly as another tab would connect.
 - **The terminal is Vercel's wterm** (`@wterm/dom`), running **just-bash**
   (`@wterm/just-bash`'s `BashShell`), a bash interpreter over an in-memory filesystem. The
-  harness adds `ask` and `harness …` commands to that shell, so turns, sessions, workers,
-  approvals and traces are driven from the terminal. Tool approvals are asked in the
-  terminal and answered with one key.
+  harness adds slash commands (`/ask`, `/sessions`, `/worker`, `/trace`, `/help` …),
+  read before bash sees the line and parsed by **cac**, a command-line parser (options,
+  per-command `--help`, unknown-option errors), so turns, sessions, workers, approvals and
+  traces are driven from the terminal. Words are split leniently (a quote opens only at
+  the start of a word and only if it closes, so a prompt's apostrophe is a letter);
+  `/ask` takes the rest of its line as typed; the others' output pipes into bash
+  (`/trace 100 | grep model`), and a path that exists (`/bin/ls`) is still bash's. cac
+  because it runs in a page (it checks for `process`, and needs no Node module) and Vite
+  depends on it; citty 0.2 imports `node:util`, yargs' browser build loads its
+  dependencies from URLs at run time, and clipanion reads `process.env` when loaded.
+  Tool approvals are asked in the terminal and answered with one key.
 - **The agent's tools run in a just-bash shell of their own over the terminal's
   filesystem**, so the person and the agent share one filesystem, but the terminal's
-  harness commands (`ask`, `harness`) are not the agent's: a tool call cannot start a
+  slash commands are not the agent's: a tool call cannot start a
   turn, switch sessions, change approvals or reset the page. They are `bash`, `readFile` and `writeFile`, named and shaped
   as Vercel's `bash-tool`; we do not use `bash-tool` itself because it imports `node:fs`,
   `node:path` and fast-glob at module load and so does not bundle for a page.
 - **Claude through the artifact's `sample` capability, as an AI SDK `LanguageModelV4`.**
+  Since ADR 0012 it is not the default: the default worker answers from templates, and
+  Claude writes a template (asking first) or runs as the worker when a person picks it.
   The capability takes plain turns and returns text; the call's instructions, tools and
   conversation are rendered as turns, and the reply's shape is fixed as one JSON object
   (`{"text", "toolCalls"}`) whose `text` streams as it is written. The capability takes no
@@ -52,7 +62,7 @@ no scripts from other hosts, no network.
 
 - What the playground keeps lives in the viewer's browser (IndexedDB, one database with a
   record each for the daemon's snapshot, the filesystem and the page's state, and one per
-  session's agent conversation), restored on reload and cleared by `harness reset`. Conversations are kept
+  session's agent conversation), restored on reload and cleared by `/reset`. Conversations are kept
   by the agent worker through an optional `ConversationStore`, since the daemon's session
   log holds ACP updates, not the model messages an agent continues from. The filesystem
   is saved whole after each command, tool run and turn; a turn running at a reload ends

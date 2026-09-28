@@ -130,6 +130,19 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(model.doStreamCalls[1]!.prompt.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
+  it("AW1.20 instructions given as a function are read anew each turn (a file the person edits, say)", async () => {
+    const model = scripted([...text("a"), finish()], [...text("b"), finish()]);
+    let said = "Be brief.";
+    const worker = new AgentWorker({ agent: sessionAgent({ model, instructions: async () => said }) });
+    await run(worker, [{ type: "text", text: "one" }]).done;
+    said = "Be thorough.";
+    await run(worker, [{ type: "text", text: "two" }], "s1", "t2").done;
+    expect(model.doStreamCalls.map((c) => c.prompt[0])).toEqual([
+      { role: "system", content: "Be brief." },
+      { role: "system", content: "Be thorough." },
+    ]);
+  });
+
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {
     const model = scripted([...text("text"), finish()]);
     const vision = scripted([...text("a cat"), finish()]);
@@ -329,7 +342,7 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([[], ["learned"]]);
   });
 
-  it("AW1.20 tools given anew each turn are told the turn's session, turn, cwd and meta, so a session can get tools of its own", async () => {
+  it("AW1.24 tools given anew each turn are told the turn's session, turn, cwd and meta, so a session can get tools of its own", async () => {
     const scopes: unknown[] = [];
     const learned = tool({ description: "A tool of session s2.", inputSchema: z.object({}), execute: async () => "ok" });
     const model = scripted([...text("one"), finish()]);

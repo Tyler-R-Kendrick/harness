@@ -61,10 +61,12 @@ describe("the page's own state across reloads", () => {
   const report = { stopReason: "end_turn", diff: { added: [], modified: ["/home/user/a"], removed: [] }, toolCalls: 1, modelCalls: 2, ms: 30 };
 
   it("PS2.1 the current session, the settings and the turns are parsed back; anything else is no state", () => {
-    const state = { version: 1, sessionId: "ses_1", settings: { worker: "shell", tier: "quick", approval: "auto" }, turns: [{ prompt: "hi", report }] };
+    const state = { version: 1, sessionId: "ses_1", settings: { worker: "shell", tier: "quick", approval: "auto", generate: "off" }, turns: [{ prompt: "hi", report }] };
     expect(parsePageState(state)).toEqual(state);
+    // A page kept before generation had a setting asks first.
+    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings.generate).toBe("ask");
     expect(parsePageState({ ...state, sessionId: undefined })).toEqual({ ...state, sessionId: undefined });
-    for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
+    for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, settings: { ...state.settings, generate: "always" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
   });
 });
 

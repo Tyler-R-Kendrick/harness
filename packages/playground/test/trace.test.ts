@@ -216,6 +216,20 @@ describe("tracing model calls (AI SDK middleware)", () => {
     await streamText({ model: wrapped, prompt: "hi", onError: () => {} }).consumeStream();
     expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { error: "mid-stream" } });
   });
+  it("TR5.7 what a call reports in its provider metadata (the template engine's decision) is on its span's end", async () => {
+    const tracer = new Tracer(() => 0);
+    const meta = { harness: { template: "list-files", by: "harness.lexical/tf-idf" } };
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({ content: [{ type: "text", text: "x" }], finishReason: { unified: "stop", raw: undefined }, usage, providerMetadata: meta, warnings: [] }),
+      doStream: async () => ({ stream: convertArrayToReadableStream([{ type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: "x" }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage, providerMetadata: meta }]) }),
+    });
+    const wrapped = wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) });
+    await generateText({ model: wrapped, prompt: "hi" });
+    expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "generate", detail: { metadata: meta } });
+    await streamText({ model: wrapped, prompt: "hi" }).text;
+    expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { metadata: meta } });
+  });
+
   it("TR5.4 a streamed call that fails to start is recorded as failed and still fails", async () => {
     const tracer = new Tracer(() => 0);
     const model = new MockLanguageModelV4({

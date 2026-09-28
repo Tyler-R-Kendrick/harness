@@ -189,7 +189,8 @@ export function sessionAgent(options: {
   readonly model: LanguageModel;
   /** Takes turns that send images, when given. */
   readonly vision?: LanguageModel;
-  readonly instructions?: string;
+  /** Instructions, or a function giving them anew each turn (e.g. a file the person edits). */
+  readonly instructions?: string | (() => string | Promise<string>);
   /**
    * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
    * grows as learning builds tools), told the turn's scope and conversation so a session
@@ -224,7 +225,7 @@ export function sessionAgent(options: {
       const memories = options.memory && said ? await options.memory.recall(said, { excludeSession: turn.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];
       const notes = options.consult && said ? await consultOn(options.consult, said) : "";
       const instructions = [
-        options.instructions,
+        typeof options.instructions === "function" ? await options.instructions() : options.instructions,
         playbook,
         memories.length ? `Relevant memories from earlier sessions:\n${memories.map((m) => `- ${m.text}`).join("\n")}` : "",
         notes ? `Reference notes from a larger model (check them before relying on them):\n${notes}` : "",

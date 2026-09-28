@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "decision": {
+      "type": "object",
+      "properties": {
+        "accept": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "maxOptions": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "none": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "accept",
+        "maxOptions",
+        "question",
+        "none"
+      ],
+      "additionalProperties": false
+    },
+    "lexical": {
+      "type": "object",
+      "properties": {
+        "none": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "temperature": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "stopwords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "none",
+        "temperature",
+        "stopwords"
+      ],
+      "additionalProperties": false
+    },
+    "curation": {
+      "type": "object",
+      "properties": {
+        "retireMargin": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "retireMargin"
+      ],
+      "additionalProperties": false
+    },
+    "generation": {
+      "type": "object",
+      "properties": {
+        "write": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fill": {
+          "type": "string",
+          "minLength": 1
+        },
+        "refine": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "write",
+        "fill",
+        "refine"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "decision",
+    "lexical",
+    "curation",
+    "generation"
+  ],
+  "additionalProperties": false
+}

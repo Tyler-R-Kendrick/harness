@@ -6,7 +6,7 @@ import { z } from "zod";
  * expression, or a template of fixed text with holes. A template puts the known text
  * in the output without the model having to produce it and leaves the model only the
  * holes, each optionally constrained itself. Read a template's holes back with
- * readTemplate.
+ * readTemplate, and fill them with fillTemplate.
  */
 export const CONSTRAINT_TYPES = ["json-schema", "grammar", "regex", "template"] as const;
 export type ConstraintType = (typeof CONSTRAINT_TYPES)[number];
@@ -33,6 +33,28 @@ export const ConstraintSchema = z.union([JsonSchemaConstraint, GrammarConstraint
 export type Constraint = z.output<typeof ConstraintSchema>;
 export type TemplateConstraint = z.output<typeof TemplateConstraint>;
 
+type TemplateHole = Exclude<TemplateConstraint["parts"][number], string>;
+
+/** Refuse a value its hole's regex does not match. */
+function fits(hole: TemplateHole, value: string): void {
+  if (hole.constraint?.type === "regex" && !new RegExp(`^(?:${hole.constraint.pattern})$`).test(value)) {
+    throw new Error(`hole ${hole.hole} does not match /${hole.constraint.pattern}/: ${value}`);
+  }
+}
+
+/** A template's text with its holes filled (the inverse of readTemplate); every hole needs a value that fits it. */
+export function fillTemplate(template: TemplateConstraint, values: Readonly<Record<string, string>>): string {
+  return template.parts
+    .map((part) => {
+      if (typeof part === "string") return part;
+      const value = values[part.hole];
+      if (value === undefined) throw new Error(`hole ${part.hole} has no value`);
+      fits(part, value);
+      return value;
+    })
+    .join("");
+}
+
 /** The holes of a template's output, by name. The text must follow the template exactly. */
 export function readTemplate(template: TemplateConstraint, text: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -47,9 +69,7 @@ export function readTemplate(template: TemplateConstraint, text: string): Record
     const end = next === undefined ? rest.length : rest.indexOf(next);
     if (end < 0) throw new Error(`the output has no ${JSON.stringify(next)} after hole ${part.hole}`);
     const value = rest.slice(0, end);
-    if (part.constraint?.type === "regex" && !new RegExp(`^(?:${part.constraint.pattern})$`).test(value)) {
-      throw new Error(`hole ${part.hole} does not match /${part.constraint.pattern}/: ${value}`);
-    }
+    fits(part, value);
     values[part.hole] = value;
     rest = rest.slice(end);
   });

@@ -30,7 +30,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/platform-native` | Node host: stdio/socket/WebSocket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
 | `packages/platform-browser` | browser host (tab, PWA, shared worker, extension): ACP over MessagePorts (Web Lock liveness) and extension runtime ports, IndexedDB snapshots, the ensemble with a Cache API byte cache (and packaged code for extensions, `/vite`), durable workflows on QuickJS | host (browser) |
 | `packages/evals` | eval runner; the best reachable judgment model from the catalog as judge | host |
-| `packages/playground` | browser playground: the browser host in one page, driven from a wterm terminal (just-bash) with traces, the daemon's state and the filesystem's changes beside it; builds to one HTML file (`node packages/playground/build.ts`) | host (browser) |
+| `packages/playground` | browser playground: the browser host in one page, driven from a wterm terminal (just-bash, slash commands parsed by cac) with traces, the daemon's state and the filesystem's changes beside it; `/ask` answers from templates in the filesystem before any inference (a decision model picks, generators write only with consent); the harness's state written into its filesystem as an Eve agent directory (`~/AGENTS.md`, `~/agent/`); builds to one HTML file (`node packages/playground/build.ts`) | host (browser) |
 
 `tools/model-lab` holds offline Python tools that produce files the product loads (steerable
 exports, SAE rows); nothing in `packages/` imports it.
