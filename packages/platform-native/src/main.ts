@@ -285,8 +285,9 @@ if (values.stdio) {
 }
 if (values.socket !== undefined) {
   await host.listen(values.socket);
-  // harness-procedural reaches the store through this socket while the daemon holds it.
-  await storeLock?.advertise(resolve(values.socket));
+  // harness-procedural reaches the store through this socket while the daemon holds it, when
+  // the daemon serves `procedural.*` (its cognitive core has the extension); otherwise it refuses.
+  if (cognitive) await storeLock?.advertise(resolve(values.socket));
   process.stderr.write(`harness listening on ${values.socket}\n`);
 }
 if (values.ws !== undefined) {

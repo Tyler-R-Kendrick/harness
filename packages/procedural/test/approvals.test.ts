@@ -304,7 +304,7 @@ describe("the approvals inbox", () => {
       ],
     })));
 
-    it("PX2.80 what the edits delete and add back is not taken for something the head already has: re-adding it after the deletion is kept, so a head that already made the change is unchanged", async () => {
+    it("PX2.114 what the edits delete and add back is not taken for something the head already has: re-adding it after the deletion is kept, so a head that already made the change is unchanged", async () => {
       const P = verifying();
       // Rebuild Verify with new texts, and rewrite Start's edge: deletions, then the same things added back.
       const rebuild = edits({
@@ -328,7 +328,7 @@ describe("the approvals inbox", () => {
       expect(await approveCandidate({ store, record, preset: ungated, clock })).toEqual({ status: "unchanged", graph: GRAPH, candidate: record.id, head });
     });
 
-    it("PX2.81 on the head it was proposed on, a candidate is its stored document exactly; an import on a later head is its document with the new head as parent; a rebase follows the preset's cycle policy", async () => {
+    it("PX2.115 on the head it was proposed on, a candidate is its stored document exactly; an import on a later head is its document with the new head as parent; a rebase follows the preset's cycle policy", async () => {
       // An edit set that adds an edge G₀ already has: the dream's document holds it twice, and that is what commits.
       const twice = edits({ add_edges: [{ source: "Start", target: "First_Hop_Retrieve", relation: "LEADS_TO", condition: null, guidance: "After Start, go to First_Hop_Retrieve.", pitfalls: "Do not skip First_Hop_Retrieve." }] });
       const doubled = proposal({ edits: twice });
