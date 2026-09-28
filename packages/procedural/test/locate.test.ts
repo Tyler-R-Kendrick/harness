@@ -154,4 +154,37 @@ describe("neighborhood", () => {
     expect(() => neighborhood(g, name("Start"), 1.5)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Start"), Number.NaN)).toThrow("hops");
   });
+
+  // Research §2.2 item 3 (plan §5.2): under exact matching a reasoning node is never active, so
+  // with h = 2 two of them after an action hide the next tool node. Action hops end at ACTION nodes.
+  const reasoning = (id: string): DocInput["nodes"][number] => ({ id, type: "REASONING", description: `${id}.` });
+  const hidden = () =>
+    view(
+      graphOf(
+        [{ id: "Start", type: "STATUS", description: "Begin." }, node("Retrieve"), reasoning("Scan_Index"), reasoning("Decide_Capital"), node("Answer_Lookup"), node("Verify"), { id: "End", type: "STATUS", description: "Done." }],
+        [edge("Start", "Retrieve"), edge("Retrieve", "Scan_Index"), edge("Scan_Index", "Decide_Capital"), edge("Decide_Capital", "Answer_Lookup"), edge("Answer_Lookup", "Verify"), edge("Verify", "End")],
+      ),
+    );
+
+  it("PG3.28 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
+    const g = hidden();
+    expect(neighborhood(g, name("Retrieve"), 2).hops.map(pairs)).toEqual([["Retrieve→Scan_Index"], ["Scan_Index→Decide_Capital"]]);
+    expect(neighborhood(g, name("Retrieve"), 2, "edge")).toEqual(neighborhood(g, name("Retrieve"), 2));
+    expect(neighborhood(g, name("Retrieve"), 2, "action").hops.map(pairs)).toEqual([["Retrieve→Scan_Index", "Scan_Index→Decide_Capital", "Decide_Capital→Answer_Lookup"], ["Answer_Lookup→Verify"]]);
+    // A non-action active node (Start is a status) counts its first action as hop 1 too; a terminal ends a hop.
+    expect(neighborhood(g, name("Start"), 3, "action").hops.map(pairs)).toEqual([["Start→Retrieve"], ["Retrieve→Scan_Index", "Scan_Index→Decide_Capital", "Decide_Capital→Answer_Lookup"], ["Answer_Lookup→Verify"]]);
+    expect(neighborhood(g, name("Verify"), 2, "action").hops.map(pairs)).toEqual([["Verify→End"], []]);
+  });
+
+  it("PG3.29 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
+    const g = view(
+      graphOf(
+        [node("Start"), reasoning("R1"), reasoning("R2"), node("A"), node("B"), { id: "End", type: "STATUS", description: "Done." }],
+        [edge("Start", "R1"), edge("Start", "A"), edge("R1", "R2"), edge("R2", "R1"), edge("R2", "B"), edge("A", "B"), edge("B", "End")],
+      ),
+    );
+    expect(neighborhood(g, name("Start"), 3, "action").hops.map(pairs)).toEqual([["Start→R1", "Start→A", "R1→R2", "R2→R1", "R2→B"], ["A→B", "B→End"], []]);
+    expect(neighborhood(g, name("R1"), 1, "action").hops.map(pairs)).toEqual([["R1→R2", "R2→R1", "R2→B"]]);
+    expect(neighborhood(g, name("Start"), 0, "action")).toEqual({ active: "Start", hops: [] });
+  });
 });

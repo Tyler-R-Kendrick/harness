@@ -61,6 +61,43 @@ describe("neighborhood", () => {
       expect(new Set(edges)).toEqual(new Set(expected));
     });
   });
+
+  /** Some nodes turned into reasoning nodes, by a mask. */
+  const mixed = fc.tuple(graph, fc.array(fc.boolean(), { minLength: 8, maxLength: 8 })).map(([g, mask]): EffectiveGraph => ({ ...g, nodes: g.nodes.map((n, i) => (mask[i] ? n : { ...n, type: "REASONING" })) }));
+
+  /** 0-1 breadth-first distances: entering an ACTION node costs one hop, anything else none (the active node's own type does not count). */
+  function actionDistances(g: EffectiveGraph, from: string): Map<string, number> {
+    const d = new Map([[from, 0]]);
+    const deque = [from];
+    for (let u = deque.shift(); u !== undefined; u = deque.shift()) {
+      for (const e of g.edges) {
+        if (e.from !== u) continue;
+        const cost = g.nodes.find((n) => n.id === e.to)!.type === "ACTION" ? 1 : 0;
+        const via = d.get(u)! + cost;
+        if (!d.has(e.to) || via < d.get(e.to)!) {
+          d.set(e.to, via);
+          if (cost === 0) deque.unshift(e.to);
+          else deque.push(e.to);
+        }
+      }
+    }
+    return d;
+  }
+
+  test.prop([mixed, fc.nat(), fc.nat({ max: 5 })])("PG3.P5 in action hops, hop k holds exactly the edges whose source is k − 1 action nodes away, each once; with every node an action it is the edge count", (g, i, hops) => {
+    const active = pick(g, i).id;
+    const n = neighborhood(g, active, hops, "action");
+    const d = actionDistances(g, active);
+    expect(n.hops).toHaveLength(hops);
+    const listed = n.hops.flat();
+    expect(new Set(listed).size).toBe(listed.length);
+    n.hops.forEach((edges, k) => {
+      const expected = g.edges.filter((e) => d.get(e.from) === k);
+      expect(new Set(edges)).toEqual(new Set(expected));
+    });
+    const actions: EffectiveGraph = { ...g, nodes: g.nodes.map((x) => ({ ...x, type: "ACTION" })) };
+    expect(neighborhood(actions, active, hops, "action")).toEqual(neighborhood(actions, active, hops, "edge"));
+  });
 });
 
 describe("match", () => {

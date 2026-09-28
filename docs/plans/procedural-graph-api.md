@@ -1067,6 +1067,19 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Localization extensions (plan §5.2's later list)
+
+As built. These are additions; the paper preset keeps the paper's mechanism exactly.
+
+- **Action hops.** `neighborhood(g, node, hops, unit?: HopUnit)` with
+  `type HopUnit = "edge" | "action"` (default `edge`, the paper's). In `action` hops a
+  step ends only at an `ACTION` node: the outgoing edges of a non-action node a hop
+  reaches first belong to that same hop (breadth first), and the action nodes it reaches
+  start the next. Two reasoning nodes after an action (research §2.2 item 3) then no
+  longer hide the next tool: from `Retrieve → Scan_Index → Decide_Capital → Answer_Lookup`,
+  hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
+  two units agree.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in

@@ -48,21 +48,46 @@ export function match(action: string | undefined, g: EffectiveGraph, mode: Match
 }
 
 /**
+ * What a hop counts (the preset's `hopUnit`): an `edge`, as the paper does, or an
+ * `action`, where a hop runs through reasoning and status nodes to the next `ACTION`
+ * node, so that nodes which are never active cannot hide the next tool behind them.
+ */
+export type HopUnit = "edge" | "action";
+
+/** The node type a hop ends at when hops are counted in actions. */
+const ACTION = "ACTION";
+
+/**
  * `N_h(node)`: hop k holds the outgoing edges of the nodes first reached in k − 1 steps,
  * in document order, so every edge appears once, at the hop that first reaches its
  * source. There are always exactly `hops` hops; those past the horizon are empty.
+ *
+ * In `action` hops a step ends only at an `ACTION` node: the outgoing edges of a
+ * non-action node a hop reaches first belong to that same hop (breadth first), and the
+ * action nodes it reaches start the next.
  */
-export function neighborhood(g: EffectiveGraph, node: NodeName, hops: number): Neighborhood {
+export function neighborhood(g: EffectiveGraph, node: NodeName, hops: number, unit: HopUnit = "edge"): Neighborhood {
   if (!Number.isInteger(hops) || hops < 0) throw new RangeError(`hops must be a whole number, not ${hops}`);
   if (nodeById(g, node) === undefined) throw new RangeError(`node ${node} is not in the graph`);
+  const ends = (id: string): boolean => unit === "edge" || nodeById(g, id)?.type === ACTION;
   const reached = new Set<string>([node]);
   let frontier: string[] = [node];
   const result: EffectiveEdge[][] = [];
   for (let hop = 0; hop < hops; hop++) {
-    const edges = frontier.flatMap((from) => outgoing(g, from));
-    // The targets not reached before, once each, in the order the edges reach them.
-    frontier = [...new Set(edges.map((e) => e.to))].filter((to) => !reached.has(to));
-    for (const to of frontier) reached.add(to);
+    const edges: EffectiveEdge[] = [];
+    const next: string[] = [];
+    // Sources of this hop: the frontier, then the non-action nodes the hop passes through.
+    const sources = [...frontier];
+    for (let i = 0; i < sources.length; i++) {
+      for (const e of outgoing(g, sources[i]!)) {
+        edges.push(e);
+        // Each target not reached before, once, in the order the edges reach it.
+        if (reached.has(e.to)) continue;
+        reached.add(e.to);
+        (ends(e.to) ? next : sources).push(e.to);
+      }
+    }
+    frontier = next;
     result.push(edges);
   }
   return { active: node, hops: result };
