@@ -77,7 +77,7 @@ describe("proceduralExtension", () => {
   });
 
   it("PX2.34 feedback scores a session's turn through the live learner, on the graph the session is pinned to", async () => {
-    const feedback = vi.fn(async () => undefined);
+    const feedback = vi.fn(async () => ({ kind: "observed" as const }));
     const store = new FakeStore();
     await store.pins.set("s1", { graph, core: revisionId(core()), overlay: 0, salt: "x", at: 0 });
     const { op } = extension({ store, feedback });
@@ -85,6 +85,20 @@ describe("proceduralExtension", () => {
     expect(feedback).toHaveBeenCalledWith("s1", "t3", 0.25);
     expect(await op("feedback", { session: "s2", turn: "t1", score: 1 })).toEqual({ status: "missing", reason: "session s2 is not pinned to a graph" });
     expect(await extension({ store }).op("feedback", { session: "s1", turn: "t3", score: 1 })).toEqual({ status: "unavailable", reason: "no live learner is configured" });
+  });
+
+  it("PX2.67 feedback the learner skips is not reported as recorded, and a learner that is not running is unavailable", async () => {
+    const store = new FakeStore();
+    await store.pins.set("s1", { graph, core: revisionId(core()), overlay: 0, salt: "x", at: 0 });
+    const skipping = extension({ store, feedback: async () => ({ kind: "skipped", reason: "the log does not hold the turn, or it names no graph" }) });
+    expect(await skipping.op("feedback", { session: "s1", turn: "typo", score: 1 })).toEqual({ status: "skipped", graph, reason: "the log does not hold the turn, or it names no graph" });
+    const ignoring = extension({ store, feedback: async () => ({ kind: "ignored", reason: "the preset has no overlay" }) });
+    expect(await ignoring.op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "skipped", graph, reason: "the preset has no overlay" });
+    for (const kind of ["rescored", "unchanged", "duplicate"] as const) {
+      expect(await extension({ store, feedback: async () => ({ kind }) }).op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "recorded", graph });
+    }
+    // A host whose learner has not started yet answers nothing.
+    expect(await extension({ store, feedback: async () => undefined }).op("feedback", { session: "s1", turn: "t", score: 1 })).toEqual({ status: "unavailable", reason: "no live learner is configured" });
   });
 
   it("PX2.35 every operation checks the policy for its action on its graph first; a refusal throws and nothing runs", async () => {

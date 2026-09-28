@@ -24,8 +24,11 @@ export interface ProceduralExtensionOptions {
   readonly authorize?: (action: ProceduralAction, graph: GraphId) => boolean;
   /** Runs a dream for a graph (P6's `runDream`, with the host's ports). */
   readonly dream?: (graph: GraphId) => Promise<unknown>;
-  /** Scores a session's turn (P11's `LiveLearner.feedback`). */
-  readonly feedback?: (session: string, turn: string, score: Score) => Promise<unknown>;
+  /**
+   * Scores a session's turn (P11's `LiveLearner.feedback`): what the learner made of it,
+   * or undefined when no learner is running yet.
+   */
+  readonly feedback?: (session: string, turn: string, score: Score) => Promise<{ readonly kind: string; readonly reason?: string } | undefined>;
 }
 
 /** Each operation's input. Built per extension, not at module load. */
@@ -60,7 +63,7 @@ const unavailable = (what: string) => ({ status: "unavailable" as const, reason:
  * - `procedural.graph` (read): a revision (the head by default) with its effective graph
  * - `procedural.history` (read): the heads and every recorded revision
  * - `procedural.export` (read): a revision as JSON, or the effective graph as Mermaid
- * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to
+ * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to (`skipped`, with why, when the learner recorded nothing)
  * - `procedural.dream` (dream): run a dream on the graph
  * - `procedural.revert` (revert): move the head back to an earlier head
  * - `procedural.import` (import): a seed or expert graph; head only for a graph with none
@@ -103,8 +106,10 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
         const pin = await store.pins.get(session);
         if (!pin) return { status: "missing", reason: `session ${session} is not pinned to a graph` };
         check("feedback", "write", pin.graph);
-        if (!options.feedback) return unavailable("live learner");
-        await options.feedback(session, turn, score);
+        const result = await options.feedback?.(session, turn, score);
+        if (result === undefined) return unavailable("live learner");
+        // A turn the learner skipped (not in the log) or ignored (no overlay) recorded nothing.
+        if (result.kind === "skipped" || result.kind === "ignored") return { status: "skipped", graph: pin.graph, reason: result.reason };
         return { status: "recorded", graph: pin.graph };
       },
       dream: async (value) => {
