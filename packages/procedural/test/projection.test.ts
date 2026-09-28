@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { coreView, GraphIdSchema, match, NodeNameSchema, parseGraph, projectTurn, RevisionIdSchema, ScoreSchema, sha256Hex, turnProjection } from "@harness/procedural";
+import { coreView, GraphIdSchema, match, NodeNameSchema, parseGraph, projectTurn, RevisionIdSchema, ScoreSchema, sha256Hex, terminalAfter, turnProjection } from "@harness/procedural";
 import { edge, hotpot } from "./fixtures.ts";
 import type { NodeName, ObservedAction, ProjectionContext } from "@harness/procedural";
-import { call, CORE, ended, GRAPH, logOf, record, result, said, started, thought, user } from "./learner-fixtures.ts";
+import { call, CORE, ended, GRAPH, logOf, record, result, said, started, thought, used, user } from "./learner-fixtures.ts";
 import { core, hexId } from "./overlay-fixtures.ts";
 
 const view = coreView(core());
@@ -258,6 +258,53 @@ describe("projecting a turn from the session log", () => {
     expect(p.next).toBe(5);
     const odd = [...logOf([started("t1"), record()]), { offset: 2.5, payload: ended("t1") }];
     expect(turnProjection(odd, ctx())!).toMatchObject({ ended: true, next: undefined });
+  });
+
+  it("PL1.71 a turn that ends with a final answer after a matched node with an edge to a terminal walks on to that terminal", () => {
+    const terminal = (node: NodeName) => terminalAfter(view, node);
+    const answered = [started("t1"), user("q"), call("c1", "Bridge_Extract"), result("c1", "Nolan"), said("It was "), said("Nolan."), ended("t1")];
+    expect(turnProjection(logOf(answered), ctx({ terminal, pin }))!.path).toEqual(["Bridge_Extract", "End"]);
+    // Without calls, the node the turn began at is where it answered from.
+    const direct = [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")];
+    expect(turnProjection(logOf(direct), ctx({ terminal }))!.path).toEqual(["Bridge_Extract", "End"]);
+    // A node whose edges lead to no terminal stays where it was.
+    expect(turnProjection(logOf(turn()), ctx({ terminal }))!.path).toEqual(["Start", "First_Hop_Retrieve", "Scan_Index"]);
+  });
+
+  it("PL1.72 no terminal is walked to without the context's terminal, a final answer, a matched last action, or an end_turn end", () => {
+    const terminal = (node: NodeName) => terminalAfter(view, node);
+    const body = (...rest: unknown[]) => [started("t1"), user("q"), call("c1", "Bridge_Extract"), result("c1", "Nolan"), ...rest];
+    const path = (payloads: unknown[], more: Partial<ProjectionContext> = { terminal }) => turnProjection(logOf(payloads), ctx({ pin, ...more }))?.path;
+    expect(path(body(said("Nolan."), ended("t1")), {})).toEqual(["Bridge_Extract"]);
+    // The turn ended on a tool result, a thought, or an empty message: no answer.
+    expect(path(body(ended("t1")))).toEqual(["Bridge_Extract"]);
+    expect(path(body(thought("Done?"), ended("t1")))).toEqual(["Bridge_Extract"]);
+    expect(path(body(said("  "), ended("t1")))).toEqual(["Bridge_Extract"]);
+    // Text before a later call or result is not the final answer.
+    expect(path(body(said("Checking."), call("c2", "Bridge_Extract"), ended("t1")))).toEqual(["Bridge_Extract", "Bridge_Extract"]);
+    expect(path([started("t1"), user("q"), call("c1", "Bridge_Extract"), said("Nolan."), result("c1", "Nolan"), ended("t1")])).toEqual(["Bridge_Extract"]);
+    // The last action matched nothing: where the turn answered from is unknown, even to a terminal that would take any node.
+    const anywhere = () => NodeNameSchema.parse("End");
+    expect(path(body(call("c2", "grep"), result("c2", "x"), said("Nolan."), ended("t1")), { terminal: anywhere })).toEqual(["Bridge_Extract"]);
+    expect(path([started("t1"), user("q"), said("Nolan."), ended("t1")], { terminal: anywhere })).toEqual([]);
+    // A turn that says nothing gave no answer.
+    expect(path([started("t1"), user("q"), record({ node: "Bridge_Extract" }), ended("t1")])).toEqual(["Bridge_Extract"]);
+    // A turn that was cancelled, refused or cut off, or whose end is not in view, did not answer.
+    for (const reason of ["cancelled", "refusal", "max_tokens"]) expect(path(body(said("Nolan."), ended("t1", reason)))).toEqual(["Bridge_Extract"]);
+    expect(path(body(said("Nolan.")))).toEqual(["Bridge_Extract"]);
+    // An end that names no stop reason is taken as a finished turn.
+    expect(path(body(said("Nolan."), { event: "turn.ended", data: { turnId: "t1" } }))).toEqual(["Bridge_Extract", "End"]);
+  });
+
+  it("PL1.74 the trajectory's input and output tokens sum the turn's step usage records, which are no steps; malformed ones are skipped", () => {
+    const withUsage = [...turn().slice(0, -1), used({ inputTokens: 40, outputTokens: 7 }), used({ inputTokens: 55, outputTokens: 3 }), used({ inputTokens: -1, outputTokens: 2 }), used({ inputTokens: 5 }), used("none"), ended("t1")];
+    const p = turnProjection(logOf(withUsage), ctx())!;
+    expect(p.trajectory.usage).toEqual({ steps: 7, inputTokens: 95, outputTokens: 10, guidanceTokens: 360 });
+    expect(p.trajectory.steps).toEqual(turnProjection(logOf(turn()), ctx())!.trajectory.steps);
+    // Records of another turn do not count.
+    const other = [started("t0"), used({ inputTokens: 1000, outputTokens: 1000 }), ended("t0"), ...withUsage];
+    expect(turnProjection(logOf(other), ctx())!.trajectory.usage).toMatchObject({ inputTokens: 95, outputTokens: 10 });
+    expect(turnProjection(logOf(turn()), ctx())!.trajectory.usage).toMatchObject({ inputTokens: 0, outputTokens: 0 });
   });
 
   it("PL1.26 projectTurn is the projection's trajectory", () => {

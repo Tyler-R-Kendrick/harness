@@ -1,7 +1,7 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { streamText, ToolLoopAgent } from "ai";
 import { HARNESS } from "@harness/cognitive";
-import type { Instructions, LanguageModel, ModelMessage, PrepareStepFunction, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
+import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, StepResult, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
 
@@ -48,16 +48,27 @@ export interface TurnContext extends TurnScope {
   readonly tools: readonly string[];
 }
 
+/** A step that ended, as AI SDK `onStepEnd` sees it: its number and its model call's usage. */
+export interface StepEndContext extends TurnScope {
+  /** The AI SDK step number (it restarts with the stream after an approval round). */
+  readonly stepNumber: number;
+  /** The step's model usage, as the AI SDK reports it. */
+  readonly usage: LanguageModelUsage;
+}
+
 /**
  * Per-step guidance (e.g. procedural graphs): `prepare` may replace a step's
  * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
  * messages, and may limit the tools that step offers the model (AI SDK `activeTools`;
  * the next step offers every tool again unless the hook limits it too). `turn`, when
- * given, guides an opaque harness's turn: its text is prepended to the prompt.
+ * given, guides an opaque harness's turn: its text is prepended to the prompt. `end`,
+ * when given, is told each step's model usage once the step ends (an agent's steps and
+ * a harness's alike), e.g. to record it in the session log.
  */
 export interface StepHook {
   prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[]; readonly activeTools?: readonly string[] } | undefined>;
   turn?(context: TurnContext): Promise<string | undefined>;
+  end?(context: StepEndContext): Promise<void>;
 }
 
 /** A thrown value's message. */
@@ -85,6 +96,50 @@ function preparing(hook: StepHook, turn: TurnOptions, tools: readonly string[]):
       return {};
     }
   };
+}
+
+/** Tell the hook's `end` about a step that ended; a failing hook never fails the turn, and a warning says why. */
+export async function stepEnded(hook: StepHook, turn: TurnOptions, step: Pick<StepResult<ToolSet>, "stepNumber" | "usage">): Promise<void> {
+  if (!hook.end) return;
+  const scope = scopeOf(turn);
+  try {
+    await hook.end({ ...scope, stepNumber: step.stepNumber, usage: step.usage });
+  } catch (e) {
+    scope.report({ sessionUpdate: "notice", severity: "warning", title: "Step usage failed", description: messageOf(e) });
+  }
+}
+
+type StepEnd = NonNullable<AgentCallParameters<TurnOptions, ToolSet>["onStepEnd"]>;
+
+/** Call parameters whose step ends also reach the hook, after the caller's own `onStepEnd` (or its deprecated alias, which this one replaces). */
+function ending<P extends AgentCallParameters<TurnOptions, ToolSet>>(hook: StepHook | undefined, params: P): P {
+  if (!hook?.end) return params;
+  const theirs: StepEnd | undefined = params.onStepEnd ?? params.onStepFinish;
+  return {
+    ...params,
+    onStepEnd: async (step: Parameters<StepEnd>[0]) => {
+      await theirs?.(step);
+      await stepEnded(hook, params.options, step);
+    },
+  };
+}
+
+/** A `ToolLoopAgent` whose steps, once ended, are told to the step hook's `end`. */
+class SessionAgent extends ToolLoopAgent<TurnOptions, ToolSet> {
+  readonly #hook: StepHook | undefined;
+
+  constructor(settings: ToolLoopAgentSettings<TurnOptions, ToolSet>, hook: StepHook | undefined) {
+    super(settings);
+    this.#hook = hook;
+  }
+
+  override generate(params: AgentCallParameters<TurnOptions, ToolSet>) {
+    return super.generate(ending(this.#hook, params));
+  }
+
+  override stream(params: AgentStreamParameters<TurnOptions, ToolSet>) {
+    return super.stream(ending(this.#hook, params));
+  }
 }
 
 const TurnOptionsSchema = z.object({
@@ -121,8 +176,12 @@ export function sessionAgent(options: {
   /** Takes turns that send images, when given. */
   readonly vision?: LanguageModel;
   readonly instructions?: string;
-  /** Tools, or a function giving them anew each turn (e.g. a workflow library's, which grows as learning builds tools). */
-  readonly tools?: ToolSet | (() => ToolSet | Promise<ToolSet>);
+  /**
+   * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
+   * grows as learning builds tools), told the turn's scope so a session can get tools of
+   * its own (e.g. the workflows its pinned procedural core binds).
+   */
+  readonly tools?: ToolSet | ((turn: TurnScope) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -135,7 +194,7 @@ export function sessionAgent(options: {
   /** Prepares each step (see StepHook), e.g. with procedural graph guidance. */
   readonly step?: StepHook;
 }): ToolLoopAgent<TurnOptions, ToolSet> {
-  return new ToolLoopAgent<TurnOptions, ToolSet>({
+  return new SessionAgent({
     model: options.model,
     ...(options.tools && typeof options.tools !== "function" ? { tools: options.tools } : {}),
     ...(options.toolApproval ? { toolApproval: options.toolApproval } : {}),
@@ -156,7 +215,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools() : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools(scopeOf(turn)) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {
@@ -168,7 +227,7 @@ export function sessionAgent(options: {
         ...(options.step ? { prepareStep: preparing(options.step, turn, Object.keys(tools ?? call.tools ?? {})) } : {}),
       };
     },
-  });
+  }, options.step);
 }
 
 const CONSULT = "Give brief factual notes that help answer the request: facts, figures, names and caveats. Do not answer in full; another model will.";

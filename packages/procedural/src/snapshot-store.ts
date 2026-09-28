@@ -12,8 +12,8 @@
 import type { SnapshotStorage } from "@harness/core";
 import { z } from "zod";
 import { GraphIdSchema, RevisionIdSchema, RevisionRecordSchema } from "./graph.ts";
-import type { GraphId, RevisionId } from "./graph.ts";
-import { MemoryProceduralStore, STORE_FORMAT } from "./memory-store.ts";
+import type { GraphId, RevisionId, RevisionRecord } from "./graph.ts";
+import { MemoryProceduralStore, STORE_FORMAT, STORE_FORMAT_V1 } from "./memory-store.ts";
 import type { ProceduralStoreDocument } from "./memory-store.ts";
 import { OverlayEventSchema } from "./overlay-types.ts";
 import type { AppendLog, ProceduralStore } from "./store.ts";
@@ -34,12 +34,58 @@ export const ProceduralStoreDocumentSchema = z.strictObject({
   leases: z.array(z.strictObject({ graph: GraphIdSchema, holder: z.string().nullable(), epoch: natural })),
 });
 
-/** The store a saved value holds: nothing saved is an empty store; anything malformed is an error, never a silent reset. */
+/** A store saved before records were keyed by graph: the same fields, checked the same way. */
+export const ProceduralStoreDocumentV1Schema = ProceduralStoreDocumentSchema.extend({ format: z.literal(STORE_FORMAT_V1) });
+export type ProceduralStoreDocumentV1 = z.output<typeof ProceduralStoreDocumentV1Schema>;
+
+const SavedStoreSchema = z.discriminatedUnion("format", [ProceduralStoreDocumentSchema, ProceduralStoreDocumentV1Schema]);
+
+/**
+ * The record a v1 `revert` replaced. A v1 revert took its target's id, so it replaced the
+ * target's record and kept it in `evidence.replaces` (minus id, graph and document); v2
+ * reverts write no record, so the replaced record comes back, through reverts of reverts.
+ * A revert whose replaced record no longer parses (a redacted one) stays as it is.
+ */
+function unrevert(record: RevisionRecord): RevisionRecord {
+  let current = record;
+  while (current.origin === "revert") {
+    // Anything but a record's fields (absent, a string, a scrubbed record) fails to parse.
+    const replaced = RevisionRecordSchema.safeParse(Object.assign({}, current.evidence["replaces"], { id: current.id, graph: current.graph, document: current.document }));
+    if (!replaced.success) break;
+    current = replaced.data;
+  }
+  return current;
+}
+
+/**
+ * A v1 store as v2 (A1). v1 kept one record per id, whichever graph wrote it last, and a
+ * revert replaced its target's record. So: each revert record becomes the record it
+ * replaced, every record stays under its own graph, and a graph whose head or earlier head
+ * has no record of its own gets a copy of the one another graph wrote. Nothing else changes.
+ */
+export function migrateStoreDocument(document: ProceduralStoreDocumentV1): ProceduralStoreDocument {
+  const revisions = new Map<string, RevisionRecord>();
+  const byId = new Map<RevisionId, RevisionRecord>();
+  for (const record of document.revisions.map(unrevert)) {
+    revisions.set(`${record.id}${record.graph}`, record);
+    byId.set(record.id, record);
+  }
+  for (const head of document.heads) {
+    for (const id of [head.revision, ...head.history]) {
+      const elsewhere = byId.get(id);
+      const key = `${id}${head.graph}`;
+      if (elsewhere !== undefined && !revisions.has(key)) revisions.set(key, { ...elsewhere, graph: head.graph });
+    }
+  }
+  return { ...document, format: STORE_FORMAT, revisions: [...revisions.values()] };
+}
+
+/** The store a saved value holds: nothing saved is an empty store; a v1 store is migrated; anything malformed is an error, never a silent reset. */
 function storeOf(saved: unknown): MemoryProceduralStore {
   if (saved === undefined) return new MemoryProceduralStore();
-  const parsed = ProceduralStoreDocumentSchema.safeParse(saved);
+  const parsed = SavedStoreSchema.safeParse(saved);
   if (!parsed.success) throw new Error(`the saved procedural store is malformed: ${z.prettifyError(parsed.error)}`);
-  const document: ProceduralStoreDocument = parsed.data;
+  const document: ProceduralStoreDocument = parsed.data.format === STORE_FORMAT_V1 ? migrateStoreDocument(parsed.data) : parsed.data;
   return new MemoryProceduralStore(document);
 }
 
@@ -86,7 +132,7 @@ export class SnapshotProceduralStore implements ProceduralStore {
 
   readonly revisions: ProceduralStore["revisions"] = {
     put: (record) => this.#run((s) => s.revisions.put(record), always),
-    get: (id) => this.#run((s) => s.revisions.get(id), never),
+    get: (graph, id) => this.#run((s) => s.revisions.get(graph, id), never),
     list: (graph) => this.#run((s) => s.revisions.list(graph), never),
   };
 
@@ -94,6 +140,11 @@ export class SnapshotProceduralStore implements ProceduralStore {
     get: (graph) => this.#run((s) => s.heads.get(graph), never),
     set: (graph, expected, next) => this.#run((s) => s.heads.set(graph, expected, next), (moved) => moved),
   };
+
+  /** Every graph with a head, in the order each got its first. */
+  graphs(): Promise<readonly GraphId[]> {
+    return this.#run((s) => s.graphs(), never);
+  }
 
   overlay(graph: GraphId): ReturnType<ProceduralStore["overlay"]> {
     return this.#log((s) => s.overlay(graph));

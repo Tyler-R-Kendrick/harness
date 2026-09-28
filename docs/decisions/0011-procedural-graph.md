@@ -151,22 +151,59 @@ The decision held; these details moved.
   (and `compose` in its settings) compiles the best-supported path into a workflow, stages
   it and binds it to a new node. The path's distinct-session support is that node's
   evidence, and it goes through the same gates as any candidate. By default approval is
-  needed, because a workflow counts as a tool with side effects. No host gives dream a
-  composer yet, and no worker takes `revisionTools` yet, so composition is a library.
-- **Approval has no daemon path yet.** The permission flow belongs to a session's turn,
-  and dream runs outside any session. The CLI asks on a terminal; `procedural.dream` in
-  the daemon rejects candidates that need approval, and the rejection is recorded for a
-  later dream or an operator.
-- **Dream runs on demand.** `procedural.dream` and `harness-procedural dream` start it;
-  there is no schedule or trigger in the daemon.
+  needed, because a workflow counts as a tool with side effects. Hosts give dream a
+  composer over their session tools and a staging library of their own (a directory under
+  `--procedural` natively, an IndexedDB database in a browser; never the shared workflow
+  library), and agent workers take their tools per turn from the core the step hook pins
+  for the turn, so a session is offered exactly the workflows its pinned core binds.
+  Opaque harness workers keep their harness's own tools and are not offered workflows.
+- **Approval outside a session is an inbox.** The permission flow belongs to a session's
+  turn, and dream runs outside any session, so a dream with no one to ask stores each
+  candidate that needs approval as `pending-approval` and moves on without blocking. The
+  inbox (`procedural.approvals`, `procedural.approve`, `procedural.decline`, under the
+  policy's `approve` action) is where an operator decides; approving re-runs the
+  structure and evidence gates against the current head (re-applying the candidate's
+  edits there when the head moved) and commits by compare-and-set. Proposals and
+  decisions are announced on the hook bus through the host publish API. The CLI still
+  asks on a terminal when it has one.
+- **One owner per store directory.** The snapshot store loads its file once and saves it
+  whole, so two processes over one directory would lose each other's writes. A lock file
+  in the directory names its holder; the daemon refuses to start on a held store, and
+  `harness-procedural` either holds the lock for its run or, when a daemon holds it and
+  listens on a socket, sends its operation to that daemon's `procedural.*`. We chose a
+  lock over routing alone because a daemon on stdio has no socket to reach.
+- **Dream runs on demand and on a schedule.** `procedural.dream` and
+  `harness-procedural dream` start it, and the preset's schedule (`dream.every`, a
+  duration, or `dream.afterTurns`, observed turns since the last dream) starts it from
+  the daemon runtime's tick. The schedule reads the last run from the dream log, so it
+  survives restarts, and one process never runs a graph's dream twice at once.
+- **The evaluator is a task suite.** A user brings replayable tasks as a JSON file
+  (`--procedural-eval`): each task runs on a session agent guided by the candidate graph,
+  and a metric or the catalog's judge (its probability) scores the answer. Datasets stay
+  the user's; the framework ships the evaluator, its contract and the metrics.
 - **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
   event with `rescore`, which moves the turn's score without a new traversal.
+- **Turns walk into terminals by rule.** Reaching `End` is no action, so a path of
+  matched actions never showed it. A turn that ends (`end_turn`) with a final answer
+  after a matched node with an edge to exactly one terminal walks on to that terminal,
+  so edges into `End` get statistics and cautions.
+- **A step's model usage is its own record.** A step record precedes its model call, so
+  the step's AI SDK usage (from `onStepEnd`, for agents and harnesses alike) follows it as
+  a usage record, and projection sums those into the trajectory's tokens.
+- **The step hook's session state is a bounded cache.** It is evicted on detach, after an
+  idle time and beyond a session cap (settings data, measured with the Clock port). A
+  step that continues its turn after eviction reads its stored pin as it is, so I3 holds.
+- **Feedback answers what the learner did.** `procedural.feedback` returns `recorded`,
+  `unknown-turn`, `no-pin` or `invalid` from the learner's result, not `recorded` always.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host
   builds on the ensemble's generator, so the harness preset can keep reflection off
   while a deployment turns it on with data.
-- **Records are keyed by content.** A rejection never replaces an older head's or an
-  import's record with the same id, and a commit that loses the head race puts back the
-  record it replaced.
+- **Records are keyed by graph and content.** A revision's id is its document's hash, and
+  the store keys its record by the graph too, so two graphs that hold the same document
+  each keep their own record. Within a graph a rejection never replaces an older head's
+  or an import's record with the same id, and a commit that loses the head race puts
+  back the record it replaced. Redaction follows the content into every graph. A revert
+  writes no record: its target is already recorded, and the heads show the move back.
 - **Resolver rules may route.** A rule may name candidate graphs and a minimum
   confidence instead of a graph; the cognitive router chooses among them by the session's
   first prompt (a tool whose schema admits only the candidates, with the router's
@@ -194,5 +231,5 @@ The decision held; these details moved.
 - A maintained TypeScript implementation of the paper appears.
 - An ablation shows that state tracking, action hops or successor-only tools help. Then
   the harness preset turns them on in its data.
-- The daemon gains approvals outside a session's turn. Then `procedural.dream` can ask
-  for approval instead of rejecting.
+- Operators need approvals routed to a person (a notification channel, a review UI).
+  Then a plugin on `procedural.approval.*` does it; the inbox stays the record.

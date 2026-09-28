@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { usage } from "@harness/cognitive";
 import { ManualClock, MemoryStorage, SeededEntropy } from "@harness/testkit";
-import { applyEdits, compilePath, DEFAULT_SELECT, DreamIdSchema, foldAll, MemoryProceduralStore, NodeNameSchema, ProceduralGraphSchema, ScoredTrajectorySchema, SnapshotProceduralStore, StagingLibrary, modelRefiner, presetOf, revisionId, RevisionRecordSchema, runDream, workflowBinding } from "@harness/procedural";
+import { applyEdits, compilePath, DEFAULT_SELECT, DreamIdSchema, DreamLogEntrySchema, foldAll, MemoryProceduralStore, NodeNameSchema, ProceduralGraphSchema, ScoredTrajectorySchema, SnapshotProceduralStore, StagingLibrary, modelRefiner, presetOf, revisionId, RevisionRecordSchema, runDream, workflowBinding } from "@harness/procedural";
 import { chain, chainDoc, observed as observedTurn, PATH, RUNS, settings as compositionSettings, SPECS, turn } from "./compose-fixtures.ts";
-import type { ProceduralStore, DreamPorts, DreamRefineRequest, Evaluator, OverlayEvent, Preset, ProceduralGraph, RefineResult, ScoredTrajectory } from "@harness/procedural";
+import type { ProceduralStore, DreamPorts, DreamRefineRequest, Evaluator, OverlayEvent, Preset, ProceduralGraph, RefineResult, RevisionRecord, ScoredTrajectory } from "@harness/procedural";
 import { addVerify, core, edits, GRAPH, graphOf, renameGuidance, settings, toGhost } from "./dream-fixtures.ts";
 import { edge, hotpot } from "./fixtures.ts";
 import { FakeStore } from "./dream-store.ts";
@@ -295,6 +295,41 @@ describe("runDream: inputs and recovery", () => {
     expect(store.dreamLog.get(GRAPH)![0]).toMatchObject({ train: [], stride: DEFAULT_SELECT, overlay: 3 });
   });
 
+  it("PD2.32 with an approvals inbox and no approver, a candidate needing approval is stored pending-approval and announced, and the dream moves on", async () => {
+    const store = seeded();
+    store.overlayLog.set(GRAPH, support());
+    const announced: unknown[] = [];
+    const inbox = { pending: async (request: unknown) => void announced.push(request) };
+    const result = await runDream({ store, graph: GRAPH, settings: withRounds(harness, 2), ports: ports({ refiner: refiner([{ edits: toTool, raw: "{}" }, { edits: toTool, raw: "{}" }]), inbox }), tools: ["first_hop_retrieve", "Scan_Index"] });
+    const id = revisionId(applyEdits(G0, toTool));
+    expect(result).toMatchObject({ status: "done", head: G0_ID, rounds: [{ round: 1, outcome: "pending-approval", revision: id, gate: "approval-for-side-effects" }, { round: 2, outcome: "pending-approval", revision: id }] });
+    expect(store.records.get(id)).toMatchObject({ graph: GRAPH, parents: [G0_ID], origin: "dream", decision: { kind: "pending-approval" }, evidence: { approval: { gate: "approval-for-side-effects", tools: ["first_hop_retrieve"] } } });
+    // Announced once: round 2 proposed the same candidate, which was already waiting.
+    expect(announced).toEqual([{ graph: GRAPH, candidate: store.records.get(id), tools: ["first_hop_retrieve"] }]);
+    expect(store.headOf.get(GRAPH)!.revision).toBe(G0_ID);
+  });
+
+  it("PD2.33 a proposal never replaces a record that is not a rejection: a head's, or an import already waiting, stays and is not announced again; a rejection is replaced", async () => {
+    const id = revisionId(applyEdits(G0, toTool));
+    const run = async (existing: RevisionRecord) => {
+      const store = seeded();
+      store.overlayLog.set(GRAPH, support());
+      store.records.set(id, existing);
+      const announced: unknown[] = [];
+      await runDream({ store, graph: GRAPH, settings: withRounds({ ...harness, dream: { ...harness.dream, rejections: { ...harness.dream.rejections, dedupe: false } } }, 1), ports: ports({ refiner: refiner([{ edits: toTool, raw: "{}" }]), inbox: { pending: async (r) => void announced.push(r) } }), tools: ["first_hop_retrieve", "Scan_Index"] });
+      return { record: store.records.get(id), announced };
+    };
+    const base = { id, graph: GRAPH, parents: [G0_ID], document: applyEdits(G0, toTool), edits: null, evidence: {}, at: 1 };
+    const imported = RevisionRecordSchema.parse({ ...base, origin: "import", decision: { kind: "pending-approval" } });
+    expect(await run(imported)).toEqual({ record: imported, announced: [] });
+    const head = RevisionRecordSchema.parse({ ...base, origin: "dream", decision: { kind: "head" } });
+    expect(await run(head)).toEqual({ record: head, announced: [] });
+    const rejected = RevisionRecordSchema.parse({ ...base, origin: "dream", decision: { kind: "rejected-gate", gate: "approval", reason: "no" } });
+    const replaced = await run(rejected);
+    expect(replaced.record).toMatchObject({ decision: { kind: "pending-approval" }, edits: toTool });
+    expect(replaced.announced).toHaveLength(1);
+  });
+
   it("PD2.18 only rejected records are remembered", async () => {
     const store = seeded();
     const doc = renamed();
@@ -375,7 +410,7 @@ describe("runDream on the real stores", () => {
       expect(result).toMatchObject({ status: "done", rounds: [{ outcome: "committed" }] });
       const head = await store.heads.get(GRAPH);
       expect(head).toEqual({ revision: (result as { head: string }).head, history: [G0_ID] });
-      expect((await store.revisions.get(head!.revision))?.decision).toEqual({ kind: "head" });
+      expect((await store.revisions.get(GRAPH, head!.revision))?.decision).toEqual({ kind: "head" });
       const overlay = (await store.overlay(GRAPH).read(0)).map((e) => e.event);
       expect(overlay.at(-1)).toEqual({ kind: "rebased", core: head!.revision, absorbed: [idOf(shortcut)], dropped: [], frozenAt: 2 });
       expect(await store.lease.acquire(GRAPH, "someone-else")).toBeDefined();
@@ -476,6 +511,37 @@ describe("runDream: records, stride, tokens and composition", () => {
     const r = refiner([]);
     expect(await runDream({ store, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({ refiner: r }) })).toMatchObject({ status: "done", dream: "d" });
     expect(r.requests[0]!.rejected).toBe("None");
+  });
+
+  it("PD2.34 a dream's started entry records the clock's time, which a schedule reads; an entry from before it still replays", async () => {
+    const store = seeded();
+    const clock = new ManualClock(4_200);
+    await runDream({ store, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({ clock }) });
+    expect(store.dreamLog.get(GRAPH)![0]).toMatchObject({ kind: "started", at: 4_200 });
+    expect(DreamLogEntrySchema.parse(store.dreamLog.get(GRAPH)![0])).toMatchObject({ kind: "started", at: 4_200 });
+    expect(DreamLogEntrySchema.parse(store.dreamLog.get(GRAPH)![1])).toMatchObject({ kind: "event", event: { at: 4_200 } });
+    // PD2.30's entry has no time, as logs written before it do.
+    expect(DreamLogEntrySchema.parse({ kind: "started", dream: "d", head: G0_ID, overlay: 0, rejections: [], train: [], stride: 1 })).not.toHaveProperty("at");
+    expect(() => DreamLogEntrySchema.parse({ kind: "started", dream: "d", head: G0_ID, overlay: 0, rejections: [], train: [], stride: 1, at: -1 })).toThrow();
+  });
+
+  it("PD2.35 a dream that throws releases its lease, so another holder may resume it from the log", async () => {
+    const store = seeded();
+    await expect(runDream({ store, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({ refiner: refiner([new Error("model down")]) }), holder: "a" })).rejects.toThrow("model down");
+    expect(store.leases.get(GRAPH)).toEqual({ holder: null, epoch: 1 });
+    const result = await runDream({ store, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({}), holder: "b" });
+    expect(result).toMatchObject({ status: "done", rounds: [{ outcome: "rejected" }] });
+    expect(store.dreamLog.get(GRAPH)!.filter((e) => (e as { kind: string }).kind === "started")).toHaveLength(1);
+    // A throw after the lease was lost leaves the new holder's lease alone.
+    const taken = seeded();
+    const thief: DreamPorts["refiner"] = {
+      async refine() {
+        await taken.lease.acquire(GRAPH, "a");
+        throw new Error("late");
+      },
+    };
+    await expect(runDream({ store: taken, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({ refiner: thief }), holder: "a" })).rejects.toThrow("late");
+    expect(taken.leases.get(GRAPH)).toEqual({ holder: "a", epoch: 2 });
   });
 
   describe("composition", () => {

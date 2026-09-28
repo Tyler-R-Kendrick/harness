@@ -6,14 +6,14 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { HARNESS, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GUIDANCE_LABEL, MemoryProceduralStore, parseGraph, parseSettings, proceduralStep, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
+import { GUIDANCE_LABEL, MemoryProceduralStore, parseGraph, parseSettings, proceduralStep, projectTurn, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
 import type { ProceduralStepDeps, ProceduralStore, Settings, StepRecord } from "@harness/procedural";
 import { ManualClock, MemoryStorage, nullSandbox, scriptedHarness, SeededEntropy } from "@harness/testkit";
 import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
 import { hotpot } from "../../procedural/test/fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "../../procedural/test/step-fixtures.ts";
 
-const finish = (unified: "stop" | "tool-calls" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
+const finish = (unified: "stop" | "tool-calls" = "stop", used = usage()): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: used });
 const text = (t: string): LanguageModelV4StreamPart[] => [
   { type: "text-start", id: "0" },
   { type: "text-delta", id: "0", delta: t },
@@ -85,11 +85,23 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
     await done;
     const systems = model.doStreamCalls.map((c) => c.prompt.filter((m) => m.role === "system").map(contents));
     expect(systems).toEqual([[`Be brief.\n\n${GUIDANCE_LABEL}advice 0`], [`Be brief.\n\n${GUIDANCE_LABEL}advice 1`]]);
-    expect(updates(events).map((u) => u.sessionUpdate)).toEqual(["notice", "tool_call", "tool_call_update", "notice", "agent_message_chunk"]);
+    // Each step's record comes before its model call, and its usage once it ends.
+    expect(updates(events).map((u) => (u.sessionUpdate === "notice" ? u.title : u.sessionUpdate))).toEqual(["Procedural step", "tool_call", "tool_call_update", "Procedural step usage", "Procedural step", "agent_message_chunk", "Procedural step usage"]);
     expect(records(events).map((r) => [r.node, r.action])).toEqual([
       ["Start", null],
       ["First_Hop_Retrieve", "first_hop_retrieve"],
     ]);
+  });
+
+  it("PW1.68 the session log of a guided turn gives its trajectory the model's input and output tokens, and the guidance model's", async () => {
+    const d = await deps("harness");
+    const model = scripted([call("first_hop_retrieve"), finish("tool-calls", usage(120, 9))], [...text("Answer."), finish("stop", usage(150, 4))]);
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools: { first_hop_retrieve: retrieve }, step: proceduralStep(d) }) });
+    const { events, done } = run(worker, "Who directed the film?");
+    await done;
+    const payloads = [{ event: "turn.started", data: { turnId: "t1" } }, ...updates(events).map((update) => ({ update })), { event: "turn.ended", data: { turnId: "t1", stopReason: "end_turn" } }];
+    const trajectory = projectTurn(payloads.map((payload, offset) => ({ offset, payload })), { sessionId: "s1", turnId: "t1" });
+    expect(trajectory?.usage).toEqual({ steps: 3, inputTokens: 270, outputTokens: 13, guidanceTokens: 24 });
   });
 
   it("PW1.16 the harness preset adds one tagged advisory message per model call, never stacked, and never kept in the conversation", async () => {

@@ -1,7 +1,10 @@
 // @harness/procedural: see docs/decisions/0011-procedural-graph.md and docs/plans/procedural-graph.md.
+export { approvalInbox, approveCandidate, declineCandidate, decidedNotice, listApprovals, requestedNotice, type ApprovalList, type ApprovalNotice, type ApprovalResult, type ApprovalSummary } from "./approvals.ts";
 export { canonicalJson, sha256Hex } from "./canonical.ts";
+export { composer, composition, sessionTools, staging, toolSpecs, type HostComposition, type Staging, type StagingFiles } from "./compose-host.ts";
 export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
-export { DEFAULT_SELECT, modelRefiner, runDream, type Approver, type Composer, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
+export { DEFAULT_SELECT, DreamLogEntrySchema, modelRefiner, runDream, type ApprovalInbox, type Approver, type Composer, type DreamLogEntry, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
+export { DreamSchedule, exclusiveDream, type DreamDue, type DreamRun, type DreamScheduleOptions, type ScheduledDream, type ScheduleReason } from "./dream-schedule.ts";
 export { absorbedEntries, CompositionSchema, DreamEventSchema, dreamStart, dreamStep, RolloutResultSchema, tailTokens, type DreamCommand, type DreamComposition, type Tokenizer, type DreamEvent, type DreamInput, type DreamOutcome, type DreamRefineRequest, type DreamState, type DreamStep, type Rejection, type RolloutResult, type RoundOutcome } from "./dream.ts";
 export { applyEdits, prepareCandidate, type PreparedCandidate, type PrepareOptions, type RepairedEdge } from "./edits.ts";
 export { proceduralExtension, type ProceduralAction, type ProceduralExtensionOptions } from "./extension.ts";
@@ -10,9 +13,9 @@ export { anchoredNonInferiority, approvalGate, atLeastRetained, evidenceGate, gr
 export { acceptsArguments, ArgumentPredicateSchema, BindingSchema, CandidateDocumentSchema, checkGraph, DecisionSchema, DEFAULT_NODE_TYPES, DEFAULT_RELATIONS, DIAGNOSTIC_CODES, DiagnosticSchema, DreamIdSchema, EditSetSchema, editSetJsonSchema, END, EntryIdSchema, FORMAT, GraphEdgeSchema, GraphIdSchema, graphJsonSchema, GraphNodeSchema, incoming, nodeById, NodeNameSchema, NodeTypeNameSchema, outgoing, parseGraph, ProceduralGraphSchema, RelationNameSchema, revisionId, RevisionIdSchema, RevisionRecordSchema, ScoreSchema, seedGraph, START, TrajectoryIdSchema, type ArgumentPredicate, type Binding, type CandidateDocument, type CyclePolicy, type Decision, type Diagnostic, type DiagnosticCode, type DreamId, type EditSet, type EntryId, type GraphEdge, type GraphId, type GraphNode, type NodeName, type NodeTypeName, type ParsedGraph, type ProceduralGraph, type RelationName, type RevisionId, type RevisionRecord, type Score, type TrajectoryId } from "./graph.ts";
 export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "./guide.ts";
 export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
-export { LiveLearner, type LearnerEvent, type LearnerResult, type LiveLearnerDeps } from "./learner.ts";
-export { declaredNode, match, neighborhood, type HopUnit, type MatchMode, type Neighborhood, type ObservedAction } from "./locate.ts";
-export { MemoryProceduralStore, redactRecord, STORE_FORMAT, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
+export { LiveLearner, type LearnerEvent, type LearnerResult, type LiveLearnerDeps, type SkipCode } from "./learner.ts";
+export { declaredNode, match, neighborhood, terminalAfter, type HopUnit, type MatchMode, type Neighborhood, type ObservedAction } from "./locate.ts";
+export { MemoryProceduralStore, redactRecord, STORE_FORMAT, STORE_FORMAT_V1, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
 export { exportMermaid } from "./mermaid.ts";
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
@@ -28,8 +31,10 @@ export { modelReflector, reflect, reflectionJsonSchema, type Reflector, type Ref
 export { explainResolve, explainRoute, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, routes, RouteSchema, routeGraph, WhenSchema, type GraphRouter, type Resolution, type ResolveContext, type Resolver, type Route, type RouteAnswer, type RouteCandidate, type RouteRequest, type When } from "./resolver.ts";
 export { GRAPH_TOOL, modelGraphRouter } from "./routing.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
-export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type Delivery, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
-export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
-export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepRecord, type StepScope, type TurnInput } from "./step.ts";
+export { duration, DurationSchema, GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type Delivery, type DreamSettings, type Duration, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
+export { migrateStoreDocument, PinSchema, ProceduralStoreDocumentSchema, ProceduralStoreDocumentV1Schema, SnapshotProceduralStore, type ProceduralStoreDocumentV1 } from "./snapshot-store.ts";
+export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, StepUsageSchema, trajectorySteps, type ProceduralStepDeps, type ProceduralStepHook, type StepEndInput, type StepInput, type StepNotice, type StepRecord, type StepScope, type StepUsage, type StepUsageNotice, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
+export { taskSuiteEvaluator, type TaskSuiteEvaluatorOptions } from "./task-evaluator.ts";
+export { f1Score, normalizeAnswer, parseTaskSuite, scoreAnswer, SuiteTaskSchema, TASK_SCORERS, TaskSuiteSchema, taskSuiteJsonSchema, type SuiteTask, type TaskMetric, type TaskScorer, type TaskSuite } from "./task-suite.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";

@@ -7,7 +7,7 @@ const policy = (rules: unknown[], fallback?: "allow" | "deny") => parsePolicy(fa
 describe("the access policy (plan §8.3)", () => {
   it("PX1.20 without a policy every action on every graph is allowed", () => {
     for (const action of ACTIONS) expect(authorize(undefined, action, g("any/graph"), {})).toBe(true);
-    expect(ACTIONS).toEqual(["read", "write", "dream", "revert", "import"]);
+    expect(ACTIONS).toEqual(["read", "write", "dream", "revert", "import", "approve"]);
   });
 
   it("PX1.21 a policy no rule matches falls back to its default, which is allow", () => {
@@ -78,5 +78,17 @@ describe("the access policy (plan §8.3)", () => {
     expect(Object.keys(schema.properties)).toEqual(["$schema", "rules", "default"]);
     // The file may leave the default out.
     expect(schema.required).toEqual(["rules"]);
+  });
+
+  it("PX1.47 approve is an action of its own: a rule can let one principal decide dream candidates on a graph and refuse everyone else, and the JSON Schema names it", () => {
+    const p = policy([
+      { when: { principal: "lead", actions: ["approve"] }, allow: true },
+      { when: { actions: ["approve"] }, allow: false },
+    ]);
+    expect(authorize(p, "approve", g("team/web"), { principal: "lead" })).toBe(true);
+    expect(authorize(p, "approve", g("team/web"), { principal: "dev" })).toBe(false);
+    expect(authorize(p, "dream", g("team/web"), { principal: "dev" })).toBe(true);
+    const schema = JSON.stringify(policyJsonSchema());
+    expect(schema).toContain('"approve"');
   });
 });

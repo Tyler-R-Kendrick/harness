@@ -40,9 +40,15 @@ export interface Lease {
 }
 
 export interface ProceduralStore {
+  /**
+   * Revision records, keyed by graph and id: the same document in two graphs is two
+   * records, each with its own origin, parents and decision. A put with a known key
+   * replaces that record in place.
+   */
   readonly revisions: {
     put(record: RevisionRecord): Promise<void>;
-    get(id: RevisionId): Promise<RevisionRecord | undefined>;
+    get(graph: GraphId, id: RevisionId): Promise<RevisionRecord | undefined>;
+    /** The graph's records in put order. */
     list(graph: GraphId): Promise<readonly RevisionRecord[]>;
   };
   readonly heads: {
@@ -67,6 +73,9 @@ export interface ProceduralStore {
     renew(graph: GraphId, holder: string, epoch: number): Promise<boolean>;
     release(graph: GraphId, holder: string, epoch: number): Promise<boolean>;
   };
-  /** Tombstones a revision's text in place; its id stays. */
+  /**
+   * Tombstones a revision's text in place; its id stays. Redaction is by content: every
+   * graph's record of the id is redacted, and so is any record put under the id later.
+   */
   redact(id: RevisionId): Promise<void>;
 }

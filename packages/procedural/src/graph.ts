@@ -367,6 +367,8 @@ export const DecisionSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("rejected-structure"), diagnostics: z.array(DiagnosticSchema) }),
   z.strictObject({ kind: z.literal("rejected-gate"), gate: z.string().min(1), reason: z.string() }),
   z.strictObject({ kind: z.literal("pending-approval") }),
+  /** Approved from the approvals inbox and committed as another revision: its edits on a later head. */
+  z.strictObject({ kind: z.literal("approved"), revision: RevisionIdSchema }),
 ]);
 export type Decision = z.output<typeof DecisionSchema>;
 
