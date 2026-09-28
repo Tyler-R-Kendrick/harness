@@ -15,6 +15,12 @@ export interface TurnScope {
   readonly report: (update: SessionUpdate) => void;
 }
 
+/** What tools given anew each turn are told: the turn's scope and its conversation so far. */
+export interface ToolContext extends TurnScope {
+  /** The call's messages: a new prompt last, or, for a stream restarted in its turn (after an approval round), what the turn did so far. */
+  readonly messages: readonly ModelMessage[];
+}
+
 /** One step of an agent's loop, as AI SDK `prepareStep` sees it. */
 export interface StepContext extends TurnScope {
   /** Everything the step's model call would get: the conversation so far, this turn's tool calls and results included. */
@@ -163,10 +169,10 @@ export function sessionAgent(options: {
   readonly instructions?: string;
   /**
    * Tools, or a function giving them anew each turn (e.g. a workflow library's, which
-   * grows as learning builds tools), told the turn's scope so a session can get tools of
-   * its own (e.g. the workflows its pinned procedural core binds).
+   * grows as learning builds tools), told the turn's scope and conversation so a session
+   * can get tools of its own (e.g. the workflows its pinned procedural core binds).
    */
-  readonly tools?: ToolSet | ((turn: TurnScope) => ToolSet | Promise<ToolSet>);
+  readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -187,7 +193,8 @@ export function sessionAgent(options: {
     maxRetries: 0,
     callOptionsSchema: TurnOptionsSchema,
     prepareCall: async ({ options: turn, ...call }) => {
-      const user = lastUser(call.messages ?? []);
+      const messages = call.messages ?? [];
+      const user = lastUser(messages);
       const said = textOf(user);
       const playbook = options.learning && said ? await options.learning.recall(said).then((r) => r.playbook, () => "") : "";
       const memories = options.memory && said ? await options.memory.recall(said, { excludeSession: turn.sessionId, limit: 3, kinds: ["user", "assistant"] }).catch(() => []) : [];
@@ -200,7 +207,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools(scopeOf(turn)) : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages }) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {

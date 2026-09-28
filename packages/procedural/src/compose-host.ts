@@ -11,7 +11,7 @@
  * Portable: the host brings the files, the code mode and the model that answers `tools.ask`.
  */
 import { asSchema } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import type { SnapshotStorage } from "@harness/core";
 import { WorkflowHost } from "@harness/workflows";
 import type { CodeMode, Effects, ToolSpec, WorkflowLibrary } from "@harness/workflows";
@@ -67,8 +67,12 @@ export interface ToolsNotice {
   readonly description: string;
 }
 
-/** A turn's scope as a session's tools see it: it reports step records and warnings. */
-export type ToolsScope = StepScope<StepNotice | ToolsNotice>;
+/**
+ * A turn's scope as a session's tools see it: it reports step records and warnings, and
+ * may carry the turn's conversation, by which the step hook tells a stream that resumes
+ * its turn from a new one (`sessionAgent` gives it).
+ */
+export type ToolsScope = StepScope<StepNotice | ToolsNotice> & { readonly messages?: readonly ModelMessage[] };
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 

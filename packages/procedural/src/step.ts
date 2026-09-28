@@ -115,9 +115,11 @@ export interface ProceduralStepHook {
    * The core revision the session reads this turn, or undefined when it has no graph. It
    * resolves and pins at a turn boundary as a step does, so the turn's steps read the same
    * core: a host builds the turn's tools from it (`sessionTools`, plan §7.6). Without a
-   * turn id every call is a boundary.
+   * turn id every call is a boundary. Given the turn's conversation, a call for a session
+   * evicted meanwhile whose conversation resumes its turn (a stream restarted after an
+   * approval round) reads the pin it had, as a step does.
    */
-  core(scope: StepScope): Promise<ProceduralGraph | undefined>;
+  core(scope: StepScope & { readonly messages?: readonly ModelMessage[] }): Promise<ProceduralGraph | undefined>;
   /** Records a step's model usage in the session log, for a session with a graph (the trajectory's input and output tokens). */
   end(input: StepEndInput): Promise<void>;
   /** Evicts a session's state (its pinned view and guidance cache), e.g. when it is detached. */
@@ -235,7 +237,10 @@ interface Session {
  * the stream, or a restarted stream (after an approval round) whose conversation ends
  * with tool results rather than a new prompt.
  */
-const continues = (input: StepInput): boolean => input.stepNumber > 0 || input.messages.filter((m) => m.role !== "system" && !isAdvisory(m)).at(-1)?.role !== "user";
+const continues = (input: StepInput): boolean => input.stepNumber > 0 || resumes(input.messages);
+
+/** Whether a conversation resumes its turn: it ends with something other than a new prompt (advisories and system messages aside). */
+const resumes = (messages: readonly ModelMessage[]): boolean => messages.filter((m) => m.role !== "system" && !isAdvisory(m)).at(-1)?.role !== "user";
 
 /**
  * The procedural step hook (plan §5): resolve, pin, match, neighborhood, serialize,
@@ -293,7 +298,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     if (!preset.overlay || live === undefined) return { graph, core: parsed.graph, effective: coreView(parsed.graph) };
     const state = await readOverlay(deps.store, pin);
     // A session never pairs a core with an overlay built on another core.
-    return { graph, core: parsed.graph, effective:effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
+    return { graph, core: parsed.graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
   };
 
   /**
@@ -396,8 +401,10 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     },
 
     async core(scope) {
-      // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows.
-      const session = await enter(scope, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, false);
+      // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows,
+      // or, for a session evicted meanwhile, a restarted stream whose conversation resumes its turn.
+      const continuing = scope.messages !== undefined && resumes(scope.messages);
+      const session = await enter(scope, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, continuing);
       return session.view?.core;
     },
 

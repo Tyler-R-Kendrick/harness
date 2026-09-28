@@ -116,6 +116,11 @@ describe("composition on a host", () => {
     // Base tools that fail are the host's own failure, and fail the turn.
     const broken = sessionTools({ step: { core: async () => undefined }, staging: s, base: () => Promise.reject(new Error("no tools")) });
     await expect(broken(scope("s1"))).rejects.toThrow("no tools");
+    // The step hook is told the turn's conversation, by which it tells a resumed turn from a new one.
+    const told: ToolsScope[] = [];
+    const messages = [{ role: "user" as const, content: "q" }];
+    await sessionTools({ step: { core: async (sc: ToolsScope) => void told.push(sc) }, staging: s, base })({ ...scope("s1"), messages });
+    expect(told[0]!.messages).toBe(messages);
   });
 
   it("PC1.40 composition is what a host hands out: a session's per-turn tools, and for each dream a composer and a tool catalog over the base tools as they are then", async () => {

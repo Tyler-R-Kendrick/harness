@@ -12,6 +12,7 @@ import {
   parseResolver,
   parseSettings,
   proceduralStep,
+  revisionId,
   RevisionIdSchema,
   sha256Hex,
   StepRecordSchema,
@@ -367,6 +368,26 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(pins).toHaveBeenCalledTimes(4);
     const none = await setup("harness", { resolver: parseResolver({ rules: [{ when: {}, graph: null }] }) });
     expect(await proceduralStep(none.deps).core(input(none, [user("q")]))).toBeUndefined();
+  });
+
+  it("PW1.74 core at a stream that continues its turn after eviction (its conversation ends with tool results) reads the pin it had; a new prompt re-pins", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    const first = s.records[0]!.core;
+    const next = await seed(s.store, variant("."), GRAPH, "dream");
+    // An approval round restarts the stream in the same turn, after the session was evicted: the tools read the same core as its steps.
+    hook.forget("s1");
+    const resumed = [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")];
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t1", report: () => {}, messages: resumed }))!)).toBe(first);
+    await hook.prepare(input(s, resumed, { stepNumber: 0 }));
+    expect(s.records.map((r) => r.core)).toEqual([first, first]);
+    // A new prompt is a new turn: it re-pins, as does a call that does not give the conversation.
+    hook.forget("s1");
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t2", report: () => {}, messages: [...resumed, user("again")] }))!)).toBe(next);
+    await pinned(s, "s1", { core: first });
+    hook.forget("s1");
+    expect(revisionId((await hook.core({ sessionId: "s1", turnId: "t3", report: () => {} }))!)).toBe(next);
   });
 
   it("PW1.47 without a turn id, the first step of a stream is the turn boundary", async () => {
