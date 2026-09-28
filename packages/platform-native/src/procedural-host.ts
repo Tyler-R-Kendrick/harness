@@ -2,7 +2,7 @@ import { getRandomValues } from "node:crypto";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
+import { authorize, LiveLearner, logTrajectories, modelGraphRouter, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
 import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
@@ -18,7 +18,9 @@ export const hostPorts = {
  * The procedural step hook for this host's sessions (plan §5): each session resolves to a
  * graph through the resolver (the host's principal as the owner) and is pinned by P9's
  * `pinSession`. It goes to `sessionAgent({ step })` and, with a guidance model,
- * `harnessSessions({ step })`.
+ * `harnessSessions({ step })`. A resolver rule that routes asks `router` (the ensemble's
+ * tool router) to choose the graph by the session's first prompt; without one such a
+ * session has no graph.
  */
 export function nativeProceduralStep(options: {
   readonly store: ProceduralStore;
@@ -28,8 +30,10 @@ export function nativeProceduralStep(options: {
   readonly preset?: string;
   /** The guidance model; a step's own model when not given. Turn-level guidance (harness workers) needs one. */
   readonly model?: LanguageModel;
+  /** The routing model route rules ask (`modelGraphRouter`), such as the ensemble's `tool-calling` router. */
+  readonly router?: LanguageModel;
 }): ProceduralStepHook {
-  const { store, settings, resolver, principal, preset, model } = options;
+  const { store, settings, resolver, principal, preset, model, router } = options;
   return proceduralStep({
     store,
     settings,
@@ -38,6 +42,7 @@ export function nativeProceduralStep(options: {
     ...hostPorts,
     ...(preset === undefined ? {} : { preset }),
     ...(model === undefined ? {} : { model }),
+    ...(router === undefined ? {} : { router: modelGraphRouter({ model: router, settings }) }),
   });
 }
 

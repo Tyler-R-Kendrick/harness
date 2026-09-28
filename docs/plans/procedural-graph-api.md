@@ -1106,6 +1106,11 @@ As built. A resolver rule may route instead of naming a graph (plan §8.1).
   are kept per session by request, so a session routed to no graph is not asked again for
   the same prompt; a router that throws is asked again at the next turn. Harness turns
   (`turn`) route the same way.
+- Native host: `nativeProceduralStep({ …, router?: LanguageModel })` wraps it in
+  `modelGraphRouter` with the host's settings. With the cognitive core, `main.ts` passes
+  the ensemble's `languageModel("tool-calling", "router")`; without it a routing rule
+  gives no graph, and an ensemble with no router member fails the route (no graph) at
+  each turn until one serves.
 
 ## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
 

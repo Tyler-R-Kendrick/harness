@@ -167,6 +167,11 @@ The decision held; these details moved.
 - **Records are keyed by content.** A rejection never replaces an older head's or an
   import's record with the same id, and a commit that loses the head race puts back the
   record it replaced.
+- **Resolver rules may route.** A rule may name candidate graphs and a minimum
+  confidence instead of a graph; the cognitive router chooses among them by the session's
+  first prompt (a tool whose schema admits only the candidates, with the router's
+  calibrated confidence). Below the minimum, or with no router, the session has no graph,
+  and a routed session keeps its graph through its pin.
 - **Plans come from subgraphs.** Core's task graph carries opaque payloads and
   serializes to JSON; `planFromSubgraph` turns the subgraph between two nodes into one,
   a task per action node, with the graph's relations as data and control dependencies.
