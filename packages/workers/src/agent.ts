@@ -31,6 +31,16 @@ export function userContent(prompt: readonly unknown[]): { content: UserContent;
   return { content, said: content.map((p) => (p.type === "text" ? p.text : "")).join("\n") };
 }
 
+/**
+ * Where a worker keeps each session's conversation beyond its own memory, so a restarted
+ * host continues a session where it stopped. Best effort: a failed load starts the
+ * conversation afresh and a failed save loses only that.
+ */
+export interface ConversationStore {
+  load(sessionId: string): Promise<readonly ModelMessage[] | undefined>;
+  save(sessionId: string, messages: readonly ModelMessage[]): Promise<void>;
+}
+
 interface Running {
   readonly abort: AbortController;
   readonly decisions: Map<string, (outcome: CallbackOutcome) => void>;
@@ -48,6 +58,7 @@ export class AgentWorker implements Worker {
   readonly #agent: Agent<TurnOptions, ToolSet>;
   readonly #onTurn: ((turn: Turn) => Promise<unknown>) | undefined;
   readonly #onEvent: ((sessionId: string, name: string) => BehaviorChange | undefined) | undefined;
+  readonly #conversations: ConversationStore | undefined;
   readonly #history = new Map<string, ModelMessage[]>();
   readonly #running = new Map<string, Running>();
 
@@ -56,10 +67,13 @@ export class AgentWorker implements Worker {
     readonly onTurn?: (turn: Turn) => Promise<unknown>;
     /** A session's behavior (a steered model's): takes host events and returns the change each caused. */
     readonly onEvent?: (sessionId: string, name: string) => BehaviorChange | undefined;
+    /** Keeps each session's conversation across restarts. */
+    readonly conversations?: ConversationStore;
   }) {
     this.#agent = options.agent;
     this.#onTurn = options.onTurn;
     this.#onEvent = options.onEvent;
+    this.#conversations = options.conversations;
   }
 
   event(command: EventCommand, emit: Emit): void {
@@ -74,9 +88,15 @@ export class AgentWorker implements Worker {
     const base = { sessionId: command.sessionId, turnId: command.turnId };
     const update = (u: SessionUpdate) => emit({ type: "update", ...base, update: u });
     const { content, said } = userContent(command.prompt);
-    const messages: ModelMessage[] = [...(this.#history.get(command.sessionId) ?? []), { role: "user", content }];
+    // With a store, the store is the conversation (other workers may share it). A load that
+    // fails falls back to what this worker remembers, and the turn is then not saved, so
+    // what could not be read is not overwritten.
+    const loaded = this.#conversations ? await this.#conversations.load(command.sessionId).then((m) => ({ ok: true as const, m }), () => ({ ok: false as const })) : undefined;
+    const past = (loaded?.ok ? loaded.m : this.#history.get(command.sessionId)) ?? [];
+    const messages: ModelMessage[] = [...past, { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
+    let finished: readonly ModelMessage[] | undefined;
     try {
       for (;;) {
         const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
@@ -151,6 +171,7 @@ export class AgentWorker implements Worker {
         messages.push({ role: "tool", content: responses });
       }
       this.#history.set(command.sessionId, messages);
+      finished = messages;
       // Remembering is best effort: a turn never fails because of it.
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {
@@ -163,7 +184,12 @@ export class AgentWorker implements Worker {
     } finally {
       this.#running.delete(key);
     }
+    // The save begins before the turn ends, so a turn started from the end event loads after it
+    // (the store orders a session's load after its saves); it is awaited after, so a slow store
+    // does not hold the end back. Saving is best effort.
+    const saved = finished && loaded?.ok ? this.#conversations?.save(command.sessionId, finished).catch(() => undefined) : undefined;
     emit({ type: "end", ...base, stopReason });
+    await saved;
   }
 
   cancel(sessionId: string, turnId: string): void {
