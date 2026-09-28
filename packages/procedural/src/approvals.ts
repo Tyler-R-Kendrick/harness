@@ -92,7 +92,7 @@ function summary(record: RevisionRecord, head: RevisionId | undefined): Approval
     graph: record.graph,
     origin: record.origin,
     parent,
-    onHead: parent !== null && parent === head,
+    onHead: parent === head,
     ...(record.dream === undefined ? {} : { dream: record.dream }),
     at: record.at,
     edits: record.edits,
@@ -117,16 +117,9 @@ export function requestedNotice(record: RevisionRecord): ApprovalNotice {
 /** The notice that a candidate was decided, for a result that decided one; none otherwise. */
 export function decidedNotice(result: ApprovalResult): ApprovalNotice | undefined {
   const { graph, candidate } = result;
-  switch (result.status) {
-    case "committed":
-      return { type: "procedural.approval.decided", payload: { graph, candidate, decision: "approved", revision: result.revision } };
-    case "unchanged":
-      return { type: "procedural.approval.decided", payload: { graph, candidate, decision: "approved", revision: result.head } };
-    case "declined":
-      return { type: "procedural.approval.decided", payload: { graph, candidate, decision: "declined" } };
-    case "refused":
-      return undefined;
-  }
+  if (result.status === "refused") return undefined;
+  if (result.status === "declined") return { type: "procedural.approval.decided", payload: { graph, candidate, decision: "declined" } };
+  return { type: "procedural.approval.decided", payload: { graph, candidate, decision: "approved", revision: result.status === "committed" ? result.revision : result.head } };
 }
 
 /** Dream's inbox port over a notifier: each stored proposal becomes a `requested` notice. */
@@ -171,8 +164,8 @@ function againstHead(record: RevisionRecord, head: ProceduralGraph, cycles: Cycl
 /** The evidence gate against the overlay on the current head, when the preset lists it; a pass otherwise. */
 async function evidenceNow(store: ProceduralStore, record: RevisionRecord, head: Head, base: ProceduralGraph, candidate: ProceduralGraph, preset: Preset): Promise<GateResult | undefined> {
   const { dream } = preset;
-  // Stryker disable next-line Regex: equivalent; parsed settings allow `?` only at the end of a gate name
-  const listed = dream.mode === "incremental" && dream.gate.some((g) => g.replace(/\?$/, "") === "evidence");
+  // As in dream: only an incremental dream gates on evidence (parsed settings never mark it optional).
+  const listed = dream.mode === "incremental" && dream.gate.includes("evidence");
   if (!listed || record.edits === null) return undefined;
   if (!preset.overlay || preset.live === undefined) return { pass: false, reason: "no live evidence: the preset has no overlay" };
   const overlay = foldAll(firstHead(head), (await store.overlay(record.graph).read(0)).map((e) => e.event));

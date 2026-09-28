@@ -10,6 +10,7 @@ import {
   listApprovals,
   MemoryProceduralStore,
   NodeNameSchema,
+  parseGraph,
   prepareCandidate,
   presetOf,
   rebaseOverlay,
@@ -33,6 +34,12 @@ const toTool = edits({ add_edges: [{ source: "Bridge_Extract", target: "First_Ho
 /** Three distinct sessions walked the loop: the evidence the gate needs for it. */
 const support = (): OverlayEvent[] => Array.from({ length: 3 }, (_, i) => observed(`s${i}/t`, ["Bridge_Extract", "First_Hop_Retrieve"], null));
 const H1 = graphOf({ ...hotpot(), edges: hotpot().edges.map((e, i) => (i === 0 ? { ...e, guidance: "Go." } : e)) });
+/** A document known to parse, as a graph. */
+const parsed = (doc: CandidateDocument): ProceduralGraph => {
+  const p = parseGraph(doc);
+  if (!p.ok) throw new Error(JSON.stringify(p.diagnostics));
+  return p.graph;
+};
 /** An expert's document: the hotpot core with another description. */
 const EXPERT = graphOf({ ...hotpot(), nodes: hotpot().nodes.map((n, i) => (i === 2 ? { ...n, description: "Scan every passage." } : n)) });
 
@@ -80,7 +87,7 @@ describe("the approvals inbox", () => {
     await store.revisions.put(imported);
     await store.revisions.put({ ...proposal({ edits: renameGuidance("Hi.") }), decision: { kind: "rejected-gate", gate: "approval", reason: "no" } });
     await store.revisions.put({ ...proposal({ edits: renameGuidance("Yo.") }), graph: (await import("@harness/procedural")).GraphIdSchema.parse("other/graph") });
-    expect(await listApprovals({ store, graph: GRAPH })).toEqual({
+    expect(await listApprovals({ store, graph: GRAPH })).toStrictEqual({
       graph: GRAPH,
       head: G0_ID,
       approvals: [
@@ -90,7 +97,7 @@ describe("the approvals inbox", () => {
     });
     await moveHead(store, H1);
     expect((await listApprovals({ store, graph: GRAPH })).approvals.map((a) => a.onHead)).toEqual([false, false]);
-    expect(await listApprovals({ store: new MemoryProceduralStore(), graph: GRAPH })).toEqual({ graph: GRAPH, approvals: [] });
+    expect(await listApprovals({ store: new MemoryProceduralStore(), graph: GRAPH })).toStrictEqual({ graph: GRAPH, approvals: [] });
     const orphan = RevisionRecordSchema.parse({ ...proposal(), parents: [] });
     const lone = new MemoryProceduralStore();
     await lone.revisions.put(orphan);
@@ -221,7 +228,7 @@ describe("the approvals inbox", () => {
     await store.revisions.put(record);
     // Another dream already made the candidate's change, on a head that moved.
     await moveHead(store, H1);
-    const head = await moveHead(store, graphOf(applyEdits(H1, toTool)));
+    const head = await moveHead(store, parsed(applyEdits(H1, toTool)));
     expect(await approveCandidate({ store, record, preset: harness, clock })).toEqual({ status: "unchanged", graph: GRAPH, candidate: record.id, head });
     expect((await store.revisions.get(record.id))!.decision).toEqual({ kind: "approved", revision: head });
 
@@ -239,7 +246,7 @@ describe("the approvals inbox", () => {
     const candidate = proposal({ edits: onVerify });
     await verifying.revisions.put(candidate);
     // The head already verifies (and describes a node otherwise); it lacks the rewrite.
-    const had = await moveHead(verifying, graphOf(applyEdits(EXPERT, { ...onVerify, delete_edges: [], add_edges: onVerify.add_edges.slice(0, 2) })));
+    const had = await moveHead(verifying, parsed(applyEdits(EXPERT, { ...onVerify, delete_edges: [], add_edges: onVerify.add_edges.slice(0, 2) })));
     const ungated: Preset = { ...harness, dream: { ...harness.dream, gate: ["approval"] } };
     expect(await approveCandidate({ store: verifying, record: candidate, preset: ungated, clock })).toMatchObject({ status: "committed", previous: had });
     const committed = (await verifying.heads.get(GRAPH))!.revision;
@@ -249,7 +256,7 @@ describe("the approvals inbox", () => {
     expect(doc.edges.filter((e) => e.from === "Start")).toEqual([expect.objectContaining({ guidance: "Go." })]);
 
     const decided = RevisionRecordSchema.parse({ ...record, decision: { kind: "head" } });
-    expect(await approveCandidate({ store, record: decided, preset: harness, clock })).toEqual({ status: "refused", graph: GRAPH, candidate: record.id, reason: `candidate ${record.id} is not waiting for approval (its decision is head)` });
+    expect(await approveCandidate({ store, record: decided, preset: harness, clock })).toStrictEqual({ status: "refused", graph: GRAPH, candidate: record.id, reason: `candidate ${record.id} is not waiting for approval (its decision is head)` });
     expect(await approveCandidate({ store, record: { ...record, redacted: true }, preset: harness, clock })).toMatchObject({ status: "refused", reason: `candidate ${record.id} is redacted` });
     expect(await approveCandidate({ store: new MemoryProceduralStore(), record, preset: harness, clock })).toMatchObject({ status: "refused", reason: `graph ${GRAPH} has no head` });
     const headless = new MemoryProceduralStore();
@@ -268,7 +275,7 @@ describe("the approvals inbox", () => {
     await declineCandidate({ store, record: imported });
     expect((await store.revisions.get(imported.id))!.decision).toEqual({ kind: "rejected-gate", gate: "approval", reason: "declined by the approver" });
     const decided = (await store.revisions.get(record.id))!;
-    expect(await declineCandidate({ store, record: decided })).toEqual({ status: "refused", graph: GRAPH, candidate: record.id, reason: `candidate ${record.id} is not waiting for approval (its decision is rejected-gate)` });
+    expect(await declineCandidate({ store, record: decided })).toStrictEqual({ status: "refused", graph: GRAPH, candidate: record.id, reason: `candidate ${record.id} is not waiting for approval (its decision is rejected-gate)` });
     expect(await store.heads.get(GRAPH)).toEqual({ revision: G0_ID, history: [] });
   });
 
@@ -276,14 +283,75 @@ describe("the approvals inbox", () => {
     const record = proposal();
     const requested: ApprovalNotice = { type: "procedural.approval.requested", payload: { graph: GRAPH, candidate: record.id, origin: "dream", parent: G0_ID, dream: DREAM, gate: "approval-for-side-effects", tools: ["first_hop_retrieve"] } };
     expect(requestedNotice(record)).toEqual(requested);
-    expect(requestedNotice(proposal({ document: H1, origin: "import" }))).toEqual({ type: "procedural.approval.requested", payload: { graph: GRAPH, candidate: revisionId(H1), origin: "import", parent: G0_ID, tools: [] } });
+    expect(requestedNotice(proposal({ document: H1, origin: "import" }))).toStrictEqual({ type: "procedural.approval.requested", payload: { graph: GRAPH, candidate: revisionId(H1), origin: "import", parent: G0_ID, tools: [] } });
     const base = { graph: GRAPH, candidate: record.id };
     expect(decidedNotice({ status: "committed", ...base, revision: G0_ID, previous: G0_ID })).toEqual({ type: "procedural.approval.decided", payload: { ...base, decision: "approved", revision: G0_ID } });
     expect(decidedNotice({ status: "unchanged", ...base, head: G0_ID })).toEqual({ type: "procedural.approval.decided", payload: { ...base, decision: "approved", revision: G0_ID } });
-    expect(decidedNotice({ status: "declined", ...base })).toEqual({ type: "procedural.approval.decided", payload: { ...base, decision: "declined" } });
+    expect(decidedNotice({ status: "declined", ...base })).toStrictEqual({ type: "procedural.approval.decided", payload: { ...base, decision: "declined" } });
     expect(decidedNotice({ status: "refused", ...base, reason: "no" })).toBeUndefined();
     const sent: ApprovalNotice[] = [];
     await approvalInbox((n) => void sent.push(n)).pending({ graph: GRAPH, candidate: record, tools: ["first_hop_retrieve"] });
     expect(sent).toEqual([requested]);
+  });
+
+  describe("rebasing a candidate's edits", () => {
+    /** G₀ with a Verify step between the bridge and the answer. */
+    const verifying = () => parsed(applyEdits(G0, edits({
+      add_nodes: [{ id: "Verify", type: "REASONING", description: "Check." }],
+      add_edges: [
+        { source: "Bridge_Extract", target: "Verify", relation: "LEADS_TO", condition: null, guidance: "Check.", pitfalls: "" },
+        { source: "Verify", target: "End", relation: "LEADS_TO", condition: null, guidance: "Answer.", pitfalls: "" },
+      ],
+    })));
+
+    it("PX2.80 what the edits delete and add back is not taken for something the head already has: re-adding it after the deletion is kept, so a head that already made the change is unchanged", async () => {
+      const P = verifying();
+      // Rebuild Verify with new texts, and rewrite Start's edge: deletions, then the same things added back.
+      const rebuild = edits({
+        delete_nodes: ["Verify"],
+        delete_edges: [{ source: "Start", target: "First_Hop_Retrieve" }],
+        add_nodes: [{ id: "Verify", type: "REASONING", description: "Check." }],
+        add_edges: [
+          { source: "Bridge_Extract", target: "Verify", relation: "LEADS_TO", condition: null, guidance: "Check the bridge.", pitfalls: "" },
+          { source: "Verify", target: "End", relation: "LEADS_TO", condition: null, guidance: "Answer it.", pitfalls: "" },
+          { source: "Start", target: "First_Hop_Retrieve", relation: "LEADS_TO", condition: null, guidance: "Go.", pitfalls: "" },
+        ],
+      });
+      const store = await headed(new MemoryProceduralStore(), []);
+      await moveHead(store, P);
+      const record = RevisionRecordSchema.parse({ ...proposal({ edits: rebuild, document: applyEdits(P, rebuild), parent: revisionId(P) }) });
+      await store.revisions.put(record);
+      // The head made exactly that change, and also rewrote a description.
+      const done = parsed({ ...applyEdits(P, rebuild), nodes: applyEdits(P, rebuild).nodes.map((n) => (n.id === "Scan_Index" ? { ...n, description: "Scan every passage." } : n)) });
+      const head = await moveHead(store, done);
+      const ungated: Preset = { ...harness, dream: { ...harness.dream, gate: ["approval"] } };
+      expect(await approveCandidate({ store, record, preset: ungated, clock })).toEqual({ status: "unchanged", graph: GRAPH, candidate: record.id, head });
+    });
+
+    it("PX2.81 on the head it was proposed on, a candidate is its stored document exactly; an import on a later head is its document with the new head as parent; a rebase follows the preset's cycle policy", async () => {
+      // An edit set that adds an edge G₀ already has: the dream's document holds it twice, and that is what commits.
+      const twice = edits({ add_edges: [{ source: "Start", target: "First_Hop_Retrieve", relation: "LEADS_TO", condition: null, guidance: "After Start, go to First_Hop_Retrieve.", pitfalls: "Do not skip First_Hop_Retrieve." }] });
+      const doubled = proposal({ edits: twice });
+      expect(doubled.document.edges.filter((e) => e.from === "Start")).toHaveLength(2);
+      const ungated: Preset = { ...harness, dream: { ...harness.dream, gate: ["approval"] } };
+      const store = await headed(new MemoryProceduralStore(), []);
+      await store.revisions.put(doubled);
+      expect(await approveCandidate({ store, record: doubled, preset: ungated, clock })).toMatchObject({ status: "committed", revision: doubled.id });
+
+      const imported = proposal({ document: EXPERT, origin: "import" });
+      const later = await headed(new MemoryProceduralStore(), []);
+      await later.revisions.put(imported);
+      const h1 = await moveHead(later, H1);
+      expect(await approveCandidate({ store: later, record: imported, preset: harness, clock })).toEqual({ status: "committed", graph: GRAPH, candidate: imported.id, revision: imported.id, previous: h1 });
+      expect(await later.revisions.get(imported.id)).toMatchObject({ parents: [h1], origin: "import", document: EXPERT });
+
+      // Rebased under forbidden cycles, the loop back to retrieval is repaired away: nothing is left to add.
+      const loop = await headed();
+      const record = proposal();
+      await loop.revisions.put(record);
+      const moved = await moveHead(loop, H1);
+      const forbidding: Preset = { ...harness, dream: { ...harness.dream, cycles: "forbidden" } };
+      expect(await approveCandidate({ store: loop, record, preset: forbidding, clock })).toEqual({ status: "unchanged", graph: GRAPH, candidate: record.id, head: moved });
+    });
   });
 });
