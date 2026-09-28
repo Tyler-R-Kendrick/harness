@@ -91,7 +91,13 @@ differed on 1,380.
   real weights by behavior, not against reference logits.
 - A page downloads 614 MB once (kept in the Cache API), plus onnxruntime-web's 28 MB
   WebAssembly. The claude.ai artifact may not be allowed to fetch either; the page then
-  says so and decides lexically.
+  says so and decides lexically. Run by hand in headless Chromium (no GPU adapter, so
+  onnxruntime-web fell back to WebAssembly), the real model loaded from a local hub and
+  answered in 9.6 seconds, first question included.
+- A browser's storage quota can refuse a 577 MB file (headless Chromium's did). The
+  artifact store now treats its cache as a saving only: a cache that cannot be read is a
+  miss, one that cannot keep a file leaves the verified bytes in use, and the host hears
+  why (`onCacheProblem`).
 
 ## Revisit when
 

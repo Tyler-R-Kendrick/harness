@@ -16,6 +16,8 @@ export interface BrowserEnsembleOptions {
   readonly fetch?: typeof fetch;
   /** Where model files come from (default Hugging Face). */
   readonly hub?: string;
+  /** Hears why the cache could not read or keep a model file (a storage quota, an insecure page); the model loads regardless. */
+  readonly onCacheProblem?: (key: string, error: unknown) => void;
   /** Allow hosted models (default true); they still need their credential in `env`. */
   readonly allowHosted?: boolean;
   /** Credentials and server addresses (a browser has no process environment). */
@@ -57,7 +59,12 @@ export function buildBrowserEnsemble(options: BrowserEnsembleOptions): Ensemble 
   const allowHosted = options.allowHosted !== false;
   const fetchFn = options.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
   const ensemble = new Ensemble({ platform: "browser", preferences: options.catalog.preferences, selection: { allowHosted } });
-  const artifacts = new ArtifactStore({ fetch: fetchFn, cache: options.cache ?? new CacheStorageByteCache(), ...(options.hub === undefined ? {} : { baseUrl: options.hub }) });
+  const artifacts = new ArtifactStore({
+    fetch: fetchFn,
+    cache: options.cache ?? new CacheStorageByteCache(),
+    ...(options.hub === undefined ? {} : { baseUrl: options.hub }),
+    ...(options.onCacheProblem === undefined ? {} : { onCacheProblem: options.onCacheProblem }),
+  });
   const xgrammar = options.xgrammar;
   const enforces = (m: ModelDescriptor) => xgrammar !== undefined && m.runtime === "transformers.js" && m.run.vocab !== undefined;
   const constrainer = (m: ModelDescriptor): Constrainer | undefined =>

@@ -219,6 +219,15 @@ describe("the browser host's cognitive core", () => {
     expect(d.runtime.env.wasm.wasmPaths).toBeUndefined();
   });
 
+  it("BE1.14 a model loads when the cache cannot keep its files (a storage quota), and the page hears why", async () => {
+    const d = decider();
+    const problems: string[] = [];
+    const full = { get: async () => undefined, put: async () => Promise.reject(new Error("QuotaExceededError")) };
+    const ensemble = buildBrowserEnsemble({ catalog: { models: [d.m], preferences: {} }, cache: full, fetch: d.fetch, device: "wasm", onnxruntime: d.runtime, onCacheProblem: (key, e) => problems.push(`${key.split("/").at(-1)}: ${String(e)}`) });
+    expect((await classify(ensemble)).answers.pick.choice).toBe("last");
+    expect(problems.sort()).toEqual(Object.keys(d.served).map((p) => `${p}: Error: QuotaExceededError`).sort());
+  });
+
   it("BE1.11 an XGrammar loader from source evaluates it once, and again only when asked for a fresh instance", async () => {
     const load = xgrammarFromSource("module.exports = { instance: Symbol('xgrammar') };");
     const first = await load(false);
