@@ -645,6 +645,18 @@ describe("step usage", () => {
     // Nothing is read or pinned for it.
     expect(await s.store.pins.get("s1")).toBeUndefined();
   });
+
+  it("PW1.95 a session the access policy keeps from its graph reports no step usage, as it is not guided by it", async () => {
+    const s = await setup("harness");
+    const usages: StepUsageNotice[] = [];
+    const scope = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n) };
+    for (const denied of ["read", "write"] as const) {
+      await proceduralStep({ ...s.deps, policy: parsePolicy({ rules: [{ when: { actions: [denied] }, allow: false }] }) }).end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    }
+    expect(usages).toEqual([]);
+    await proceduralStep({ ...s.deps, policy: parsePolicy({ rules: [] }) }).end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    expect(usages).toHaveLength(1);
+  });
 });
 
 describe("step records", () => {
