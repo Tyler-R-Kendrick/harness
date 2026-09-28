@@ -1084,6 +1084,10 @@ evaluator"; the names above keep their meaning.
   parses the dream log's entries for readers such as the schedule. A run that throws
   releases its lease (its epoch, so a lease another run took is left alone): the log
   keeps every finished command, so any holder resumes the dream.
+- **Graphs of a store.** `MemoryProceduralStore.graphs()` and
+  `SnapshotProceduralStore.graphs()` name every graph with a head, in the order each got
+  its first. It is not on the `ProceduralStore` port: a host that tends every graph (the
+  schedule) takes the list from its own store.
 
 ## Open issues
 

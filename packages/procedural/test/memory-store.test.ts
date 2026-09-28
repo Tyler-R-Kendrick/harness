@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, TOMBSTONE } from "@harness/procedural";
+import { GraphIdSchema, MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, TOMBSTONE } from "@harness/procedural";
 import { graphA, record } from "./store-fixtures.ts";
 
 describe("MemoryProceduralStore", () => {
@@ -26,6 +26,20 @@ describe("MemoryProceduralStore", () => {
     expect(document.dreams).toEqual([{ graph: graphA, events: [1] }]);
     expect((await store.dreams(graphA).read(0)).map((e) => e.event)).toEqual([1, 2]);
     expect((await rebuilt.dreams(graphA).read(0)).map((e) => e.event)).toEqual([1, 3]);
+  });
+
+  it("PS1.49 graphs names every graph with a head, in the order each got its first, and a rebuilt store keeps it", async () => {
+    const store = new MemoryProceduralStore();
+    expect(await store.graphs()).toEqual([]);
+    const r = record([]);
+    const other = GraphIdSchema.parse("team/beta");
+    await store.revisions.put(r);
+    await store.overlay(GraphIdSchema.parse("team/gamma")).append([]);
+    await store.heads.set(other, undefined, r.id);
+    await store.heads.set(graphA, undefined, r.id);
+    await store.heads.set(other, r.id, r.id);
+    expect(await store.graphs()).toEqual([other, graphA]);
+    expect(await new MemoryProceduralStore(store.document()).graphs()).toEqual([other, graphA]);
   });
 
   it("PS1.47 a bad read names the argument and its value", async () => {
