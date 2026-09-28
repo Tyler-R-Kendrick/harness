@@ -1174,11 +1174,12 @@ evaluator"; the names above keep their meaning.
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
-the evaluator contract and scripted environment, rejection records). Still open:
+the evaluator contract and scripted environment, rejection records), and the section
+above gave dream a schedule and a configured evaluator. Still open:
 
-- P6 × P12: dream on the daemon has no approver (the permission flow, MX3, is per
-  session and dream runs outside any session), no configured `Evaluator`, and no session
-  tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
+- P6 × P12: dream on the daemon (on demand or scheduled) has no approver (the permission
+  flow, MX3, is per session and dream runs outside any session) and no session tool
+  catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
   for their absence. The CLI approves on a terminal.
 - P12: content-id keying means two graphs holding the same document share one record (its
