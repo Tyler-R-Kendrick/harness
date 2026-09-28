@@ -113,7 +113,7 @@ describe("running plans (runPlan)", () => {
     const save = async () => {
       if (++saves === 2) throw new Error("disk full");
     };
-    await expect(runPlan({ plan: planOf(["a", "b"], [["a", "b", "control"]]), task: echo(log), settings: settings(), save })).rejects.toThrow("disk full");
+    await expect(runPlan({ plan: planOf(["a", "b"], [["a", "b", "control"]]), task: echo(log), settings: settings(), save })).rejects.toStrictEqual(new Error("disk full"));
     expect(log.map((t) => t.id)).toEqual(["a"]);
     // A task still running when a save fails finishes unsaved: nothing is saved after the failure.
     let calls = 0;

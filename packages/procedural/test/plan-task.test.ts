@@ -96,5 +96,8 @@ describe("plan tasks on a model (modelTask)", () => {
       await modelTask({ model, tools: {}, settings, ...(g === undefined ? {} : { graph: g }) })({ id, payload: summarize, inputs: {} });
       expect(JSON.stringify(options.at(-1)!.prompt)).not.toContain("Transition:");
     }
+    // Without the graph the guidance slot is empty.
+    const bare = settings.prompts.planTask.replace("{task}", "[summarize] (Type: ACTION)\nDescription: Summarize the page.").replace("{guidance}", "").replace("{inputs}", "{}");
+    expect(JSON.stringify(options.at(-2)!.prompt)).toContain(JSON.stringify(bare).slice(1, -1));
   });
 });

@@ -204,5 +204,8 @@ describe("plan runs on a host (planRunner)", () => {
     // Tools may be given once, for every graph.
     const fixed = planRunner({ store, runs: recording(), settings, entropy: counting(), task: modelTasks({ model, tools: tools({ graph }), settings }) });
     expect((await fixed.run(graph, await planOf(store, "Fetch_Page", "Fetch_Page"))).status).toBe("succeeded");
+    // A graph with no head: its tasks run unguided.
+    expect((await fixed.run(GraphIdSchema.parse("team/none"), await planOf(store, "Fetch_Page", "Fetch_Page"))).status).toBe("succeeded");
+    expect(prompts.at(-1)).not.toContain("Transition:");
   });
 });

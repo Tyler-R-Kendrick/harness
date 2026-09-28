@@ -41,6 +41,7 @@ export function modelTask(options: ModelTaskOptions): PlanTask {
     const task = `[${payload.node.id}] (Type: ${payload.node.type})\nDescription: ${payload.node.description}`;
     const prompt = renderPrompt(settings.prompts.planTask, { task, guidance, inputs: JSON.stringify(inputs) });
     if (name === undefined) return { ok: true, output: (await generateText({ model, prompt, ...decoding })).text };
+    // Stryker disable next-line StringLiteral: equivalent; the SDK reads any object tool choice as the tool it names by toolName
     const result = await generateText({ model, prompt, tools: { [name]: tools[name]! }, toolChoice: { type: "tool", toolName: name }, ...decoding });
     for (const part of result.content) {
       if (part.type === "tool-result") return { ok: true, output: part.output };

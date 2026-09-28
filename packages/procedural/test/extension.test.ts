@@ -260,7 +260,10 @@ describe("proceduralExtension", () => {
       await expect(op("plan", { graph: web, from: "", to: "End" })).rejects.toThrow(/invalid procedural\.plan input[\s\S]*from/);
       await expect(op("run", { graph: web })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
       await expect(op("run", { graph: web, from: "Start" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
       await expect(op("run", { graph: web, plan: {}, from: "Start", to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, plan: {}, from: "Start" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, plan: {}, to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
       await expect(op("run", { graph: web, from: "Start", to: "End", extra: 1 })).rejects.toThrow(/invalid procedural\.run input/);
     });
   });
