@@ -48,7 +48,7 @@ function daemon(dir: string, store: string, transport: string[]) {
 const deadPid = (): number => spawnSync(process.execPath, ["-e", ""], { env: { NODE_OPTIONS: "" } }).pid!;
 
 describe("one owner per procedural store", () => {
-  it("PX2.73 while a daemon holds the store and listens on a socket, harness-procedural sends its operations to the daemon", async () => {
+  it("PX2.76 while a daemon holds the store and listens on a socket, harness-procedural sends its operations to the daemon", async () => {
     const { dir, store, cli, json } = await scratch();
     const socket = join(dir, "harness.sock");
     const d = daemon(dir, store, ["--socket", socket]);
@@ -77,7 +77,7 @@ describe("one owner per procedural store", () => {
     expect(await json("history", "team/search")).toMatchObject({ head: revisionId(seedGraph()) });
   });
 
-  it("PX2.74 a daemon that holds the store without a socket makes harness-procedural refuse, and the store is untouched", async () => {
+  it("PX2.77 a daemon that holds the store without a socket makes harness-procedural refuse, and the store is untouched", async () => {
     const { dir, store, cli } = await scratch();
     const d = daemon(dir, store, ["--stdio"]);
     for (let i = 0; i < 200 && !existsSync(join(store, STORE_LOCK)); i += 1) await new Promise((r) => setTimeout(r, 25));
@@ -92,7 +92,7 @@ describe("one owner per procedural store", () => {
     expect(existsSync(join(store, STORE_LOCK))).toBe(false);
   });
 
-  it("PX2.75 a daemon refuses to start while another process holds the store; a stale lock does not stop it", async () => {
+  it("PX2.78 a daemon refuses to start while another process holds the store; a stale lock does not stop it", async () => {
     const { dir, store } = await scratch();
     await mkdir(store, { recursive: true });
     await writeFile(join(store, STORE_LOCK), JSON.stringify({ pid: process.pid, holder: "harness-procedural" }));
@@ -109,7 +109,7 @@ describe("one owner per procedural store", () => {
     expect(await started.exited).toBe(0);
   });
 
-  it("PX2.76 with no daemon, harness-procedural takes the lock for its run and releases it; a stale lock does not stop it", async () => {
+  it("PX2.79 with no daemon, harness-procedural takes the lock for its run and releases it; a stale lock does not stop it", async () => {
     const { store, json } = await scratch();
     await mkdir(store, { recursive: true });
     await writeFile(join(store, STORE_LOCK), JSON.stringify({ pid: deadPid(), holder: "harness" }));

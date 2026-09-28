@@ -10,9 +10,9 @@ import type { WorkerEvent } from "@harness/core";
 import { nullSandbox, scriptedHarness } from "@harness/testkit";
 import type { ScriptedTurn } from "@harness/testkit";
 import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
-import type { StepContext, StepHook, TurnContext } from "@harness/workers";
+import type { StepContext, StepEndContext, StepHook, TurnContext } from "@harness/workers";
 
-const finish = (unified: "stop" | "tool-calls" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
+const finish = (unified: "stop" | "tool-calls" = "stop", used = usage()): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: used });
 const text = (t: string): LanguageModelV4StreamPart[] => [
   { type: "text-start", id: "0" },
   { type: "text-delta", id: "0", delta: t },
@@ -159,6 +159,47 @@ describe("sessionAgent's step hook: a per-step AI SDK prepareStep for procedural
     expect(none.seen[0]!.tools).toEqual([]);
   });
 
+  it("PW1.64 the hook's end is told each step's model usage with the turn's scope, after the step, and the caller's own onStepEnd still runs", async () => {
+    const ended: StepEndContext[] = [];
+    const order: string[] = [];
+    const hook: StepHook = {
+      prepare: async (c) => void order.push(`prepare ${c.stepNumber}`),
+      end: async (c) => {
+        ended.push(c);
+        order.push(`end ${c.stepNumber}`);
+      },
+    };
+    const model = scripted([call("weather", { city: "Lagos" }), finish("tool-calls", usage(40, 7))], [...text("Sunny."), finish("stop", usage(55, 3))]);
+    const tools = { weather: tool({ inputSchema: z.object({ city: z.string() }), execute: async () => "sunny" }) };
+    await run(new AgentWorker({ agent: sessionAgent({ model, tools, step: hook }) }), "weather?", { sessionMeta: { repo: "harness" } }).done;
+    expect(order).toEqual(["prepare 0", "end 0", "prepare 1", "end 1"]);
+    expect(ended.map((c) => [c.sessionId, c.turnId, c.cwd, c.sessionMeta, c.stepNumber, c.usage.inputTokens, c.usage.outputTokens])).toEqual([
+      ["s1", "t1", "/work", { repo: "harness" }, 0, 40, 7],
+      ["s1", "t1", "/work", { repo: "harness" }, 1, 55, 3],
+    ]);
+    // Called directly, the agent runs both its hook's end and the caller's callback (or its deprecated alias), on stream and generate.
+    const agent = sessionAgent({ model: scripted([...text("ok"), finish("stop", usage(9, 1))]), step: hook });
+    const theirs: number[] = [];
+    const streamed = await agent.stream({ prompt: "hi", options: { sessionId: "s2" }, onStepEnd: (e) => void theirs.push(e.usage.inputTokens!) });
+    await streamed.consumeStream();
+    await streamed.response;
+    const generating = sessionAgent({ model: new MockLanguageModelV4({ doGenerate: async () => ({ content: [{ type: "text", text: "ok" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(8, 2), warnings: [] }) }), step: hook });
+    await generating.generate({ prompt: "hi", options: { sessionId: "s3" }, onStepFinish: (e) => void theirs.push(e.usage.inputTokens!) });
+    expect(theirs).toEqual([9, 8]);
+    expect(ended.slice(2).map((c) => [c.sessionId, c.turnId, c.usage.inputTokens])).toEqual([
+      ["s2", undefined, 9],
+      ["s3", undefined, 8],
+    ]);
+  });
+
+  it("PW1.65 a failing end hook never fails the turn: a warning says why", async () => {
+    const hook: StepHook = { prepare: async () => undefined, end: async () => Promise.reject(new Error("store offline")) };
+    const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("ok"), finish()]), step: hook }) }), "hi");
+    await done;
+    expect(updates(events)).toContainEqual({ sessionUpdate: "notice", severity: "warning", title: "Step usage failed", description: "store offline" });
+    expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
+  });
+
   it("PW1.8 without a hook, no step preparation is added", async () => {
     const model = scripted([...text("ok"), finish()]);
     const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model, instructions: "Be brief." }) }), "hi");
@@ -249,6 +290,21 @@ describe("harnessSessions' turn hook: turn-level guidance for opaque harness wor
     await done;
     expect(harness.log.turns[0]!.prompt).toMatchObject({ content: [{ type: "text", text: "hi" }] });
     expect(updates(events)[0]).toEqual({ sessionUpdate: "notice", severity: "warning", title: "Turn guidance failed", description: "no graph" });
+    expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
+  });
+
+  it("PW1.66 the hook's end is told each harness step's model usage with the turn's scope; a failing one warns", async () => {
+    const ended: StepEndContext[] = [];
+    const harness = scriptedHarness((p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"));
+    const agent = new HarnessAgent({ harness, instructions: "Be brief.", tools: { weather } });
+    const hook: StepHook = { prepare: async () => undefined, end: async (c) => void ended.push(c) };
+    await run(new AgentWorker({ agent: harnessSessions(agent, { sandboxSession: nullSandbox, step: hook }) }), "weather?", { sessionMeta: { repo: "harness" } }).done;
+    expect(ended.length).toBeGreaterThan(0);
+    expect(ended.map((c) => [c.sessionId, c.turnId, c.cwd, c.sessionMeta, c.usage.inputTokens, c.usage.outputTokens])).toEqual(ended.map(() => ["s1", "t1", "/work", { repo: "harness" }, 1, 1]));
+    const failing: StepHook = { prepare: async () => undefined, end: async () => Promise.reject(new Error("store offline")) };
+    const { events, done } = run(new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness: scriptedHarness(() => "plain"), tools: { weather } }), { sandboxSession: nullSandbox, step: failing }) }), "hi");
+    await done;
+    expect(updates(events)).toContainEqual({ sessionUpdate: "notice", severity: "warning", title: "Step usage failed", description: "store offline" });
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });
 

@@ -51,6 +51,9 @@ export function record(input: RecordInput = {}): Payload {
   return { update: { sessionUpdate: "notice", severity: "info", title: "Procedural step", _meta: { harness: { procedural: { step } } } } };
 }
 
+/** A step's model usage: a notice carrying `_meta.harness.procedural.usage`. */
+export const used = (usage: unknown): Payload => ({ update: { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", _meta: { harness: { procedural: { usage } } } } });
+
 /**
  * A small in-memory `ProceduralStore` for the learner's tests (only what the learner
  * uses does anything). It counts appends so tests can see what happened.

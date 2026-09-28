@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { coreView, match, neighborhood, NodeNameSchema, parseGraph } from "@harness/procedural";
+import { coreView, effectiveGraph, emptyOverlay, foldAll, match, neighborhood, NodeNameSchema, parseGraph, revisionId, terminalAfter } from "@harness/procedural";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "@harness/procedural";
 import { edge, hotpot } from "./fixtures.ts";
+import { proposed } from "./overlay-fixtures.ts";
 import type { DocInput } from "./fixtures.ts";
 
 const view = (doc: DocInput): EffectiveGraph => {
@@ -153,5 +154,33 @@ describe("neighborhood", () => {
     expect(() => neighborhood(g, name("Start"), -1)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Start"), 1.5)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Start"), Number.NaN)).toThrow("hops");
+  });
+});
+
+describe("terminalAfter", () => {
+  it("PG3.28 the one terminal a node has an edge to (a node with no outgoing edges), or none when it has no such edge or several", () => {
+    const g = view(hotpot());
+    expect(terminalAfter(g, name("Bridge_Extract"))).toBe("End");
+    // Scan_Index leads to Bridge_Extract, which is no terminal; End leads nowhere.
+    expect(terminalAfter(g, name("Scan_Index"))).toBeUndefined();
+    expect(terminalAfter(g, name("End"))).toBeUndefined();
+    const nodes = [...hotpot().nodes, { id: "Failed", type: "STATUS", description: "The task failed." }];
+    const two = view(graphOf(nodes, [...hotpot().edges, edge("Bridge_Extract", "Failed")]));
+    expect(terminalAfter(two, name("Bridge_Extract"))).toBeUndefined();
+    // A terminal beside other successors is still the one terminal; parallel edges to it count once.
+    const mixed = view(graphOf(hotpot().nodes, [...hotpot().edges, edge("Scan_Index", "End"), edge("Scan_Index", "End", "TRIGGERS")]));
+    expect(terminalAfter(mixed, name("Scan_Index"))).toBe("End");
+  });
+
+  it("PG3.29 overlay edges the session sees count: into a terminal, and out of a node that would otherwise be one", () => {
+    const parsed = parseGraph(hotpot());
+    if (!parsed.ok) throw new Error("fixture");
+    const core = parsed.graph;
+    const learned = (from: string, to: string) => proposed({ kind: "edge", from, relation: "LEADS_TO", to, condition: null, guidance: "g", pitfalls: "" }, ["s1"]);
+    const shortcut = effectiveGraph(core, foldAll(revisionId(core), [learned("Scan_Index", "End")]), { salt: "x", probationShare: 1 });
+    expect(terminalAfter(shortcut, name("Scan_Index"))).toBe("End");
+    const onward = effectiveGraph(core, foldAll(revisionId(core), [learned("End", "Start")]), { salt: "x", probationShare: 1 });
+    expect(terminalAfter(onward, name("Bridge_Extract"))).toBeUndefined();
+    expect(terminalAfter(effectiveGraph(core, emptyOverlay(revisionId(core)), { salt: "x", probationShare: 1 }), name("Bridge_Extract"))).toBe("End");
   });
 });

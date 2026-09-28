@@ -21,7 +21,7 @@ async function scratch(): Promise<string> {
 const deadPid = (): number => spawnSync(process.execPath, ["-e", ""], { env: { NODE_OPTIONS: "" } }).pid!;
 
 describe("the procedural store's lock", () => {
-  it("PX2.69 the first holder takes the lock, which names its pid and holder; while it holds it, another is told who holds it", async () => {
+  it("PX2.72 the first holder takes the lock, which names its pid and holder; while it holds it, another is told who holds it", async () => {
     const dir = join(await scratch(), "store");
     const first = await lockStore(dir, "harness");
     expect(first.status).toBe("acquired");
@@ -32,7 +32,7 @@ describe("the procedural store's lock", () => {
     expect(STORE_LOCK).toBe("procedural.lock");
   });
 
-  it("PX2.70 a lock whose process has exited, or that does not parse, is stale: the next holder takes it over", async () => {
+  it("PX2.73 a lock whose process has exited, or that does not parse, is stale: the next holder takes it over", async () => {
     const dir = await scratch();
     await writeFile(join(dir, STORE_LOCK), JSON.stringify({ pid: deadPid(), holder: "harness" }));
     const taken = await lockStore(dir, "harness-procedural");
@@ -47,7 +47,7 @@ describe("the procedural store's lock", () => {
     expect(await lockStore(dir, "harness-procedural", { alive: () => true })).toEqual({ status: "held", owner: { pid: 1, holder: "harness" } });
   });
 
-  it("PX2.71 a holder advertises its socket in the lock, and release removes only its own lock, once", async () => {
+  it("PX2.74 a holder advertises its socket in the lock, and release removes only its own lock, once", async () => {
     const dir = await scratch();
     const result = await lockStore(dir, "harness");
     if (result.status !== "acquired") throw new Error("not acquired");
@@ -64,7 +64,7 @@ describe("the procedural store's lock", () => {
     expect((await readdir(dir)).sort()).toEqual([STORE_LOCK]);
   });
 
-  it("PX2.72 a lock that cannot be read or written is an error, not a lock, and leaves no scratch file", async () => {
+  it("PX2.75 a lock that cannot be read or written is an error, not a lock, and leaves no scratch file", async () => {
     const dir = await scratch();
     await mkdir(join(dir, STORE_LOCK));
     await expect(lockStore(dir, "harness", { alive: () => false })).rejects.toThrow(/EISDIR/);

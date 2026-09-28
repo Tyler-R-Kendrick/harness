@@ -48,6 +48,16 @@ export function match(action: string | undefined, g: EffectiveGraph, mode: Match
 }
 
 /**
+ * The terminal (a node with no outgoing edges) that `node` has an edge to, when there is
+ * exactly one; undefined when it has none or several (which one the agent reached is then
+ * unknown). The live learner walks a turn that ends with a final answer on to it.
+ */
+export function terminalAfter(g: EffectiveGraph, node: NodeName): NodeName | undefined {
+  const ends = new Set(outgoing(g, node).flatMap((e) => (outgoing(g, e.to).length === 0 ? [e.to] : [])));
+  return ends.size === 1 ? [...ends][0] : undefined;
+}
+
+/**
  * `N_h(node)`: hop k holds the outgoing edges of the nodes first reached in k − 1 steps,
  * in document order, so every edge appears once, at the hop that first reaches its
  * source. There are always exactly `hops` hops; those past the horizon are empty.

@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { GraphIdSchema, parseGraph, parseSettings, proceduralExtension, revisionId, seedGraph } from "@harness/procedural";
-import type { GraphId, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
+import type { GraphId, LearnerResult, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
 import { hotpot } from "./fixtures.ts";
+import { paper, setup, turnOf } from "./learner-setup.ts";
 import { proposed, shortcut } from "./overlay-fixtures.ts";
 import { FakeStore } from "./store-fake.ts";
 
@@ -77,14 +78,40 @@ describe("proceduralExtension", () => {
   });
 
   it("PX2.34 feedback scores a session's turn through the live learner, on the graph the session is pinned to", async () => {
-    const feedback = vi.fn(async () => undefined);
+    const feedback = vi.fn(async (): Promise<LearnerResult> => ({ kind: "rescored", turnKey: "s1/t3", graph, appended: [] }));
     const store = new FakeStore();
     await store.pins.set("s1", { graph, core: revisionId(core()), overlay: 0, salt: "x", at: 0 });
     const { op } = extension({ store, feedback });
     expect(await op("feedback", { session: "s1", turn: "t3", score: 0.25 })).toEqual({ status: "recorded", graph });
     expect(feedback).toHaveBeenCalledWith("s1", "t3", 0.25);
-    expect(await op("feedback", { session: "s2", turn: "t1", score: 1 })).toEqual({ status: "missing", reason: "session s2 is not pinned to a graph" });
+    expect(await op("feedback", { session: "s2", turn: "t1", score: 1 })).toEqual({ status: "no-pin", reason: "session s2 is not pinned to a graph" });
     expect(await extension({ store }).op("feedback", { session: "s1", turn: "t3", score: 1 })).toEqual({ status: "unavailable", reason: "no live learner is configured" });
+  });
+
+  it("PX2.66 feedback answers what the learner did with the score: recorded, unknown-turn, no-pin or invalid", async () => {
+    const t = setup();
+    t.pin("s1");
+    t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
+    const pinned = (await t.store.pins.get("s1"))!.graph;
+    const { op } = extension({ store: t.store, feedback: (session, turn, score) => t.learner.feedback(session, turn, score) });
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "recorded", graph: pinned });
+    // A rescore, and the same score again, are recorded too.
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.75 })).toEqual({ status: "recorded", graph: pinned });
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.75 })).toEqual({ status: "recorded", graph: pinned });
+    expect(await op("feedback", { session: "s1", turn: "absent", score: 0.5 })).toEqual({ status: "unknown-turn", graph: pinned, reason: "the log does not hold the turn, or it names no graph" });
+    t.pin("a/b");
+    expect(await op("feedback", { session: "a/b", turn: "t1", score: 0.5 })).toEqual({ status: "invalid", reason: "a session id with '/' cannot key a turn" });
+    // The pin went between the operation's check and the learner's.
+    const racing = extension({ store: t.store, feedback: async (session, turn, score) => (t.store.pinOf.delete(session), t.learner.feedback(session, turn, score)) });
+    expect(await racing.op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "no-pin", reason: "the session has no pin, so no graph" });
+  });
+
+  it("PX2.67 feedback is unavailable when no learner answers, or the learner's preset keeps no overlay", async () => {
+    const t = setup({ preset: paper });
+    t.pin("s1");
+    const pinned = (await t.store.pins.get("s1"))!.graph;
+    expect(await extension({ store: t.store, feedback: (session, turn, score) => t.learner.feedback(session, turn, score) }).op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "unavailable", graph: pinned, reason: "the preset has no overlay" });
+    expect(await extension({ store: t.store, feedback: async () => undefined }).op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "unavailable", graph: pinned, reason: "no live learner is running" });
   });
 
   it("PX2.35 every operation checks the policy for its action on its graph first; a refusal throws and nothing runs", async () => {

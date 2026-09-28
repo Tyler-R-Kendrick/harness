@@ -222,6 +222,8 @@ As built (P1). These are additions; nothing above changed meaning.
   `evaluator-anchored-noninferiority`, `approval` and `approval-for-side-effects`. A
   `Gate` is one of them, or an evaluator gate with a trailing `?`.
 - `decoding` holds `temperature`, `topK`, `solverMaxTokens` and `refinerMaxTokens`.
+- `sessions: {idleMs, max}` (positive ints; shipped as 30 minutes and 1024) bounds the
+  step hook's per-session state (P10).
 - `graphContext: {local: {desc, source}, full: {desc, source}}` fills
   `{graph_context_desc}` and `{graph_source}`. `full` is App. B.5's wording.
 - `prompts` holds `solver`, `guidance`, `guidanceHarness`, `refiner`, `dream` and
@@ -658,7 +660,7 @@ As built (A1). These change P7's keys; every other name keeps its meaning.
   and a put replaces only its own graph's record (PS1.49). Callers read a graph's records
   only: import, read, pinning's ancestry, the step hook, the learner and dream all pass
   the graph they work on, so an import into one graph never overwrites another's record
-  (PX2.68).
+  (PX2.71).
 - `redact(id)` is by content: it tombstones every graph's record of the id, and a record
   put under that id later, in any graph, is stored redacted (PS1.50).
 - The saved document's format is `harness.procedural-store/v2` (`STORE_FORMAT`). The
@@ -769,11 +771,16 @@ changed.
   - `TurnOptions` is `{ sessionId; turnId?; cwd?; sessionMeta?; report? }`. `AgentWorker`
     fills all of them from the prompt command; `report` is its own `update`. The agent's
     `callOptionsSchema` keeps every field.
-  - `StepHook = { prepare(StepContext): Promise<{ instructions?; messages? } | undefined>; turn?(TurnContext): Promise<string | undefined> }`.
+  - `StepHook = { prepare(StepContext): Promise<{ instructions?; messages? } | undefined>; turn?(TurnContext): Promise<string | undefined>; end?(StepEndContext): Promise<void> }`.
     `TurnScope = { sessionId; turnId?; cwd?; sessionMeta?; report }`.
     `StepContext = TurnScope & { messages; initialInstructions; stepNumber; model; tools }`
     (`model` is the step's; `tools` names the tools the turn offers).
     `TurnContext = TurnScope & { messages; lastAction: string | undefined; tools }`.
+    `StepEndContext = TurnScope & { stepNumber; usage: LanguageModelUsage }`: a step's
+    model usage once it ended. `sessionAgent` returns a `ToolLoopAgent` whose `stream` and
+    `generate` add an AI SDK `onStepEnd` (after the caller's own, or its deprecated
+    `onStepFinish`) that calls `end`; `harnessSessions` calls it from the harness's
+    `onStepEnd`. A failing `end` reports a `warning` notice "Step usage failed".
   - `sessionAgent({ step })` returns a per-call `prepareStep` from `prepareCall`, which
     closes over the turn's options (rather than `runtimeContext`). A hook that throws
     leaves the step as it was and reports a `warning` notice "Step guidance failed".
@@ -794,6 +801,15 @@ changed.
     overlay at the pin (`readOverlay`). An overlay whose base is not the pinned core is
     replaced by an empty one. Every step until the next boundary reads that pair (I3). A
     missing or unparsable (for example redacted) pinned revision throws.
+  - Per-session state (the pinned view and the guidance cache) is kept in least recently
+    used order and evicted: by `forget(sessionId)` (the host's call when the daemon
+    detaches the session; the daemon has no session close), when the session has been
+    idle for longer than `settings.sessions.idleMs` by the `clock` (swept at the next step
+    or turn of any session), and, beyond `settings.sessions.max` sessions, the least
+    recently used one. A step of a session whose state is gone that continues its turn
+    (`stepNumber > 0`, or a restarted stream whose conversation does not end with a user
+    message, as after an approval round) reads the stored pin as it is when it is on the
+    resolved graph, so the turn keeps its pair (I3); otherwise the step is a boundary.
   - Localization reads `messages` without system messages and advisories; under `start`
     only from the last user message on. The action is the last `tool-call` of the last
     assistant message that has one. The task is the first user message's text, the query
@@ -811,7 +827,14 @@ changed.
     probationary entries (entry ids recomputed from the shown items) among the nodes and
     edges the guidance model was shown: the whole graph, or the neighborhood's edges, its
     active node and their endpoints. `inert` is true when the tools are known and the
-    active node is an `ACTION` that neither its id nor its binding's name offers.
+    active node is an `ACTION` that neither its id nor its binding's name offers. A
+    record's `usage` is the guidance model's.
+  - The step's own model usage is known only once the step ends, after its record, so
+    `end(StepEndInput)` (the workers' `end`) reports it as a second notice for any session
+    that resolves to a graph: `StepUsageNotice`, `{ sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description, _meta: { harness: { procedural: { usage: StepUsage } } } }`
+    with `StepUsageSchema` `{ inputTokens, outputTokens }` (ints ≥ 0; an undefined count
+    is 0). It reads no store. `StepScope<N = StepNotice>` names what a scope reports;
+    `StepEndInput = StepScope<StepUsageNotice> & { stepNumber; usage }`.
 
 ## P11: live learner (`learner.ts`, `projection.ts`)
 
@@ -831,7 +854,7 @@ As built (P11). These refine the above; the names keep their meaning.
 - `projectTurn(entries, context)` is `turnProjection(entries, context)?.trajectory`.
   `turnProjection` returns `TurnProjection`:
   `{ trajectory, path: NodeName[], unmatched: string[], shown: EntryId[], gaps: LogGap[], started, ended, next }`.
-  - `ProjectionContext = { sessionId; turnId; from?; pin?: VersionPair; locate?: (action) => NodeName | undefined; score?: {score, source} | null }`,
+  - `ProjectionContext = { sessionId; turnId; from?; pin?: VersionPair; locate?: (action) => NodeName | undefined; terminal?: (node) => NodeName | undefined; score?: {score, source} | null }`,
     with `VersionPair = { graph; core; overlay: number | null }` and
     `ScoreSource` the trajectory's non-null `scoreSource`.
   - The turn is the entries after its `turn.started` and before its `turn.ended` (by
@@ -849,12 +872,22 @@ As built (P11). These refine the above; the names keep their meaning.
     (other fields ignored; a record failing this is skipped). The first record gives the
     version pair; with none, `context.pin` does; with neither the result is undefined.
     `localization` counts records (`inert`, else `matched`, else `fallback`);
-    `usage.guidanceTokens` sums their usage. The log holds no turn usage, so
-    `inputTokens`/`outputTokens` are 0.
+    `usage.guidanceTokens` sums their usage. `usage.inputTokens`/`outputTokens` sum the
+    turn's step usage records (`_meta.harness.procedural.usage`, `{inputTokens, outputTokens}`,
+    reported by the step hook's `end`), which are no steps; a malformed one is skipped.
   - `path` is the first record's node (when the turn started in view, it matched, and no
     tool call preceded it), then `locate(title)` for each tool call in emission order;
     `unmatched` lists the titles `locate` did not match. `shown` is the union of the
     records' `exposure`.
+  - Transitions into a terminal have no action, so the path records them by rule: when
+    the turn ended (its `turn.ended` in view, with stop reason `end_turn` or none), its
+    latest update of substance is agent message text that is not blank (no tool call or
+    result after it; thoughts do not count), and the node it answered from is known (its
+    last action matched, or with no action it began at a matched node), the path walks on
+    to `context.terminal(node)`. The learner passes `terminalAfter(view, node)`
+    (`locate.ts`): the one terminal (a node with no outgoing edges in the effective graph
+    the session saw) that node has an edge to, or none when it has none or several. So
+    edges into `End` get statistics, cautions and entry evidence like any other.
   - `gaps` are the missing offsets `[from, to)` inside the turn, and before it when its
     start was not seen (from `context.from` when nothing bounds it). `next` is the offset
     after `turn.ended`. It never throws.
@@ -863,8 +896,10 @@ As built (P11). These refine the above; the names keep their meaning.
   reads to the head when `to` is omitted. `clock` is accepted and unused (the fold counts
   versions). `onHookEvent(event: LearnerEvent)` and `feedback(session, turn, score: number)`
   return `Promise<LearnerResult>`: `ignored` (not a `turn.ended` whose `source` is
-  `daemon`, or a preset without an overlay), `skipped` (turn or version pair not found,
-  a session id containing `/`, no pin for feedback, a score outside [0, 1]), `duplicate`,
+  `daemon`, or a preset without an overlay), `skipped` with a `code: SkipCode`
+  (`unknown-turn`: the turn or its version pair is not found; `no-pin`: feedback for a
+  session with no pin; `invalid`: a session id containing `/`, a score outside [0, 1])
+  and a reason, `duplicate`,
   `unchanged`, `observed {turnKey, graph, trajectory, gaps, appended}` or
   `rescored {turnKey, graph, appended}`. Store failures reject, so the bus redelivers.
 - Localization matches in the graph the session saw: the turn's core with the overlay
@@ -901,9 +936,16 @@ As built (P12). These refine the shapes above; no name another phase uses change
     by the host (P9's `authorize(policy, action, graph, context)` with its context), which
     allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
   - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
-    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+    `feedback?: (session, turn, score) => Promise<LearnerResult | undefined>` (P11's
+    `LiveLearner.feedback`; undefined while no learner runs).
 
-  It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
+  It takes no resolver: `feedback` finds the graph from the session's pin, and answers
+  what the learner did with the score: `recorded` for `observed`, `rescored` and
+  `unchanged` (the score is in the overlay), the skip's code for `skipped`
+  (`unknown-turn`, with the pin's graph; `no-pin`, when the pin went before the learner
+  read it; `invalid`), and `unavailable` when the learner is `ignored` (its preset keeps
+  no overlay) or no learner answered. A session with no pin is `no-pin` before the
+  learner is asked. Each operation
   parses its input (malformed input throws `invalid procedural.<op> input`), then checks
   the policy for its action (a refusal throws `procedural.<op>: <action> on graph <g> is
   not allowed`), then runs. The ops and their actions:
@@ -913,7 +955,7 @@ As built (P12). These refine the shapes above; no name another phase uses change
   | `graph` | `{graph, revision?, overlay?}` | read | `{status:"ok", head, revision, origin, document, effective}` or `missing` |
   | `history` | `{graph}` | read | `GraphHistory` |
   | `export` | `{graph, revision?, format?: "json" \| "mermaid", overlay?}` | read | `ExportResult` |
-  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `{status:"recorded", graph}`, `missing` (no pin) or `unavailable` |
+  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `FeedbackOutcome`: `{status:"recorded", graph}`, `{status:"unknown-turn", graph, reason}`, `{status:"no-pin" \| "invalid", reason}` or `unavailable` |
   | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
   | `revert` | `{graph, to?}` | revert | `RevertResult` |
   | `import` | `{graph, document?}` | import | `ImportResult` |
@@ -964,11 +1006,14 @@ As built (P12). These refine the shapes above; no name another phase uses change
     P10's `proceduralStep` with `resolveGraph` (the host's principal as the owner),
     `pinSession`, and the host's clock and entropy (`hostPorts`).
     `hostAuthorizer(policy, principal)` is P9's `authorize` bound to the host's principal.
+  - `nativeStepEvictions({runtime, step, intervalMs?, log?})` pumps the daemon's
+    `session.detached` hook events (plugin `procedural-step`) to `step.forget`; `main.ts`
+    starts it with the daemon when it has a step hook.
   - `pumpHookEvents(runtime, {plugin, types, onEvent, intervalMs?, log?})` is an in-process
     plugin connection with a durable hook-bus cursor, acknowledging each event after its
     handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
     `[from, to?)` through the daemon's host-side `readLog`, which copies no other
-    session's log (PX2.66).
+    session's log (PX2.69).
   - `nativeDream(…)` runs P6's `runDream` on this host; its shape and ports are under
     "Dream from the host" in the finalization's notes below.
   - `nativeLiveLearner({runtime, store, settings, preset?, intervalMs?, log?})` is P11's
@@ -985,18 +1030,18 @@ As built (P12). These refine the shapes above; no name another phase uses change
   `<dir>/procedural.lock` (`STORE_LOCK`): a complete file hard-linked into place, naming
   `{pid, holder, socket?}`; it returns `{status: "acquired", lock}` (`advertise(socket)`,
   `release()`) or `{status: "held", owner}`. A lock whose process has exited, or that does
-  not parse, is stale and taken over (PX2.69–PX2.72). The daemon (`--procedural`) takes it
+  not parse, is stale and taken over (PX2.72–PX2.75). The daemon (`--procedural`) takes it
   as `harness` before it opens the store and exits 1 while another process holds it
-  (PX2.75); once it listens on `--socket` it advertises the socket's absolute path, and it
+  (PX2.78); once it listens on `--socket` it advertises the socket's absolute path, and it
   releases the lock on shutdown. `invokeDaemon(socket, op, input)` runs one
   `_harness/cognitive/invoke` on a daemon over its socket (DL1.3–DL1.4).
 - `harness-procedural <history|export|import|revert|dream> <graph>` runs the extension's
   operations on the store in `--procedural <dir>` (default `~/.cache/harness/procedural`),
-  holding the directory's lock as `harness-procedural` for the run (PX2.76). When a daemon
+  holding the directory's lock as `harness-procedural` for the run (PX2.79). When a daemon
   holds it and advertises a socket, the CLI sends `procedural.<command>` to that daemon
   instead, which runs it under its policy with its own settings and models (options for a
-  local run are named on stderr as ignored) (PX2.73); a holder with no socket (a daemon on
-  `--stdio` or `--ws` only) makes the CLI exit 1 without touching the store (PX2.74). The
+  local run are named on stderr as ignored) (PX2.76); a holder with no socket (a daemon on
+  `--stdio` or `--ws` only) makes the CLI exit 1 without touching the store (PX2.77). The
   daemon serves `procedural.*` only with the cognitive core, so without it the daemon's
   refusal is the CLI's error.
   `export` takes `--format`, `--revision`, `--no-overlay` and `--out`, `import` an optional
@@ -1095,7 +1140,7 @@ their meaning.
     and the host's clock and entropy, holding the graph's lease as `holder` (default
     `native-host`; the CLI's is `harness-procedural`), so a dream another process holds
     is `busy`. `daemonSessions(daemon)` reads every session's log from the live daemon
-    through `sessionIds` and `readLog` (PX2.67), and `snapshotSessions(snapshot)` reads
+    through `sessionIds` and `readLog` (PX2.70), and `snapshotSessions(snapshot)` reads
     the session logs of a saved daemon snapshot (its state file's). `terminalApprover(input, output)`
     asks `[y/N]` on a terminal. With the cognitive core, `main.ts` serves `procedural.dream`
     with the ensemble's `reasoning` generator over the daemon's logs; the live learner gets
@@ -1130,5 +1175,3 @@ write no record, `Daemon.readLog`, one owner per store directory). Still open:
   tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
   for their absence. The CLI approves on a terminal.
-- P12: `procedural.feedback` answers `recorded` once the learner has the score, even when
-  the learner skips it (for example, a turn it cannot find in the log).

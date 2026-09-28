@@ -101,7 +101,7 @@ describe("importGraph", () => {
     expect(await importGraph({ store, graph, document: other(), clock })).toMatchObject({ status: "proposed" });
   });
 
-  it("PX2.68 importing a document another graph holds gives this graph its own record and leaves the other graph's, which still reads", async () => {
+  it("PX2.71 importing a document another graph holds gives this graph its own record and leaves the other graph's, which still reads", async () => {
     const store = new MemoryProceduralStore();
     const elsewhere = GraphIdSchema.parse("elsewhere");
     const id = revisionId(other());

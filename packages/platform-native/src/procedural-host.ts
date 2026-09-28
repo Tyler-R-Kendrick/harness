@@ -146,6 +146,30 @@ export function nativeLiveLearner(options: {
 }
 
 /**
+ * The step hook's evictions on this host (plan §5): subscribed in process to the daemon's
+ * `session.detached` events (plugin `procedural-step`, with its durable cursor), each
+ * detached session's state (pinned view, guidance cache) is forgotten. The daemon has no
+ * session close; a session that is attached again is re-read at its next step.
+ */
+export function nativeStepEvictions(options: {
+  readonly runtime: Pick<DaemonRuntime, "connect">;
+  readonly step: Pick<ProceduralStepHook, "forget">;
+  readonly intervalMs?: number;
+  readonly log?: (message: string) => void;
+}): HookPump {
+  const { step, log } = options;
+  return pumpHookEvents(options.runtime, {
+    plugin: "procedural-step",
+    types: ["session.detached"],
+    onEvent: async (event) => {
+      if (event.sessionId !== undefined) step.forget(event.sessionId);
+    },
+    ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+    ...(log === undefined ? {} : { log }),
+  });
+}
+
+/**
  * A session's log entries in `[from, to)`, read through the daemon's host-side
  * `readLog`, which copies no other session's log. Entries compacted into the log's
  * snapshot are gone; an unknown session has none.

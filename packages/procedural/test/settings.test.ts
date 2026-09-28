@@ -149,6 +149,15 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
+  it("PG1.48 the step hook's per-session state is bounded by data: an idle time in milliseconds and a session cap, both positive whole numbers", () => {
+    expect(settings().sessions).toEqual({ idleMs: 1_800_000, max: 1024 });
+    expect(edit(["sessions", "idleMs"], 0)).toThrow(/sessions\.idleMs/);
+    expect(edit(["sessions", "idleMs"], 1.5)).toThrow(/sessions\.idleMs/);
+    expect(edit(["sessions", "max"], 0)).toThrow(/sessions\.max/);
+    expect(edit(["sessions", "extra"], 1)).toThrow(/sessions/);
+    expect(edit(["sessions"], undefined)).toThrow(/sessions/);
+  });
+
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
     const s = structuredClone(file) as { presets: Record<string, unknown> };
     s.presets["careful"] = { ...(s.presets["harness"] as object), match: "case-insensitive", guidanceCache: false };

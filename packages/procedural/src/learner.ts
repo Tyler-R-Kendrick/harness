@@ -7,7 +7,9 @@
  *   log, projects it (`projection.ts`) and scores it with the deployment's scorer, if any.
  * - Localization. Actions are matched in the graph the session saw: the turn's core
  *   revision with the overlay folded to the version its step records name, as that
- *   session's salt exposed it.
+ *   session's salt exposed it. A turn that ends with a final answer at a node with an
+ *   edge to one terminal walks on to it (`turnProjection`), so edges into `End` are
+ *   observed like any other.
  * - Exposure. The arm of the randomized comparison comes from the pin's salt alone: the
  *   entries on probation at that version that the salt exposes. What a log entry claims
  *   was shown is not trusted, and a session is in an entry's arm whether or not its path
@@ -19,7 +21,7 @@
  *   fold moves the turn's score, and nothing is traversed again.
  */
 import { z } from "zod";
-import { match } from "./locate.ts";
+import { match, terminalAfter } from "./locate.ts";
 import { editFilter } from "./filter.ts";
 import { effectiveGraph, emptyOverlay, entryId, exposed, foldOverlay } from "./overlay.ts";
 import { proposals, statusChanges, structure } from "./overlay-policy.ts";
@@ -77,9 +79,15 @@ const entryTexts = (e: Reflectable): string[] => (e.kind === "edge" ? [e.conditi
 /** The nodes an entry names, which must exist for it to be anchored (I6). */
 const anchorsOf = (e: Reflectable): string[] => (e.kind === "edge" ? [e.from, e.to] : [e.on.from, e.on.to]);
 
+/**
+ * Why a delivery or a score was skipped: the log does not hold the turn (or it names no
+ * graph), the session has no pin, or an input no turn key or score can hold.
+ */
+export type SkipCode = "unknown-turn" | "no-pin" | "invalid";
+
 export type LearnerResult =
   | { readonly kind: "ignored"; readonly reason: string }
-  | { readonly kind: "skipped"; readonly reason: string }
+  | { readonly kind: "skipped"; readonly code: SkipCode; readonly reason: string }
   | { readonly kind: "duplicate"; readonly turnKey: string }
   | { readonly kind: "unchanged"; readonly turnKey: string }
   | { readonly kind: "observed"; readonly turnKey: string; readonly graph: GraphId; readonly trajectory: ScoredTrajectory; readonly gaps: LogGap[]; readonly appended: OverlayEvent[] }
@@ -114,7 +122,7 @@ function replay(base: RevisionId, events: readonly OverlayEvent[], version: numb
 const TurnEndedSchema = z.object({ turnId: z.string().min(1) });
 
 const ignored = (reason: string): LearnerResult => ({ kind: "ignored", reason });
-const skipped = (reason: string): LearnerResult => ({ kind: "skipped", reason });
+const skipped = (code: SkipCode, reason: string): LearnerResult => ({ kind: "skipped", code, reason });
 
 export class LiveLearner {
   readonly #deps: LiveLearnerDeps;
@@ -151,9 +159,9 @@ export class LiveLearner {
   feedback(sessionId: string, turnId: string, score: number): Promise<LearnerResult> {
     return this.#serial(async (live) => {
       const parsed = ScoreSchema.safeParse(score);
-      if (!parsed.success) return skipped("a score is a probability in [0, 1]");
+      if (!parsed.success) return skipped("invalid", "a score is a probability in [0, 1]");
       const pin = await this.#deps.store.pins.get(sessionId);
-      if (pin === undefined) return skipped("the session has no pin, so no graph");
+      if (pin === undefined) return skipped("no-pin", "the session has no pin, so no graph");
       const turnKey = `${sessionId}/${turnId}`;
       const log = this.#deps.store.overlay(pin.graph);
       const { state, turn } = replay(pin.core, await events(log), null, turnKey);
@@ -177,13 +185,13 @@ export class LiveLearner {
 
   async #observe(live: LiveSettings, sessionId: string, turnId: string, forced: { score: Score; source: ScoreSource } | undefined): Promise<LearnerResult> {
     const turnKey = `${sessionId}/${turnId}`;
-    if (sessionId.includes("/")) return skipped("a session id with '/' cannot key a turn");
+    if (sessionId.includes("/")) return skipped("invalid", "a session id with '/' cannot key a turn");
     const pin = await this.#deps.store.pins.get(sessionId);
     const fallback = pin === undefined ? undefined : { graph: pin.graph, core: pin.core, overlay: pin.overlay };
     const cursor = this.#cursors.get(sessionId) ?? 0;
     let read = await this.#read(sessionId, turnId, cursor, fallback);
     if (read === undefined && cursor > 0) read = await this.#read(sessionId, turnId, 0, fallback);
-    if (read === undefined) return skipped("the log does not hold the turn, or it names no graph");
+    if (read === undefined) return skipped("unknown-turn", "the log does not hold the turn, or it names no graph");
     const { entries, from, projection: first } = read;
     const { graph, core, overlay } = first.trajectory;
     const log = this.#deps.store.overlay(graph);
@@ -197,7 +205,8 @@ export class LiveLearner {
     const pinned = history.pinned;
     const view: EffectiveGraph | undefined = coreGraph === undefined ? undefined : pinned === undefined ? coreView(coreGraph) : effectiveGraph(coreGraph, pinned, draw);
     const locate = view === undefined ? undefined : (action: string): NodeName | undefined => match(action, view, this.#deps.settings.match);
-    const context = { sessionId, turnId, from, pin: fallback, locate };
+    const terminal = view === undefined ? undefined : (node: NodeName): NodeName | undefined => terminalAfter(view, node);
+    const context = { sessionId, turnId, from, pin: fallback, locate, terminal };
     // Defined: the first projection found the turn and a pair in these same entries.
     const projection = turnProjection(entries, context)!;
     const scored = forced ?? (await this.#score(projection.trajectory));
