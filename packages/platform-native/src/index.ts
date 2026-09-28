@@ -12,7 +12,7 @@ export { loadCatalog, loadLearningSettings, loadPluginSettings, loadProceduralPo
 export { lockStore, STORE_LOCK, type LockOwner, type LockResult, type StoreLock } from "./store-lock.ts";
 export { daemonSessions, hostAuthorizer, hostPorts, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, pumpHookEvents, sessionLogReader, snapshotSessions, terminalApprover, type HookPump } from "./procedural-host.ts";
 export { WorkflowFiles } from "./workflow-files.ts";
-export { daemonSocket } from "./daemon-link.ts";
+export { daemonSocket, invokeDaemon } from "./daemon-link.ts";
 export { dockerSandbox } from "./docker-sandbox.ts";
 export { webSocketToken } from "./ws-token.ts";
 export type { DockerSandboxOptions } from "./docker-sandbox.ts";
