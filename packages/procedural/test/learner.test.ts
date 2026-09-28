@@ -174,14 +174,14 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(loose.store.events())[0]!.path).toEqual(["Start", "Scan_Index"]);
   });
 
-  it("PL1.77 under a state-tracker preset a call is located where its result declared, as guidance located it", async () => {
+  it("PL1.77 under a state-tracker preset a result's declared node counts only for a tool the core trusts to declare: an unbound grep's is ignored", async () => {
     const declared = { stdout: "Nolan", _meta: { harness: { procedural: { node: "Bridge_Extract" } } } };
     const turn = [started("t1"), user("q"), record({ node: "Start" }), call("t1-c0", "grep", { q: "film" }), result("t1-c0", declared), ended("t1")];
     const tracker = setup({ preset: preset({}, { match: "state-tracker" }) });
     tracker.pin("s1");
     tracker.add("s1", turn);
     await tracker.learner.onHookEvent(turnEnded("s1", "t1"));
-    expect(observedOf(tracker.store.events())[0]).toMatchObject({ path: ["Start", "Bridge_Extract"], unmatched: [] });
+    expect(observedOf(tracker.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
     const exact = setup();
     exact.pin("s1");
     exact.add("s1", turn);

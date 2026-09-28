@@ -104,7 +104,15 @@ export function acceptsArguments(predicate: ArgumentPredicate, args: unknown): b
  * whose arguments satisfy it (the `state-tracker` match mode reads it).
  */
 export const BindingSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("tool"), name: toolName, arguments: ArgumentPredicateSchema.exactOptional() }).readonly(),
+  z
+    .strictObject({
+      kind: z.literal("tool"),
+      name: toolName,
+      arguments: ArgumentPredicateSchema.exactOptional(),
+      /** The core trusts this tool's results to declare the active node (`_meta.harness.procedural.node`) under `state-tracker`; only dream, a seed or an import sets it. */
+      declares: z.literal(true).exactOptional(),
+    })
+    .readonly(),
   z.strictObject({ kind: z.literal("workflow"), name: toolName, code: Sha256Schema }).readonly(),
   z.strictObject({ kind: z.literal("skill"), name: toolName, content: Sha256Schema }).readonly(),
 ]);

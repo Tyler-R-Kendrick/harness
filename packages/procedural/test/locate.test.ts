@@ -12,7 +12,7 @@ const view = (doc: DocInput): EffectiveGraph => {
 };
 
 const graphOf = (nodes: DocInput["nodes"], edges: DocInput["edges"]): DocInput => ({ ...hotpot(), nodes, edges });
-const node = (id: string, binding?: { kind: string; name: string; code?: string; content?: string }): DocInput["nodes"][number] =>
+const node = (id: string, binding?: { kind: string; name: string; code?: string; content?: string; declares?: true }): DocInput["nodes"][number] =>
   binding === undefined ? { id, type: "ACTION", description: `${id}.` } : { id, type: "ACTION", description: `${id}.`, binding };
 const hex = "a".repeat(64);
 const name = (n: string) => NodeNameSchema.parse(n);
@@ -110,11 +110,28 @@ describe("match: state-tracker (plan §5.2)", () => {
     ),
   );
 
-  it("PG3.32 a node the tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
-    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Check_Docs");
-    expect(match({ name: "grep", declared: "End" }, g, "state-tracker")).toBe("End");
-    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, g, "state-tracker")).toBe("Run_Tests");
-    expect(match({ name: "Edit", declared: "Edit_Docs" }, g, "state-tracker")).toBe("Edit_Docs");
+  // The same graph, where the core trusts Bash and Edit to declare the active node in their results.
+  const trusted = (id: string, args?: object): DocInput["nodes"][number] => ({ id, type: "ACTION", description: `${id}.`, binding: args === undefined ? { kind: "tool", name: "Bash", declares: true } : { kind: "tool", name: "Bash", arguments: args, declares: true } });
+  const trusting = view(
+    graphOf(
+      [node("Start"), trusted("Shell"), trusted("Run_Tests", tests), trusted("Check_Docs", edits), node("Edit"), node("Edit_Docs", { kind: "tool", name: "Edit", declares: true }), node("End")],
+      [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Check_Docs"), edge("Check_Docs", "Edit"), edge("Edit", "Edit_Docs"), edge("Edit_Docs", "End")],
+    ),
+  );
+
+  it("PG3.32 a node a trusted tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, trusting, "state-tracker")).toBe("Check_Docs");
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, trusting, "state-tracker")).toBe("Run_Tests");
+    expect(match({ name: "Edit", declared: "Edit_Docs" }, trusting, "state-tracker")).toBe("Edit_Docs");
+  });
+
+  it("PG3.37 a declared node counts only when the core binds the calling tool with declares: an unbound or untrusted tool's result cannot steer localization", () => {
+    // Bash is bound but not trusted to declare: its predicate decides, not the declared node.
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Run_Tests");
+    // grep is bound nowhere: whatever its result (say, a fetched page) declares is ignored.
+    expect(match({ name: "grep", declared: "End" }, g, "state-tracker")).toBeUndefined();
+    expect(match({ name: "grep", declared: "End" }, trusting, "state-tracker")).toBeUndefined();
+    expect(match({ name: "Edit", declared: "End" }, g, "state-tracker")).toBe("Edit_Docs");
   });
 
   it("PG3.33 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {

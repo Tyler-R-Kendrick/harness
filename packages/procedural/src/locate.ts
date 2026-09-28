@@ -58,7 +58,8 @@ const lower = (key: Key): Key => (n) => key(n)?.toLowerCase();
  * a binding name. These two modes read only an observed action's name.
  *
  * `state-tracker` (plan §5.2) localizes more than tool names: the node the tool's result
- * declared, when the graph has it; then a node bound to the tool, first one whose
+ * declared, when the graph has it and binds that tool with `declares` (a trust the core
+ * grants; nothing learned from traffic can); then a node bound to the tool, first one whose
  * binding's argument predicate accepts the call, then one whose binding has none; then a
  * node whose id is the tool's name. Every comparison is exact.
  */
@@ -81,8 +82,10 @@ export function match(observed: string | ObservedAction | undefined, g: Effectiv
 /** The state tracker's rules, in order: the declared node, a binding whose predicate holds, a bare binding, the id. */
 function track(action: ObservedAction, g: EffectiveGraph): NodeName | undefined {
   const bound = (n: EffectiveNode): boolean => n.binding?.name === action.name;
+  // A result may declare the active node only when the core binds its tool with `declares`: a tool that passes outside content through cannot steer localization.
+  const trusted = g.nodes.some((n) => n.binding?.kind === "tool" && n.binding.name === action.name && n.binding.declares === true);
   const rules: ((n: EffectiveNode) => boolean)[] = [
-    (n) => n.id === action.declared,
+    (n) => trusted && n.id === action.declared,
     (n) => bound(n) && predicateOf(n) !== undefined && acceptsArguments(predicateOf(n)!, action.arguments),
     (n) => bound(n) && predicateOf(n) === undefined,
     (n) => n.id === action.name,

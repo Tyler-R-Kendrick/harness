@@ -227,7 +227,7 @@ describe("procedural guidance for an opaque harness (harnessSessions + procedura
       ...hotpot(),
       nodes: [
         { id: "Start", type: "STATUS", description: "Begin." },
-        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "sh" } },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "sh", declares: true } },
         { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "sh", arguments: tests } },
         { id: "Review", type: "REASONING", description: "Read the failures." },
         { id: "End", type: "STATUS", description: "Done." },

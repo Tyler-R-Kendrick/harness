@@ -17,9 +17,9 @@ const graph = fc
   .uniqueArray(nodeName, { minLength: 1, maxLength: 8, comparator: (a, b) => a === b })
   .chain((ids) =>
     fc.record({
-      nodes: fc.tuple(...ids.map((id) => fc.record({ description: line, binding: fc.option(nodeName, { nil: undefined }) }).map(({ description, binding }): EffectiveNode => {
+      nodes: fc.tuple(...ids.map((id) => fc.record({ description: line, binding: fc.option(nodeName, { nil: undefined }), declares: fc.boolean() }).map(({ description, binding, declares }): EffectiveNode => {
         const n = { id: NodeNameSchema.parse(id), type: "ACTION", description, origin: "core" as const };
-        return binding === undefined ? n : { ...n, binding: { kind: "tool", name: binding } };
+        return binding === undefined ? n : { ...n, binding: { kind: "tool", name: binding, ...(declares ? { declares: true as const } : {}) } };
       }))),
       edges: fc.array(
         fc.record({ from: fc.constantFrom(...ids), to: fc.constantFrom(...ids), condition: fc.option(line, { nil: null }), guidance: line, pitfalls: line }).map(
@@ -114,9 +114,10 @@ describe("match", () => {
     expect(loose !== undefined).toBe(g.nodes.some((n) => names(n).some((x) => x?.toLowerCase() === action.toLowerCase())));
   });
 
-  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PG3.P6 the state tracker takes a declared node the graph has; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
+  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PG3.P6 the state tracker takes a declared node the graph has only from a tool the core trusts to declare; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
     const tracked = match({ name: action, ...(declared === undefined ? {} : { declared }) }, g, "state-tracker");
-    if (declared !== undefined && g.nodes.some((n) => n.id === declared)) {
+    const trusted = g.nodes.some((n) => n.binding?.kind === "tool" && n.binding.name === action && n.binding.declares === true);
+    if (trusted && declared !== undefined && g.nodes.some((n) => n.id === declared)) {
       expect(tracked).toBe(declared);
       return;
     }

@@ -310,7 +310,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
       ...hotpot(),
       nodes: [
         { id: "Start", type: "STATUS", description: "Begin." },
-        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "Bash" } },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "Bash", declares: true } },
         { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "Bash", arguments: tests } },
         { id: "Review", type: "REASONING", description: "Read the failures." },
         { id: "End", type: "STATUS", description: "Done." },

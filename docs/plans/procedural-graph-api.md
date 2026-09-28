@@ -1209,6 +1209,11 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   tool's name. A node whose predicate rejects the call is never matched by its binding.
   `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
   `Preset.match` accepts `"state-tracker"`; both shipped presets stay `exact`.
+  A result's declared node counts only when the core binds the calling tool with
+  `declares: true` (a tool binding field that only dream, a seed or an import can set;
+  neither the refiner nor the overlay writes bindings). A tool that passes outside
+  content through, such as a fetched page, therefore cannot steer localization,
+  successor-only tools or the learner's projected path (PG3.37).
 - **The step hook as a state tracker.** `proceduralStep` observes the last action with its
   call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
   string) of the call's own result (the `tool-result` with its `toolCallId` in a later

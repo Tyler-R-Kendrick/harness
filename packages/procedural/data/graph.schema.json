@@ -66,6 +66,10 @@
                       "type": "string"
                     },
                     "additionalProperties": {}
+                  },
+                  "declares": {
+                    "type": "boolean",
+                    "const": true
                   }
                 },
                 "required": [
