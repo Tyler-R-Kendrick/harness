@@ -44,6 +44,7 @@ export class DaemonRuntime {
   readonly #stopMirror: () => void;
   readonly #connections = new Map<string, (message: object) => void>();
   readonly #turns = new Set<Promise<void>>();
+  readonly #tickListeners = new Set<() => unknown>();
   #saving: Promise<void> = Promise.resolve();
   #savePending = false;
 
@@ -90,9 +91,31 @@ export class DaemonRuntime {
     };
   }
 
-  /** Expire deadlines; hosts call this periodically. */
+  /** Expire deadlines, then run the tick listeners; hosts call this periodically. */
   tick(): void {
     this.#apply(this.daemon.tick());
+    for (const listener of [...this.#tickListeners]) {
+      try {
+        void Promise.resolve(listener()).catch((e: unknown) => this.#tickFailed(e));
+      } catch (e) {
+        this.#tickFailed(e);
+      }
+    }
+  }
+
+  /**
+   * Run `listener` on every tick from now on, after the daemon's own work: periodic host
+   * work such as a scheduled dream. It is not awaited; a failure (thrown or rejected) is
+   * logged. Returns a function that removes it; closing the runtime removes them all.
+   */
+  onTick(listener: () => unknown): () => void {
+    const entry = () => listener();
+    this.#tickListeners.add(entry);
+    return () => void this.#tickListeners.delete(entry);
+  }
+
+  #tickFailed(e: unknown): void {
+    this.#log(`tick listener failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   /** Turns and cognitive work in flight. */
@@ -103,6 +126,7 @@ export class DaemonRuntime {
   /** Let running turns and cognitive work finish, and their saves land. */
   async close(): Promise<void> {
     this.#stopMirror();
+    this.#tickListeners.clear();
     await Promise.allSettled([...this.#turns]);
     await this.#saving;
   }

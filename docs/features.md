@@ -222,7 +222,7 @@ Every native local model is tested on real weights by `catalog.model.test.ts`, b
 
 | Feature | Status | Evidence / gap |
 |---|---|---|
-| Portable daemon runtime (`@harness/runtime`, pure): the daemon core driven by its outputs (worker commands, cognitive work, capability mirroring) with coalesced snapshot saves; every host wraps it and supplies transports, ports and a ticker | built | RT1.1–RT3.6 |
+| Portable daemon runtime (`@harness/runtime`, pure): the daemon core driven by its outputs (worker commands, cognitive work, capability mirroring) with coalesced snapshot saves; every host wraps it and supplies transports, ports and a ticker, whose ticks also run the host's tick listeners (periodic work such as a scheduled dream) | built | RT1.1–RT1.11, RT2.1–RT2.8, RT3.1–RT3.9 |
 | Native background service (Node): stdio/socket, file storage, workers, on the runtime | built | NS1, NS2, NH1; tested on Linux only |
 | Native model hosting: verified artifact cache, streamed GGUF files, Emscripten loader, llama-server processes, ensemble builder with one loader per runtime | built | MC1–MC2, MF1.1–MF1.6, LP1.1–LP1.4, CH1.1–CH3.2; CLI `--cognitive` |
 | Browser host (`@harness/platform-browser`): the runtime in a tab, PWA, shared worker (`BrowserHost.serve(self)`, one daemon for every tab of an origin) or extension background; `Date.now` clock, Web Crypto entropy, timer ticks, IndexedDB snapshots, any session worker (echo, an AI SDK agent) | built | BH1.1–BH1.12, BI1.1–BI1.3 (bundled with Vite, run in Chromium via Playwright); the ensemble, extension ports and workflows are their own rows |

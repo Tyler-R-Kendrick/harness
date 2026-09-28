@@ -1108,6 +1108,11 @@ evaluator"; the names above keep their meaning.
   graph whose dream is running answers `busy` at once and leaves the lease alone (a
   holder may take its own lease again, which would strand the running dream). Another
   process's dream holds the lease, so `runDream` answers `busy`.
+- **The runtime's tick (`packages/runtime`).** `DaemonRuntime.onTick(listener)` runs a
+  listener on every `tick()`, after the daemon's own, and returns a function that removes
+  it; listeners are not awaited, a failure (thrown or rejected) is logged as
+  `tick listener failed: …`, and `close()` removes them all. Hosts already call `tick()`
+  from their ticker, so periodic host work needs no timer of its own.
 
 ## Open issues
 
