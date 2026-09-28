@@ -128,5 +128,6 @@ describe("harness-procedural CLI", () => {
     await expect(cli("approve", "team/search")).rejects.toMatchObject({ code: 2 });
     await expect(cli("decline", "team/search", proposal, "extra")).rejects.toMatchObject({ code: 2 });
     await expect(cli("approvals", "team/search", "extra")).rejects.toMatchObject({ code: 2 });
-  });
+    // Fourteen CLI processes: about 9 s alone, and more than the default 20 s beside the other suites.
+  }, 60_000);
 });
