@@ -192,7 +192,7 @@ describe("proceduralExtension", () => {
       return { ...extension({ store, plans, ...options }), notices };
     }
 
-    it("PX2.120 plan builds a plan from the graph's head and overlay between two nodes and returns its JSON, or the diagnostics; a missing graph is a value", async () => {
+    it("PX2.133 plan builds a plan from the graph's head and overlay between two nodes and returns its JSON, or the diagnostics; a missing graph is a value", async () => {
       const { op, store } = planning();
       await op("import", { graph: web, document: chainDoc() });
       await store.overlay(web).append([observed("s1/t1", ["Start", "search"], 1)]);
@@ -204,7 +204,7 @@ describe("proceduralExtension", () => {
       expect(await op("plan", { graph: GraphIdSchema.parse("team/none"), from: "Start", to: "End" })).toEqual({ status: "missing", reason: "graph team/none has no head" });
     });
 
-    it("PX2.121 run runs a plan, built between two nodes or given as JSON, with the host's plan runner, and answers each task's outcome; the runner announces it", async () => {
+    it("PX2.134 run runs a plan, built between two nodes or given as JSON, with the host's plan runner, and answers each task's outcome; the runner announces it", async () => {
       const { op, notices } = planning();
       await op("import", { graph: web, document: chainDoc() });
       const outcome = await op("run", { graph: web, from: "search", to: "End" });
@@ -228,12 +228,12 @@ describe("proceduralExtension", () => {
       expect(notices).toHaveLength(2);
     });
 
-    it("PX2.122 run without a plan runner is unavailable, before anything is built", async () => {
+    it("PX2.135 run without a plan runner is unavailable, before anything is built", async () => {
       const { op } = extension();
       expect(await op("run", { graph: web, from: "Start", to: "End" })).toEqual({ status: "unavailable", reason: "no plan runner is configured" });
     });
 
-    it("PX2.123 plan is the read action; run is the run action, and read too when it builds the plan from the graph; a refusal throws and nothing runs", async () => {
+    it("PX2.136 plan is the read action; run is the run action, and read too when it builds the plan from the graph; a refusal throws and nothing runs", async () => {
       const asked: [ProceduralAction, string][] = [];
       let allow: readonly ProceduralAction[] = [];
       const { op, notices } = planning({ authorize: (action, g) => (asked.push([action, g]), allow.includes(action)) });
@@ -254,7 +254,7 @@ describe("proceduralExtension", () => {
       expect(await op("run", { graph: web, plan })).toMatchObject({ status: "succeeded" });
     });
 
-    it("PX2.124 their malformed input throws, naming the operation: run takes a plan or both ends, never both", async () => {
+    it("PX2.137 their malformed input throws, naming the operation: run takes a plan or both ends, never both", async () => {
       const { op } = planning();
       await expect(op("plan", { graph: web, from: "Start" })).rejects.toThrow(/invalid procedural\.plan input[\s\S]*to/);
       await expect(op("plan", { graph: web, from: "", to: "End" })).rejects.toThrow(/invalid procedural\.plan input[\s\S]*from/);

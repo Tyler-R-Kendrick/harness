@@ -39,7 +39,7 @@ const diamond = () =>
   );
 
 describe("running plans (runPlan)", () => {
-  it("PC1.55 runs every task once in dependency order, each given the outputs of its data predecessors (not its control ones), and reports each task's outcome in plan order", async () => {
+  it("PC1.73 runs every task once in dependency order, each given the outputs of its data predecessors (not its control ones), and reports each task's outcome in plan order", async () => {
     const log: PlanTaskInput[] = [];
     const result = await runPlan({ plan: diamond(), task: echo(log), settings: settings() });
     expect(log.map((t) => t.id)).toEqual(["a", "b", "c", "d"]);

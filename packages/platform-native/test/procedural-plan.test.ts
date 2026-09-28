@@ -64,7 +64,7 @@ async function seeded() {
 }
 
 describe("plans on the native host", () => {
-  it("PX2.125 nativePlanRunner runs a plan on the model with the host's tools, each task offered its bound tool, keeping the run in plan-runs.json beside the store until it ends", async () => {
+  it("PX2.138 nativePlanRunner runs a plan on the model with the host's tools, each task offered its bound tool, keeping the run in plan-runs.json beside the store until it ends", async () => {
     const { dir, store, plan } = await seeded();
     const performed: [string, unknown][] = [];
     const offered: string[][] = [];

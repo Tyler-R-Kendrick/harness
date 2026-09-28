@@ -243,7 +243,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["prompts", "route"], "Choose a graph.")).toThrow(/missing placeholders \{graphs\}\n.*at prompts\.route$/);
   });
 
-  it("PGR1.58 running plans is data: how many tasks run at once, and the prompt each task is asked with, which fills the task, its guidance and its inputs", () => {
+  it("PGR1.60 running plans is data: how many tasks run at once, and the prompt each task is asked with, which fills the task, its guidance and its inputs", () => {
     const s = settings();
     expect(s.plans).toEqual({ concurrency: 4 });
     expect(PLACEHOLDERS.planTask).toEqual(["task", "guidance", "inputs"]);
