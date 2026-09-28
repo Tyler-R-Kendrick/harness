@@ -7,8 +7,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
-import { parsePolicy, parseResolver, parseSettings as parseProceduralSettings } from "@harness/procedural";
-import type { AccessPolicy, Resolver, Settings as ProceduralSettings } from "@harness/procedural";
+import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings } from "@harness/procedural";
+import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -40,6 +40,11 @@ export function loadProceduralSettings(file: string = require.resolve("@harness/
 /** Read and parse the procedural resolver (which graph a session uses) at startup: procedural's own data file by default, or a deployment's. */
 export function loadProceduralResolver(file: string = require.resolve("@harness/procedural/data/resolver.json")): Resolver {
   return parseResolver(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse dream's composition settings (which paths compile into workflows) at startup: procedural's own data file by default, or a deployment's. */
+export function loadProceduralComposition(file: string = require.resolve("@harness/procedural/data/composition.json")): CompositionSettings {
+  return parseCompositionSettings(JSON.parse(readFileSync(file, "utf8")));
 }
 
 /** Read and parse a procedural access policy (who may read, write, dream, revert or import which graph). */

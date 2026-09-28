@@ -1,12 +1,35 @@
 import { getRandomValues } from "node:crypto";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, ApprovalInbox, ApprovalNotice, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
+import { authorize, composer, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, sessionTools, SnapshotProceduralStore, staging } from "@harness/procedural";
+import type {
+  AccessPolicy,
+  Action,
+  ApprovalInbox,
+  ApprovalNotice,
+  Approver,
+  Composer,
+  CompositionSettings,
+  DreamPorts,
+  DreamResult,
+  Evaluator,
+  GraphId,
+  ProceduralStepHook,
+  ProceduralStore,
+  Reflector,
+  Resolver,
+  SessionLog,
+  Settings,
+  Staging,
+  StepScope,
+} from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
-import type { LanguageModel } from "ai";
+import type { Effects } from "@harness/workflows";
+import { aiCodeMode } from "@harness/workflows/node";
+import type { LanguageModel, ToolSet } from "ai";
 import { FileStorage } from "./file-storage.ts";
+import { WorkflowFiles } from "./workflow-files.ts";
 
 /** This host's clock and entropy, for pinning and the step hook. */
 export const hostPorts = {
@@ -183,9 +206,11 @@ export function nativeDream(options: {
   readonly evaluator?: Evaluator;
   readonly approver?: Approver;
   readonly inbox?: ApprovalInbox;
-  readonly composer?: Composer;
+  /** A composer, or how to make one for each dream (`nativeComposition`'s, over the session tools as they are then). */
+  readonly composer?: Composer | (() => Promise<Composer>);
   readonly task?: string;
-  readonly tools?: readonly string[];
+  /** The session tool catalog, or how to list it for each dream (`nativeComposition`'s `catalog`). */
+  readonly tools?: readonly string[] | (() => Promise<readonly string[]>);
   readonly sideEffectFree?: readonly string[];
   readonly holder?: string;
 }): (graph: GraphId) => Promise<DreamResult> {
@@ -198,19 +223,54 @@ export function nativeDream(options: {
     ...(evaluator === undefined ? {} : { evaluator }),
     ...(approver === undefined ? {} : { approver }),
     ...(inbox === undefined ? {} : { inbox }),
-    ...(composer === undefined ? {} : { composer }),
   };
-  return (graph) =>
+  return async (graph) =>
     runDream({
       store,
       graph,
       settings: preset,
-      ports,
+      ports: composer === undefined ? ports : { ...ports, composer: typeof composer === "function" ? await composer() : composer },
       holder,
       ...(task === undefined ? {} : { task }),
-      ...(tools === undefined ? {} : { tools }),
+      ...(tools === undefined ? {} : { tools: typeof tools === "function" ? await tools() : tools }),
       ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
     });
+}
+
+/**
+ * Composition on this host (plan §7.6). Dream stages the workflows it compiles in
+ * `<dir>/staging` (the `--procedural` directory's: one file per workflow, run journals
+ * under `.runs/`), a library of its own: the shared workflow library (`shared`, the
+ * `--workflows` directory) is never written, and may not be the same directory. Staged
+ * workflows run in AI SDK code mode, `ask` answering their questions.
+ *
+ * - `tools` is a session worker's per-turn tools (`sessionAgent({ tools })`): the host's
+ *   `base` tools plus exactly the workflows the core the session reads this turn binds
+ *   (`step.core`), each only while its staged code hashes to the binding.
+ * - `composer` makes dream's composer (`nativeDream({ composer })`) over the specs of the
+ *   base tools as they are when a dream starts, and `catalog` lists them as dream's tool
+ *   catalog (`nativeDream({ tools })`), which the harness preset enforces.
+ */
+export function nativeComposition(options: {
+  readonly dir: string;
+  readonly settings: CompositionSettings;
+  readonly step: Pick<ProceduralStepHook, "core">;
+  readonly ask: Effects["ask"];
+  /** The session tools a compiled path calls: the same for every session of this host. */
+  readonly base?: () => ToolSet | Promise<ToolSet>;
+  /** The shared workflow library's directory, if the host has one. */
+  readonly shared?: string;
+}): { readonly staging: Staging; readonly tools: (scope: StepScope) => Promise<ToolSet>; readonly composer: () => Promise<Composer>; readonly catalog: () => Promise<string[]> } {
+  const { settings, step, ask, base = () => ({}) } = options;
+  const dir = join(options.dir, "staging");
+  if (options.shared !== undefined && resolve(options.shared) === resolve(dir)) throw new Error(`the shared workflow library (${options.shared}) cannot be procedural's staging library`);
+  const s = staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask });
+  return {
+    staging: s,
+    tools: sessionTools({ step, staging: s, base }),
+    composer: async () => composer({ settings, staging: s, tools: await base() }),
+    catalog: async () => Object.keys(await base()),
+  };
 }
 
 /**

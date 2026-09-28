@@ -64,6 +64,24 @@ describe("procedural graphs on the native daemon", () => {
     expect(await client.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] })).toMatchObject({ stopReason: "end_turn" });
   });
 
+  it("PX2.88 an agent worker's daemon gives dream a composer: procedural.dream runs with it; a --workflows directory that is procedural's staging library, or an invalid --procedural-composition file, keeps the daemon from starting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const daemon = launch(dir, "--worker", "model");
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    expect(await invoke(daemon.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+
+    const shared = launch(dir, "--worker", "model", "--workflows", join(dir, "procedural", "staging"));
+    expect(await shared.exited).not.toBe(0);
+    expect(shared.stderr()).toContain("cannot be procedural's staging library");
+    const file = join(dir, "composition.json");
+    writeFileSync(file, JSON.stringify({ support: 0, minScore: 0.5, maxLength: 3 }));
+    const invalid = launch(dir, "--worker", "model", "--procedural-composition", file);
+    expect(await invalid.exited).not.toBe(0);
+    expect(invalid.stderr()).toContain("invalid composition settings");
+  });
+
   it("PX2.79 the approvals inbox over ACP: an import proposal waits and is announced on the hook bus, procedural.approve commits it, procedural.decline rejects another, each decision announced; the policy's approve action guards them", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     const state = join(dir, "state.json");

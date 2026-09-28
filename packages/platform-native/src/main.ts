@@ -6,17 +6,17 @@ import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
-import { workflowTools } from "@harness/workflows";
+import { askModel, workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { approvalInbox, modelReflector } from "@harness/procedural";
 import type { ApprovalNotice, GraphId } from "@harness/procedural";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
-import { loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
+import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hookNotifier, hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -39,6 +39,7 @@ const { values } = parseArgs({
     "procedural-settings": { type: "string" },
     "procedural-resolver": { type: "string" },
     "procedural-policy": { type: "string" },
+    "procedural-composition": { type: "string" },
     harness: { type: "string" },
     consult: { type: "string" },
     "harness-state": { type: "string" },
@@ -60,7 +61,7 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
       "                            [--consult <gateway id>]]\n" +
-      "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>]]\n",
+      "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>] [--procedural-composition <composition.json>]]\n",
   );
   process.exit(2);
 }
@@ -132,6 +133,21 @@ const step =
     principal,
     ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
   });
+// Composition (agent workers): dream compiles well-trodden paths into workflows staged in the procedural
+// directory (never the shared --workflows library), with the session tools as its catalog, and each session
+// is offered its tools plus exactly the workflows its pinned core binds. The ensemble worker's tools are the
+// shared library's workflows; the model worker has none of its own.
+const composition =
+  step && (values.worker === "model" || values.worker === "ensemble")
+    ? nativeComposition({
+        dir: values.procedural!,
+        settings: loadProceduralComposition(values["procedural-composition"]),
+        step,
+        ask: askModel(cognitive?.ensemble.languageModel() ?? gateway(values.model)),
+        base: async () => (values.worker === "ensemble" && cognitive?.workflowHost ? workflowTools(cognitive.workflowHost) : {}),
+        ...(values.workflows === undefined ? {} : { shared: values.workflows }),
+      })
+    : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
@@ -159,7 +175,7 @@ const harness =
 const worker: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions, ...(step ? { step } : {}) }) })
+    ? new AgentWorker({ agent: sessionAgent({ model: gateway(values.model), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}) }) })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
@@ -171,8 +187,9 @@ const worker: Worker = harness
             ...(cognitive!.learning ? { learning: cognitive!.learning } : {}),
             // A larger hosted model's notes on each request, as reference for the local kernel.
             ...(values.consult === undefined ? {} : { consult: gateway(values.consult) }),
-            // The workflow library's workflows are durable tools, looked up each turn as learning adds to them.
-            ...(cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
+            // The workflow library's workflows are durable tools, looked up each turn as learning adds to them
+            // (with procedural graphs, plus the workflows the session's pinned core binds).
+            ...(composition ? { tools: composition.tools } : cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
           }),
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
@@ -193,7 +210,14 @@ if (procedural && generator) {
   // Dream refines with the generator, on trajectories from the daemon's session logs. No one can be
   // asked for approval outside a session's turn: candidates that need it wait in the approvals inbox
   // (`procedural.approvals`, `procedural.approve`, `procedural.decline`).
-  live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()), inbox: approvalInbox(notify) });
+  // With composition, a dream ends with a composition round over the session tools, which are its tool catalog.
+  live.dream = nativeDream({
+    ...procedural,
+    model: generator,
+    sessions: async () => snapshotSessions(host.daemon.snapshot()),
+    inbox: approvalInbox(notify),
+    ...(composition ? { composer: composition.composer, tools: composition.catalog } : {}),
+  });
 }
 
 const shutdown = async () => {

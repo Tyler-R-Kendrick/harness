@@ -1169,6 +1169,26 @@ above keep their meaning.
     (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
     or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
     `staging.host(base)` running the workflows; without a graph, the base.
+- **Workers (`@harness/workers`).** `sessionAgent({ tools })` given a function calls it
+  each turn with the turn's scope (`TurnScope`: session, turn, cwd, meta, report), so a
+  session gets tools of its own. Opaque harness workers keep their harness's own tools,
+  so they get no workflow tools (and their dream no composer).
+- **Native host.**
+  - `loadProceduralComposition(file?)` reads `data/composition.json`, or a deployment's
+    copy (`--procedural-composition`).
+  - `nativeComposition({dir, settings, step, ask, base?, shared?})` returns
+    `{staging, tools, composer, catalog}`: staging in `<dir>/staging` (`WorkflowFiles`: a
+    file per workflow, run journals under `.runs/`) on AI SDK code mode; `shared` (the
+    `--workflows` directory) is never written and may not be that directory (it throws).
+    `tools` is `sessionTools` over `base` (the host's session tools, the same for every
+    session); `composer()` and `catalog()` read `base` when a dream starts.
+  - `nativeDream`'s `composer` and `tools` may be functions, called at the start of each
+    dream.
+  - `main.ts`, for `--worker model` and `--worker ensemble` with `--procedural`: the
+    worker's tools are `composition.tools` (base: none for the model worker, the shared
+    library's `workflowTools` for the ensemble worker), `ask` is the ensemble's default
+    model or the gateway model, and the daemon's dream gets `composer` and `catalog` as
+    its tool catalog (so `enforceToolCatalog` sees the session tools).
 
 ## Open issues
 
