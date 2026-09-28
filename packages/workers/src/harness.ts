@@ -2,7 +2,7 @@ import type { HarnessAgent, HarnessAgentSession } from "@ai-sdk/harness/agent";
 import type { Agent, AgentCallParameters, AgentStreamParameters, Experimental_SandboxSession, ModelMessage, ToolSet } from "ai";
 import type { TurnOptions } from "./agent.ts";
 import { messageOf, scopeOf } from "./session-agent.ts";
-import type { StepHook } from "./session-agent.ts";
+import type { LastCall, StepHook } from "./session-agent.ts";
 
 /** An AI SDK agent whose turns name their daemon session, and which can end every harness session. */
 export type HarnessSessions = Agent<TurnOptions, ToolSet> & { close(): Promise<void> };
@@ -39,7 +39,8 @@ export function harnessSessions(
   } = {},
 ): HarnessSessions {
   const sessions = new Map<string, Promise<HarnessAgentSession>>();
-  const lastActions = new Map<string, string>();
+  /** Each session's last tool call, with its id so a later step's result can be paired with it. */
+  const lastCalls = new Map<string, LastCall & { readonly id: string }>();
   const { store, step } = options;
   /**
    * The messages with the turn's guidance prepended to its prompt; undefined when there
@@ -52,7 +53,9 @@ export function harnessSessions(
     const scope = scopeOf(turn);
     let text: string | undefined;
     try {
-      text = await hook({ ...scope, messages, lastAction: lastActions.get(turn.sessionId), tools: Object.keys(agent.tools ?? {}) });
+      const known = lastCalls.get(turn.sessionId);
+      const lastCall = known === undefined ? {} : { lastCall: { name: known.name, input: known.input, ...(known.output === undefined ? {} : { output: known.output }) } };
+      text = await hook({ ...scope, messages, lastAction: known?.name, ...lastCall, tools: Object.keys(agent.tools ?? {}) });
     } catch (e) {
       scope.report({ sessionUpdate: "notice", severity: "warning", title: "Turn guidance failed", description: messageOf(e) });
     }
@@ -97,10 +100,14 @@ export function harnessSessions(
       const guided = step?.turn && call.messages ? await guide(step.turn.bind(step), turn, call.messages) : undefined;
       const { onStepEnd, ...rest } = call;
       const settings = {
-        // The harness keeps its own conversation, so the session's last tool call is remembered from its steps.
+        // The harness keeps its own conversation, so the session's last tool call is remembered from its steps,
+        // and its output from the step that reports its result (a later one, for a host-executed tool).
         onStepEnd: async (event: Parameters<NonNullable<typeof onStepEnd>>[0]) => {
           const last = event.toolCalls.at(-1);
-          if (last) lastActions.set(turn.sessionId, last.toolName);
+          if (last) lastCalls.set(turn.sessionId, { id: last.toolCallId, name: last.toolName, input: last.input });
+          const known = lastCalls.get(turn.sessionId);
+          const result = event.toolResults.find((r) => r.toolCallId === known?.id);
+          if (known !== undefined && result !== undefined) lastCalls.set(turn.sessionId, { ...known, output: result.output });
           await onStepEnd?.(event);
         },
         session: live,

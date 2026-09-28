@@ -29,12 +29,21 @@ export interface StepContext extends TurnScope {
   readonly tools: readonly string[];
 }
 
+/** A harness's tool call as a turn hook is told it. */
+export interface LastCall {
+  readonly name: string;
+  readonly input: unknown;
+  readonly output?: unknown;
+}
+
 /** A turn of an opaque harness, which has no steps to prepare: only its prompt can carry guidance. */
 export interface TurnContext extends TurnScope {
   /** The conversation the worker holds, ending with the turn's prompt. */
   readonly messages: readonly ModelMessage[];
   /** The last tool the harness called in an earlier turn of the session. */
   readonly lastAction: string | undefined;
+  /** That call with its input and, once the harness reported it, its result's output (what a state tracker reads). */
+  readonly lastCall?: LastCall;
   /** The names of the tools the harness offers. */
   readonly tools: readonly string[];
 }
