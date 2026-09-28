@@ -1,23 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import type { ModelMessage } from "ai";
-import type { SnapshotStorage } from "@harness/core";
-import { Coalesced, conversationStore, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
+import { Coalesced, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
 import { HOME, walk } from "../src/vfs.ts";
-
-/** Storage that keeps a structured clone, as IndexedDB does. */
-function cloneStorage(): SnapshotStorage & { value: unknown; saves: number } {
-  const s = {
-    value: undefined as unknown,
-    saves: 0,
-    load: async () => structuredClone(s.value),
-    save: async (v: unknown) => {
-      s.saves++;
-      s.value = structuredClone(v);
-    },
-  };
-  return s;
-}
 
 describe("the filesystem across reloads", () => {
   it("PS1.1 a snapshot keeps every file's bytes and every directory under the root; restoring it into a fresh shell reproduces them", async () => {
@@ -65,26 +49,6 @@ describe("the page's own state across reloads", () => {
     expect(parsePageState(state)).toEqual(state);
     expect(parsePageState({ ...state, sessionId: undefined })).toEqual({ ...state, sessionId: undefined });
     for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
-  });
-});
-
-describe("conversations across reloads", () => {
-  const said = (text: string): ModelMessage[] => [{ role: "user", content: [{ type: "text", text }] }];
-
-  it("PS3.1 each session's conversation is saved, and a new store on the same storage (after a reload) loads it", async () => {
-    const storage = cloneStorage();
-    const first = conversationStore(storage);
-    await Promise.all([first.save("s1", said("one")), first.save("s2", said("two"))]);
-    expect(await first.load("s1")).toEqual(said("one"));
-    const again = conversationStore(storage);
-    expect(await again.load("s2")).toEqual(said("two"));
-    expect(await again.load("s3")).toBeUndefined();
-  });
-
-  it("PS3.2 a stored value that is not a map of conversations is treated as none", async () => {
-    const storage = cloneStorage();
-    await storage.save(["nonsense"]);
-    expect(await conversationStore(storage).load("s1")).toBeUndefined();
   });
 });
 

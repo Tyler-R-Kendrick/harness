@@ -8,7 +8,8 @@ import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
 import { IndexedDbStorage } from "@harness/platform-browser";
-import { Coalesced, conversationStore, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "./persist.ts";
+import { storedConversations } from "@harness/workers";
+import { Coalesced, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "./persist.ts";
 import { Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
@@ -507,7 +508,7 @@ async function boot() {
     approval: () => settings.approval,
     onSnapshot,
     storage: stores.daemon,
-    conversations: conversationStore(stores.conversations),
+    conversations: storedConversations(stores.conversations),
   });
   const p = playground;
   vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));

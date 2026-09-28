@@ -1,15 +1,14 @@
 /**
  * What the playground keeps across reloads, in the viewer's browser: the daemon's
- * snapshot (its sessions and logs), each session's agent conversation, the shared
- * filesystem, and the page's own state (the current session, the settings, the turns).
+ * snapshot (its sessions and logs), each session's agent conversation (kept by the
+ * worker, `storedConversations`), the shared filesystem, and the page's own state (the
+ * current session, the settings, the turns).
  * Every store is a `SnapshotStorage` (IndexedDB in the page), read back through a parser,
  * and allowed to fail: without storage the playground simply starts fresh.
  */
-import type { ModelMessage } from "ai";
 import type { IFileSystem } from "just-bash";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
-import type { ConversationStore } from "@harness/workers";
 
 const vfsSnapshot = z.object({
   version: z.literal(1),
@@ -73,24 +72,6 @@ export type PageState = z.infer<typeof pageState>;
 export function parsePageState(value: unknown): PageState | undefined {
   const parsed = pageState.safeParse(value);
   return parsed.success ? parsed.data : undefined;
-}
-
-/** Each session's conversation, all in one stored record (a map from session to messages). */
-export function conversationStore(storage: SnapshotStorage): ConversationStore {
-  let all: Promise<Map<string, readonly ModelMessage[]>> | undefined;
-  const loaded = () =>
-    (all ??= storage.load().then((value) => new Map(value instanceof Map ? (value as Map<string, readonly ModelMessage[]>) : [])));
-  let saving = Promise.resolve();
-  return {
-    load: async (sessionId) => (await loaded()).get(sessionId),
-    save: async (sessionId, messages) => {
-      const map = await loaded();
-      map.set(sessionId, messages);
-      // Saves run one after another, each storing the whole map as it is then.
-      saving = saving.then(() => storage.save(map));
-      await saving;
-    },
-  };
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
