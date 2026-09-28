@@ -28,7 +28,12 @@ no scripts from other hosts, no network.
 - **Claude through the artifact's `sample` capability, as an AI SDK `LanguageModelV4`.**
   The capability takes plain turns and returns text; the call's instructions, tools and
   conversation are rendered as turns, and the reply's shape is fixed as one JSON object
-  (`{"text", "toolCalls"}`) whose `text` streams as it is written. The AI SDK then runs the
+  (`{"text", "toolCalls"}`) whose `text` streams as it is written. The capability takes no
+  schema or grammar, so the reply's JSON Schema is sent in the leading turn, the strongest
+  constraint it allows; `sample.json` is not used, because it only notes that the reply
+  will be parsed (by the same tolerant rules we use) and rejects a reply cut short, whose
+  partial text we keep. The model is named by its runtime (`sample`), and its tool-call ids
+  are random, since a conversation outlives the page that wrote it. The AI SDK then runs the
   tools, through the daemon's permission flow, as with any provider. The capability's own
   `tools` option is not used: it would run tools inside the capability, out of the
   daemon's sight and approvals. Outside claude.ai the capability is absent, and the page
@@ -57,6 +62,6 @@ no scripts from other hosts, no network.
 
 ## Revisit when
 
-- The `sample` capability can take a JSON Schema or report token usage: send the
-  schema instead of describing it, and record usage in the trace.
+- The `sample` capability can take a JSON Schema or grammar, or report token usage: send
+  the schema as a constraint rather than in the prompt, and record usage in the trace.
 - `bash-tool` loads in browsers: use it for the agent's tools.

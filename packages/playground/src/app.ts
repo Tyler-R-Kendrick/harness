@@ -337,7 +337,7 @@ function renderFiles() {
 let bashRef: BashShell["bash"] = null;
 async function refreshFiles() {
   if (!bashRef) return;
-  files = await walk(bashRef.fs, HOME);
+  files = await walk(bashRef.fs, HOME, { previous: files });
   renderFiles();
 }
 
