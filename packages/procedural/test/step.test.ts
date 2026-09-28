@@ -284,7 +284,9 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   });
 
   it("PW1.61 a preset without an overlay reads the core alone, even with live settings", async () => {
-    const settings = withPreset("harness", { overlay: false });
+    // Counting observed turns needs an overlay, so this preset's schedule keeps only its period.
+    const { afterTurns: _turns, ...dream } = settingsFile.presets.harness.dream;
+    const settings = withPreset("harness", { overlay: false, dream });
     const s = await setup("custom", { settings });
     await append(s, proposed(noteOnCore, ["a"]));
     await proceduralStep(s.deps).prepare(input(s, [user("q")]));

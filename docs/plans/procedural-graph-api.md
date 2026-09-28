@@ -1067,6 +1067,19 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Scheduled dream and the task-suite evaluator
+
+As built. These close the gap "dream runs on demand only; no host configures an
+evaluator"; the names above keep their meaning.
+
+- **The schedule is data.** `DreamSettings` gains `every?: Duration` and `afterTurns?`
+  (a positive count). `Duration` is a refined type (`DurationSchema`, `duration(text)`):
+  days, hours, minutes and seconds in that order (`90s`, `15m`, `6h`, `1d`, `1h30m`),
+  parsed into positive whole milliseconds; a number is milliseconds already, so parsed
+  settings parse again to themselves. `afterTurns` counts observed turns, so a preset
+  without an overlay refuses it. The harness preset dreams every `7d` or after `50`
+  observed turns, whichever comes first; the paper preset has no schedule.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in

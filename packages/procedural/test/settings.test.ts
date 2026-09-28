@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW } from "@harness/procedural";
+import { duration, DurationSchema, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW } from "@harness/procedural";
 
 const file = JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")) as Record<string, unknown>;
 const settings = () => parseSettings(structuredClone(file));
@@ -147,6 +147,37 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["presets", "harness", "live", "reflectionBatch"], 0)).toThrow(/presets\.harness\.live\.reflectionBatch/);
     const { code, path } = SettingsSchema.safeParse(JSON.parse(JSON.stringify(file).replace('"reflection":"off"', '"reflection":"batch"'))).error!.issues[0]!;
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
+  });
+
+  it("PG1.48 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
+    expect(presetOf(settings(), "harness").dream).toMatchObject({ every: 7 * 24 * 3_600_000, afterTurns: 50 });
+    expect(presetOf(settings(), "paper").dream.every).toBeUndefined();
+    expect(presetOf(settings(), "paper").dream.afterTurns).toBeUndefined();
+    expect(presetOf(edit(["presets", "paper", "dream", "every"], "90m")(), "paper").dream.every).toBe(5_400_000);
+    expect(edit(["presets", "harness", "dream", "every"], "soon")).toThrow(/a duration such as 90s, 15m, 6h, 1d or 1h30m[\s\S]*presets\.harness\.dream\.every/);
+    expect(edit(["presets", "harness", "dream", "every"], "0s")).toThrow(/presets\.harness\.dream\.every/);
+    expect(edit(["presets", "harness", "dream", "afterTurns"], 0)).toThrow(/presets\.harness\.dream\.afterTurns/);
+    expect(edit(["presets", "harness", "dream", "afterTurns"], 1.5)).toThrow(/presets\.harness\.dream\.afterTurns/);
+    expect(edit(["presets", "paper", "dream", "afterTurns"], 5)).toThrow(/observed turns need an overlay[\s\S]*presets\.paper\.dream\.afterTurns/);
+    const { code, path } = SettingsSchema.safeParse(JSON.parse(JSON.stringify(file).replace('"rounds":10', '"rounds":10,"afterTurns":5'))).error!.issues[0]!;
+    expect({ code, path }).toEqual({ code: "custom", path: ["presets", "paper", "dream", "afterTurns"] });
+  });
+
+  it("PG1.49 a duration is days, hours, minutes and seconds in that order, parsed into milliseconds", () => {
+    expect(duration("45s")).toBe(45_000);
+    expect(duration("15m")).toBe(900_000);
+    expect(duration("6h")).toBe(21_600_000);
+    expect(duration("2d")).toBe(172_800_000);
+    expect(duration("1d2h3m4s")).toBe(86_400_000 + 7_200_000 + 180_000 + 4_000);
+    expect(duration("1h30m")).toBe(5_400_000);
+    for (const bad of ["", "5", "m", "1m1h", "1.5h", "-1h", "1w", " 1h", "1h ", "0d0h", "1H"]) expect(() => duration(bad), bad).toThrow(RangeError);
+    expect(() => duration("1m1h")).toThrow(/invalid duration "1m1h": a duration such as 90s, 15m, 6h, 1d or 1h30m/);
+    expect(DurationSchema.safeParse("10m").data).toBe(600_000);
+    // Parsed settings parse again to themselves: a number is milliseconds already.
+    expect(DurationSchema.parse(DurationSchema.parse("10m"))).toBe(600_000);
+    expect(parseSettings(settings())).toEqual(settings());
+    expect(DurationSchema.safeParse(0).success).toBe(false);
+    expect(DurationSchema.safeParse(1.5).success).toBe(false);
   });
 
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {

@@ -47,6 +47,8 @@
       "dream": {
         "mode": "incremental",
         "rounds": 3,
+        "every": "7d",
+        "afterTurns": 50,
         "compose": true,
         "cycles": "allowed",
         "contextTokens": 32000,

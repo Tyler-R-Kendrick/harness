@@ -31,6 +31,29 @@ const EVALUATOR_GATES = ["evaluator-at-least-retained", "evaluator-anchored-noni
 const GateSchema = z.union([z.enum(GATES), z.templateLiteral([z.enum(EVALUATOR_GATES), "?"])]);
 export type Gate = z.output<typeof GateSchema>;
 
+const DURATION = /^(?=\d)(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/;
+const DURATION_FORMAT = "a duration such as 90s, 15m, 6h, 1d or 1h30m";
+const UNIT_MS = [86_400_000, 3_600_000, 60_000, 1_000] as const;
+
+/**
+ * A length of time, written as days, hours, minutes and seconds in that order (`1d`,
+ * `6h`, `1h30m`), parsed into a positive whole number of milliseconds. A number is
+ * already milliseconds, so parsed settings parse again to themselves.
+ */
+const DurationTextSchema = z
+  .string()
+  .regex(DURATION, DURATION_FORMAT)
+  .transform((text) => DURATION.exec(text)!.slice(1).reduce((ms, part, i) => ms + Number(part ?? 0) * UNIT_MS[i]!, 0));
+export const DurationSchema = z.union([DurationTextSchema, z.int()], { error: DURATION_FORMAT }).pipe(z.int().positive().brand<"Duration">());
+export type Duration = z.output<typeof DurationSchema>;
+
+/** Parse a duration (see `DurationSchema`); anything else is a `RangeError`. */
+export function duration(text: string): Duration {
+  const parsed = DurationSchema.safeParse(text);
+  if (!parsed.success) throw new RangeError(`invalid duration "${text}": ${DURATION_FORMAT}, and longer than zero`);
+  return parsed.data;
+}
+
 const LiveSettingsSchema = z
   .strictObject({
     /** Model-written overlay entries after a scored turn (`turn`) or a batch of scored turns (`batch`); off by default (plan §6.2). */
@@ -65,6 +88,14 @@ const DreamSettingsSchema = z
      * rounds, or the runner's `DEFAULT_SELECT`.
      */
     stride: z.int().positive().exactOptional(),
+    /**
+     * The schedule (plan §7.1): a dream is due once this long has passed since the last
+     * one (or, before any, since the head was set). With `afterTurns` too, whichever
+     * comes first. Unset with `afterTurns` unset: dream runs on demand only.
+     */
+    every: DurationSchema.exactOptional(),
+    /** A dream is due once the live learner has observed this many turns since the last one; needs an overlay. */
+    afterTurns: z.int().positive().exactOptional(),
     /** After the rounds, one more: compose a well-trodden path into a workflow node (plan §7.6), gated as any candidate. */
     compose: z.boolean().exactOptional(),
     /** The cycle policy c of App. B.6. */
@@ -117,6 +148,7 @@ const PresetSchema = z
   })
   .superRefine((p, ctx) => {
     if (p.overlay && p.live === undefined) ctx.addIssue({ code: "custom", message: "an overlay needs live settings", path: ["live"] });
+    if (!p.overlay && p.dream.afterTurns !== undefined) ctx.addIssue({ code: "custom", message: "observed turns need an overlay: without one the live learner observes none", path: ["dream", "afterTurns"] });
   });
 export type Preset = z.output<typeof PresetSchema>;
 
