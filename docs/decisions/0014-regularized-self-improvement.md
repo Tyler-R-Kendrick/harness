@@ -164,8 +164,8 @@ rate.
 
 ## Decision
 
-`@harness/evolution` (pure) runs the paper's loop over a surface of JSON documents, with
-the selection side replaced, and the paper's rule kept beside it (`select.rule: "paper"`)
+`@harness/evolution` (pure) runs the paper's loop over a surface of JSON and text
+documents, with the selection side replaced, and the paper's rule kept beside it (`select.rule: "paper"`)
 so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–RS9.11).
 
 - **The harness is data, edited by JSON Patch.** A surface names documents and their zod
@@ -174,8 +174,16 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   computed: edits touching the same part are one edit, so the L0 count is real (RS5.3); a
   change's components come from the paths it changed, not from its tag (RS5.1, RS5.6); a
   document its schema refuses is the liveness failure (RS5.4); every accepted edit keeps
-  its inverse, so it can be taken out again (RS5.5). Code is not a surface yet: in this
-  repository what is tuned by hand is data.
+  its inverse, so it can be taken out again (RS5.5).
+- **Code is a surface too: text documents.** A source file is a document of `kind: "text"`,
+  edited by `edit` ops (`old` must occur exactly once, as in the reference implementation's
+  `edit_file`). Independence is computed from the character ranges the edits occupy
+  (touching is not overlapping; an edit that depends on another's output is not
+  independent), the footprint is the changed lines, the host's `check` (it parses, it
+  compiles) is the liveness test and also runs on the base harness, `classifyText` maps a
+  changed region to a component, an inverse carries the least surrounding context that
+  makes a repeated or deleted text findable again, and the leakage screen reads the text
+  an edit adds. Ablation and entanglement work as for JSON (RS13.1–RS13.43).
 - **Paired, same-window measurement.** Each round evaluates the incumbent again with the
   candidates. Its evidence is what was measured *after* it was chosen, never the
   measurement it won on, which removes the winner's curse (RS9.2, RS10.1). Earlier fresh
@@ -191,6 +199,33 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
 - **A run-wide error rate.** Every acceptance test gets alpha / (T (m + 1)), a union bound
   valid under the arbitrary dependence an adaptive search has (RS3.2). The cost is power,
   stated in the table above and chosen in data (`select.alpha`, `rounds`, `trials`).
+- **The error budget can be spent front-loaded, and must be spendable.** `select.spending`
+  is `uniform` (equal shares) or `geometric` (round t gets alpha ratio^t / sum ratio^s,
+  split among the round's tests). Both are functions of (round, rounds, tests) alone and
+  add up to alpha, so the union bound holds (RS14.1–RS14.9, and as a property RS14.20–22).
+  Geometric moves power from late rounds to early ones: measured at n = 240 and a +0.05
+  gain, a gain proposed in round 0 is certified 48.5% of the time against 38% uniform, and
+  one proposed in round 15 30% against 38% (RS14.70–RS14.71). It is deliberately not
+  alpha-investing, which lets a test's level depend on earlier outcomes and controls the
+  marginal false discovery rate, not the chance of any false acceptance; a wrongly accepted
+  change is built on by every later round, so the family-wise rate is what is promised.
+  Because a test that flips whole groups of tasks cannot certify anything at a level of
+  2^-G or below, a run whose evolve set has fewer groups than its smallest test level can
+  resolve is refused before anything is evaluated, also when a saved run is restored
+  against a smaller set (RS16.1–RS16.5). Settings whose resamples cannot resolve a round's
+  level are refused too (RS14.7).
+- **Futility staging saves evaluations without adding acceptances.** With `select.futility`
+  a drafted change is first evaluated on a random prefix of the evolve tasks; if the
+  prefix gain's upper bound (at the futility level) is below the non-inferiority margin
+  it can be neither a supported gain nor a non-inferior saving, and is abandoned with the
+  reason recorded. Survivors are evaluated on the rest and the acceptance test runs on
+  all tasks at its unchanged level, so staging can only remove acceptances, never add
+  them. Measured on the study world: 0 null acceptances in 40 runs with it (2 without,
+  RS14.60); bad candidates (harm 0.2) abandoned 331 of 400 times with 18.8% fewer tasks
+  evaluated overall, about a third fewer counting only candidates (RS14.61); a real +0.05
+  gain abandoned in 0 of 300 runs (RS14.62). Ablations are never staged. What is not
+  claimed: a paired power comparison, since staging changes which random trials each
+  candidate gets.
 - **Gains, savings and removals are different claims.** A change is a gain only when its
   lower bound is above zero, and its added cost must be paid for by that lower bound, not
   the point estimate (RS8.4). Anything else, a saving of at least `saving` or a removal, is
@@ -219,6 +254,16 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
 - **The history speaks in verdicts.** `supported`, `refuted` or `inconclusive`, with the
   interval; the proposer's instructions say an inconclusive change is not evidence against
   it (RS7.1, RS7.6).
+- **A host drives it.** `harness-evolution` (`packages/platform-native`) runs
+  `start | round | run | status | documents` from a config file: the documents (JSON or
+  text, with optional JSON Schemas, `check` commands and component classification), the
+  evolve and holdout tasks (id, text, reference, group) and an evaluator command that runs
+  the harness as a child process (`{documents, tasks, k}` on stdin, task runs on stdout,
+  parsed into refined types). The run is saved atomically after every completed round, so a
+  failed round changes nothing and `run` resumes; documents are written back only on
+  request, and never over files that changed since the run started (EH1.1–EH12.x, and end
+  to end with a real child-process evaluator and a holdout, EH10.1). The proposer and the
+  critic are gateway models, or the critic is the ensemble's judge.
 - **Models are AI SDK models.** The proposer is `generateText` constrained to the proposal's
   JSON Schema; the critic is `experimental_evaluate` (RS12.1–RS12.3). Settings, prompts
   included, are data with a generated schema (`packages/evolution/data/settings.json`,
@@ -241,22 +286,34 @@ thin when few tasks carry the signal. The randomization test is exact by constru
   (the table), fewer rounds, or a larger alpha, all in data.
 - Each round costs one more evaluation than the paper's (the incumbent again), plus the
   ablation candidate, plus the winner on the holdout.
-- `Evolution` is a library: no host drives it yet. A host supplies the evaluator (run the
-  harness these documents describe on these tasks), the proposer and critic models, and
-  the surface (the documents and their schemas).
+- The evolve set must have enough groups. A suite of a few dozen tasks each in its own
+  group is enough for a short run; a suite whose tasks fall into four practice areas is not,
+  and the run says so before spending anything.
+- Each evaluation is a child process the host spawns; the harness under test runs with
+  the host's authority. Evolving code that runs code is the operator's sandbox decision,
+  as it is for any harness session.
 
-## Not done
+## Limits, and what was decided against
 
-- Driving it from the native host or the evals runner, over a real suite with a holdout.
-- Code surfaces (harness code in a sandbox, as the paper edits Python in worktrees).
-- Sharper error control: online FDR or alpha-investing across rounds, and anytime-valid
-  (e-value) sequential evaluation that stops measuring a candidate once it is clearly in
-  or out, which would save most of the evaluation cost.
-- Interactions: ablation measures a mechanism's marginal contribution given the rest;
-  mechanisms that only help together are removed together or not at all.
-- Rewards from an LLM judge carry the judge's noise and bias. The paired design cancels
-  only what the judge does the same way to both harnesses, and nothing here guards against
-  optimizing toward the judge. The holdout helps only if its judge is different.
-- Out-of-distribution transfer: the holdout guards the evolve set's distribution, not
-  another suite's. That still has to be measured, with intervals, and over several seeds of
-  the whole search.
+None of these is scheduled work; each is either outside what a library over an evaluator
+port can do, or a decision.
+
+- **Early acceptance.** Stopping an evaluation as soon as a candidate is clearly good needs
+  an anytime-valid test (e-values, a confidence sequence) whose error is charged across
+  looks, at a price in power. Futility staging already captures about a third of the
+  candidate evaluations at no visible power loss, and the acceptance test stays exact; a
+  sequential acceptance test was not adopted.
+- **Online FDR.** Alpha-investing controls a different guarantee (see above). Not adopted.
+- **Interactions.** Ablation measures a mechanism's marginal contribution given the rest.
+  Mechanisms that only help together are each found redundant if removed alone, and are
+  then kept or removed one at a time; the proposer is asked to make coordinated changes
+  one edit (edits that touch the same part are one edit).
+- **Judged rewards.** With an LLM judge as the verifier, the paired design cancels only
+  what the judge does the same way to both harnesses, and nothing guards against
+  optimizing toward the judge. The holdout helps only if it is judged differently; the
+  evaluator port lets a host do that.
+- **Transfer.** The guarantee is about the evolve set's distribution: a supported gain is
+  a gain on new tasks of that kind. Whether a harness evolved on one suite helps on another
+  is an empirical question that needs real suites, real models and several seeds of the
+  whole search, with intervals; nothing in this repository can settle it, and the paper's
+  numbers do not settle it either (see the critique).
