@@ -41,7 +41,8 @@
                     "dream",
                     "revert",
                     "import",
-                    "approve"
+                    "approve",
+                    "run"
                   ]
                 }
               },

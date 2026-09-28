@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { GraphIdSchema, MemoryProceduralStore, parseGraph, parseSettings, proceduralExtension, revisionId, seedGraph } from "@harness/procedural";
-import type { ApprovalNotice, GraphId, LearnerResult, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
+import { MemoryStorage } from "@harness/testkit";
+import { GraphIdSchema, MemoryProceduralStore, parseGraph, parsePlan, parseSettings, planRunner, proceduralExtension, revisionId, seedGraph, SnapshotPlanRuns } from "@harness/procedural";
+import type { ApprovalNotice, GraphId, LearnerResult, PlanNotice, PlanTask, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
+import { chain, chainDoc, observed } from "./compose-fixtures.ts";
 import { hotpot } from "./fixtures.ts";
 import { paper, setup, turnOf } from "./learner-setup.ts";
 import { proposed, shortcut } from "./overlay-fixtures.ts";
@@ -28,7 +30,7 @@ describe("proceduralExtension", () => {
     const { x } = extension();
     expect(x.id).toBe("procedural");
     expect(x.models).toEqual([]);
-    expect(Object.keys(x.operations!).sort()).toEqual(["approvals", "approve", "decline", "dream", "export", "feedback", "graph", "history", "import", "revert"]);
+    expect(Object.keys(x.operations!).sort()).toEqual(["approvals", "approve", "decline", "dream", "export", "feedback", "graph", "history", "import", "plan", "revert", "run"]);
   });
 
   it("PX2.29 import, graph, export and history work on the store", async () => {
@@ -178,6 +180,92 @@ describe("proceduralExtension", () => {
     expect(await strict.op("import", { graph, document: cyclic })).toMatchObject({ status: "invalid", diagnostics: [{ code: "cycle" }] });
     expect(await extension().op("import", { graph, document: cyclic })).toMatchObject({ status: "head" });
     expect(() => extension({ preset: "absent" })).toThrow(RangeError);
+  });
+
+  describe("plans", () => {
+    const web = GraphIdSchema.parse("team/web");
+    const echo: PlanTask = async ({ id, inputs }) => (id === "review" ? { ok: false, error: "no reviewer" } : { ok: true, output: `${id}(${Object.keys(inputs).join(",")})` });
+    function planning(options: Partial<ProceduralExtensionOptions> = {}) {
+      const store = new MemoryProceduralStore();
+      const notices: PlanNotice[] = [];
+      const plans = planRunner({ store, runs: new SnapshotPlanRuns(new MemoryStorage()), settings, entropy: { bytes: (n) => new Uint8Array(n).fill(9) }, task: () => echo, notify: (n) => void notices.push(n) });
+      return { ...extension({ store, plans, ...options }), notices };
+    }
+
+    it("PX2.133 plan builds a plan from the graph's head and overlay between two nodes and returns its JSON, or the diagnostics; a missing graph is a value", async () => {
+      const { op, store } = planning();
+      await op("import", { graph: web, document: chainDoc() });
+      await store.overlay(web).append([observed("s1/t1", ["Start", "search"], 1)]);
+      const built = (await op("plan", { graph: web, from: "Fetch_Page", to: "summarize" })) as { status: string; revision: string; overlay: number | null; plan: unknown };
+      expect(built).toMatchObject({ status: "ok", revision: revisionId(chain()), overlay: 1 });
+      expect(parsePlan(built.plan).toJSON()).toEqual(built.plan);
+      expect((built.plan as { nodes: { id: string }[] }).nodes.map((n) => n.id)).toEqual(["Fetch_Page", "summarize"]);
+      expect(await op("plan", { graph: web, from: "End", to: "Start" })).toEqual({ status: "invalid", diagnostics: [{ code: "unreachable", message: "Start cannot be reached from End" }] });
+      expect(await op("plan", { graph: GraphIdSchema.parse("team/none"), from: "Start", to: "End" })).toEqual({ status: "missing", reason: "graph team/none has no head" });
+    });
+
+    it("PX2.134 run runs a plan, built between two nodes or given as JSON, with the host's plan runner, and answers each task's outcome; the runner announces it", async () => {
+      const { op, notices } = planning();
+      await op("import", { graph: web, document: chainDoc() });
+      const outcome = await op("run", { graph: web, from: "search", to: "End" });
+      expect(outcome).toEqual({
+        run: "0909090909090909",
+        graph: web,
+        status: "failed",
+        tasks: [
+          { id: "search", status: "succeeded", output: "search()" },
+          { id: "Fetch_Page", status: "succeeded", output: "Fetch_Page(search)" },
+          { id: "summarize", status: "succeeded", output: "summarize()" },
+          { id: "review", status: "failed", error: "no reviewer" },
+        ],
+      });
+      expect(notices).toEqual([{ type: "procedural.plan.completed", payload: outcome }]);
+      const { plan } = (await op("plan", { graph: web, from: "Fetch_Page", to: "summarize" })) as { plan: unknown };
+      expect(await op("run", { graph: web, plan })).toMatchObject({ status: "succeeded", tasks: [{ id: "Fetch_Page" }, { id: "summarize" }] });
+      expect(await op("run", { graph: web, from: "End", to: "Start" })).toEqual({ status: "invalid", diagnostics: [{ code: "unreachable", message: "Start cannot be reached from End" }] });
+      expect(await op("run", { graph: web, plan: { nodes: "no" } })).toEqual({ status: "invalid", reason: "invalid task graph data: nodes is not a list" });
+      expect(await op("run", { graph: GraphIdSchema.parse("team/none"), from: "Start", to: "End" })).toEqual({ status: "missing", reason: "graph team/none has no head" });
+      expect(notices).toHaveLength(2);
+    });
+
+    it("PX2.135 run without a plan runner is unavailable, before anything is built", async () => {
+      const { op } = extension();
+      expect(await op("run", { graph: web, from: "Start", to: "End" })).toEqual({ status: "unavailable", reason: "no plan runner is configured" });
+    });
+
+    it("PX2.136 plan is the read action; run is the run action, and read too when it builds the plan from the graph; a refusal throws and nothing runs", async () => {
+      const asked: [ProceduralAction, string][] = [];
+      let allow: readonly ProceduralAction[] = [];
+      const { op, notices } = planning({ authorize: (action, g) => (asked.push([action, g]), allow.includes(action)) });
+      allow = ["import"];
+      await op("import", { graph: web, document: chainDoc() });
+      await expect(op("plan", { graph: web, from: "Start", to: "End" })).rejects.toThrow("procedural.plan: read on graph team/web is not allowed");
+      await expect(op("run", { graph: web, from: "Start", to: "End" })).rejects.toThrow("procedural.run: run on graph team/web is not allowed");
+      allow = ["run"];
+      await expect(op("run", { graph: web, from: "Start", to: "End" })).rejects.toThrow("procedural.run: read on graph team/web is not allowed");
+      expect(asked.slice(-2)).toEqual([
+        ["run", web],
+        ["read", web],
+      ]);
+      expect(notices).toEqual([]);
+      allow = ["read"];
+      const { plan } = (await op("plan", { graph: web, from: "Fetch_Page", to: "summarize" })) as { plan: unknown };
+      allow = ["run"];
+      expect(await op("run", { graph: web, plan })).toMatchObject({ status: "succeeded" });
+    });
+
+    it("PX2.137 their malformed input throws, naming the operation: run takes a plan or both ends, never both", async () => {
+      const { op } = planning();
+      await expect(op("plan", { graph: web, from: "Start" })).rejects.toThrow(/invalid procedural\.plan input[\s\S]*to/);
+      await expect(op("plan", { graph: web, from: "", to: "End" })).rejects.toThrow(/invalid procedural\.plan input[\s\S]*from/);
+      await expect(op("run", { graph: web })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, from: "Start" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, plan: {}, from: "Start", to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, plan: {}, from: "Start" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, plan: {}, to: "End" })).rejects.toThrow(/invalid procedural\.run input[\s\S]*a plan, or from and to/);
+      await expect(op("run", { graph: web, from: "Start", to: "End", extra: 1 })).rejects.toThrow(/invalid procedural\.run input/);
+    });
   });
 
   describe("the approvals inbox", () => {

@@ -1059,6 +1059,20 @@
       ],
       "additionalProperties": false
     },
+    "plans": {
+      "type": "object",
+      "properties": {
+        "concurrency": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "concurrency"
+      ],
+      "additionalProperties": false
+    },
     "prompts": {
       "type": "object",
       "properties": {
@@ -1090,6 +1104,10 @@
           "type": "string",
           "minLength": 1
         },
+        "planTask": {
+          "type": "string",
+          "minLength": 1
+        },
         "taskJudge": {
           "type": "string",
           "minLength": 1
@@ -1102,7 +1120,8 @@
         "refiner",
         "dream",
         "reflection",
-        "route"
+        "route",
+        "planTask"
       ],
       "additionalProperties": false
     }
@@ -1112,6 +1131,7 @@
     "decoding",
     "sessions",
     "graphContext",
+    "plans",
     "prompts"
   ],
   "additionalProperties": false
