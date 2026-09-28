@@ -832,8 +832,10 @@ As built (P11). These refine the above; the names keep their meaning.
   reads to the head when `to` is omitted. `clock` is accepted and unused (the fold counts
   versions). `onHookEvent(event: LearnerEvent)` and `feedback(session, turn, score: number)`
   return `Promise<LearnerResult>`: `ignored` (not a `turn.ended` whose `source` is
-  `daemon`, or a preset without an overlay), `skipped` (turn or version pair not found,
-  a session id containing `/`, no pin for feedback, a score outside [0, 1]), `duplicate`,
+  `daemon`, or a preset without an overlay), `skipped` with a `code: SkipCode`
+  (`unknown-turn`: the turn or its version pair is not found; `no-pin`: feedback for a
+  session with no pin; `invalid`: a session id containing `/`, a score outside [0, 1])
+  and a reason, `duplicate`,
   `unchanged`, `observed {turnKey, graph, trajectory, gaps, appended}` or
   `rescored {turnKey, graph, appended}`. Store failures reject, so the bus redelivers.
 - Localization matches in the graph the session saw: the turn's core with the overlay

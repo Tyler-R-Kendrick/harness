@@ -229,14 +229,14 @@ describe("the live learner on turn.ended", () => {
 
   it("PL1.42 a turn the log does not hold, or one naming no graph, is skipped; so is a session id a turn key cannot hold", async () => {
     const t = setup();
-    const missing = { kind: "skipped", reason: "the log does not hold the turn, or it names no graph" };
+    const missing = { kind: "skipped", code: "unknown-turn", reason: "the log does not hold the turn, or it names no graph" };
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toEqual(missing);
     // No cursor yet, so one read from the start is all there is to try.
     expect(t.reads).toEqual([["s1", 0]]);
     t.add("s1", [started("t1"), user("q"), call("c1", "first_hop_retrieve"), ended("t1")]);
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toEqual(missing);
     t.add("a/b", turnOf("t1", ["first_hop_retrieve"]));
-    expect(await t.learner.onHookEvent(turnEnded("a/b", "t1"))).toEqual({ kind: "skipped", reason: "a session id with '/' cannot key a turn" });
+    expect(await t.learner.onHookEvent(turnEnded("a/b", "t1"))).toEqual({ kind: "skipped", code: "invalid", reason: "a session id with '/' cannot key a turn" });
     expect(t.store.appends).toBe(0);
   });
 
@@ -348,8 +348,18 @@ describe("feedback", () => {
 
   it("PL1.53 feedback without a pin, or with a score outside [0, 1], is skipped", async () => {
     const t = await observedTurn();
-    expect(await t.learner.feedback("s2", "t1", 0.5)).toEqual({ kind: "skipped", reason: "the session has no pin, so no graph" });
-    for (const bad of [1.5, -0.1, Number.NaN]) expect(await t.learner.feedback("s1", "t1", bad)).toEqual({ kind: "skipped", reason: "a score is a probability in [0, 1]" });
+    expect(await t.learner.feedback("s2", "t1", 0.5)).toEqual({ kind: "skipped", code: "no-pin", reason: "the session has no pin, so no graph" });
+    for (const bad of [1.5, -0.1, Number.NaN]) expect(await t.learner.feedback("s1", "t1", bad)).toEqual({ kind: "skipped", code: "invalid", reason: "a score is a probability in [0, 1]" });
+    expect(t.store.events()).toHaveLength(1);
+  });
+
+  it("PL1.70 feedback says why it skipped a score: a turn the log does not hold, no pin, or an input no turn key or score can hold", async () => {
+    const t = await observedTurn();
+    expect(await t.learner.feedback("s1", "absent", 0.5)).toMatchObject({ kind: "skipped", code: "unknown-turn" });
+    expect(await t.learner.feedback("s2", "t1", 0.5)).toMatchObject({ kind: "skipped", code: "no-pin" });
+    t.pin("a/b");
+    expect(await t.learner.feedback("a/b", "t1", 0.5)).toMatchObject({ kind: "skipped", code: "invalid" });
+    expect(await t.learner.feedback("s1", "t1", 2)).toMatchObject({ kind: "skipped", code: "invalid" });
     expect(t.store.events()).toHaveLength(1);
   });
 

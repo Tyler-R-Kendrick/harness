@@ -77,9 +77,15 @@ const entryTexts = (e: Reflectable): string[] => (e.kind === "edge" ? [e.conditi
 /** The nodes an entry names, which must exist for it to be anchored (I6). */
 const anchorsOf = (e: Reflectable): string[] => (e.kind === "edge" ? [e.from, e.to] : [e.on.from, e.on.to]);
 
+/**
+ * Why a delivery or a score was skipped: the log does not hold the turn (or it names no
+ * graph), the session has no pin, or an input no turn key or score can hold.
+ */
+export type SkipCode = "unknown-turn" | "no-pin" | "invalid";
+
 export type LearnerResult =
   | { readonly kind: "ignored"; readonly reason: string }
-  | { readonly kind: "skipped"; readonly reason: string }
+  | { readonly kind: "skipped"; readonly code: SkipCode; readonly reason: string }
   | { readonly kind: "duplicate"; readonly turnKey: string }
   | { readonly kind: "unchanged"; readonly turnKey: string }
   | { readonly kind: "observed"; readonly turnKey: string; readonly graph: GraphId; readonly trajectory: ScoredTrajectory; readonly gaps: LogGap[]; readonly appended: OverlayEvent[] }
@@ -114,7 +120,7 @@ function replay(base: RevisionId, events: readonly OverlayEvent[], version: numb
 const TurnEndedSchema = z.object({ turnId: z.string().min(1) });
 
 const ignored = (reason: string): LearnerResult => ({ kind: "ignored", reason });
-const skipped = (reason: string): LearnerResult => ({ kind: "skipped", reason });
+const skipped = (code: SkipCode, reason: string): LearnerResult => ({ kind: "skipped", code, reason });
 
 export class LiveLearner {
   readonly #deps: LiveLearnerDeps;
@@ -151,9 +157,9 @@ export class LiveLearner {
   feedback(sessionId: string, turnId: string, score: number): Promise<LearnerResult> {
     return this.#serial(async (live) => {
       const parsed = ScoreSchema.safeParse(score);
-      if (!parsed.success) return skipped("a score is a probability in [0, 1]");
+      if (!parsed.success) return skipped("invalid", "a score is a probability in [0, 1]");
       const pin = await this.#deps.store.pins.get(sessionId);
-      if (pin === undefined) return skipped("the session has no pin, so no graph");
+      if (pin === undefined) return skipped("no-pin", "the session has no pin, so no graph");
       const turnKey = `${sessionId}/${turnId}`;
       const log = this.#deps.store.overlay(pin.graph);
       const { state, turn } = replay(pin.core, await events(log), null, turnKey);
@@ -177,13 +183,13 @@ export class LiveLearner {
 
   async #observe(live: LiveSettings, sessionId: string, turnId: string, forced: { score: Score; source: ScoreSource } | undefined): Promise<LearnerResult> {
     const turnKey = `${sessionId}/${turnId}`;
-    if (sessionId.includes("/")) return skipped("a session id with '/' cannot key a turn");
+    if (sessionId.includes("/")) return skipped("invalid", "a session id with '/' cannot key a turn");
     const pin = await this.#deps.store.pins.get(sessionId);
     const fallback = pin === undefined ? undefined : { graph: pin.graph, core: pin.core, overlay: pin.overlay };
     const cursor = this.#cursors.get(sessionId) ?? 0;
     let read = await this.#read(sessionId, turnId, cursor, fallback);
     if (read === undefined && cursor > 0) read = await this.#read(sessionId, turnId, 0, fallback);
-    if (read === undefined) return skipped("the log does not hold the turn, or it names no graph");
+    if (read === undefined) return skipped("unknown-turn", "the log does not hold the turn, or it names no graph");
     const { entries, from, projection: first } = read;
     const { graph, core, overlay } = first.trajectory;
     const log = this.#deps.store.overlay(graph);
