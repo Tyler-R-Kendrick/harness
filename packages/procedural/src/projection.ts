@@ -163,7 +163,7 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   /** Tool call ids seen (undefined for calls without one, which never repeat). */
   const calls = new Set<string | undefined>();
   /** Each call's action by its id, so its result can say where it left the agent. */
-  const byId = new Map<string, number>();
+  const byId = new Map<string | undefined, number>();
   const records: StepRecord[] = [];
   let start: NodeName | undefined;
   const say = (role: "user" | "assistant", content: string): void => {
@@ -201,9 +201,9 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
       if (status !== "completed" && status !== "failed") continue;
       const output = field(update, "rawOutput");
       steps.push({ role: "tool", content: render(output) });
-      const resultId = text(field(update, "toolCallId"));
-      const at = resultId === undefined ? undefined : byId.get(resultId);
+      const at = byId.get(text(field(update, "toolCallId")));
       const declared = declaredNode(output);
+      // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent; an undefined declared node names no node, and an undefined index is never read
       if (at !== undefined && declared !== undefined) actions[at] = { ...actions[at]!, declared };
     }
   }

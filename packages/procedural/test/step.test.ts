@@ -81,6 +81,13 @@ async function pinned(s: Setup, session: string, pin: Partial<Pin>): Promise<voi
   await s.store.pins.set(session, { graph: GRAPH, core: head, overlay: 0, salt: "salt", at: 0, ...pin });
 }
 
+/** The hotpot graph with its nodes listed from End back to Start. */
+function reordered() {
+  const parsed = parseGraph({ ...hotpot(), nodes: [...hotpot().nodes].reverse() });
+  if (!parsed.ok) throw new Error("fixture");
+  return parsed.graph;
+}
+
 const prompts = (s: Setup) => s.guidance.doGenerateCalls.map((c) => promptText(c.prompt));
 
 describe("proceduralStep: the live path as a worker step hook (plan §5)", () => {
@@ -334,6 +341,8 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
       expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring(7))])).toBe("Shell");
       expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "json", value: ["Review"] })])).toBe("Shell");
       expect(await nodeAt("state-tracker", [bash("ls")])).toBe("Shell");
+      // A result before the call, even under the same id, is not its result.
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review")), bash("ls")])).toBe("Shell");
       // The paper's exact Match ignores the declaration.
       expect(await nodeAt("paper", [bash("ls"), bashResult(declaring("Review"))])).toBe("Shell");
     });
@@ -362,9 +371,10 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
   describe("successor-only tools (an ablation)", () => {
     const successors = (changes: Record<string, unknown> = {}, base: "paper" | "harness" = "paper") => withPreset(base, { delivery: { to: base === "paper" ? "system" : "trailing-message", activeTools: "successors" }, ...changes });
     const OFFERED = ["first_hop_retrieve", "Scan_Index", "grep"];
-    const at = async (settings: Settings, messages: ModelMessage[], tools: string[] | undefined = OFFERED) => {
+    /** A step offered `tools` (null: the tools are unknown). */
+    const at = async (settings: Settings, messages: ModelMessage[], tools: string[] | null = OFFERED) => {
       const s = await setup("custom", { settings });
-      const out = await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages], tools === undefined ? {} : { tools }));
+      const out = await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages], tools === null ? {} : { tools }));
       return { out, record: s.records[0]! };
     };
 
@@ -380,13 +390,13 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
 
     it("PW1.73 with no successor action the session offers, or no matched node, every tool stays offered and the record names none", async () => {
       // Scan_Index leads to a reasoning node; grep matches nothing; the successor's tool is not offered.
-      for (const [messages, tools] of [[[calls("Scan_Index"), result("Scan_Index")], OFFERED], [[calls("grep"), result("grep")], OFFERED], [[], ["grep"]]] as const) {
+      for (const [messages, tools] of [[[calls("Scan_Index"), result("Scan_Index")], [...OFFERED, "Bridge_Extract"]], [[calls("grep"), result("grep")], OFFERED], [[], ["grep"]]] as const) {
         const { out, record } = await at(successors(), [...messages], [...tools]);
         expect(out).not.toHaveProperty("activeTools");
         expect(record).not.toHaveProperty("activeTools");
       }
       // Tools unknown: the successors' names as they are.
-      expect((await at(successors(), [], undefined)).out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
+      expect((await at(successors(), [], null)).out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
     });
 
     it("PW1.74 both shipped presets offer every tool; successors follow the preset's hop unit", async () => {
@@ -417,7 +427,25 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
       };
       expect(await through("edge")).not.toHaveProperty("activeTools");
       expect(await through("action")).toMatchObject({ activeTools: ["lookup"] });
+      // A harness turn cannot limit its harness's tools: it is guided as usual, and its record names no limit.
+      const s = await setup("custom", { settings: successors({}, "harness") });
+      await proceduralStep(s.deps).turn({ ...input(s, [user("q")], { tools: OFFERED }), lastAction: undefined });
+      expect(s.records[0]).toMatchObject({ node: "Start" });
+      expect(s.records[0]).not.toHaveProperty("activeTools");
     });
+  });
+
+  it("PW1.76 a user message in plain text after a call does not hide it, and a harness turn with no call yet is at Start", async () => {
+    const s = await setup("harness");
+    // Nodes listed with End first: a lookup by an absent name must not fall on the first node.
+    await seed(s.store, reordered());
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q"), calls("Scan_Index"), result("Scan_Index"), { role: "user", content: "and then?" }]));
+    await hook.turn({ ...input(s, [user("q")], { turnId: "t2" }), lastAction: undefined });
+    expect(s.records.map((r) => [r.node, r.action])).toEqual([
+      ["Scan_Index", "Scan_Index"],
+      ["Start", null],
+    ]);
   });
 
   it("PW1.59 a message tagged by another provider is not an advisory", async () => {

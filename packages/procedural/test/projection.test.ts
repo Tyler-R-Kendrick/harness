@@ -297,6 +297,8 @@ describe("projecting a turn from the session log", () => {
       call("c5", "Bash", { command: "ls" }),
       result("c5", declares("Review"), "in_progress"),
       { update: { sessionUpdate: "tool_call", title: "Bash" } },
+      // A result without a call id pairs with no call, not even one without an id.
+      { update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: declares("Review") } },
       ended("t1"),
     ];
     const p = turnProjection(logOf(log), ctx({ locate: (a) => match(a, tracker, "state-tracker") }))!;

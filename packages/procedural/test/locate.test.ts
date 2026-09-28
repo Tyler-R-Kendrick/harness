@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coreView, match, neighborhood, NodeNameSchema, parseGraph } from "@harness/procedural";
+import { coreView, declaredNode, match, neighborhood, NodeNameSchema, parseGraph } from "@harness/procedural";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "@harness/procedural";
 import { edge, hotpot } from "./fixtures.ts";
 import type { DocInput } from "./fixtures.ts";
@@ -136,6 +136,12 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match(undefined, g, "state-tracker")).toBe("Start");
     expect(match("run_tests", g, "state-tracker")).toBeUndefined();
     expect(match({ name: "grep", arguments: {} }, g, "state-tracker")).toBeUndefined();
+  });
+
+  it("PG3.34 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
+    const at = (node: unknown) => ({ stdout: "ok", _meta: { harness: { procedural: { node } } } });
+    expect(declaredNode(at("Review"))).toBe("Review");
+    expect([at(7), at(null), at(["Review"]), { _meta: { harness: { procedural: "Review" } } }, { _meta: "Review" }, "Review", null, undefined, [at("Review")]].map(declaredNode)).toEqual(Array(9).fill(undefined));
   });
 
   it("PG3.33 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {

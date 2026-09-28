@@ -131,7 +131,10 @@ describe("bindings", () => {
     expect(parsed.ok && nodeById(parsed.graph, "Scan_Index")?.binding).toEqual({ kind: "tool", name: "Bash", arguments: tests });
     expect(revisionId(ok(doc))).not.toBe(revisionId(ok(hotpot())));
     const bad = parseGraph({ ...doc, nodes: doc.nodes.map((n) => (n.id === "Scan_Index" ? { ...n, binding: { kind: "tool", name: "Bash", arguments: { type: "number" } } } : n)) });
-    expect(bad.ok ? [] : bad.diagnostics.map((d) => [d.code, d.at])).toEqual([["malformed", "nodes[2].binding.arguments"]]);
+    expect(bad.ok ? [] : bad.diagnostics.map((d) => [d.code, d.at, d.message])).toEqual([["malformed", "nodes[2].binding.arguments", 'an argument predicate is an object schema: its type must be "object"']]);
+    expect(ArgumentPredicateSchema.safeParse({ type: "string" }).error?.issues.map((i) => i.code)).toEqual(["custom"]);
+    const broken = ArgumentPredicateSchema.safeParse({ type: "object", properties: { command: { $ref: "#/nowhere" } } });
+    expect(broken.error?.issues.map((i) => [i.code, i.message])).toEqual([["custom", "an argument predicate must compile: Reference not found: #/nowhere"]]);
   });
 
   it("PG1.50 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {

@@ -25,6 +25,7 @@ export interface ObservedAction {
   readonly declared?: string;
 }
 
+// Stryker disable next-line ConditionalExpression: equivalent; a string or an array has no `_meta` key either
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const field = (v: unknown, key: string): unknown => (isRecord(v) ? v[key] : undefined);
 
@@ -94,6 +95,7 @@ function track(action: ObservedAction, g: EffectiveGraph): NodeName | undefined 
 }
 
 /** A node's argument predicate: only a tool binding carries one. */
+// Stryker disable next-line ConditionalExpression,OptionalChaining: equivalent; it is asked only of bound nodes, and other bindings have no `arguments`
 const predicateOf = (n: EffectiveNode): ArgumentPredicate | undefined => (n.binding?.kind === "tool" ? n.binding.arguments : undefined);
 
 /**
@@ -118,15 +120,18 @@ const ACTION = "ACTION";
 export function neighborhood(g: EffectiveGraph, node: NodeName, hops: number, unit: HopUnit = "edge"): Neighborhood {
   if (!Number.isInteger(hops) || hops < 0) throw new RangeError(`hops must be a whole number, not ${hops}`);
   if (nodeById(g, node) === undefined) throw new RangeError(`node ${node} is not in the graph`);
+  // Stryker disable next-line OptionalChaining: equivalent; every edge of the effective graph ends at one of its nodes (I6)
   const ends = (id: string): boolean => unit === "edge" || nodeById(g, id)?.type === ACTION;
   const reached = new Set<string>([node]);
   let frontier: string[] = [node];
   const result: EffectiveEdge[][] = [];
   for (let hop = 0; hop < hops; hop++) {
     const edges: EffectiveEdge[] = [];
+    // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder id has no outgoing edges
     const next: string[] = [];
     // Sources of this hop: the frontier, then the non-action nodes the hop passes through.
     const sources = [...frontier];
+    // Stryker disable next-line EqualityOperator: equivalent; the source past the end is undefined, which has no outgoing edges
     for (let i = 0; i < sources.length; i++) {
       for (const e of outgoing(g, sources[i]!)) {
         edges.push(e);

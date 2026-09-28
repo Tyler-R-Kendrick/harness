@@ -61,8 +61,6 @@ export const END = "End";
 
 const toolName = z.string().min(1).max(200);
 
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
 /**
  * A state tracker's test on a call (plan §5.2): a JSON Schema over the call's arguments,
  * declared an object. It is compiled by zod's JSON Schema converter, which reads a
@@ -78,7 +76,8 @@ export const ArgumentPredicateSchema = z
     try {
       z.fromJSONSchema(schema as z.core.JSONSchema.JSONSchema);
     } catch (e) {
-      ctx.addIssue({ code: "custom", message: `an argument predicate must compile: ${errorText(e)}` });
+      // zod's converter throws only Errors.
+      ctx.addIssue({ code: "custom", message: `an argument predicate must compile: ${(e as Error).message}` });
     }
   })
   .brand<"ArgumentPredicate">();
@@ -90,8 +89,10 @@ const compiled = new WeakMap<ArgumentPredicate, z.ZodType>();
 /** Whether a call's arguments satisfy a binding's argument predicate. */
 export function acceptsArguments(predicate: ArgumentPredicate, args: unknown): boolean {
   let parser = compiled.get(predicate);
+  // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent; the cache only saves compiling a predicate again
   if (parser === undefined) {
     parser = z.fromJSONSchema(predicate as z.core.JSONSchema.JSONSchema);
+    // Stryker disable next-line CallExpression: equivalent; the cache only saves compiling a predicate again
     compiled.set(predicate, parser);
   }
   return parser.safeParse(args).success;

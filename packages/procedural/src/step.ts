@@ -144,10 +144,12 @@ const outputText = (output: ToolResultPart["output"]): string => (output.type ==
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 /** The node a tool result part declares, in its JSON value. */
+// Stryker disable next-line ConditionalExpression: equivalent; a text result's value is a string, which declares nothing
 const declaredBy = (output: ToolResultPart["output"]): string | undefined => (output.type === "json" || output.type === "error-json" ? declaredNode(output.value) : undefined);
 
 /** An action observed from a call's name, arguments and the node its result declared. */
 function observe(name: string, args: unknown, declared: string | undefined): ObservedAction {
+  // Stryker disable next-line ConditionalExpression: equivalent; an undefined declared node names no node, as an absent one
   return { name, arguments: args, ...(declared === undefined ? {} : { declared }) };
 }
 
@@ -159,11 +161,14 @@ function observe(name: string, args: unknown, declared: string | undefined): Obs
 function lastCall(messages: readonly ModelMessage[]): { action: ObservedAction; others: string[] } | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
+    // Stryker disable next-line ConditionalExpression: equivalent; user and tool messages hold no tool-call parts
     if (m.role !== "assistant" || typeof m.content === "string") continue;
     const calls = m.content.flatMap((p) => (p.type === "tool-call" ? [p] : []));
     const last = calls.at(-1);
     if (last === undefined) continue;
+    // Stryker disable next-line ConditionalExpression,ArrayDeclaration: equivalent; only tool messages hold tool-result parts
     const results = messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? r.content : []));
+    // Stryker disable next-line ConditionalExpression: equivalent; the other part of a tool message (an approval response) has no call id
     const own = results.find((p) => p.type === "tool-result" && p.toolCallId === last.toolCallId);
     const action = observe(last.toolName, last.input, own?.type === "tool-result" ? declaredBy(own.output) : undefined);
     return { action, others: calls.slice(0, -1).map((c) => c.toolName) };
@@ -213,9 +218,10 @@ function exposureOf(nodes: readonly EffectiveNode[], edges: readonly EffectiveEd
  */
 function successorTools(view: EffectiveGraph, around: Neighborhood, tools: readonly string[] | undefined): string[] | undefined {
   const names = new Set<string>();
-  for (const e of around.hops[0] ?? []) {
-    const next = nodeById(view, e.to);
-    if (next?.type !== "ACTION") continue;
+  // Hop 1 is always there (HOPS ≥ 1), and every edge of the effective graph ends at one of its nodes (I6).
+  for (const e of around.hops[0]!) {
+    const next = nodeById(view, e.to)!;
+    if (next.type !== "ACTION") continue;
     const candidates = next.binding === undefined ? [next.id] : [next.binding.name, next.id];
     const offered = tools === undefined ? candidates[0] : candidates.find((c) => tools.includes(c));
     if (offered !== undefined) names.add(offered);
@@ -274,7 +280,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
    * Guidance for the step at `action`, reported as a step record; the delivered text is
    * returned, with the tools the step may offer when `limit` asks for them.
    */
-  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel, limit: boolean): Promise<{ block: string; activeTools?: string[] }> => {
+  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel, limit: boolean): Promise<{ block: string; activeTools: string[] | undefined }> => {
     const { messages, tools } = scope;
     const view = session.view.effective;
     const action = observed?.name;
@@ -335,7 +341,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       ...(activeTools === undefined ? {} : { activeTools }),
     };
     scope.report({ sessionUpdate: "notice", severity: "info", title: "Procedural step", description: node === undefined ? "No node matched: the whole graph" : `At ${node}`, _meta: { harness: { procedural: { step } } } });
-    return { block: `${GUIDANCE_LABEL}${text}`, ...(activeTools === undefined ? {} : { activeTools }) };
+    return { block: `${GUIDANCE_LABEL}${text}`, activeTools };
   };
 
   return {
