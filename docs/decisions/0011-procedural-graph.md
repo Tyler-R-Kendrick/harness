@@ -169,6 +169,11 @@ The decision held; these details moved.
   record it replaced.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
+- **Localization extensions are settings, off in both presets.** A `state-tracker` match
+  mode (a node a tool's result declares, then argument predicates on tool bindings, then
+  the id), a horizon counted in action hops, and successor-only `activeTools` (the hard
+  constraint the plan allows as an ablation) are data a deployment turns on; the paper
+  preset stays the paper's `Match`, edge hops and unconstrained tools.
 
 ## Revisit when
 
@@ -178,5 +183,7 @@ The decision held; these details moved.
 - The task graph gains payloads. Then dream can emit plans from subgraphs.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
+- An ablation shows that state tracking, action hops or successor-only tools help. Then
+  the harness preset turns them on in its data.
 - The daemon gains approvals outside a session's turn. Then `procedural.dream` can ask
   for approval instead of rejecting.
