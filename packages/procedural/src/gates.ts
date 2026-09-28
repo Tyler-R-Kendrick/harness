@@ -241,6 +241,8 @@ export interface EvidenceGateInput extends EvidenceBar {
   base: CandidateDocument;
   candidate: CandidateDocument;
   overlay: OverlayState;
+  /** A composition candidate (plan §7.6): its workflow node, and the distinct sessions whose turns walked the path it compiles. */
+  composition?: { node: string; support: number };
 }
 
 const triple = (e: Pick<GraphEdge, "from" | "relation" | "to">): string => `${e.from}\u0000${e.relation}\u0000${e.to}`;
@@ -256,7 +258,9 @@ const label = (e: Pick<GraphEdge, "from" | "relation" | "to">): string => `${e.f
  * - an added edge has an active overlay edge between its endpoints, or `minSupport`
  *   sessions on the transition;
  * - a rewritten edge's text is shorter, or absorbs an active note on the edge;
- * - a rewritten node keeps its type and binding and has a shorter description.
+ * - a rewritten node keeps its type and binding and has a shorter description;
+ * - a composition's workflow node, and every edge into or out of it, are backed by the
+ *   distinct sessions that walked the path it compiles, at least `minSupport` of them.
  */
 export function evidenceGate(input: EvidenceGateInput): GateResult {
   const { base, candidate, overlay, minSupport } = input;
@@ -265,6 +269,12 @@ export function evidenceGate(input: EvidenceGateInput): GateResult {
   const sessions = (from: string, to: string): number => overlay.transitions[edgeKey(from, to)]?.sessions.length ?? 0;
   const through = (node: string): boolean =>
     Object.entries(overlay.transitions).some(([key, t]) => t.sessions.length >= minSupport && key.split("→").includes(node));
+  // Stryker disable next-line ConditionalExpression,ArrayDeclaration: equivalent; entries of other kinds have no id, and neither undefined nor a string with spaces names a node
+  const activeNodes = new Set(active.flatMap((e) => (e.kind === "node" ? [e.id] : [])));
+  // Stryker disable next-line ConditionalExpression,ArrayDeclaration: equivalent; entries of other kinds have no endpoints of their own, and "undefined→undefined" or a key without "→" joins no nodes
+  const activeEdges = new Set(active.flatMap((e) => (e.kind === "edge" ? [edgeKey(e.from, e.to)] : [])));
+  /** The composed workflow node, when its path has the support: it and the edges into and out of it are justified. */
+  const composed = (node: string): boolean => input.composition !== undefined && input.composition.node === node && input.composition.support >= minSupport;
 
   const unjustified: string[] = [];
   const baseEdges = new Map(base.edges.map((e) => [triple(e), e]));
@@ -278,7 +288,7 @@ export function evidenceGate(input: EvidenceGateInput): GateResult {
   for (const n of candidate.nodes) {
     const old = baseNodes.get(n.id);
     if (old === undefined) {
-      if (!active.some((e) => e.kind === "node" && e.id === n.id) && !through(n.id)) unjustified.push(`added node ${n.id}`);
+      if (!activeNodes.has(n.id) && !through(n.id) && !composed(n.id)) unjustified.push(`added node ${n.id}`);
     } else if (canonicalJson(old) !== canonicalJson(n)) {
       const kept = old.type === n.type && canonicalJson(old.binding ?? null) === canonicalJson(n.binding ?? null);
       if (!kept || n.description.length >= old.description.length) unjustified.push(`rewritten node ${n.id}`);
@@ -287,10 +297,10 @@ export function evidenceGate(input: EvidenceGateInput): GateResult {
   for (const [key, e] of candidateEdges) {
     const old = baseEdges.get(key);
     if (old === undefined) {
-      if (!active.some((a) => a.kind === "edge" && a.from === e.from && a.to === e.to) && sessions(e.from, e.to) < minSupport) unjustified.push(`added edge ${label(e)}`);
+      if (!activeEdges.has(edgeKey(e.from, e.to)) && sessions(e.from, e.to) < minSupport && !composed(e.from) && !composed(e.to)) unjustified.push(`added edge ${label(e)}`);
     } else if (canonicalJson(old) !== canonicalJson(e)) {
-      const text = [e.condition ?? "", e.guidance, e.pitfalls];
-      const absorbs = active.some((a) => a.kind === "note" && a.on.from === e.from && a.on.to === e.to && text.some((t) => t.includes(a.text)));
+      const text = [e.condition, e.guidance, e.pitfalls];
+      const absorbs = active.some((a) => a.kind === "note" && a.on.from === e.from && a.on.to === e.to && text.some((t) => t !== null && t.includes(a.text)));
       if (!absorbs && edgeChars(e) >= edgeChars(old)) unjustified.push(`rewritten edge ${label(e)}`);
     }
   }

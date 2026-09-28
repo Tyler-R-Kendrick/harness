@@ -3,13 +3,12 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import type { DaemonSnapshot } from "@harness/core";
+import { gateway } from "@ai-sdk/gateway";
 import { proceduralExtension } from "@harness/procedural";
-import type { GraphId } from "@harness/procedural";
 import { loadProceduralSettings } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
-import { daemonTrajectories, nativeDream, proceduralStore } from "./procedural-host.ts";
+import { nativeDream, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
 
 // harness-procedural <history|export|import|revert|dream> <graph> [options]
 // Works on the procedural store in --procedural <dir> (the daemon's), through the same
@@ -20,7 +19,9 @@ const USAGE =
   "       harness-procedural export <graph> [--format json|mermaid] [--revision <id>] [--no-overlay] [--out <file>]\n" +
   "       harness-procedural import <graph> [<graph.json>]   (without a file: the scratch skeleton)\n" +
   "       harness-procedural revert <graph> [--to <revision>]\n" +
-  "       harness-procedural dream <graph> [--state <daemon state file>] [--model-cache <dir>] [--llama-server <path>] [--no-hosted]\n" +
+  "       harness-procedural dream <graph> [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]] [--state <daemon state file>]\n" +
+  "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
+  "          daemon's saved session logs; asks for approval on a terminal)\n" +
   "  options: [--procedural <dir>] [--settings <settings.json>] [--preset <name>]\n";
 
 const { values, positionals } = parseArgs({
@@ -34,6 +35,7 @@ const { values, positionals } = parseArgs({
     "no-overlay": { type: "boolean", default: false },
     out: { type: "string" },
     to: { type: "string" },
+    model: { type: "string" },
     state: { type: "string" },
     "model-cache": { type: "string" },
     "llama-server": { type: "string" },
@@ -50,20 +52,32 @@ if (!COMMANDS.includes(command) || graph === undefined || (file !== undefined &&
 const store = proceduralStore(values.procedural ?? join(homedir(), ".cache", "harness", "procedural"));
 const settings = values.settings === undefined ? loadProceduralSettings() : loadProceduralSettings(values.settings);
 const preset = values.preset === undefined ? {} : { preset: values.preset };
-// Dream's refiner is the ensemble's reasoning model (it loads only when the refiner is asked);
-// its trajectories come from the daemon's saved session logs, when --state names them.
+// Dream refines with the --model gateway model, or else the ensemble's reasoning model (which
+// loads only when the refiner is asked). Its trajectories come from the daemon's saved session
+// logs when --state names them, and on a terminal a candidate that needs approval is asked about.
 const cognitive =
-  command === "dream"
+  command === "dream" && values.model === undefined
     ? buildNativeEnsemble({
         cacheDir: values["model-cache"] ?? join(homedir(), ".cache", "harness", "models"),
         allowHosted: !values["no-hosted"],
         ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
       })
     : undefined;
-const saved = values.state === undefined ? undefined : ((await new FileStorage(values.state).load()) as DaemonSnapshot | undefined);
-const daemon = { snapshot: (): DaemonSnapshot => saved ?? { version: 1, sessions: [], hooks: undefined } };
-const dream = cognitive && nativeDream({ store, settings, model: cognitive.ensemble.languageModel("reasoning"), trajectories: daemonTrajectories({ daemon, store }), holder: "harness-procedural", ...preset });
-const extension = proceduralExtension({ store, settings, ...preset, clock: { now: () => Date.now() }, ...(dream ? { dream: (g: GraphId) => dream(g) } : {}) });
+const model = values.model === undefined ? cognitive?.ensemble.languageModel("reasoning") : gateway(values.model);
+const state = values.state;
+const dream =
+  command !== "dream" || model === undefined
+    ? undefined
+    : nativeDream({
+        store,
+        settings,
+        ...preset,
+        model,
+        sessions: async () => snapshotSessions(state === undefined ? undefined : await new FileStorage(state).load()),
+        holder: "harness-procedural",
+        ...(process.stdin.isTTY ? { approver: terminalApprover(process.stdin, process.stderr) } : {}),
+      });
+const extension = proceduralExtension({ store, settings, ...preset, clock: { now: () => Date.now() }, ...(dream === undefined ? {} : { dream }) });
 
 const optional = (key: string, value: unknown) => (value === undefined ? {} : { [key]: value });
 const input = {
@@ -80,9 +94,9 @@ try {
   } else {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   }
-  // A dream that could not run (busy, no head, lease lost) is a result the caller handles.
-  const failed = ["missing", "invalid", "refused", "unavailable"].includes(result.status ?? "") || (command === "dream" && result.result?.status !== "done");
-  process.exitCode = failed ? 1 : 0;
+  // A dream that could not run (another holds the lease, no head, the lease lost) is a result the caller handles too.
+  const handled = ["missing", "invalid", "refused", "unavailable"].includes(result.status ?? "") || (command === "dream" && result.result?.status !== "done");
+  process.exitCode = handled ? 1 : 0;
 } catch (e) {
   process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
   process.exitCode = 1;

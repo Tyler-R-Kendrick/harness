@@ -80,4 +80,11 @@ describe("harness-procedural CLI", () => {
     await expect(cli("history")).rejects.toMatchObject({ code: 2 });
     await expect(cli("history", "g", "extra")).rejects.toMatchObject({ code: 2 });
   });
+
+  it("PX2.62 dream with a model (and optionally the daemon's state file for logs) runs the host's dream: a graph with no head is a result the caller handles", async () => {
+    const { dir, cli } = await setup();
+    await writeFile(join(dir, "state.json"), JSON.stringify({ version: 1, sessions: [], hooks: {} }));
+    await expect(cli("dream", "g", "--model", "provider/model", "--state", join(dir, "state.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"status": "no-head"') });
+    await expect(cli("dream", "g", "--model", "provider/model")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
+  });
 });

@@ -49,12 +49,13 @@ export const decayedSupport = (evidence: EntryEvidence, version: number, halfLif
   evidence.support.length * 2 ** (-(version - evidence.lastSeen) / halfLife);
 
 /** The nodes a proposal may anchor to, and the edges it may annotate: the core's and live overlay ones. */
-function structure(state: OverlayState, core: ProceduralGraph): { nodes: Set<string>; edges: { from: string; to: string }[] } {
+export function structure(state: OverlayState, core: ProceduralGraph): { nodes: Set<string>; edges: { from: string; to: string }[] } {
   const live = Object.values(state.entries).filter((r) => r.status !== "retired").map((r) => r.entry);
   const nodes = new Set<string>(core.nodes.map((n) => n.id));
   // Stryker disable next-line ConditionalExpression: equivalent; other kinds have no id, and the undefined it would add equals no name
   for (const e of live) if (e.kind === "node") nodes.add(e.id);
   const edges: { from: string; to: string }[] = [...core.edges];
+  // Stryker disable next-line ConditionalExpression: equivalent; node, note and caution entries have no `from`, and undefined is no node
   for (const e of live) if (e.kind === "edge" && nodes.has(e.from) && nodes.has(e.to)) edges.push(e);
   return { nodes, edges };
 }

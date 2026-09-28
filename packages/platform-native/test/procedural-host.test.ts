@@ -7,12 +7,11 @@ import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
 import { invokeCognitive } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GraphIdSchema, importGraph, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
+import { GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
 import { scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
-  daemonTrajectories,
   harnessWorker,
   hostAuthorizer,
   hostPorts,
@@ -25,6 +24,7 @@ import {
   NodeHost,
   pumpHookEvents,
   sessionLogReader,
+  snapshotSessions,
 } from "@harness/platform-native";
 
 const require = createRequire(import.meta.url);
@@ -234,6 +234,24 @@ describe("the live learner on the native host", () => {
     await host.close();
   });
 
+  it("PX2.61 with reflection on in the preset, the learner reflects on a scored turn with the host's reflector", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    const store = new MemoryProceduralStore();
+    const graph = GraphIdSchema.parse("default");
+    const { revision } = (await importGraph({ store, graph, clock: hostPorts.clock })) as { revision: RevisionId };
+    await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
+    const base = loadProceduralSettings();
+    const settings = { ...base, presets: { ...base.presets, harness: { ...base.presets.harness, live: { ...base.presets.harness.live!, reflection: "turn" as const } } } };
+    const asked: string[] = [];
+    const live = nativeLiveLearner({ runtime: host.runtime, store, settings, intervalMs: 60_000, reflect: async ({ trajectory }) => (asked.push(trajectory), []) });
+    await prompt("reflect on this");
+    const ended = JSON.stringify(host.daemon.snapshot()).match(/"event":"turn\.ended","data":\{"turnId":"([^"]+)"/)!;
+    expect(await live.learner.feedback(sessionId, ended[1]!, 0.9)).toMatchObject({ kind: "observed" });
+    expect(asked).toEqual([expect.stringMatching(/^Score: 0\.90\nQuery: reflect on this/)]);
+    live.close();
+    await host.close();
+  });
+
   it("PX2.57 a learner failure is logged and the turn is observed on a later drain", async () => {
     const { host, sessionId, prompt } = await withSession();
     const store = new MemoryProceduralStore();
@@ -256,8 +274,8 @@ describe("the live learner on the native host", () => {
   });
 });
 
-describe("dream on the native host", () => {
-  it("PX2.58 trajectories for dream are the ended turns of sessions pinned to the graph, under the revision, the most recent first to go, scored from the overlay", async () => {
+describe("dream's trajectories and lease on the native host", () => {
+  it("PX2.63 trajectories for dream from the live daemon's logs are the ended turns of sessions pinned to the graph, under the revision, scored from the overlay (scored first)", async () => {
     const { host, sessionId, prompt } = await withSession();
     const store = new MemoryProceduralStore();
     const graph = GraphIdSchema.parse("default");
@@ -265,33 +283,34 @@ describe("dream on the native host", () => {
     await store.pins.set(sessionId, { graph, core: revision, overlay: 0, salt: "s", at: 0 });
     await prompt("one");
     await prompt("two");
-    const source = daemonTrajectories({ daemon: host.daemon, store });
+    const source = logTrajectories({ store, sessions: async () => snapshotSessions(host.daemon.snapshot()) });
     const all = await source.select({ graph, revision, limit: 10 });
     expect(all.map((t) => [t.session, t.core, t.score])).toEqual([
       [sessionId, revision, null],
       [sessionId, revision, null],
     ]);
     await store.overlay(graph).append([{ kind: "observed", turnKey: `${sessionId}/${all[1]!.turn}`, path: [], unmatched: [], score: ScoreSchema.parse(0.75), exposure: [] }]);
-    expect(await source.select({ graph, revision, limit: 1 })).toMatchObject([{ turn: all[1]!.turn, score: 0.75, scoreSource: "feedback" }]);
+    expect(await source.select({ graph, revision, limit: 1 })).toMatchObject([{ turn: all[1]!.turn, score: 0.75, scoreSource: null }]);
     expect(await source.select({ graph: GraphIdSchema.parse("other"), revision, limit: 10 })).toEqual([]);
     expect(await source.select({ graph, revision: RevisionIdSchema.parse("a".repeat(64)), limit: 10 })).toEqual([]);
-    expect(await daemonTrajectories({ daemon: { snapshot: () => ({ version: 1, sessions: [{ id: sessionId, cwd: "/", owner: "me", log: {}, tree: {} }], hooks: {} }) }, store }).select({ graph, revision, limit: 5 })).toEqual([]);
+    const empty = { version: 1, sessions: [{ id: sessionId, cwd: "/", owner: "me", log: {}, tree: {} }], hooks: {} };
+    expect(await logTrajectories({ store, sessions: async () => snapshotSessions(empty) }).select({ graph, revision, limit: 5 })).toEqual([]);
     await host.close();
   });
 
-  it("PX2.59 a dream runs on the store with the refiner on the given model, under the preset's dream settings, and holds the lease as the host", async () => {
+  it("PX2.64 a dream runs on the store with the refiner on the given model, under the preset's dream settings, and holds the lease as the host", async () => {
     const store = new MemoryProceduralStore();
     const graph = GraphIdSchema.parse("default");
     await importGraph({ store, graph, clock: hostPorts.clock });
     const model = scriptedModel(() => JSON.stringify({ add_nodes: [], delete_nodes: [], add_edges: [], delete_edges: [] }));
-    const dream = nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] }, preset: "harness" });
+    const dream = nativeDream({ store, settings: loadProceduralSettings(), model, sessions: async () => [], preset: "harness" });
     const result = await dream(graph);
     expect(result).toMatchObject({ status: "done", graph });
     expect(model.doGenerateCalls.length).toBeGreaterThan(0);
     expect(await store.dreams(graph).head()).toBeGreaterThan(0);
-    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] } })(GraphIdSchema.parse("none"))).toMatchObject({ status: "no-head" });
+    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, sessions: async () => [] })(GraphIdSchema.parse("none"))).toMatchObject({ status: "no-head" });
     expect(await store.lease.acquire(graph, "someone-else")).toBeDefined();
-    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, trajectories: { select: async () => [] }, holder: "mine" })(graph)).toEqual({ status: "busy", graph });
+    expect(await nativeDream({ store, settings: loadProceduralSettings(), model, sessions: async () => [], holder: "mine" })(graph)).toEqual({ status: "busy", graph });
   });
 });
 

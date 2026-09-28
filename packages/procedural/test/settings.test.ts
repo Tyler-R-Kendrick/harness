@@ -133,6 +133,22 @@ describe("procedural settings (data/settings.json)", () => {
     expect(issue(["prompts", "solver"], "no slots")).toEqual({ code: "custom", at: ["prompts", "solver"] });
   });
 
+  it("PG1.47 dream's composition, stride and live reflection's batch are data: the harness composes, the paper does not, batch reflection needs a batch size", () => {
+    expect(presetOf(settings(), "harness").dream.compose).toBe(true);
+    expect(presetOf(settings(), "paper").dream.compose).toBeUndefined();
+    expect(presetOf(settings(), "paper").dream.stride).toBeUndefined();
+    expect(presetOf(edit(["presets", "paper", "dream", "stride"], 4)(), "paper").dream.stride).toBe(4);
+    expect(edit(["presets", "paper", "dream", "stride"], 0)).toThrow(/presets\.paper\.dream\.stride/);
+    expect(edit(["presets", "paper", "dream", "compose"], "yes")).toThrow(/presets\.paper\.dream\.compose/);
+    expect(edit(["presets", "harness", "live", "reflection"], "batch")).toThrow(/batch reflection needs a batch size[\s\S]*presets\.harness\.live\.reflectionBatch/);
+    const batched = structuredClone(file) as { presets: { harness: { live: Record<string, unknown> } } };
+    Object.assign(batched.presets.harness.live, { reflection: "batch", reflectionBatch: 4 });
+    expect(presetOf(parseSettings(batched), "harness").live).toMatchObject({ reflection: "batch", reflectionBatch: 4 });
+    expect(edit(["presets", "harness", "live", "reflectionBatch"], 0)).toThrow(/presets\.harness\.live\.reflectionBatch/);
+    const { code, path } = SettingsSchema.safeParse(JSON.parse(JSON.stringify(file).replace('"reflection":"off"', '"reflection":"batch"'))).error!.issues[0]!;
+    expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
+  });
+
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
     const s = structuredClone(file) as { presets: Record<string, unknown> };
     s.presets["careful"] = { ...(s.presets["harness"] as object), match: "case-insensitive", guidanceCache: false };

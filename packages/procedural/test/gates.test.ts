@@ -226,6 +226,27 @@ describe("the evidence gate", () => {
   const sessions = (n: number) => Array.from({ length: n }, (_, i) => `s${i}`);
   const turns = (path: string[], n: number, score: number | null, prefix = "s") => Array.from({ length: n }, (_, i) => observed(`${prefix}${i}/t`, path, score));
 
+  it("PD1.73 a composed workflow node and its edges are justified by its path's distinct-session support; nothing else is", () => {
+    const composed = edited((d) => {
+      d.nodes.push({ id: "retrieve-scan-1234abcd", type: "ACTION", description: "Runs it in one call.", binding: { kind: "workflow", name: "retrieve-scan-1234abcd", code: "a".repeat(64) } });
+      d.edges.push(edge("Start", "retrieve-scan-1234abcd"), edge("retrieve-scan-1234abcd", "Bridge_Extract"));
+    });
+    const gate = (composition?: { node: string; support: number }, candidate = composed) => evidenceGate({ base, candidate, overlay: overlayOf(), ...live, ...(composition && { composition }) });
+    expect(gate({ node: "retrieve-scan-1234abcd", support: 3 })).toEqual({ pass: true, reason: "every change has evidence (3 changes)" });
+    const unjustified = "no evidence for: added node retrieve-scan-1234abcd; added edge Start → retrieve-scan-1234abcd (LEADS_TO); added edge retrieve-scan-1234abcd → Bridge_Extract (LEADS_TO)";
+    expect(gate({ node: "retrieve-scan-1234abcd", support: 2 })).toEqual({ pass: false, reason: unjustified });
+    expect(gate({ node: "Scan_Index", support: 9 })).toEqual({ pass: false, reason: unjustified });
+    expect(gate()).toEqual({ pass: false, reason: unjustified });
+    // The composition justifies its own node and edges, not an edge between other nodes nor a pruned one.
+    const more = edited((d) => {
+      d.nodes.push({ id: "retrieve-scan-1234abcd", type: "ACTION", description: "Runs it in one call." });
+      d.edges.push(edge("Start", "retrieve-scan-1234abcd"), edge("Start", "Scan_Index"));
+      d.edges = d.edges.filter((e) => e.from !== "Bridge_Extract");
+      d.edges.push(edge("retrieve-scan-1234abcd", "End"));
+    });
+    expect(gate({ node: "retrieve-scan-1234abcd", support: 3 }, more)).toEqual({ pass: false, reason: "no evidence for: removed edge Bridge_Extract → End (CONVERGES_TO); added edge Start → Scan_Index (LEADS_TO)" });
+  });
+
   it("PD1.17 an unchanged candidate passes", () => {
     expect(withBase(base)).toEqual({ pass: true, reason: "every change has evidence (0 changes)" });
   });

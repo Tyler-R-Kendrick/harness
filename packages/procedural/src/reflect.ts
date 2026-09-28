@@ -13,6 +13,7 @@ import { OverlayEntrySchema } from "./overlay-types.ts";
 import type { OverlayEntry } from "./overlay-types.ts";
 import { readJsonBlock, renderPrompt } from "./prompt.ts";
 import type { Decoding } from "./prompt.ts";
+import type { Settings } from "./settings.ts";
 
 // Reflection proposes edges and notes only: nodes come with templated edges, and cautions
 // only from statistics (plan §6.2). PG4.33 checks that these are the edge and note options.
@@ -38,6 +39,16 @@ export interface ReflectRequest extends Decoding {
   graphContext: string;
   /** `{trajectory}`: the turn's trajectory and its score. */
   trajectory: string;
+}
+
+/** What the live learner asks a reflector: the graph the turns were guided by, and the scored turns as text. */
+export type Reflector = (request: { graphContext: string; trajectory: string }) => Promise<readonly OverlayEntry[]>;
+
+/** The reflector over a language model: the reflection prompt, with the refiner's decoding. */
+export function modelReflector(deps: { model: LanguageModel; settings: Settings }): Reflector {
+  const { model, settings } = deps;
+  return (request) =>
+    reflect({ model, template: settings.prompts.reflection, ...request, temperature: settings.decoding.temperature, topK: settings.decoding.topK, maxOutputTokens: settings.decoding.refinerMaxTokens });
 }
 
 /** Ask for overlay entries a finished turn suggests; the well-formed ones, in order. */

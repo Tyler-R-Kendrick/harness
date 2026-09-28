@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { MockLanguageModelV4 } from "ai/test";
 import { usage } from "@harness/cognitive";
 import { ManualClock, MemoryStorage, SeededEntropy } from "@harness/testkit";
-import { DEFAULT_SELECT, DreamIdSchema, foldAll, MemoryProceduralStore, ScoredTrajectorySchema, SnapshotProceduralStore, modelRefiner, presetOf, revisionId, RevisionRecordSchema, runDream } from "@harness/procedural";
+import { applyEdits, compilePath, DEFAULT_SELECT, DreamIdSchema, foldAll, MemoryProceduralStore, NodeNameSchema, ProceduralGraphSchema, ScoredTrajectorySchema, SnapshotProceduralStore, StagingLibrary, modelRefiner, presetOf, revisionId, RevisionRecordSchema, runDream, workflowBinding } from "@harness/procedural";
+import { chain, chainDoc, observed as observedTurn, PATH, RUNS, settings as compositionSettings, SPECS, turn } from "./compose-fixtures.ts";
 import type { ProceduralStore, DreamPorts, DreamRefineRequest, Evaluator, OverlayEvent, Preset, ProceduralGraph, RefineResult, ScoredTrajectory } from "@harness/procedural";
 import { addVerify, core, edits, GRAPH, graphOf, renameGuidance, settings, toGhost } from "./dream-fixtures.ts";
-import { hotpot } from "./fixtures.ts";
+import { edge, hotpot } from "./fixtures.ts";
 import { FakeStore } from "./dream-store.ts";
 import { observed, proposed, status, idOf } from "./overlay-fixtures.ts";
 
@@ -408,6 +409,167 @@ describe("modelRefiner", () => {
     expect(prompts[1]).toContain("Consolidation.");
     expect(prompts[1]).toContain("OE");
     expect(calls[0]).toMatchObject({ maxOutputTokens: settings.decoding.refinerMaxTokens, temperature: settings.decoding.temperature, topK: settings.decoding.topK });
+  });
+});
+
+describe("runDream: records, stride, tokens and composition", () => {
+  /** G₀ with Verify before End, recorded as an earlier head (an import). */
+  const verified = () => ProceduralGraphSchema.parse(applyEdits(G0, addVerify));
+  const earlierHead = () => RevisionRecordSchema.parse({ id: revisionId(verified()), graph: GRAPH, parents: [], document: verified(), edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 1 });
+
+  it("PD2.22 a rejected candidate equal to an older head keeps that head's record; a rejection replaces an older rejection", async () => {
+    const store = seeded();
+    store.records.set(earlierHead().id, earlierHead());
+    // The paper preset evaluates the candidate lower than G₀, so it is rejected.
+    const ev = evaluator((g) => (g.nodes.length > 5 ? 0 : 0.5));
+    const result = await runDream({ store, graph: GRAPH, settings: withRounds(paper, 1), ports: ports({ evaluator: ev, refiner: refiner([{ edits: addVerify, raw: "{}" }]) }), stride: 2 });
+    expect(result).toMatchObject({ rounds: [{ outcome: "rejected", revision: earlierHead().id }] });
+    expect(store.records.get(earlierHead().id)).toEqual(earlierHead());
+    const again = seeded();
+    const older = { ...earlierHead(), decision: { kind: "rejected-gate" as const, gate: "g", reason: "older" } };
+    again.records.set(older.id, older);
+    await runDream({ store: again, graph: GRAPH, settings: withRounds(paper, 1), ports: ports({ evaluator: ev, refiner: refiner([{ edits: addVerify, raw: "{}" }]) }), stride: 2 });
+    expect(again.records.get(older.id)?.decision).toMatchObject({ kind: "rejected-gate", gate: "evaluator-at-least-retained" });
+  });
+
+  it("PD2.23 a commit that loses the head race restores the record it replaced when that record is not the dream's own", async () => {
+    const store = seeded();
+    store.records.set(earlierHead().id, earlierHead());
+    store.beforeHeadSet = () => store.headOf.set(GRAPH, { revision: revisionId(renamed()), history: [G0_ID] });
+    const result = await runDream({ store, graph: GRAPH, settings: withRounds(paper, 1), ports: ports({ evaluator: evaluator(() => 1), refiner: refiner([{ edits: addVerify, raw: "{}" }]) }), stride: 2 });
+    expect(result).toMatchObject({ rounds: [{ outcome: "conflict" }] });
+    expect(store.records.get(earlierHead().id)).toEqual(earlierHead());
+    // A re-issued commit whose record is the dream's own (put before a crash) is marked rejected when the race is lost.
+    const again = seeded();
+    let calls = 0;
+    again.beforeHeadSet = () => {
+      calls += 1;
+      if (calls === 1) throw new Error("crash before the compare-and-set");
+      again.headOf.set(GRAPH, { revision: revisionId(renamed()), history: [G0_ID] });
+    };
+    const run = () => runDream({ store: again, graph: GRAPH, settings: withRounds(paper, 1), ports: ports({ evaluator: evaluator(() => 1), refiner: refiner([{ edits: addVerify, raw: "{}" }]) }), stride: 2 });
+    await expect(run()).rejects.toThrow("crash before the compare-and-set");
+    expect(again.records.get(earlierHead().id)?.decision).toEqual({ kind: "head" });
+    expect(await run()).toMatchObject({ rounds: [{ outcome: "conflict" }] });
+    expect(again.records.get(earlierHead().id)?.decision).toEqual({ kind: "rejected-gate", gate: "head", reason: "the head moved during the dream" });
+  });
+
+  it("PD2.24 the stride is dream settings data (a run's option overrides it), and a tokenizer counts the context", async () => {
+    const store = seeded();
+    const strided: Preset = { ...paper, dream: { ...paper.dream, rounds: 1, stride: 1 } };
+    const ev = evaluator(() => 0.5, ["a", "b", "c"]);
+    const r = refiner([]);
+    const chars = { encode: (text: string) => Array.from(text, (c) => c.codePointAt(0)!), decode: (ids: readonly number[]) => String.fromCodePoint(...ids) };
+    await runDream({ store, graph: GRAPH, settings: { ...strided, dream: { ...strided.dream, contextTokens: 5 } }, ports: ports({ evaluator: ev, refiner: r }), tokenizer: chars });
+    expect(ev.calls.filter((c) => c.startsWith("train")).map((c) => c.split(":")[2])).toEqual(["a"]);
+    expect(store.dreamLog.get(GRAPH)![0]).toMatchObject({ stride: 1 });
+    expect(r.requests[0]!.attempts).toBe(": q a");
+    const overridden = seeded();
+    await runDream({ store: overridden, graph: GRAPH, settings: strided, ports: ports({ evaluator: ev }), stride: 2 });
+    expect(overridden.dreamLog.get(GRAPH)![0]).toMatchObject({ stride: 2 });
+  });
+
+  it("PD2.30 a dream resumed after a remembered rejection's record is gone runs without it", async () => {
+    const store = seeded();
+    const gone = revisionId(renamed());
+    store.dreamLog.set(GRAPH, [{ kind: "started", dream: "d", head: G0_ID, overlay: 0, rejections: [gone], train: [], stride: 1 }]);
+    const r = refiner([]);
+    expect(await runDream({ store, graph: GRAPH, settings: withRounds(harness, 1), ports: ports({ refiner: r }) })).toMatchObject({ status: "done", dream: "d" });
+    expect(r.requests[0]!.rejected).toBe("None");
+  });
+
+  describe("composition", () => {
+    const g = chain();
+    const gId = revisionId(g);
+    const TOOLS = ["search", "fetch", "summarize", "review"];
+    const seededChain = (): FakeStore => {
+      const store = new FakeStore();
+      store.records.set(gId, RevisionRecordSchema.parse({ id: gId, graph: GRAPH, parents: [], document: g, edits: null, origin: "seed", evidence: {}, decision: { kind: "head" }, at: 0 }));
+      store.headOf.set(GRAPH, { revision: gId, history: [] });
+      store.overlayLog.set(GRAPH, [observedTurn("s1/t1", [...PATH], 0.9), observedTurn("s2/t1", [...PATH], 0.8), observedTurn("s3/t1", [...PATH, "End"], 1)]);
+      return store;
+    };
+    const runs = { select: async () => [turn(g, "s1", RUNS[0]!), turn(g, "s2", RUNS[1]!)] };
+    const composing: Preset = { ...harness, dream: { ...harness.dream, rounds: 1 } };
+    const approver = { approve: async () => true };
+    const composer = (staging = new StagingLibrary()) => ({ settings: compositionSettings(), toolSpecs: SPECS, staging });
+
+    it("PD2.25 with a composer, a dream ends with a composition round: the path compiles, is staged, and the head binds it", async () => {
+      const store = seededChain();
+      const staging = new StagingLibrary();
+      const result = await runDream({ store, graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, approver, composer: composer(staging) }), tools: TOOLS });
+      expect(result).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "rejected" }, { round: 2, outcome: "committed" }] });
+      const head = store.records.get(store.headOf.get(GRAPH)!.revision)!;
+      const node = head.document.nodes.find((n) => n.binding?.kind === "workflow")!;
+      const staged = await staging.get(node.binding!.name);
+      expect(node.binding).toEqual(workflowBinding(staged!));
+      expect(head.evidence).toMatchObject({ composition: { path: [...PATH], support: 3 } });
+      expect(store.dreamLog.get(GRAPH)!.map((e) => (e as { event?: { kind: string } }).event?.kind)).toContain("composed");
+      // Compiling reads DEFAULT_SELECT recorded trajectories under the head, or the composer's `runs`.
+      const limits: number[] = [];
+      const counted = { select: async ({ limit }: { limit: number }) => (limits.push(limit), runs.select()) };
+      await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: counted, composer: composer() }), tools: TOOLS, stride: 3 });
+      await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: counted, composer: { ...composer(), runs: 7 } }), tools: TOOLS, stride: 3 });
+      expect(limits).toEqual([3, DEFAULT_SELECT, 3, 7]);
+      // Without the settings' `compose`, or without a composer, there is no composition round.
+      const off = await runDream({ store: seededChain(), graph: GRAPH, settings: { ...composing, dream: { ...composing.dream, compose: false } }, ports: ports({ trajectories: runs, approver, composer: composer() }), tools: TOOLS });
+      expect(off).toMatchObject({ rounds: [{ round: 1 }] });
+      const none = await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, approver }), tools: TOOLS });
+      expect(none).toMatchObject({ rounds: [{ round: 1 }] });
+    });
+
+    it("PD2.26 no composition: no qualifying path, or each path fails to compile, compose, stage or is a known rejection, and the reasons say which", async () => {
+      const bare = seededChain();
+      bare.overlayLog.set(GRAPH, []);
+      expect(await runDream({ store: bare, graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, composer: composer() }), tools: TOOLS })).toMatchObject({
+        rounds: [{ round: 1 }, { round: 2, outcome: "no-composition", reason: "no path has the support and score to compile" }],
+      });
+      const noRuns = await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ composer: composer() }), tools: TOOLS });
+      expect(noRuns).toMatchObject({ rounds: [{ round: 1 }, { outcome: "no-composition", reason: "search → Fetch_Page → summarize: no recorded runs of the path" }] });
+      const conflicting = new StagingLibrary();
+      const first = await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, composer: composer(conflicting) }), tools: TOOLS });
+      expect(first).toMatchObject({ rounds: [{ round: 1 }, { outcome: "rejected", reason: "approval needed, and no approver is configured" }] });
+      // The candidate is now a known rejection.
+      const known = seededChain();
+      for (const [id, r] of (await (async () => {
+        const s = seededChain();
+        await runDream({ store: s, graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, composer: composer() }), tools: TOOLS });
+        return s.records;
+      })()).entries()) known.records.set(id, r);
+      expect(await runDream({ store: known, graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, composer: composer() }), tools: TOOLS })).toMatchObject({
+        rounds: [{ round: 1 }, { outcome: "no-composition", reason: "search → Fetch_Page → summarize: its candidate was rejected before" }],
+      });
+      // Other runs compile to other code under the same name, which staging refuses.
+      const otherRuns = { select: async () => [turn(g, "s1", RUNS[1]!), turn(g, "s3", RUNS[1]!.map((c) => ({ ...c, arguments: { ...c.arguments, extra: 1 } })))] };
+      expect(await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: otherRuns, composer: composer(conflicting) }), tools: TOOLS })).toMatchObject({
+        rounds: [{ round: 1 }, { outcome: "no-composition", reason: expect.stringMatching(/^search → Fetch_Page → summarize: staged workflow [a-z0-9-]+ is immutable/) }],
+      });
+      // Every path that fails is named, in rank order.
+      const two = seededChain();
+      two.overlayLog.set(GRAPH, ["a", "b", "c"].flatMap((s) => [observedTurn(`${s}/t1`, ["search", "Fetch_Page"], 0.9), observedTurn(`${s}/t2`, ["Fetch_Page", "summarize"], 0.6)]));
+      expect(await runDream({ store: two, graph: GRAPH, settings: composing, ports: ports({ composer: composer() }), tools: TOOLS })).toMatchObject({
+        rounds: [{ round: 1 }, { outcome: "no-composition", reason: "search → Fetch_Page: no recorded runs of the path; Fetch_Page → summarize: no recorded runs of the path" }],
+      });
+      // A staging library that fails for any reason is a reason too.
+      const full = { ...composer(), staging: { stage: async () => Promise.reject("the library is full") } };
+      expect(await runDream({ store: seededChain(), graph: GRAPH, settings: composing, ports: ports({ trajectories: runs, composer: full }), tools: TOOLS })).toMatchObject({
+        rounds: [{ round: 1 }, { outcome: "no-composition", reason: "search → Fetch_Page → summarize: the library is full" }],
+      });
+      // A core that already has the workflow's node cannot take it again.
+      const compiled = compilePath([...PATH].map((n) => NodeNameSchema.parse(n)), RUNS, SPECS);
+      if (!compiled.ok) throw new Error(compiled.error);
+      const doc = chainDoc();
+      doc.nodes.push({ id: compiled.workflow.name, type: "ACTION", description: "Taken." });
+      doc.edges.push(edge("Start", compiled.workflow.name));
+      const taken = graphOf(doc);
+      const store = seededChain();
+      store.records.set(revisionId(taken), RevisionRecordSchema.parse({ id: revisionId(taken), graph: GRAPH, parents: [], document: taken, edits: null, origin: "seed", evidence: {}, decision: { kind: "head" }, at: 0 }));
+      store.headOf.set(GRAPH, { revision: revisionId(taken), history: [] });
+      const tools = { select: async () => [turn(taken, "s1", RUNS[0]!), turn(taken, "s2", RUNS[1]!)] };
+      expect(await runDream({ store, graph: GRAPH, settings: composing, ports: ports({ trajectories: tools, composer: composer() }), tools: [...TOOLS, compiled.workflow.name] })).toMatchObject({
+        rounds: [{ round: 1 }, { outcome: "no-composition", reason: `search → Fetch_Page → summarize: the core already has a node ${compiled.workflow.name}` }],
+      });
+    });
   });
 });
 

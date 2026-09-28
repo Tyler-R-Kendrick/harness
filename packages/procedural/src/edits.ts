@@ -103,12 +103,16 @@ function staleDeletions(base: CandidateDocument, edits: EditSet): Diagnostic[] {
   ];
 }
 
-/** Action nodes that name no tool in the catalog, by binding name or by id. */
+/**
+ * Action nodes that name no tool in the catalog, by binding name or by id. A node bound
+ * to a workflow is dream's composition (plan §7.6): the workflow is compiled from calls
+ * to catalog tools and offered only to sessions whose pinned core binds it, so it is not
+ * a catalog tool itself.
+ */
 function outsideCatalog(doc: CandidateDocument, tools: readonly string[]): Diagnostic[] {
   const catalog = new Set(tools);
-  return doc.nodes.flatMap((n, i): Diagnostic[] =>
-    n.type !== "ACTION" || catalog.has(n.id) || (n.binding !== undefined && catalog.has(n.binding.name)) ? [] : [{ code: "tool-not-in-catalog", message: `action node ${n.id} names no tool in the catalog`, at: `nodes[${i}]` }],
-  );
+  const named = (n: CandidateDocument["nodes"][number]): boolean => catalog.has(n.id) || n.binding?.kind === "workflow" || (n.binding !== undefined && catalog.has(n.binding.name));
+  return doc.nodes.flatMap((n, i): Diagnostic[] => (n.type !== "ACTION" || named(n) ? [] : [{ code: "tool-not-in-catalog", message: `action node ${n.id} names no tool in the catalog`, at: `nodes[${i}]` }]));
 }
 
 /** The text the edits add, each at its place in the edit set. A null condition is no text. */

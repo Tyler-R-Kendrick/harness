@@ -20,13 +20,16 @@
  */
 import { z } from "zod";
 import { match } from "./locate.ts";
-import { effectiveGraph, emptyOverlay, exposed, foldOverlay } from "./overlay.ts";
-import { proposals, statusChanges } from "./overlay-policy.ts";
+import { editFilter } from "./filter.ts";
+import { effectiveGraph, emptyOverlay, entryId, exposed, foldOverlay } from "./overlay.ts";
+import { proposals, statusChanges, structure } from "./overlay-policy.ts";
 import { coreView, OverlayEventSchema } from "./overlay-types.ts";
-import type { EffectiveGraph, OverlayEvent, OverlayState } from "./overlay-types.ts";
+import type { EffectiveGraph, OverlayEntry, OverlayEvent, OverlayState } from "./overlay-types.ts";
 import { EntryIdSchema, parseGraph, ScoreSchema } from "./graph.ts";
 import type { EntryId, GraphId, NodeName, ProceduralGraph, RevisionId, Score } from "./graph.ts";
 import { turnProjection } from "./projection.ts";
+import type { Reflector } from "./reflect.ts";
+import { serializeGraph, serializeWindow } from "./serialize.ts";
 import type { LogEntryLike, LogGap, ScoreSource, TurnProjection, VersionPair } from "./projection.ts";
 import type { LiveSettings, Preset } from "./settings.ts";
 import type { AppendLog, ProceduralStore } from "./store.ts";
@@ -50,7 +53,29 @@ export interface LiveLearnerDeps {
   readonly score?: (trajectory: ScoredTrajectory) => Promise<{ readonly score: Score; readonly source: ScoreSource } | null>;
   /** Accepted for the contract; the fold counts overlay versions, not time. */
   readonly clock?: { now(): number };
+  /** Live reflection's model call (`modelReflector`), used when the preset's `live.reflection` is not `off`. */
+  readonly reflect?: Reflector;
 }
+
+/** An entry reflection proposed, with the sessions of the turns it reflected on. */
+interface Reflected {
+  readonly entry: Reflectable;
+  readonly sessions: readonly string[];
+}
+
+/** A scored turn as reflection reads it: its score, query and steps. */
+const reflectionText = (t: ScoredTrajectory): string =>
+  [`Score: ${t.score!.toFixed(2)}`, `Query: ${t.query}`, serializeWindow(t.steps, t.steps.length)].filter((line) => line !== "").join("\n");
+
+/** What reflection may propose: notes and edges (nodes come with templated edges, cautions only from statistics). */
+type Reflectable = Extract<OverlayEntry, { kind: "note" | "edge" }>;
+const reflectable = (e: OverlayEntry): e is Reflectable => e.kind === "note" || e.kind === "edge";
+
+/** The text an entry would put in front of later sessions. */
+const entryTexts = (e: Reflectable): string[] => (e.kind === "edge" ? [e.condition, e.guidance, e.pitfalls].filter((t) => t !== null) : [e.text]);
+
+/** The nodes an entry names, which must exist for it to be anchored (I6). */
+const anchorsOf = (e: Reflectable): string[] => (e.kind === "edge" ? [e.from, e.to] : [e.on.from, e.on.to]);
 
 export type LearnerResult =
   | { readonly kind: "ignored"; readonly reason: string }
@@ -95,6 +120,8 @@ export class LiveLearner {
   readonly #deps: LiveLearnerDeps;
   /** Per session, the offset after the last turn observed: the next read starts there. */
   readonly #cursors = new Map<string, number>();
+  /** Per graph, the scored turns waiting for a batch reflection. */
+  readonly #batches = new Map<GraphId, ScoredTrajectory[]>();
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(deps: LiveLearnerDeps) {
@@ -180,7 +207,8 @@ export class LiveLearner {
       for (const [id, r] of Object.entries(pinned.entries)) if (r.status === "probation" && exposed(draw.salt, id, draw.probationShare)) exposure.push(EntryIdSchema.parse(id));
     }
     const event = OverlayEventSchema.parse({ kind: "observed", turnKey, path: projection.path, unmatched: projection.unmatched, score: trajectory.score, exposure });
-    const appended = await this.#append(live, log, graph, history.state, event, coreGraph);
+    const reflected = view === undefined ? [] : await this.#reflect(live, graph, view, trajectory);
+    const appended = await this.#append(live, log, graph, history.state, event, coreGraph, reflected);
     if (projection.next !== undefined) this.#cursors.set(sessionId, Math.max(cursor, projection.next));
     return { kind: "observed", turnKey, graph, trajectory, gaps: projection.gaps, appended };
   }
@@ -189,6 +217,29 @@ export class LiveLearner {
     const entries = await this.#deps.readLog(sessionId, from);
     const projection = turnProjection(entries, { sessionId, turnId, from, pin });
     return projection === undefined ? undefined : { entries, from, projection };
+  }
+
+  /**
+   * Live reflection (plan §6.2.4): after a scored turn (`turn`), or once `reflectionBatch`
+   * scored turns of a graph have gathered (`batch`), the reflector proposes notes and
+   * edges over the graph the turn saw. Every entry passes the edit filter against the
+   * reflected turns' tool observations, or is dropped. A failing reflector proposes nothing.
+   */
+  async #reflect(live: LiveSettings, graph: GraphId, view: EffectiveGraph, trajectory: ScoredTrajectory): Promise<Reflected[]> {
+    const reflector = this.#deps.reflect;
+    if (live.reflection === "off" || reflector === undefined || trajectory.score === null) return [];
+    const batch = [...(this.#batches.get(graph) ?? []), trajectory];
+    if (live.reflection === "batch" && batch.length < live.reflectionBatch!) {
+      this.#batches.set(graph, batch);
+      return [];
+    }
+    this.#batches.delete(graph);
+    // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string is no note or edge, so it is dropped with the rest
+    const entries = await reflector({ graphContext: serializeGraph(view), trajectory: batch.map(reflectionText).join("\n\n") }).catch((): readonly OverlayEntry[] => []);
+    // Turns projected from the log carry tool results as `tool` steps (never `observation` ones).
+    const observations = batch.flatMap((t) => t.steps.filter((s) => s.role === "tool").map((s) => s.content));
+    const sessions = [...new Set(batch.map((t) => t.session))];
+    return entries.filter(reflectable).filter((entry) => editFilter(entryTexts(entry), observations).length === 0).map((entry) => ({ entry, sessions }));
   }
 
   /** The scorer's score; a scorer that fails leaves the turn unscored (feedback can score it later). */
@@ -210,9 +261,11 @@ export class LiveLearner {
 
   /**
    * Append the events with what the policy makes of them, in one append: proposals from
-   * the folded state against the head core (the overlay's base), then status changes.
+   * the folded state against the head core (the overlay's base), then reflection's
+   * entries that are new and anchored in that core or live overlay nodes (I6), then
+   * status changes.
    */
-  async #append(live: LiveSettings, log: AppendLog<OverlayEvent>, graph: GraphId, state: OverlayState, event: OverlayEvent, turnCore: ProceduralGraph | undefined): Promise<OverlayEvent[]> {
+  async #append(live: LiveSettings, log: AppendLog<OverlayEvent>, graph: GraphId, state: OverlayState, event: OverlayEvent, turnCore: ProceduralGraph | undefined, reflected: readonly Reflected[] = []): Promise<OverlayEvent[]> {
     const head = await this.#deps.store.heads.get(graph);
     const policyCore = (head === undefined ? undefined : await this.#graph(head.revision)) ?? turnCore;
     const out: OverlayEvent[] = [event];
@@ -220,7 +273,11 @@ export class LiveLearner {
       let folded = foldOverlay(state, event);
       const proposed = proposals(folded, policyCore, live);
       folded = proposed.reduce(foldOverlay, folded);
-      out.push(...proposed, ...statusChanges(folded, live));
+      const { nodes } = structure(folded, policyCore);
+      const fresh = reflected.filter(({ entry }) => folded.entries[entryId(entry)] === undefined && anchorsOf(entry).every((n) => nodes.has(n)));
+      const byReflection = fresh.map(({ entry, sessions }): OverlayEvent => ({ kind: "proposed", entry, source: { sessions: [...sessions], by: "reflection" } }));
+      folded = byReflection.reduce(foldOverlay, folded);
+      out.push(...proposed, ...byReflection, ...statusChanges(folded, live));
     }
     await log.append(out);
     return out;

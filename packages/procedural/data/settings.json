@@ -47,6 +47,7 @@
       "dream": {
         "mode": "incremental",
         "rounds": 3,
+        "compose": true,
         "cycles": "allowed",
         "contextTokens": 32000,
         "context": "tail-per-trajectory",

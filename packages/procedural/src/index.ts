@@ -1,8 +1,8 @@
 // @harness/procedural: see docs/decisions/0011-procedural-graph.md and docs/plans/procedural-graph.md.
 export { canonicalJson, sha256Hex } from "./canonical.ts";
 export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
-export { DEFAULT_SELECT, modelRefiner, runDream, type Approver, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
-export { absorbedEntries, DreamEventSchema, dreamStart, dreamStep, RolloutResultSchema, tailTokens, type DreamCommand, type DreamEvent, type DreamInput, type DreamOutcome, type DreamRefineRequest, type DreamState, type DreamStep, type Rejection, type RolloutResult, type RoundOutcome } from "./dream.ts";
+export { DEFAULT_SELECT, modelRefiner, runDream, type Approver, type Composer, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
+export { absorbedEntries, CompositionSchema, DreamEventSchema, dreamStart, dreamStep, RolloutResultSchema, tailTokens, type DreamCommand, type DreamComposition, type Tokenizer, type DreamEvent, type DreamInput, type DreamOutcome, type DreamRefineRequest, type DreamState, type DreamStep, type Rejection, type RolloutResult, type RoundOutcome } from "./dream.ts";
 export { applyEdits, prepareCandidate, type PreparedCandidate, type PrepareOptions, type RepairedEdge } from "./edits.ts";
 export { proceduralExtension, type ProceduralAction, type ProceduralExtensionOptions } from "./extension.ts";
 export { editFilter, type EntropyOptions, type FilterCode, type FilterFinding, type FilterOptions } from "./filter.ts";
@@ -21,8 +21,9 @@ export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES,
 export { AccessPolicySchema, ACTIONS, authorize, globMatches, parsePolicy, policyJsonSchema, type AccessPolicy, type Action } from "./policy.ts";
 export { projectTurn, turnProjection, type LogEntryLike, type LogGap, type ProjectionContext, type ScoreSource, type TurnProjection, type VersionPair } from "./projection.ts";
 export { readJsonBlock, renderPrompt, type Decoding } from "./prompt.ts";
+export { logTrajectories, type SessionLog } from "./recorded.ts";
 export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
-export { reflect, reflectionJsonSchema, type ReflectRequest } from "./reflect.ts";
+export { modelReflector, reflect, reflectionJsonSchema, type Reflector, type ReflectRequest } from "./reflect.ts";
 export { explainResolve, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, WhenSchema, type Resolution, type ResolveContext, type Resolver, type When } from "./resolver.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
