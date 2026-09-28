@@ -149,6 +149,14 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
+  it("PG1.48 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
+    expect(presetOf(settings(), "paper").hopUnit).toBe("edge");
+    expect(presetOf(settings(), "harness").hopUnit).toBe("edge");
+    expect(presetOf(edit(["presets", "harness", "hopUnit"], "action")(), "harness").hopUnit).toBe("action");
+    expect(presetOf(edit(["presets", "harness", "hopUnit"], undefined)(), "harness").hopUnit).toBe("edge");
+    expect(edit(["presets", "paper", "hopUnit"], "node")).toThrow(/presets\.paper\.hopUnit/);
+  });
+
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
     const s = structuredClone(file) as { presets: Record<string, unknown> };
     s.presets["careful"] = { ...(s.presets["harness"] as object), match: "case-insensitive", guidanceCache: false };

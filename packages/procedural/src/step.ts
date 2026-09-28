@@ -237,7 +237,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     const node = match(action, view, preset.match);
     const active = node === undefined ? undefined : nodeById(view, node);
     const inert = tools !== undefined && active?.type === "ACTION" && !tools.includes(active.id) && !(active.binding !== undefined && tools.includes(active.binding.name));
-    const around = node === undefined ? undefined : neighborhood(view, node, HOPS);
+    const around = node === undefined ? undefined : neighborhood(view, node, HOPS, preset.hopUnit);
     const shownEdges = around === undefined ? view.edges : around.hops.flat();
     const named = new Set<string>(around === undefined ? view.nodes.map((n) => n.id) : [around.active, ...shownEdges.flatMap((e) => [e.from, e.to])]);
     const words = around === undefined ? deps.settings.graphContext.full : deps.settings.graphContext.local;

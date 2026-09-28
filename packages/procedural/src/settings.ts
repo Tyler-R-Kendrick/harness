@@ -108,6 +108,8 @@ const PresetSchema = z
     /** Which guidance prompt: the paper's, or the harness variant (plan §9). */
     guidancePrompt: z.enum(["paper", "harness"]),
     guidanceCache: z.boolean(),
+    /** What a hop of the horizon counts: an `edge` (the paper), or an `action`, running through reasoning and status nodes to the next action node. */
+    hopUnit: z.enum(["edge", "action"]).default("edge"),
     /** Re-read the overlay at each turn boundary, or freeze it for the session (plan §5.1). */
     overlayRefresh: z.enum(["turn", "session"]).default("turn"),
     /** When dream moves the head mid-session: re-pin at the next turn, or keep the old core. */

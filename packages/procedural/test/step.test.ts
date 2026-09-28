@@ -20,6 +20,7 @@ import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInp
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
+import { edge, hotpot } from "./fixtures.ts";
 
 /** Settings with an extra preset built from `base` (paper or harness). */
 function withPreset(base: "paper" | "harness", changes: Record<string, unknown>): Settings {
@@ -265,6 +266,34 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(s.records.map((r) => r.inert)).toEqual([true, false, false, false, true, false, false, false]);
     await hook.turn({ ...input(s, [user("q")], { tools: [] }), lastAction: "Scan_Index" });
     expect(s.records.at(-1)).toMatchObject({ node: "Start", inert: false });
+  });
+
+  it("PW1.64 a preset counting hops in actions shows the next tool that two reasoning nodes hide from edge hops", async () => {
+    const hiding = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Retrieve", type: "ACTION", description: "Retrieve." },
+        { id: "Scan_Index", type: "REASONING", description: "Scan." },
+        { id: "Decide_Capital", type: "REASONING", description: "Decide." },
+        { id: "Answer_Lookup", type: "ACTION", description: "Look up." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [edge("Start", "Retrieve"), edge("Retrieve", "Scan_Index"), edge("Scan_Index", "Decide_Capital"), edge("Decide_Capital", "Answer_Lookup"), edge("Answer_Lookup", "End")],
+    });
+    if (!hiding.ok) throw new Error("fixture");
+    const at = async (preset: string, settings?: Settings) => {
+      const s = await setup(preset, settings ? { settings } : {});
+      await seed(s.store, hiding.graph);
+      await proceduralStep(s.deps).prepare(input(s, [user("q"), calls("Retrieve"), result("Retrieve")]));
+      return prompts(s)[0]!;
+    };
+    const edges = await at("paper");
+    expect(edges).not.toContain("[Decide_Capital] → [Answer_Lookup]");
+    const actions = await at("custom", withPreset("paper", { hopUnit: "action" }));
+    expect(actions).toContain("Immediate Transition Options (Hop 1):\n- Transition: [Retrieve] → [Scan_Index]");
+    expect(actions).toContain("- Transition: [Decide_Capital] → [Answer_Lookup]");
+    expect(actions).toContain("Subsequent Horizon (Hop 2):\n- Transition: [Answer_Lookup] → [End]");
   });
 
   it("PW1.59 a message tagged by another provider is not an advisory", async () => {

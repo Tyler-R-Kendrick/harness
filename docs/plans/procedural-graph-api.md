@@ -1078,7 +1078,8 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   start the next. Two reasoning nodes after an action (research §2.2 item 3) then no
   longer hide the next tool: from `Retrieve → Scan_Index → Decide_Capital → Answer_Lookup`,
   hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
-  two units agree.
+  two units agree. `Preset.hopUnit: "edge" | "action"` (default `edge`; both shipped
+  presets say `edge`) is the unit `proceduralStep` passes; `h` stays `HOPS`.
 
 ## Open issues
 

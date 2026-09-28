@@ -45,6 +45,14 @@
             "guidanceCache": {
               "type": "boolean"
             },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
+            },
             "overlayRefresh": {
               "default": "turn",
               "type": "string",
@@ -305,6 +313,14 @@
             },
             "guidanceCache": {
               "type": "boolean"
+            },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
             },
             "overlayRefresh": {
               "default": "turn",
@@ -571,6 +587,14 @@
           },
           "guidanceCache": {
             "type": "boolean"
+          },
+          "hopUnit": {
+            "default": "edge",
+            "type": "string",
+            "enum": [
+              "edge",
+              "action"
+            ]
           },
           "overlayRefresh": {
             "default": "turn",

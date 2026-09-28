@@ -252,7 +252,10 @@ Learning's `Trajectory` has no score and no revision, so this type wraps its ste
 
 The paper's prompts (App. B.5) are stored verbatim. Hops (`h = 2`), window (`w = 3`) and
 the full-graph fallback are constants, taken from the paper, until an ablation is
-scheduled. A `?` on a gate means it applies only when the graph has an evaluator.
+scheduled. What a hop counts is a setting: `hopUnit: "edge"` (the paper, both presets) or
+`"action"`, where a hop runs through reasoning and status nodes to the next action node,
+so that nodes which are never active cannot hide the next tool. A `?` on a gate means it
+applies only when the graph has an evaluator.
 
 ## 5. The live path
 

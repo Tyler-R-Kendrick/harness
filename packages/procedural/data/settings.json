@@ -8,6 +8,7 @@
       "delivery": "system",
       "guidancePrompt": "paper",
       "guidanceCache": false,
+      "hopUnit": "edge",
       "dream": {
         "mode": "incremental",
         "rounds": 10,
@@ -32,6 +33,7 @@
       "delivery": "trailing-message",
       "guidancePrompt": "harness",
       "guidanceCache": true,
+      "hopUnit": "edge",
       "overlayRefresh": "turn",
       "repinOnDream": "turn",
       "live": {
