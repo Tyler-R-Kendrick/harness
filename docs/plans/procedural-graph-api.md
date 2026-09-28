@@ -962,6 +962,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
   file, `revert` `--to`, and `dream` `--model` (a gateway id) or else `--model-cache`,
   `--llama-server` and `--no-hosted` (the ensemble's reasoning model), and `--state`. A
   result a caller handles (a dream that did not finish included) exits 1, bad usage 2.
+  `harness-procedural approvals <graph>`, `approve <candidate>` and `decline <candidate>`
+  run the inbox's operations; a dream without a terminal leaves candidates that need
+  approval in the inbox (saying so on stderr) instead of rejecting them.
 - Browser host: `browserProcedural(ensemble, {storage, settings, ...})` installs the
   extension over a `SnapshotProceduralStore` in the given `SnapshotStorage`.
 

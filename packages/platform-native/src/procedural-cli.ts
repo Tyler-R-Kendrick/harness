@@ -4,13 +4,14 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
-import { proceduralExtension } from "@harness/procedural";
+import { approvalInbox, proceduralExtension } from "@harness/procedural";
 import { loadProceduralSettings } from "./catalog-files.ts";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { FileStorage } from "./file-storage.ts";
 import { nativeDream, proceduralStore, snapshotSessions, terminalApprover } from "./procedural-host.ts";
 
-// harness-procedural <history|export|import|revert|dream> <graph> [options]
+// harness-procedural <history|export|import|revert|dream|approvals> <graph> [options]
+// harness-procedural <approve|decline> <candidate> [options]
 // Works on the procedural store in --procedural <dir> (the daemon's), through the same
 // operations the `procedural` extension serves. Run it while no daemon holds that store:
 // one process owns a store file.
@@ -21,7 +22,11 @@ const USAGE =
   "       harness-procedural revert <graph> [--to <revision>]\n" +
   "       harness-procedural dream <graph> [--model <gateway id> | --model-cache <dir> [--llama-server <path>] [--no-hosted]] [--state <daemon state file>]\n" +
   "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
-  "          daemon's saved session logs; asks for approval on a terminal)\n" +
+  "          daemon's saved session logs; asks for approval on a terminal, and otherwise leaves the\n" +
+  "          candidate in the approvals inbox)\n" +
+  "       harness-procedural approvals <graph>                (the candidates waiting for approval)\n" +
+  "       harness-procedural approve <candidate>              (commit it on the head, if its gates pass there)\n" +
+  "       harness-procedural decline <candidate>\n" +
   "  options: [--procedural <dir>] [--settings <settings.json>] [--preset <name>]\n";
 
 const { values, positionals } = parseArgs({
@@ -42,8 +47,10 @@ const { values, positionals } = parseArgs({
     "no-hosted": { type: "boolean", default: false },
   },
 });
+// The second positional is the graph, or for approve and decline the candidate's revision id.
 const [command = "", graph, file] = positionals;
-const COMMANDS = ["history", "export", "import", "revert", "dream"];
+const COMMANDS = ["history", "export", "import", "revert", "dream", "approvals", "approve", "decline"];
+const decides = command === "approve" || command === "decline";
 if (!COMMANDS.includes(command) || graph === undefined || (file !== undefined && command !== "import")) {
   process.stderr.write(USAGE);
   process.exit(2);
@@ -75,17 +82,22 @@ const dream =
         model,
         sessions: async () => snapshotSessions(state === undefined ? undefined : await new FileStorage(state).load()),
         holder: "harness-procedural",
-        ...(process.stdin.isTTY ? { approver: terminalApprover(process.stdin, process.stderr) } : {}),
+        // Without a terminal, a candidate that needs approval waits in the inbox (`approvals`, `approve`, `decline`).
+        ...(process.stdin.isTTY
+          ? { approver: terminalApprover(process.stdin, process.stderr) }
+          : { inbox: approvalInbox(({ payload }) => void process.stderr.write(`candidate ${payload.candidate} of graph ${payload.graph} waits for approval\n`)) }),
       });
 const extension = proceduralExtension({ store, settings, ...preset, clock: { now: () => Date.now() }, ...(dream === undefined ? {} : { dream }) });
 
 const optional = (key: string, value: unknown) => (value === undefined ? {} : { [key]: value });
-const input = {
-  graph,
-  ...(command === "export" ? { ...optional("format", values.format), ...optional("revision", values.revision), ...(values["no-overlay"] ? { overlay: false } : {}) } : {}),
-  ...(command === "import" && file !== undefined ? { document: JSON.parse(readFileSync(file, "utf8")) as unknown } : {}),
-  ...(command === "revert" ? optional("to", values.to) : {}),
-};
+const input = decides
+  ? { candidate: graph }
+  : {
+      graph,
+      ...(command === "export" ? { ...optional("format", values.format), ...optional("revision", values.revision), ...(values["no-overlay"] ? { overlay: false } : {}) } : {}),
+      ...(command === "import" && file !== undefined ? { document: JSON.parse(readFileSync(file, "utf8")) as unknown } : {}),
+      ...(command === "revert" ? optional("to", values.to) : {}),
+    };
 try {
   const result = (await extension.operations![command]!(input)) as { status?: string; text?: string; result?: { status?: string } };
   if (command === "export" && result.status === "ok") {
