@@ -18,6 +18,7 @@ export { decayedSupport, differenceBounds, proposals, statusChanges } from "./ov
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
 export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldOverlay, MAX_SESSIONS, MAX_TURNS, rebaseOverlay } from "./overlay.ts";
 export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES, type PinRequest } from "./pinning.ts";
+export { parsePlan, PLAN_RELATIONS, planFromSubgraph, PlanPayloadSchema, type PlanOptions, type PlanPayload, type PlanRelations, type PlanResult } from "./plan.ts";
 export { AccessPolicySchema, ACTIONS, authorize, globMatches, parsePolicy, policyJsonSchema, type AccessPolicy, type Action } from "./policy.ts";
 export { projectTurn, turnProjection, type LogEntryLike, type LogGap, type ProjectionContext, type ScoreSource, type TurnProjection, type VersionPair } from "./projection.ts";
 export { readJsonBlock, renderPrompt, type Decoding } from "./prompt.ts";

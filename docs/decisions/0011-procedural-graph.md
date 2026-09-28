@@ -167,6 +167,10 @@ The decision held; these details moved.
 - **Records are keyed by content.** A rejection never replaces an older head's or an
   import's record with the same id, and a commit that loses the head race puts back the
   record it replaced.
+- **Plans come from subgraphs.** Core's task graph carries opaque payloads and
+  serializes to JSON; `planFromSubgraph` turns the subgraph between two nodes into one,
+  a task per action node, with the graph's relations as data and control dependencies.
+  Nothing drives plans yet.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 
@@ -175,7 +179,7 @@ The decision held; these details moved.
 - Live evidence shows the overlay's probation rules are too slow or too loose. Then tune
   the data, not the code.
 - A deployment needs per-caller access rules. Then pass the caller on model work.
-- The task graph gains payloads. Then dream can emit plans from subgraphs.
+- The daemon drives task graphs. Then dream, or a session, can run plans from subgraphs.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
 - The daemon gains approvals outside a session's turn. Then `procedural.dream` can ask
