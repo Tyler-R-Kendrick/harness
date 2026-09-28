@@ -49,6 +49,6 @@ describe("the page's local generators (/writer [slug])", () => {
     expect(models.status("claude")).toBe("Claude writes templates alone, when reachable (/writer auto picks a local generator for this browser)");
     expect(models.status("org/gone")).toBe("org/gone is not a generator in this page's catalog; Claude writes templates, when reachable");
     models.current("auto")!.fellBack(["local/small: out of memory"]);
-    expect(models.status("auto")).toBe("Small: ready; the last template was written by Claude instead (local/small: out of memory)");
+    expect(models.status("auto")).toBe("Small: ready; its last template was refused and left to Claude, when reachable (local/small: out of memory)");
   });
 });

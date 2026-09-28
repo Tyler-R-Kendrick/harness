@@ -18,7 +18,7 @@ export const WRITING: Role = {
   command: "writer",
   alone: { slug: CLAUDE, status: "Claude writes templates alone, when reachable (/writer auto picks a local generator for this browser)" },
   instead: "Claude writes templates, when reachable",
-  fellBack: "the last template was written by Claude instead",
+  fellBack: "its last template was refused and left to Claude, when reachable",
 };
 
 /** The catalog's local generators for a browser that enforce a JSON Schema (templates are written as one), best first by rank. */

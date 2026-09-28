@@ -775,8 +775,10 @@ async function boot() {
     afterTurn: () => {
       // A decision the model left to the lexical judge shows in the pill.
       decisionModels.current(settings.decide)?.fellBack(engine.lastProblems);
-      // So does a template the local generator left to Claude.
-      localGenerators.current(settings.writer)?.fellBack(engine.lastWriteProblems);
+      // So does a template the local generator's writing was refused for (its own problems, not Claude's).
+      const writer = localGenerators.current(settings.writer);
+      const own = writer?.port && `${writer.port.provider}/${writer.port.modelId}: `;
+      writer?.fellBack(own ? engine.lastWriteProblems.filter((p) => p.startsWith(own)) : []);
       sync();
       return syncHarness();
     },
