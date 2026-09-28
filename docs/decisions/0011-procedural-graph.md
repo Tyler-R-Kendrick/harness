@@ -167,6 +167,12 @@ The decision held; these details moved.
 - **Records are keyed by content.** A rejection never replaces an older head's or an
   import's record with the same id, and a commit that loses the head race puts back the
   record it replaced.
+- **A tool catalog is enforced only when a host gives one.** No host can list its sessions'
+  tools yet, so the daemon's and the CLI's dream have no catalog: the harness preset's
+  `enforceToolCatalog` then has nothing to check, and the refiner is shown no tools.
+- **Guidance follows the access policy.** A session's meta can name any graph the resolver
+  templates, so the step hook guides (and pins) a session only when the policy allows it
+  to read and write that graph: its turns feed the graph's overlay.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 
