@@ -111,7 +111,7 @@ export class DreamSchedule {
     if (head === undefined) return { due: false, last: 0, turns: 0, overlay };
     const mark = await this.#mark(graph);
     const started = this.#started.get(graph);
-    const last = Math.max(mark.at ?? (await store.revisions.get(head.revision))?.at ?? 0, started?.at ?? 0);
+    const last = Math.max(mark.at ?? (await store.revisions.get(graph, head.revision))?.at ?? 0, started?.at ?? 0);
     const since = Math.max(mark.overlay, started?.overlay ?? 0);
     const turns = afterTurns === undefined ? 0 : (await overlayLog.read(since)).filter(({ event }) => event.kind === "observed" && event.rescore === undefined).length;
     // An unset condition never holds.

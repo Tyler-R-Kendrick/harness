@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GraphIdSchema, MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, TOMBSTONE } from "@harness/procedural";
+import { GraphIdSchema, MemoryProceduralStore, redactRecord, RevisionRecordSchema, STORE_FORMAT, STORE_FORMAT_V1, TOMBSTONE } from "@harness/procedural";
 import { graphA, record } from "./store-fixtures.ts";
 
 describe("MemoryProceduralStore", () => {
@@ -28,7 +28,7 @@ describe("MemoryProceduralStore", () => {
     expect((await rebuilt.dreams(graphA).read(0)).map((e) => e.event)).toEqual([1, 3]);
   });
 
-  it("PS1.49 graphs names every graph with a head, in the order each got its first, and a rebuilt store keeps it", async () => {
+  it("PS1.57 graphs names every graph with a head, in the order each got its first, and a rebuilt store keeps it", async () => {
     const store = new MemoryProceduralStore();
     expect(await store.graphs()).toEqual([]);
     const r = record([]);
@@ -59,9 +59,25 @@ describe("MemoryProceduralStore", () => {
 });
 
 describe("redactRecord", () => {
+  it("PS1.55 a store rebuilt from a document keeps redaction sticky for the ids it redacted, and only those", async () => {
+    const [kept, secret] = [record([]), record(["Plan"], {}, "secret")];
+    const first = new MemoryProceduralStore();
+    await first.revisions.put(kept);
+    await first.revisions.put(secret);
+    await first.redact(secret.id);
+    const rebuilt = new MemoryProceduralStore(first.document());
+    const graphB = GraphIdSchema.parse("team/beta");
+    await rebuilt.revisions.put({ ...secret, graph: graphB });
+    await rebuilt.revisions.put({ ...kept, graph: graphB });
+    expect(await rebuilt.revisions.get(graphB, secret.id)).toMatchObject({ redacted: true });
+    expect(JSON.stringify(await rebuilt.revisions.get(graphB, secret.id))).not.toContain("secret");
+    expect(await rebuilt.revisions.get(graphB, kept.id)).toEqual({ ...kept, graph: graphB });
+  });
+
   it("PS1.48 the tombstone and the store format are fixed strings", () => {
     expect(TOMBSTONE).toBe("[redacted]");
-    expect(STORE_FORMAT).toBe("harness.procedural-store/v1");
+    expect(STORE_FORMAT).toBe("harness.procedural-store/v2");
+    expect(STORE_FORMAT_V1).toBe("harness.procedural-store/v1");
   });
 
   it("PS1.39 texts become the tombstone, an unconditional edge stays unconditional, and absent edits stay absent", () => {

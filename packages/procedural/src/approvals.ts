@@ -188,7 +188,7 @@ export async function approveCandidate(input: { store: ProceduralStore; record: 
   if (record.redacted === true) return refused(`candidate ${candidate} is redacted`);
   const head = await store.heads.get(graph);
   if (head === undefined) return refused(`graph ${graph} has no head`);
-  const current = parseGraph((await store.revisions.get(head.revision))?.document);
+  const current = parseGraph((await store.revisions.get(graph, head.revision))?.document);
   if (!current.ok) return refused(`the head ${head.revision} of graph ${graph} is missing or does not parse (it may be redacted)`);
   const structure = againstHead(record, current.graph, preset.dream.cycles);
   if (!structure.ok) return refused(structureGate(structure).reason, "structure");
@@ -205,7 +205,7 @@ export async function approveCandidate(input: { store: ProceduralStore; record: 
     await store.revisions.put(approved);
     return { status: "unchanged", graph, candidate, head: id };
   }
-  const earlier = await store.revisions.get(id);
+  const earlier = await store.revisions.get(graph, id);
   const committed = RevisionRecordSchema.parse({
     ...approved,
     id,

@@ -171,15 +171,41 @@ export function nativeLiveLearner(options: {
 }
 
 /**
- * A session's log entries in `[from, to)`, read from the daemon's snapshot: the daemon has
- * no host-side log read yet, so this copies every session's log (plan §6.5). Entries
- * compacted into the log's snapshot are gone; an unknown session has none.
+ * The step hook's evictions on this host (plan §5): subscribed in process to the daemon's
+ * `session.detached` events (plugin `procedural-step`, with its durable cursor), each
+ * detached session's state (pinned view, guidance cache) is forgotten. The daemon has no
+ * session close; a session that is attached again is re-read at its next step.
  */
-export function sessionLogReader(daemon: Pick<Daemon, "snapshot">): (sessionId: string, from: number, to?: number) => Promise<LogEntry<unknown>[]> {
-  return async (sessionId, from, to = Number.POSITIVE_INFINITY) => {
-    const session = snapshotSessions(daemon.snapshot()).find((s) => s.id === sessionId);
-    return (session?.entries ?? []).filter((e) => e.offset >= from && e.offset < to);
-  };
+export function nativeStepEvictions(options: {
+  readonly runtime: Pick<DaemonRuntime, "connect">;
+  readonly step: Pick<ProceduralStepHook, "forget">;
+  readonly intervalMs?: number;
+  readonly log?: (message: string) => void;
+}): HookPump {
+  const { step, log } = options;
+  return pumpHookEvents(options.runtime, {
+    plugin: "procedural-step",
+    types: ["session.detached"],
+    onEvent: async (event) => {
+      if (event.sessionId !== undefined) step.forget(event.sessionId);
+    },
+    ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+    ...(log === undefined ? {} : { log }),
+  });
+}
+
+/**
+ * A session's log entries in `[from, to)`, read through the daemon's host-side
+ * `readLog`, which copies no other session's log. Entries compacted into the log's
+ * snapshot are gone; an unknown session has none.
+ */
+export function sessionLogReader(daemon: Pick<Daemon, "readLog">): (sessionId: string, from: number, to?: number) => Promise<readonly LogEntry<unknown>[]> {
+  return async (sessionId, from, to) => daemon.readLog(sessionId, from, to);
+}
+
+/** Every session's log in the live daemon (dream's session logs), each read through `readLog`: no snapshot is copied. */
+export function daemonSessions(daemon: Pick<Daemon, "sessionIds" | "readLog">): SessionLog[] {
+  return daemon.sessionIds().map((id) => ({ id, entries: daemon.readLog(id) }));
 }
 
 /** Every session's log in a daemon snapshot (the daemon's, or the one saved in its state file); a snapshot of another shape has none. */

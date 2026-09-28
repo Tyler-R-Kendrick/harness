@@ -80,6 +80,10 @@
     "solverMaxTokens": 2048,
     "refinerMaxTokens": 8192
   },
+  "sessions": {
+    "idleMs": 1800000,
+    "max": 1024
+  },
   "graphContext": {
     "local": {
       "desc": "the local Procedural Graph subgraph around the agent’s current step, governing the task structure and strategic guidance",

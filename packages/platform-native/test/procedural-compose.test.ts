@@ -193,7 +193,7 @@ describe("composition on the native host", () => {
     const result = (await dream(graph)) as Extract<DreamResult, { status: "done" }>;
     const composed = result.rounds.at(-1) as { round: number; outcome: string; revision: RevisionId };
     expect(composed).toMatchObject({ round: 4, outcome: "pending-approval", gate: "approval-for-side-effects" });
-    const record = (await store.revisions.get(composed.revision))!;
+    const record = (await store.revisions.get(graph, composed.revision))!;
     const node = record.document.nodes.find((n) => n.binding?.kind === "workflow")!;
     const name = node.binding!.name;
     expect(record.evidence).toMatchObject({ composition: { path: ["fetch", "summarize"], node: name, support: 3 } });

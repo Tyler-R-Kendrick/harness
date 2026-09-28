@@ -405,6 +405,27 @@ export class Daemon {
     return this.#hooks.publish(input, this.#now());
   }
 
+  /** The id of every session the daemon holds, in creation order, for host-side reads such as `readLog`. */
+  sessionIds(): string[] {
+    return [...this.#sessions.keys()];
+  }
+
+  /**
+   * A session's log entries in `[from, to)` (`to` defaults to the head), read on the host's
+   * behalf without copying any other session's log, as `snapshot()` would. Entries compacted
+   * below the log's base are gone, so a read starts there; an unknown session has none.
+   */
+  readLog(sessionId: string, from = 0, to = Number.POSITIVE_INFINITY): readonly LogEntry<unknown>[] {
+    if (!Number.isSafeInteger(from) || from < 0) throw new RangeError(`from must be a whole number of at least 0, not ${from}`);
+    if (to !== Number.POSITIVE_INFINITY && (!Number.isSafeInteger(to) || to < 0)) throw new RangeError(`to must be a whole number of at least 0, not ${to}`);
+    const log = this.#sessions.get(sessionId)?.log;
+    if (log === undefined) return [];
+    const start = Math.max(from, log.base());
+    const read = log.read(start, Math.max(to - start, 0));
+    // Past the head the log answers out-of-range: there is nothing to read there.
+    return read.kind === "entries" ? read.entries : [];
+  }
+
   // ---- request handling -----------------------------------------------------------
 
   #handleRequest(conn: Connection, id: JsonRpcId, method: string, rawParams: unknown): void {

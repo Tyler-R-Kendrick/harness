@@ -6,8 +6,9 @@
  *
  * The entries are the daemon's own log entries, `{update}` (an ACP `SessionUpdate`) and
  * `{event, data}` payloads. A turn runs from its `turn.started` event to its
- * `turn.ended`. A tool call's title is the tool name (as `AgentWorker` emits it), and a
- * step record is any update carrying `_meta.harness.procedural.step`.
+ * `turn.ended`. A tool call's title is the tool name (as `AgentWorker` emits it), a
+ * step record is any update carrying `_meta.harness.procedural.step`, and a step's model
+ * usage any update carrying `_meta.harness.procedural.usage`.
  *
  * Logs are compacted and read in ranges, so a turn may arrive without its start or with
  * holes: the projection never throws, it reports the missing offsets as gaps, and it
@@ -45,6 +46,11 @@ export interface ProjectionContext {
   readonly pin?: VersionPair | undefined;
   /** The node an action (a tool name) matches, as guidance matched it. Without it every action is unmatched. */
   readonly locate?: ((action: string) => NodeName | undefined) | undefined;
+  /**
+   * The terminal an edge from a node leads to (`terminalAfter` on the graph the session
+   * saw). A turn that ends with a final answer where it stood walks on to that terminal.
+   */
+  readonly terminal?: ((node: NodeName) => NodeName | undefined) | undefined;
   readonly score?: { readonly score: Score; readonly source: ScoreSource } | null | undefined;
 }
 
@@ -56,7 +62,10 @@ export interface LogGap {
 
 export interface TurnProjection {
   readonly trajectory: ScoredTrajectory;
-  /** Matched nodes in order: where the turn began (when its first step record shows it), then each action's node. */
+  /**
+   * Matched nodes in order: where the turn began (when its first step record shows it),
+   * then each action's node, then the terminal it answered into (see `turnProjection`).
+   */
   readonly path: NodeName[];
   /** Actions that matched no node, in order. */
   readonly unmatched: string[];
@@ -89,6 +98,8 @@ const StepRecordSchema = z.object({
   usage: z.object({ inputTokens: tokens, outputTokens: tokens }).optional().catch(undefined),
 });
 type StepRecord = z.output<typeof StepRecordSchema>;
+/** A step's model usage, reported once the step ended (`StepUsageSchema` in step.ts). */
+const UsageRecordSchema = z.object({ inputTokens: count, outputTokens: count });
 
 const isRecord = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x);
 const field = (x: unknown, key: string): unknown => (isRecord(x) ? x[key] : undefined);
@@ -147,6 +158,13 @@ function gapsIn(entries: readonly LogEntryLike[], from: number | undefined): Log
 /**
  * Project one turn. Undefined when the entries do not hold the turn, when the session or
  * turn id is empty, or when no version pair is known (no step record and no pin).
+ *
+ * Transitions into a terminal have no action of their own, so the path records one by
+ * rule: when the turn ended (`turn.ended` in view, with stop reason `end_turn` or none),
+ * its last update of substance is agent text that is not blank (after its last tool call
+ * and result), and the node it answered from is known (its last action matched, or, with
+ * no action, it began at a matched node), the path walks on to `context.terminal` of that
+ * node, if any.
  */
 export function turnProjection(entries: readonly LogEntryLike[], context: ProjectionContext): TurnProjection | undefined {
   const { sessionId, turnId } = context;
@@ -158,7 +176,11 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   /** Tool call ids seen (undefined for calls without one, which never repeat). */
   const calls = new Set<string | undefined>();
   const records: StepRecord[] = [];
+  /** The turn's model tokens, from its steps' usage records. */
+  const model = { inputTokens: 0, outputTokens: 0 };
   let start: NodeName | undefined;
+  /** Whether the turn's latest update of substance is a final answer: agent text after its last tool call and result. */
+  let answered = false;
   const say = (role: "user" | "assistant", content: string): void => {
     const last = steps.at(-1);
     if (last !== undefined && last.role === role && last.call === undefined) steps[steps.length - 1] = { role, content: last.content + content };
@@ -166,7 +188,17 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
   };
   for (const entry of entries.slice(span.begin, span.end)) {
     const update = field(entry.payload, "update");
-    const step = field(field(field(field(update, "_meta"), "harness"), "procedural"), "step");
+    const procedural = field(field(field(update, "_meta"), "harness"), "procedural");
+    const used = field(procedural, "usage");
+    if (used !== undefined) {
+      const parsed = UsageRecordSchema.safeParse(used);
+      if (parsed.success) {
+        model.inputTokens += parsed.data.inputTokens;
+        model.outputTokens += parsed.data.outputTokens;
+      }
+      continue;
+    }
+    const step = field(procedural, "step");
     if (step !== undefined) {
       const parsed = StepRecordSchema.safeParse(step);
       if (!parsed.success) continue;
@@ -178,8 +210,10 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
     const kind = field(update, "sessionUpdate");
     const chunk = text(field(field(update, "content"), "text"));
     if (kind === "user_message_chunk" && chunk !== undefined) say("user", chunk);
-    else if ((kind === "agent_message_chunk" || kind === "agent_thought_chunk") && chunk !== undefined) say("assistant", chunk);
-    else if (kind === "tool_call") {
+    else if ((kind === "agent_message_chunk" || kind === "agent_thought_chunk") && chunk !== undefined) {
+      say("assistant", chunk);
+      if (kind === "agent_message_chunk" && chunk.trim() !== "") answered = true;
+    } else if (kind === "tool_call") {
       const name = text(field(update, "title"));
       const id = text(field(update, "toolCallId"));
       if (name === undefined || name === "" || (id !== undefined && calls.has(id))) continue;
@@ -188,9 +222,13 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
       const args = isRecord(input) ? input : input === undefined ? {} : { input };
       steps.push({ role: "assistant", content: "", call: { name, arguments: args } });
       actions.push(name);
+      answered = false;
     } else if (kind === "tool_call_update") {
       const status = field(update, "status");
-      if (status === "completed" || status === "failed") steps.push({ role: "tool", content: render(field(update, "rawOutput")) });
+      if (status === "completed" || status === "failed") {
+        steps.push({ role: "tool", content: render(field(update, "rawOutput")) });
+        answered = false;
+      }
     }
   }
 
@@ -200,11 +238,17 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
 
   const path: NodeName[] = start === undefined ? [] : [start];
   const unmatched: string[] = [];
+  /** Where the turn stands: its last action's node, or where it began; undefined once an action matched nothing. */
+  let at = start;
   for (const action of actions) {
-    const node = context.locate?.(action);
-    if (node === undefined) unmatched.push(action);
-    else path.push(node);
+    at = context.locate?.(action);
+    if (at === undefined) unmatched.push(action);
+    else path.push(at);
   }
+  const stopReason = field(field(entries[span.end]?.payload, "data"), "stopReason");
+  const finished = span.ended && (stopReason === undefined || stopReason === "end_turn");
+  const terminal = finished && answered && at !== undefined ? context.terminal?.(at) : undefined;
+  if (terminal !== undefined) path.push(terminal);
   const shown: EntryId[] = [];
   for (const r of records) for (const id of r.exposure) if (!shown.includes(id)) shown.push(id);
   const localization = { matched: 0, fallback: 0, inert: 0 };
@@ -228,7 +272,7 @@ export function turnProjection(entries: readonly LogEntryLike[], context: Projec
     score: score?.score ?? null,
     scoreSource: score?.source ?? null,
     localization,
-    usage: { steps: steps.length, inputTokens: 0, outputTokens: 0, guidanceTokens },
+    usage: { steps: steps.length, ...model, guidanceTokens },
   };
   // The turn's entries with the boundary before them (its start, or another turn's), so a hole there counts;
   // with no boundary in view, the read's start is where the turn could have begun.

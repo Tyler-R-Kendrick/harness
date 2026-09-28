@@ -80,7 +80,7 @@ describe("the access policy (plan §8.3)", () => {
     expect(schema.required).toEqual(["rules"]);
   });
 
-  it("PX1.46 approve is an action of its own: a rule can let one principal decide dream candidates on a graph and refuse everyone else, and the JSON Schema names it", () => {
+  it("PX1.47 approve is an action of its own: a rule can let one principal decide dream candidates on a graph and refuse everyone else, and the JSON Schema names it", () => {
     const p = policy([
       { when: { principal: "lead", actions: ["approve"] }, allow: true },
       { when: { actions: ["approve"] }, allow: false },

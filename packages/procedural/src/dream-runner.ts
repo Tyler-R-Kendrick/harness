@@ -180,10 +180,10 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
   const overlayLog = store.overlay(graph);
 
   async function inputOf(started: Started): Promise<DreamInput> {
-    const record = await store.revisions.get(started.head);
+    const record = await store.revisions.get(graph, started.head);
     const parsed = parseGraph(record?.document);
     if (!parsed.ok) throw new Error(`the dream's starting revision ${started.head} is missing or does not parse`);
-    const rejections = (await Promise.all(started.rejections.map((id) => store.revisions.get(id)))).filter((r) => r !== undefined);
+    const rejections = (await Promise.all(started.rejections.map((id) => store.revisions.get(graph, id)))).filter((r) => r !== undefined);
     // Stryker disable next-line ConditionalExpression: equivalent; reading no entries from offset 0 is the empty list
     const events = started.overlay === 0 ? [] : (await overlayLog.read(0, started.overlay)).map((e) => e.event);
     return {
@@ -245,9 +245,9 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
     return { none: reasons.join("; ") };
   }
 
-  /** Put a rejection, unless the id already holds a record that is not one (an older head, an import proposal): ids are content, and put replaces. */
+  /** Put a rejection, unless the graph already holds a record of the id that is not one (an older head, an import proposal): ids are content, and put replaces. */
   async function putRejection(record: RevisionRecord): Promise<void> {
-    const existing = await store.revisions.get(record.id);
+    const existing = await store.revisions.get(graph, record.id);
     if (existing === undefined || isRejection(existing)) await store.revisions.put(record);
   }
 
@@ -257,7 +257,7 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
    * import) is not announced again, and a head's record stays.
    */
   async function propose(record: RevisionRecord, tools: readonly string[]): Promise<void> {
-    const existing = await store.revisions.get(record.id);
+    const existing = await store.revisions.get(graph, record.id);
     if (existing !== undefined && !isRejection(existing)) return;
     await store.revisions.put(record);
     await ports.inbox!.pending({ graph, candidate: record, tools });
@@ -299,7 +299,7 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       case "commit": {
         const { record, expected } = command;
         // An id is its content: a candidate equal to an older revision replaces that record while it is the head.
-        const earlier = await store.revisions.get(record.id);
+        const earlier = await store.revisions.get(graph, record.id);
         await store.revisions.put(record);
         // Stryker disable next-line OptionalChaining: equivalent; a head that a compare-and-set just saw is never removed
         const ok = (await store.heads.set(graph, expected, record.id)) || (await store.heads.get(graph))?.revision === record.id;

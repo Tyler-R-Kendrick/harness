@@ -65,7 +65,7 @@ describe("harness-procedural CLI", () => {
     await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(next), graph, parents: [seed], document: next, edits: null, origin: "dream", evidence: {}, decision: { kind: "head" }, at: 1 }));
     await store.heads.set(graph, seed, revisionId(next));
     expect(await json("revert", "team/search")).toEqual({ status: "reverted", from: revisionId(next), to: seed });
-    expect(await json("history", "team/search")).toMatchObject({ head: seed, revisions: [{ id: revisionId(next) }, { id: seed, origin: "revert" }] });
+    expect(await json("history", "team/search")).toMatchObject({ head: seed, heads: [seed, revisionId(next), seed], revisions: [{ id: seed, origin: "import" }, { id: revisionId(next), origin: "dream" }] });
   });
 
   it("PX2.47 results a caller handles exit 1 with the result; a dream that cannot run (no head) exits 1; bad usage exits 2", async () => {
@@ -105,7 +105,7 @@ describe("harness-procedural CLI", () => {
     await expect(cli("dream", "team/search", "--model", "provider/model", "--procedural-eval", await tasks("d.json", { tasks: [] }))).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/d\.json: invalid task suite/) });
   });
 
-  it("PX2.82 approvals lists what waits for approval, approve commits a candidate on the head, decline rejects one; deciding one that is not waiting exits 1, and approve or decline need a candidate", async () => {
+  it("PX2.82 approvals lists what waits for approval, approve commits a graph's candidate on its head, decline rejects one; deciding one that is not waiting exits 1, and approve or decline need a graph and a candidate", async () => {
     const { dir, cli, json } = await setup();
     const file = join(dir, "graph.json");
     await writeFile(file, JSON.stringify(expert));
@@ -114,17 +114,19 @@ describe("harness-procedural CLI", () => {
     await json("import", "team/search");
     expect(await json("import", "team/search", file)).toEqual({ status: "proposed", revision: proposal, head: seed });
     expect(await json("approvals", "team/search")).toMatchObject({ graph: "team/search", head: seed, approvals: [{ candidate: proposal, origin: "import", onHead: true }] });
-    expect(await json("approve", proposal)).toEqual({ status: "committed", graph: "team/search", candidate: proposal, revision: proposal, previous: seed });
-    await expect(cli("approve", proposal)).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("not waiting for approval") });
+    expect(await json("approve", "team/search", proposal)).toEqual({ status: "committed", graph: "team/search", candidate: proposal, revision: proposal, previous: seed });
+    await expect(cli("approve", "team/search", proposal)).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining("not waiting for approval") });
     const other = { ...expert, edges: [expert.edges[0], { ...expert.edges[1], guidance: "Answer briefly." }] };
     const otherId = revisionId(CandidateDocumentSchema.parse(other));
     await writeFile(file, JSON.stringify(other));
     await json("import", "team/search", file);
-    expect(await json("decline", otherId)).toEqual({ status: "declined", graph: "team/search", candidate: otherId });
+    expect(await json("decline", "team/search", otherId)).toEqual({ status: "declined", graph: "team/search", candidate: otherId });
     expect(await json("approvals", "team/search")).toMatchObject({ head: proposal, approvals: [] });
-    await expect(cli("approve", "0".repeat(64))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"missing"') });
-    await expect(cli("decline", "abc")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("invalid procedural.decline input") });
+    await expect(cli("approve", "team/search", "0".repeat(64))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"missing"') });
+    await expect(cli("decline", "team/search", "abc")).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining("invalid procedural.decline input") });
     await expect(cli("approve")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("approve", "team/search")).rejects.toMatchObject({ code: 2 });
+    await expect(cli("decline", "team/search", proposal, "extra")).rejects.toMatchObject({ code: 2 });
     await expect(cli("approvals", "team/search", "extra")).rejects.toMatchObject({ code: 2 });
   });
 });

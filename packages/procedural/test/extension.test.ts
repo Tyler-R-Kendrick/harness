@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { GraphIdSchema, parseGraph, parseSettings, proceduralExtension, revisionId, seedGraph } from "@harness/procedural";
-import type { ApprovalNotice, GraphId, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
+import { GraphIdSchema, MemoryProceduralStore, parseGraph, parseSettings, proceduralExtension, revisionId, seedGraph } from "@harness/procedural";
+import type { ApprovalNotice, GraphId, LearnerResult, ProceduralAction, ProceduralExtensionOptions } from "@harness/procedural";
 import { hotpot } from "./fixtures.ts";
+import { paper, setup, turnOf } from "./learner-setup.ts";
 import { proposed, shortcut } from "./overlay-fixtures.ts";
 import { FakeStore } from "./store-fake.ts";
 
@@ -77,14 +78,40 @@ describe("proceduralExtension", () => {
   });
 
   it("PX2.34 feedback scores a session's turn through the live learner, on the graph the session is pinned to", async () => {
-    const feedback = vi.fn(async () => undefined);
+    const feedback = vi.fn(async (): Promise<LearnerResult> => ({ kind: "rescored", turnKey: "s1/t3", graph, appended: [] }));
     const store = new FakeStore();
     await store.pins.set("s1", { graph, core: revisionId(core()), overlay: 0, salt: "x", at: 0 });
     const { op } = extension({ store, feedback });
     expect(await op("feedback", { session: "s1", turn: "t3", score: 0.25 })).toEqual({ status: "recorded", graph });
     expect(feedback).toHaveBeenCalledWith("s1", "t3", 0.25);
-    expect(await op("feedback", { session: "s2", turn: "t1", score: 1 })).toEqual({ status: "missing", reason: "session s2 is not pinned to a graph" });
+    expect(await op("feedback", { session: "s2", turn: "t1", score: 1 })).toEqual({ status: "no-pin", reason: "session s2 is not pinned to a graph" });
     expect(await extension({ store }).op("feedback", { session: "s1", turn: "t3", score: 1 })).toEqual({ status: "unavailable", reason: "no live learner is configured" });
+  });
+
+  it("PX2.66 feedback answers what the learner did with the score: recorded, unknown-turn, no-pin or invalid", async () => {
+    const t = setup();
+    t.pin("s1");
+    t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
+    const pinned = (await t.store.pins.get("s1"))!.graph;
+    const { op } = extension({ store: t.store, feedback: (session, turn, score) => t.learner.feedback(session, turn, score) });
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "recorded", graph: pinned });
+    // A rescore, and the same score again, are recorded too.
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.75 })).toEqual({ status: "recorded", graph: pinned });
+    expect(await op("feedback", { session: "s1", turn: "t1", score: 0.75 })).toEqual({ status: "recorded", graph: pinned });
+    expect(await op("feedback", { session: "s1", turn: "absent", score: 0.5 })).toEqual({ status: "unknown-turn", graph: pinned, reason: "the log does not hold the turn, or it names no graph" });
+    t.pin("a/b");
+    expect(await op("feedback", { session: "a/b", turn: "t1", score: 0.5 })).toEqual({ status: "invalid", reason: "a session id with '/' cannot key a turn" });
+    // The pin went between the operation's check and the learner's.
+    const racing = extension({ store: t.store, feedback: async (session, turn, score) => (t.store.pinOf.delete(session), t.learner.feedback(session, turn, score)) });
+    expect(await racing.op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "no-pin", reason: "the session has no pin, so no graph" });
+  });
+
+  it("PX2.67 feedback is unavailable when no learner answers, or the learner's preset keeps no overlay", async () => {
+    const t = setup({ preset: paper });
+    t.pin("s1");
+    const pinned = (await t.store.pins.get("s1"))!.graph;
+    expect(await extension({ store: t.store, feedback: (session, turn, score) => t.learner.feedback(session, turn, score) }).op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "unavailable", graph: pinned, reason: "the preset has no overlay" });
+    expect(await extension({ store: t.store, feedback: async () => undefined }).op("feedback", { session: "s1", turn: "t1", score: 0.5 })).toEqual({ status: "unavailable", graph: pinned, reason: "no live learner is running" });
   });
 
   it("PX2.35 every operation checks the policy for its action on its graph first; a refusal throws and nothing runs", async () => {
@@ -151,7 +178,7 @@ describe("proceduralExtension", () => {
       return revisionId(parsed.graph);
     };
 
-    it("PX2.75 approvals lists what waits (an import proposal announced as requested), approve commits it and decline rejects it, each announced as decided", async () => {
+    it("PX2.108 approvals lists what waits (an import proposal announced as requested), approve commits it and decline rejects it, each announced as decided", async () => {
       const notices: ApprovalNotice[] = [];
       const { op, store } = extension({ notify: (n) => void notices.push(n) });
       await op("import", { graph, document: hotpot() });
@@ -160,12 +187,12 @@ describe("proceduralExtension", () => {
       const requested = { type: "procedural.approval.requested", payload: { graph, candidate: expertId(), origin: "import", parent: revisionId(core()), tools: [] } };
       expect(notices).toEqual([requested]);
       expect(await op("approvals", { graph })).toEqual({ graph, head: revisionId(core()), approvals: [{ candidate: expertId(), graph, origin: "import", parent: revisionId(core()), onHead: true, at: 5, edits: null, tools: [] }] });
-      expect(await op("approve", { candidate: expertId() })).toEqual({ status: "committed", graph, candidate: expertId(), revision: expertId(), previous: revisionId(core()) });
+      expect(await op("approve", { graph, candidate: expertId() })).toEqual({ status: "committed", graph, candidate: expertId(), revision: expertId(), previous: revisionId(core()) });
       expect(notices.at(-1)).toEqual({ type: "procedural.approval.decided", payload: { graph, candidate: expertId(), decision: "approved", revision: expertId() } });
       expect(store.headOf.get(graph)?.revision).toBe(expertId());
       // Deciding it again is refused, and nothing is announced.
-      expect(await op("decline", { candidate: expertId() })).toMatchObject({ status: "refused", reason: expect.stringContaining("not waiting for approval") });
-      expect(await op("approve", { candidate: expertId() })).toMatchObject({ status: "refused" });
+      expect(await op("decline", { graph, candidate: expertId() })).toMatchObject({ status: "refused", reason: expect.stringContaining("not waiting for approval") });
+      expect(await op("approve", { graph, candidate: expertId() })).toMatchObject({ status: "refused" });
       expect(notices).toHaveLength(2);
       // Another proposal, declined.
       const shorter = hotpot();
@@ -174,20 +201,20 @@ describe("proceduralExtension", () => {
       if (!parsed.ok) throw new Error("fixture");
       const other = revisionId(parsed.graph);
       await op("import", { graph, document: shorter });
-      expect(await op("decline", { candidate: other })).toEqual({ status: "declined", graph, candidate: other });
+      expect(await op("decline", { graph, candidate: other })).toEqual({ status: "declined", graph, candidate: other });
       expect(notices.at(-1)).toEqual({ type: "procedural.approval.decided", payload: { graph, candidate: other, decision: "declined" } });
       expect(store.records.get(other)?.decision).toEqual({ kind: "rejected-gate", gate: "approval", reason: "declined by the approver" });
       const unknown = "0".repeat(64);
-      expect(await op("approve", { candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded` });
-      expect(await op("decline", { candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded` });
+      expect(await op("approve", { graph, candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded in graph team/search` });
+      expect(await op("decline", { graph, candidate: unknown })).toEqual({ status: "missing", reason: `no candidate ${unknown} is recorded in graph team/search` });
       // Without a notifier the operations work the same.
       const quiet = extension();
       await quiet.op("import", { graph, document: hotpot() });
       await quiet.op("import", { graph, document: expert() });
-      expect(await quiet.op("approve", { candidate: expertId() })).toMatchObject({ status: "committed" });
+      expect(await quiet.op("approve", { graph, candidate: expertId() })).toMatchObject({ status: "committed" });
     });
 
-    it("PX2.76 approvals, approve and decline are the approve action, on the graph named or the candidate's graph; a refusal throws and nothing is decided", async () => {
+    it("PX2.109 approvals, approve and decline are the approve action, on the graph they name; a refusal throws and nothing is decided", async () => {
       const asked: [ProceduralAction, string][] = [];
       const store = new FakeStore();
       const setup = extension({ store });
@@ -195,7 +222,7 @@ describe("proceduralExtension", () => {
       await setup.op("import", { graph, document: expert() });
       const notices: ApprovalNotice[] = [];
       const { op } = extension({ store, notify: (n) => void notices.push(n), authorize: (action, g) => (asked.push([action, g]), action !== "approve") });
-      for (const [name, input] of [["approvals", { graph }], ["approve", { candidate: expertId() }], ["decline", { candidate: expertId() }]] as const) {
+      for (const [name, input] of [["approvals", { graph }], ["approve", { graph, candidate: expertId() }], ["decline", { graph, candidate: expertId() }]] as const) {
         await expect(op(name, input)).rejects.toThrow(`procedural.${name}: approve on graph team/search is not allowed`);
         expect(asked.at(-1)).toEqual(["approve", graph]);
       }
@@ -204,11 +231,30 @@ describe("proceduralExtension", () => {
       await expect(op("import", { graph, document: hotpot() })).resolves.toMatchObject({ status: "known" });
     });
 
-    it("PX2.77 their malformed input throws, naming the operation", async () => {
+    it("PX2.113 approve and decline name the candidate's graph: the same document waiting in two graphs is decided in the named graph only", async () => {
+      const other = GraphIdSchema.parse("team/web");
+      const store = new MemoryProceduralStore();
+      const { op } = extension({ store });
+      for (const g of [graph, other]) {
+        await op("import", { graph: g, document: hotpot() });
+        expect(await op("import", { graph: g, document: expert() })).toMatchObject({ status: "proposed" });
+      }
+      expect(await op("approve", { graph: other, candidate: expertId() })).toMatchObject({ status: "committed", graph: other, revision: expertId() });
+      expect((await store.heads.get(other))?.revision).toBe(expertId());
+      expect((await store.heads.get(graph))?.revision).toBe(revisionId(core()));
+      expect((await store.revisions.get(graph, expertId()))?.decision).toEqual({ kind: "pending-approval" });
+      expect(await op("decline", { graph, candidate: expertId() })).toEqual({ status: "declined", graph, candidate: expertId() });
+      expect((await store.revisions.get(other, expertId()))?.decision.kind).not.toBe("rejected-gate");
+      // A candidate of another graph is not recorded under this one.
+      expect(await op("approve", { graph: GraphIdSchema.parse("team/none"), candidate: expertId() })).toEqual({ status: "missing", reason: `no candidate ${expertId()} is recorded in graph team/none` });
+    });
+
+    it("PX2.110 their malformed input throws, naming the operation", async () => {
       const { op } = extension();
       await expect(op("approvals", {})).rejects.toThrow(/invalid procedural\.approvals input/);
-      await expect(op("approve", { candidate: "abc" })).rejects.toThrow(/invalid procedural\.approve input[\s\S]*candidate/);
-      await expect(op("decline", { candidate: expertId(), graph })).rejects.toThrow(/invalid procedural\.decline input/);
+      await expect(op("approve", { graph, candidate: "abc" })).rejects.toThrow(/invalid procedural\.approve input[\s\S]*candidate/);
+      await expect(op("decline", { candidate: expertId() })).rejects.toThrow(/invalid procedural\.decline input[\s\S]*graph/);
+      await expect(op("decline", { graph, candidate: expertId(), extra: 1 })).rejects.toThrow(/invalid procedural\.decline input/);
     });
   });
 });

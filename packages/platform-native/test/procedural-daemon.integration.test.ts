@@ -40,7 +40,7 @@ describe("procedural graphs on the native daemon", () => {
     expect(await invoke(first.client, "procedural.export", { graph: "team/search", format: "mermaid" })).toMatchObject({ status: "ok", text: expect.stringMatching(/^flowchart TD\n/) });
     // Dream and feedback reach the host's dream runner and live learner.
     expect(await invoke(first.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
-    expect(await invoke(first.client, "procedural.feedback", { session: "s", turn: "t", score: 1 })).toEqual({ status: "missing", reason: "session s is not pinned to a graph" });
+    expect(await invoke(first.client, "procedural.feedback", { session: "s", turn: "t", score: 1 })).toEqual({ status: "no-pin", reason: "session s is not pinned to a graph" });
     first.child.stdin.end();
     expect(await first.exited).toBe(0);
 
@@ -130,7 +130,7 @@ describe("procedural graphs on the native daemon", () => {
     expect(await run(...procedural, "--workflows", join(dir, "wf"), "--procedural-eval", file("e.json", { ...valid, tools: [{ name: "lookup" }] }))).toMatchObject({ code: 2 });
   });
 
-  it("PX2.79 the approvals inbox over ACP: an import proposal waits and is announced on the hook bus, procedural.approve commits it, procedural.decline rejects another, each decision announced; the policy's approve action guards them", async () => {
+  it("PX2.112 the approvals inbox over ACP: an import proposal waits and is announced on the hook bus, procedural.approve commits it, procedural.decline rejects another, each decision announced; the policy's approve action guards them", async () => {
     const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
     const state = join(dir, "state.json");
     const expert = {
@@ -157,9 +157,9 @@ describe("procedural graphs on the native daemon", () => {
     await invoke(daemon.client, "procedural.import", { graph: "team/search" });
     expect(await invoke(daemon.client, "procedural.import", { graph: "team/search", document: expert })).toEqual({ status: "proposed", revision: proposal, head: seed });
     expect(await invoke(daemon.client, "procedural.approvals", { graph: "team/search" })).toMatchObject({ head: seed, approvals: [{ candidate: proposal, origin: "import", onHead: true }] });
-    expect(await invoke(daemon.client, "procedural.approve", { candidate: proposal })).toEqual({ status: "committed", graph: "team/search", candidate: proposal, revision: proposal, previous: seed });
+    expect(await invoke(daemon.client, "procedural.approve", { graph: "team/search", candidate: proposal })).toEqual({ status: "committed", graph: "team/search", candidate: proposal, revision: proposal, previous: seed });
     await invoke(daemon.client, "procedural.import", { graph: "team/search", document: other });
-    expect(await invoke(daemon.client, "procedural.decline", { candidate: declined })).toEqual({ status: "declined", graph: "team/search", candidate: declined });
+    expect(await invoke(daemon.client, "procedural.decline", { graph: "team/search", candidate: declined })).toEqual({ status: "declined", graph: "team/search", candidate: declined });
     expect(await invoke(daemon.client, "procedural.approvals", { graph: "team/search" })).toMatchObject({ head: proposal, approvals: [] });
     daemon.child.stdin.end();
     expect(await daemon.exited).toBe(0);
@@ -180,7 +180,7 @@ describe("procedural graphs on the native daemon", () => {
     await guarded.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     await invoke(guarded.client, "procedural.import", { graph: "team/search", document: other });
     await expect(invoke(guarded.client, "procedural.approvals", { graph: "team/search" })).rejects.toMatchObject({ message: expect.stringContaining("approve on graph team/search is not allowed") });
-    await expect(invoke(guarded.client, "procedural.approve", { candidate: declined })).rejects.toMatchObject({ message: expect.stringContaining("approve on graph team/search is not allowed") });
+    await expect(invoke(guarded.client, "procedural.approve", { graph: "team/search", candidate: declined })).rejects.toMatchObject({ message: expect.stringContaining("approve on graph team/search is not allowed") });
     guarded.child.stdin.end();
     expect(await guarded.exited).toBe(0);
   });

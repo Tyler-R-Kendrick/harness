@@ -99,7 +99,7 @@ describe("procedural graphs in the browser host", () => {
     };
     const { revision } = (await invokeCognitive(ensemble, "procedural.import", { graph: "g", document: expert })) as { revision: string };
     expect(notices.map((n) => n.type)).toEqual(["procedural.approval.requested"]);
-    expect(await invokeCognitive(ensemble, "procedural.approve", { candidate: revision })).toMatchObject({ status: "committed", revision });
+    expect(await invokeCognitive(ensemble, "procedural.approve", { graph: "g", candidate: revision })).toMatchObject({ status: "committed", revision });
     expect(notices.map((n) => n.type)).toEqual(["procedural.approval.requested", "procedural.approval.decided"]);
     expect((await store.heads.get(GraphIdSchema.parse("g")))?.revision).toBe(revision);
   });

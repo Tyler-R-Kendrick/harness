@@ -88,7 +88,7 @@ describe("dream's evaluator on the native host (--procedural-eval)", () => {
     expect(result).toMatchObject({ status: "done", score: 1, rounds: [{ round: 1, outcome: "committed" }] });
     const head = await store.heads.get(graph);
     expect(head?.history).toEqual([revisionId(seed)]);
-    expect((await store.revisions.get(head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Verify each answer, then search." });
+    expect((await store.revisions.get(graph, head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Verify each answer, then search." });
     // The refiner was told the suite's task and shown the training rollout; the solver answered every task.
     expect(refined[0]).toContain("Name the capital of a country.");
     expect(refined[0]).toContain("Capital of Spain?");

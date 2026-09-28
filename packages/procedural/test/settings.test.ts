@@ -149,7 +149,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
-  it("PG1.48 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
+  it("PG1.51 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
     expect(presetOf(settings(), "harness").dream).toMatchObject({ every: 7 * 24 * 3_600_000, afterTurns: 50 });
     expect(presetOf(settings(), "paper").dream.every).toBeUndefined();
     expect(presetOf(settings(), "paper").dream.afterTurns).toBeUndefined();
@@ -184,6 +184,15 @@ describe("procedural settings (data/settings.json)", () => {
     expect(parseSettings(settings())).toEqual(settings());
     expect(DurationSchema.safeParse(0).success).toBe(false);
     expect(DurationSchema.safeParse(1.5).success).toBe(false);
+  });
+
+  it("PG1.48 the step hook's per-session state is bounded by data: an idle time in milliseconds and a session cap, both positive whole numbers", () => {
+    expect(settings().sessions).toEqual({ idleMs: 1_800_000, max: 1024 });
+    expect(edit(["sessions", "idleMs"], 0)).toThrow(/sessions\.idleMs/);
+    expect(edit(["sessions", "idleMs"], 1.5)).toThrow(/sessions\.idleMs/);
+    expect(edit(["sessions", "max"], 0)).toThrow(/sessions\.max/);
+    expect(edit(["sessions", "extra"], 1)).toThrow(/sessions/);
+    expect(edit(["sessions"], undefined)).toThrow(/sessions/);
   });
 
   it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {

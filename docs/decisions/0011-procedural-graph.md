@@ -166,6 +166,12 @@ The decision held; these details moved.
   edits there when the head moved) and commits by compare-and-set. Proposals and
   decisions are announced on the hook bus through the host publish API. The CLI still
   asks on a terminal when it has one.
+- **One owner per store directory.** The snapshot store loads its file once and saves it
+  whole, so two processes over one directory would lose each other's writes. A lock file
+  in the directory names its holder; the daemon refuses to start on a held store, and
+  `harness-procedural` either holds the lock for its run or, when a daemon holds it and
+  listens on a socket, sends its operation to that daemon's `procedural.*`. We chose a
+  lock over routing alone because a daemon on stdio has no socket to reach.
 - **Dream runs on demand and on a schedule.** `procedural.dream` and
   `harness-procedural dream` start it, and the preset's schedule (`dream.every`, a
   duration, or `dream.afterTurns`, observed turns since the last dream) starts it from
@@ -177,12 +183,27 @@ The decision held; these details moved.
   the user's; the framework ships the evaluator, its contract and the metrics.
 - **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
   event with `rescore`, which moves the turn's score without a new traversal.
+- **Turns walk into terminals by rule.** Reaching `End` is no action, so a path of
+  matched actions never showed it. A turn that ends (`end_turn`) with a final answer
+  after a matched node with an edge to exactly one terminal walks on to that terminal,
+  so edges into `End` get statistics and cautions.
+- **A step's model usage is its own record.** A step record precedes its model call, so
+  the step's AI SDK usage (from `onStepEnd`, for agents and harnesses alike) follows it as
+  a usage record, and projection sums those into the trajectory's tokens.
+- **The step hook's session state is a bounded cache.** It is evicted on detach, after an
+  idle time and beyond a session cap (settings data, measured with the Clock port). A
+  step that continues its turn after eviction reads its stored pin as it is, so I3 holds.
+- **Feedback answers what the learner did.** `procedural.feedback` returns `recorded`,
+  `unknown-turn`, `no-pin` or `invalid` from the learner's result, not `recorded` always.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host
   builds on the ensemble's generator, so the harness preset can keep reflection off
   while a deployment turns it on with data.
-- **Records are keyed by content.** A rejection never replaces an older head's or an
-  import's record with the same id, and a commit that loses the head race puts back the
-  record it replaced.
+- **Records are keyed by graph and content.** A revision's id is its document's hash, and
+  the store keys its record by the graph too, so two graphs that hold the same document
+  each keep their own record. Within a graph a rejection never replaces an older head's
+  or an import's record with the same id, and a commit that loses the head race puts
+  back the record it replaced. Redaction follows the content into every graph. A revert
+  writes no record: its target is already recorded, and the heads show the move back.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 

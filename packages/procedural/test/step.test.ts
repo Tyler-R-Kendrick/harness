@@ -15,8 +15,9 @@ import {
   RevisionIdSchema,
   sha256Hex,
   StepRecordSchema,
+  StepUsageSchema,
 } from "@harness/procedural";
-import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
+import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, StepUsageNotice } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
@@ -343,7 +344,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(pins).toHaveBeenCalledTimes(2);
   });
 
-  it("PW1.64 core gives the core the session reads this turn, pinned as a step pins it: the turn's steps then read the same core, even when the head moves; no graph is undefined", async () => {
+  it("PW1.73 core gives the core the session reads this turn, pinned as a step pins it: the turn's steps then read the same core, even when the head moves; no graph is undefined", async () => {
     const s = await setup("harness");
     const hook = proceduralStep(s.deps);
     const pins = pinCount(s);
@@ -395,7 +396,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     await expect(proceduralStep(missing.deps).prepare(input(missing, [user("q")]))).rejects.toThrow(/pinned core revision a{64} of graph team\/retrieval is missing/);
     const broken = await setup("paper");
     const id = (await broken.store.heads.get(GRAPH))!.revision;
-    const record = (await broken.store.revisions.get(id))!;
+    const record = (await broken.store.revisions.get(GRAPH, id))!;
     const document = { ...record.document, nodes: record.document.nodes.filter((n) => n.id !== "Start" && n.id !== "End") };
     await broken.store.revisions.put({ ...record, document });
     const bad = parseGraph(document);
@@ -514,6 +515,124 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
     const late = proceduralStep({ ...s.deps, settings: withPreset("harness", { repinOnDream: "never", overlayRefresh: "session" }) });
     await late.prepare(input(s, [user("q")], { sessionId: "s9" }));
     expect(s.records[2]).toMatchObject({ core: s.records[0]!.core, overlay: 0, exposure: [] });
+  });
+});
+
+describe("per-session state: evicted when a session is forgotten, idle or least recently used", () => {
+  /** Settings whose session state lasts `idleMs` and holds `max` sessions. */
+  const bounded = (idleMs: number, max: number) => parseSettings({ ...settingsFile, sessions: { idleMs, max } });
+
+  it("PW1.69 forget evicts a session's state: its next step has no cached guidance; forgetting an unknown session changes nothing", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    await hook.prepare(input(s, [user("q")], { stepNumber: 1 }));
+    expect(s.records.at(-1)!.cached).toBe(true);
+    hook.forget("s1");
+    hook.forget("nobody");
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    expect(s.records.map((r) => r.cached)).toEqual([false, true, false]);
+    expect(s.guidance.doGenerateCalls).toHaveLength(2);
+  });
+
+  it("PW1.70 a session idle for longer than the settings' idle time, by the clock, is evicted at the next step of any session", async () => {
+    const s = await setup("harness", { settings: bounded(1000, 16) });
+    const clock = s.deps.clock as ManualClock;
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    clock.advance(1000);
+    await hook.prepare(input(s, [user("q")], { stepNumber: 1 }));
+    expect(s.records.at(-1)!.cached).toBe(true);
+    clock.advance(1001);
+    // Another session's step sweeps the idle one; the sweeper itself is new, so it is guided afresh.
+    await hook.prepare(input(s, [user("q")], { sessionId: "s2" }));
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    expect(s.records.at(-1)!.cached).toBe(false);
+    // Its own late step finds it gone too.
+    clock.advance(1001);
+    await hook.prepare(input(s, [user("q")], { stepNumber: 3 }));
+    expect(s.records.at(-1)!.cached).toBe(false);
+    // Harness turns count as use, and are swept alike.
+    await hook.turn({ ...input(s, [user("q")], { sessionId: "h1" }), lastAction: undefined });
+    clock.advance(1001);
+    await hook.turn({ ...input(s, [user("q")], { sessionId: "h1", turnId: "t2" }), lastAction: undefined });
+    expect(s.records.at(-1)!.cached).toBe(false);
+  });
+
+  it("PW1.71 beyond the settings' cap the least recently used session is evicted", async () => {
+    const s = await setup("harness", { settings: bounded(1_000_000, 2) });
+    const hook = proceduralStep(s.deps);
+    const step = async (sessionId: string, stepNumber: number) => {
+      await hook.prepare(input(s, [user("q")], { sessionId, stepNumber }));
+      return s.records.at(-1)!.cached;
+    };
+    await step("s1", 0);
+    await step("s2", 0);
+    expect(await step("s1", 1)).toBe(true);
+    await step("s3", 0);
+    // s2 was the least recently used of three.
+    expect(await step("s1", 2)).toBe(true);
+    expect(await step("s3", 1)).toBe(true);
+    expect(await step("s2", 1)).toBe(false);
+    // s2 came back and pushed out s1, now the least recent.
+    expect(await step("s1", 3)).toBe(false);
+  });
+
+  it("PW1.72 a step that continues its turn after eviction reads the pin it had (one version pair per turn); a new turn re-pins", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    const first = s.records[0]!.core;
+    const next = await seed(s.store, variant("."), GRAPH, "dream");
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 1 }));
+    // An approval round restarts the stream at step 0 on a conversation ending with tool results: the same turn.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 0 }));
+    // A later step of the stream continues the turn whatever its messages end with.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    // Advisories and system messages are not the conversation: one after the tool results still continues the turn.
+    const advisory: ModelMessage = { role: "user", content: `${GUIDANCE_LABEL}advice`, providerOptions: { [HARNESS]: ADVISORY } };
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve"), advisory], { stepNumber: 0 }));
+    expect(s.records.map((r) => r.core)).toEqual([first, first, first, first, first]);
+    // A new prompt followed by a system message starts a turn.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), { role: "system", content: "Be brief." }], { turnId: "t1b" }));
+    expect(s.records.at(-1)!.core).toBe(next);
+    await pinned(s, "s1", { core: first });
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve"), user("again")], { turnId: "t2" }));
+    expect(s.records.at(-1)!.core).toBe(next);
+    // A continuing step with no pin, or a pin on another graph, is pinned as at a boundary.
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "fresh", stepNumber: 1 }));
+    expect(s.records.at(-1)!.core).toBe(next);
+    await pinned(s, "moved", { graph: GraphIdSchema.parse("team/other"), core: first });
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "moved", stepNumber: 1 }));
+    expect(s.records.at(-1)).toMatchObject({ graph: GRAPH, core: next });
+    expect(await s.store.pins.get("moved")).toMatchObject({ graph: GRAPH, core: next });
+  });
+});
+
+describe("step usage", () => {
+  it("PW1.67 a step's model usage is reported, once the step ends, as a usage record of a session with a graph; a session without one reports nothing", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    const usages: StepUsageNotice[] = [];
+    const scope = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n) };
+    await hook.end({ ...scope, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    await hook.end({ ...scope, stepNumber: 1, usage: { inputTokens: undefined } });
+    expect(usages).toEqual([
+      { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "40 input and 7 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 40, outputTokens: 7 } } } } },
+      { sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: "0 input and 0 output tokens", _meta: { harness: { procedural: { usage: { inputTokens: 0, outputTokens: 0 } } } } },
+    ]);
+    expect(StepUsageSchema.parse(usages[0]!._meta.harness.procedural.usage)).toEqual({ inputTokens: 40, outputTokens: 7 });
+    for (const bad of [{ inputTokens: -1, outputTokens: 0 }, { inputTokens: 0, outputTokens: -1 }, { inputTokens: 1.5, outputTokens: 0 }, { inputTokens: 1 }, { outputTokens: 1 }]) expect(StepUsageSchema.safeParse(bad).success).toBe(false);
+    await hook.end({ ...scope, sessionMeta: { procedural: "off" }, stepNumber: 0, usage: { inputTokens: 40, outputTokens: 7 } });
+    expect(usages).toHaveLength(2);
+    // Nothing is read or pinned for it.
+    expect(await s.store.pins.get("s1")).toBeUndefined();
   });
 });
 

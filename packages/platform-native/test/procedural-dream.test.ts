@@ -73,7 +73,7 @@ describe("dream on the native host", () => {
     expect(asked).toHaveLength(1);
     const head = await store.heads.get(graph);
     expect(head?.history).toEqual([revisionId(seed)]);
-    expect((await store.revisions.get(head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Search first." });
+    expect((await store.revisions.get(graph, head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Search first." });
     connection.disconnect();
     await host.close();
   });
@@ -136,7 +136,7 @@ describe("dream on the native host", () => {
     expect((bare as { rounds: unknown[] }).rounds).toHaveLength(3);
   });
 
-  it("PX2.78 in the native daemon, a dream with no approver leaves a candidate needing approval in the inbox and announces it on the hook bus; procedural.approve over ACP commits it on the head and announces the decision", async () => {
+  it("PX2.111 in the native daemon, a dream with no approver leaves a candidate needing approval in the inbox and announces it on the hook bus; procedural.approve over ACP commits it on the head and announces the decision", async () => {
     const store = new MemoryProceduralStore();
     await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
     await store.heads.set(graph, undefined, revisionId(seed));
@@ -176,7 +176,7 @@ describe("dream on the native host", () => {
     await watcher.drain();
     expect(events.map((e) => [e.type, e.source, e.payload])).toEqual([["procedural.approval.requested", "procedural", expect.objectContaining({ graph, candidate, tools: ["search"] })]]);
 
-    expect(await invoke("procedural.approve", { candidate })).toEqual({ status: "committed", graph, candidate, revision: candidate, previous: revisionId(seed) });
+    expect(await invoke("procedural.approve", { graph, candidate })).toEqual({ status: "committed", graph, candidate, revision: candidate, previous: revisionId(seed) });
     expect(await store.heads.get(graph)).toEqual({ revision: candidate, history: [revisionId(seed)] });
     expect((await invoke("procedural.approvals", { graph })) as { approvals: unknown[] }).toMatchObject({ approvals: [] });
     await watcher.drain();

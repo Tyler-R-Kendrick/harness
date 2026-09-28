@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
@@ -16,7 +16,8 @@ import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativeProceduralStep, nativeTaskEvaluator, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { daemonSessions, hookNotifier, hostAuthorizer, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativeProceduralStep, nativeStepEvictions, nativeTaskEvaluator, proceduralStore } from "./procedural-host.ts";
+import { lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
   options: {
@@ -119,6 +120,16 @@ const proceduralPolicy = values["procedural-policy"] === undefined ? undefined :
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
 const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; schedule?: ReturnType<typeof nativeDreamSchedule>; notify?: (notice: ApprovalNotice) => void } = {};
 const notify = (notice: ApprovalNotice) => live.notify?.(notice);
+// One process owns a store file: the daemon holds the directory's lock while it runs, and
+// refuses to start while another process (another daemon, or harness-procedural) holds it.
+// A CLI that finds it held sends its operations to this daemon's socket instead.
+const proceduralLock = values.procedural === undefined ? undefined : await lockStore(values.procedural, "harness");
+if (proceduralLock?.status === "held") {
+  const { holder, pid } = proceduralLock.owner;
+  process.stderr.write(`the procedural store in ${values.procedural} is in use by ${holder} (pid ${pid}); stop it first\n`);
+  process.exit(1);
+}
+const storeLock = proceduralLock?.lock;
 const proceduralFiles = values.procedural === undefined ? undefined : proceduralStore(values.procedural);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
@@ -247,16 +258,21 @@ if (procedural && generator) {
   const evaluation = evaluator ? { evaluator, ...(taskSuite?.description === undefined ? {} : { task: taskSuite.description }) } : {};
   // With composition, a dream ends with a composition round over the session tools, which are its tool catalog.
   const composing = composition ? { composer: composition.composer, tools: composition.catalog } : {};
-  live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()), inbox: approvalInbox(notify) }));
+  live.dream = exclusiveDream(nativeDream({ ...procedural, ...evaluation, ...composing, model: generator, sessions: async () => daemonSessions(host.daemon), inbox: approvalInbox(notify) }));
   live.schedule = nativeDreamSchedule({ runtime: host.runtime, ...procedural, dream: live.dream, log: (message) => void process.stderr.write(`${message}\n`) });
 }
 
+// The step hook forgets each session the daemon detaches (its pinned view and guidance cache).
+const evictions = step && nativeStepEvictions({ runtime: host.runtime, step, log: (message) => void process.stderr.write(`${message}\n`) });
+
 const shutdown = async () => {
+  evictions?.close();
   live.learner?.close();
   live.schedule?.close();
   await host.close();
   await harness?.close();
   await cognitive?.close();
+  await storeLock?.release();
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown());
@@ -269,6 +285,8 @@ if (values.stdio) {
 }
 if (values.socket !== undefined) {
   await host.listen(values.socket);
+  // harness-procedural reaches the store through this socket while the daemon holds it.
+  await storeLock?.advertise(resolve(values.socket));
   process.stderr.write(`harness listening on ${values.socket}\n`);
 }
 if (values.ws !== undefined) {

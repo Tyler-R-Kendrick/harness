@@ -6,6 +6,7 @@ import { GraphIdSchema, RevisionIdSchema, ScoreSchema } from "./graph.ts";
 import type { GraphId, RevisionId, RevisionRecord, Score } from "./graph.ts";
 import { exportGraph, graphHistory, importGraph, readGraph, revertGraph } from "./import-export.ts";
 import type { ClockLike } from "./import-export.ts";
+import type { LearnerResult } from "./learner.ts";
 import { presetOf } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
@@ -26,8 +27,8 @@ export interface ProceduralExtensionOptions {
   readonly authorize?: (action: ProceduralAction, graph: GraphId) => boolean;
   /** Runs a dream for a graph (P6's `runDream`, with the host's ports). */
   readonly dream?: (graph: GraphId) => Promise<unknown>;
-  /** Scores a session's turn (P11's `LiveLearner.feedback`). */
-  readonly feedback?: (session: string, turn: string, score: Score) => Promise<unknown>;
+  /** Scores a session's turn (P11's `LiveLearner.feedback`); undefined when no learner is running yet. */
+  readonly feedback?: (session: string, turn: string, score: Score) => Promise<LearnerResult | undefined>;
   /** Announces the approvals inbox's changes (an import proposal, a decision); the host publishes them on its hook bus. */
   readonly notify?: (notice: ApprovalNotice) => void | Promise<void>;
 }
@@ -44,8 +45,8 @@ function inputSchemas() {
     import: z.strictObject({ graph, document: z.unknown().exactOptional() }),
     export: z.strictObject({ graph, revision: RevisionIdSchema.exactOptional(), format: z.enum(["json", "mermaid"]).default("json"), overlay: z.boolean().exactOptional() }),
     approvals: z.strictObject({ graph }),
-    approve: z.strictObject({ candidate: RevisionIdSchema }),
-    decline: z.strictObject({ candidate: RevisionIdSchema }),
+    approve: z.strictObject({ graph, candidate: RevisionIdSchema }),
+    decline: z.strictObject({ graph, candidate: RevisionIdSchema }),
   };
 }
 type Inputs = ReturnType<typeof inputSchemas>;
@@ -60,6 +61,24 @@ function parseInput<O extends Op>(schemas: Inputs, op: O, value: unknown): z.out
 const unavailable = (what: string) => ({ status: "unavailable" as const, reason: `no ${what} is configured` });
 
 /**
+ * What `procedural.feedback` answers for the learner's result: `recorded` when the score
+ * is in the overlay (observed, re-observed, or already there), the skip's code when it
+ * was skipped, and `unavailable` when no learner answered or its preset keeps no overlay.
+ */
+function feedbackOutcome(graph: GraphId, result: LearnerResult | undefined) {
+  if (result === undefined) return { status: "unavailable" as const, graph, reason: "no live learner is running" };
+  switch (result.kind) {
+    case "ignored":
+      return { status: "unavailable" as const, graph, reason: result.reason };
+    case "skipped":
+      // A skip for no pin or an invalid input stands on no graph; an unknown turn is on the pin's.
+      return result.code === "unknown-turn" ? { status: result.code, graph, reason: result.reason } : { status: result.code, reason: result.reason };
+    default:
+      return { status: "recorded" as const, graph };
+  }
+}
+
+/**
  * Procedural graphs as a cognitive-core extension (plan §8.3, P12). It brings no models.
  * Operations, through `_harness/cognitive/invoke`, each checked against the access policy
  * for its action on its graph before anything runs:
@@ -67,15 +86,16 @@ const unavailable = (what: string) => ({ status: "unavailable" as const, reason:
  * - `procedural.graph` (read): a revision (the head by default) with its effective graph
  * - `procedural.history` (read): the heads and every recorded revision
  * - `procedural.export` (read): a revision as JSON, or the effective graph as Mermaid
- * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to
+ * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to;
+ *   it answers what the learner did with it (`recorded`, `unknown-turn`, `no-pin`, `invalid`)
  * - `procedural.dream` (dream): run a dream on the graph
  * - `procedural.revert` (revert): move the head back to an earlier head
  * - `procedural.import` (import): a seed or expert graph; head only for a graph with none,
  *   otherwise a proposal waiting for approval
  * - `procedural.approvals` (approve): the candidates waiting for approval
- * - `procedural.approve` (approve, on the candidate's graph): commit a candidate after the
+ * - `procedural.approve` (approve, on the graph named): commit the graph's candidate after the
  *   structure and evidence gates pass against the current head
- * - `procedural.decline` (approve, on the candidate's graph): reject a candidate
+ * - `procedural.decline` (approve, on the graph named): reject the graph's candidate
  *
  * A new proposal and each decision are announced through `notify`.
  *
@@ -95,11 +115,12 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
   const check = (op: Op, action: ProceduralAction, g: GraphId) => {
     if (!authorize(action, g)) throw new Error(`procedural.${op}: ${action} on graph ${g} is not allowed`);
   };
-  /** Decide a candidate: it must be recorded, and the caller allowed to approve on its graph. */
-  const decide = async (op: "approve" | "decline", candidate: RevisionId, run: (record: RevisionRecord) => Promise<ApprovalResult>) => {
-    const record = await store.revisions.get(candidate);
-    if (record === undefined) return { status: "missing", reason: `no candidate ${candidate} is recorded` };
-    check(op, "approve", record.graph);
+  /** Decide a candidate: the caller allowed to approve on its graph, and it recorded there (records are keyed by graph and id). */
+  const decide = async (op: "approve" | "decline", request: { graph: GraphId; candidate: RevisionId }, run: (record: RevisionRecord) => Promise<ApprovalResult>) => {
+    const { graph: g, candidate } = request;
+    check(op, "approve", g);
+    const record = await store.revisions.get(g, candidate);
+    if (record === undefined) return { status: "missing", reason: `no candidate ${candidate} is recorded in graph ${g}` };
     const result = await run(record);
     await notify(decidedNotice(result));
     return result;
@@ -128,11 +149,10 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       feedback: async (value) => {
         const { session, turn, score } = input("feedback", value);
         const pin = await store.pins.get(session);
-        if (!pin) return { status: "missing", reason: `session ${session} is not pinned to a graph` };
+        if (!pin) return { status: "no-pin", reason: `session ${session} is not pinned to a graph` };
         check("feedback", "write", pin.graph);
         if (!options.feedback) return unavailable("live learner");
-        await options.feedback(session, turn, score);
-        return { status: "recorded", graph: pin.graph };
+        return feedbackOutcome(pin.graph, await options.feedback(session, turn, score));
       },
       dream: async (value) => {
         const { graph: g } = input("dream", value);
@@ -143,13 +163,13 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       revert: async (value) => {
         const request = input("revert", value);
         check("revert", "revert", request.graph);
-        return revertGraph({ store, clock, ...request });
+        return revertGraph({ store, ...request });
       },
       import: async (value) => {
         const request = input("import", value);
         check("import", "import", request.graph);
         const result = await importGraph({ store, clock, cycles, ...request });
-        if (result.status === "proposed") await notify(requestedNotice((await store.revisions.get(result.revision))!));
+        if (result.status === "proposed") await notify(requestedNotice((await store.revisions.get(request.graph, result.revision))!));
         return result;
       },
       approvals: async (value) => {
@@ -157,8 +177,8 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
         check("approvals", "approve", g);
         return listApprovals({ store, graph: g });
       },
-      approve: async (value) => decide("approve", input("approve", value).candidate, (record) => approveCandidate({ store, record, preset, clock })),
-      decline: async (value) => decide("decline", input("decline", value).candidate, (record) => declineCandidate({ store, record })),
+      approve: async (value) => decide("approve", input("approve", value), (record) => approveCandidate({ store, record, preset, clock })),
+      decline: async (value) => decide("decline", input("decline", value), (record) => declineCandidate({ store, record })),
     },
   };
 }
