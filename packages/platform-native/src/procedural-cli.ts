@@ -26,7 +26,7 @@ const USAGE =
   "         (refines with the gateway model, or else the ensemble's reasoning model; trajectories from the\n" +
   "          daemon's saved session logs; asks for approval on a terminal)\n" +
   "  options: [--procedural <dir>] [--settings <settings.json>] [--preset <name>]\n" +
-  "  (when a daemon holds <dir> and listens with --socket, the command runs in that daemon, with its settings and models)\n";
+  "  (when a daemon holds <dir> and serves procedural operations with --socket and --cognitive, the command runs in that daemon, with its settings and models)\n";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -89,7 +89,9 @@ const lock = await lockStore(dir, "harness-procedural");
 if (lock.status === "held") {
   const { holder, pid, socket } = lock.owner;
   if (socket === undefined) {
-    process.stderr.write(`the procedural store in ${dir} is in use by ${holder} (pid ${pid}), which serves no socket: stop it, or run it with --socket\n`);
+    // Another run of this CLI finishes on its own; a daemon serves the operations only with a socket and a cognitive core.
+    const advice = holder === "harness-procedural" ? "; wait for it to finish" : ", which serves no procedural operations on a socket: stop it, or run it with --socket and --cognitive";
+    process.stderr.write(`the procedural store in ${dir} is in use by ${holder} (pid ${pid})${advice}\n`);
     process.exit(1);
   }
   const local = ["settings", "preset", "model", "model-cache", "llama-server", "state"].filter((name) => values[name as keyof typeof values] !== undefined);

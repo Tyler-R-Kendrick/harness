@@ -30,8 +30,8 @@ async function scratch() {
 }
 
 /** The daemon over the store in `store`: with the cognitive core (no hosted models) it serves procedural.*; `ready` resolves once it listens, `exited` with its exit code. */
-function daemon(dir: string, store: string, transport: string[]) {
-  const child = spawn(process.execPath, [MAIN, ...transport, "--worker", "echo", "--cognitive", "--no-hosted", "--model-cache", join(dir, "models"), "--procedural", store], { env });
+function daemon(dir: string, store: string, transport: string[], cognitive = true) {
+  const child = spawn(process.execPath, [MAIN, ...transport, "--worker", "echo", ...(cognitive ? ["--cognitive"] : []), "--no-hosted", "--model-cache", join(dir, "models"), "--procedural", store], { env });
   children.push(child);
   let stderr = "";
   const ready = new Promise<void>((resolve) => {
@@ -84,7 +84,7 @@ describe("one owner per procedural store", () => {
     expect(JSON.parse(await readFile(join(store, STORE_LOCK), "utf8"))).toEqual({ pid: d.child.pid, holder: "harness" });
     await expect(cli("import", "team/search")).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining(`the procedural store in ${store} is in use by harness (pid ${d.child.pid}), which serves no socket`),
+      stderr: expect.stringContaining(`the procedural store in ${store} is in use by harness (pid ${d.child.pid}), which serves no procedural operations on a socket: stop it, or run it with --socket and --cognitive`),
     });
     expect(existsSync(join(store, "procedural.json"))).toBe(false);
     d.child.stdin.end();
@@ -116,5 +116,26 @@ describe("one owner per procedural store", () => {
     expect(await json("import", "team/search")).toEqual({ status: "head", revision: revisionId(seedGraph()) });
     expect(existsSync(join(store, STORE_LOCK))).toBe(false);
     expect((await stat(join(store, "procedural.json"))).isFile()).toBe(true);
+  });
+
+  it("PX2.81 a daemon that serves no procedural operations advertises no socket, and a CLI holder is waited for, not given daemon options", async () => {
+    const { dir, store, cli } = await scratch();
+    const socket = join(dir, "plain.sock");
+    const d = daemon(dir, store, ["--socket", socket], false);
+    await d.ready;
+    expect(JSON.parse(await readFile(join(store, STORE_LOCK), "utf8"))).toEqual({ pid: d.child.pid, holder: "harness" });
+    await expect(cli("history", "team/search")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(`in use by harness (pid ${d.child.pid}), which serves no procedural operations on a socket`),
+    });
+    d.child.kill("SIGTERM");
+    expect(await d.exited).toBe(0);
+
+    await mkdir(store, { recursive: true });
+    await writeFile(join(store, STORE_LOCK), JSON.stringify({ pid: process.pid, holder: "harness-procedural" }));
+    await expect(cli("history", "team/search")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(`the procedural store in ${store} is in use by harness-procedural (pid ${process.pid}); wait for it to finish\n`),
+    });
   });
 });

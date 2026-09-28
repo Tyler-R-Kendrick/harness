@@ -11,7 +11,8 @@ import { z } from "zod";
  * would overwrite each other. The daemon (`--procedural <dir>`) and `harness-procedural`
  * both take this lock before they open the store: the daemon refuses to start while
  * another process holds it, and the CLI, finding a daemon that advertises its ACP socket
- * in the lock, sends its operation to that daemon instead of opening the file.
+ * in the lock (one that serves `procedural.*`), sends its operation to that daemon
+ * instead of opening the file.
  *
  * The lock is a file created atomically (a hard link of a complete file, which fails when
  * one exists), naming the holder's pid, a label and, once it listens, its socket. A lock
@@ -28,12 +29,12 @@ export interface LockOwner {
   readonly pid: number;
   /** Who holds it: `harness` (the daemon) or `harness-procedural` (the CLI). */
   readonly holder: string;
-  /** The daemon's ACP socket, once it listens on one. */
+  /** The daemon's ACP socket, once it listens on one and serves `procedural.*` there. */
   readonly socket?: string;
 }
 
 export interface StoreLock {
-  /** Name the socket this holder serves ACP on, for a CLI that finds the store held. */
+  /** Name the socket this holder serves `procedural.*` on, for a CLI that finds the store held. */
   advertise(socket: string): Promise<void>;
   /** Remove the lock if this holder still has it; safe to call more than once. */
   release(): Promise<void>;

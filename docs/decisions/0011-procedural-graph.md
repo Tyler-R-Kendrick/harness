@@ -161,7 +161,9 @@ The decision held; these details moved.
   whole, so two processes over one directory would lose each other's writes. A lock file
   in the directory names its holder; the daemon refuses to start on a held store, and
   `harness-procedural` either holds the lock for its run or, when a daemon holds it and
-  listens on a socket, sends its operation to that daemon's `procedural.*`. We chose a
+  serves `procedural.*` on a socket (it has a cognitive core), sends its operation there;
+  a daemon that serves none advertises no socket, and the CLI refuses. Stale locks are
+  cleared under a takeover guard, so two contenders never both hold one. We chose a
   lock over routing alone because a daemon on stdio has no socket to reach.
 - **Dream runs on demand.** `procedural.dream` and `harness-procedural dream` start it;
   there is no schedule or trigger in the daemon.
