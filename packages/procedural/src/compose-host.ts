@@ -76,3 +76,35 @@ export function sessionTools(options: {
     return core === undefined ? tools : revisionTools({ base: tools, pinnedCore: core, staging: options.staging.host(tools) });
   };
 }
+
+/** What a host hands out for composition: see `composition`. */
+export interface HostComposition {
+  readonly staging: Staging;
+  /** A session worker's per-turn tools (`sessionTools`). */
+  readonly tools: (scope: StepScope) => Promise<ToolSet>;
+  /** Dream's composer over the base tools as they are when it is called: once per dream. */
+  readonly composer: () => Promise<Composer>;
+  /** Dream's tool catalog: the base tools' names, when it is called. */
+  readonly catalog: () => Promise<string[]>;
+}
+
+/**
+ * Composition on a host whose sessions share one set of base tools (the host's own, read
+ * anew each time): each session's per-turn tools, and for each dream its composer and its
+ * tool catalog, so dream compiles paths of the tools sessions have and its catalog check
+ * sees them.
+ */
+export function composition(options: {
+  readonly staging: Staging;
+  readonly settings: CompositionSettings;
+  readonly step: Pick<ProceduralStepHook, "core">;
+  readonly base?: () => ToolSet | Promise<ToolSet>;
+}): HostComposition {
+  const { staging: s, settings, step, base = () => ({}) } = options;
+  return {
+    staging: s,
+    tools: sessionTools({ step, staging: s, base }),
+    composer: async () => composer({ settings, staging: s, tools: await base() }),
+    catalog: async () => Object.keys(await base()),
+  };
+}

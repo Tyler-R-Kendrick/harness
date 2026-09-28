@@ -5,7 +5,7 @@ import { z } from "zod";
 import { MemoryLibrary, parseWorkflow, quickjsCodeMode } from "@harness/workflows";
 import type { Workflow } from "@harness/workflows";
 import { MemoryStorage } from "@harness/testkit";
-import { compilePath, composeCandidate, composer, NodeNameSchema, parseGraph, sessionTools, staging, StagingLibrary, toolSpecs, workflowBinding } from "@harness/procedural";
+import { compilePath, composeCandidate, composer, composition, NodeNameSchema, parseGraph, sessionTools, staging, StagingLibrary, toolSpecs, workflowBinding } from "@harness/procedural";
 import type { ProceduralGraph, StagingFiles, StepScope } from "@harness/procedural";
 import { chain, PATH, RUNS, settings, SPECS } from "./compose-fixtures.ts";
 
@@ -104,5 +104,22 @@ describe("composition on a host", () => {
     // A staged workflow whose code no longer hashes to the binding is not offered.
     await store.put({ ...w, code: `${w.code}// changed\n` });
     expect(Object.keys(await tools(scope("fresh")))).toEqual(["search"]);
+  });
+
+  it("PC1.40 composition is what a host hands out: a session's per-turn tools, and for each dream a composer and a tool catalog over the base tools as they are then", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const w = compiled();
+    await s.library.stage(w);
+    let base: ToolSet = { search: tool({ description: "Search.", inputSchema: jsonSchema({ type: "object" }), execute: async () => [] }) };
+    const c = composition({ staging: s, settings: settings(), step: { core: async () => bound(w) }, base: () => base });
+    expect(c.staging).toBe(s);
+    expect(Object.keys(await c.tools(scope("s1"))).sort()).toEqual(["search", w.name].sort());
+    expect(await c.catalog()).toEqual(["search"]);
+    expect(await c.composer()).toEqual({ settings: settings(), toolSpecs: { search: { description: "Search.", inputSchema: { type: "object" } } }, staging: s.library });
+    base = {};
+    expect(await c.catalog()).toEqual([]);
+    expect(await c.composer()).toMatchObject({ toolSpecs: {} });
+    const bare = composition({ staging: s, settings: settings(), step: { core: async () => undefined } });
+    expect([await bare.tools(scope("s1")), await bare.catalog()]).toEqual([{}, []]);
   });
 });

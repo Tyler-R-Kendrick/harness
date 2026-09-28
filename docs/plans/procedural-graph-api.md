@@ -1169,6 +1169,9 @@ above keep their meaning.
     (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
     or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
     `staging.host(base)` running the workflows; without a graph, the base.
+  - `composition({staging, settings, step, base?}): HostComposition` is what a host whose
+    sessions share one set of base tools hands out: `{staging, tools, composer(),
+    catalog()}`, `composer` and `catalog` reading `base` anew each time (once per dream).
 - **Workers (`@harness/workers`).** `sessionAgent({ tools })` given a function calls it
   each turn with the turn's scope (`TurnScope`: session, turn, cwd, meta, report), so a
   session gets tools of its own. Opaque harness workers keep their harness's own tools,
@@ -1176,12 +1179,11 @@ above keep their meaning.
 - **Native host.**
   - `loadProceduralComposition(file?)` reads `data/composition.json`, or a deployment's
     copy (`--procedural-composition`).
-  - `nativeComposition({dir, settings, step, ask, base?, shared?})` returns
-    `{staging, tools, composer, catalog}`: staging in `<dir>/staging` (`WorkflowFiles`: a
-    file per workflow, run journals under `.runs/`) on AI SDK code mode; `shared` (the
-    `--workflows` directory) is never written and may not be that directory (it throws).
-    `tools` is `sessionTools` over `base` (the host's session tools, the same for every
-    session); `composer()` and `catalog()` read `base` when a dream starts.
+  - `nativeComposition({dir, settings, step, ask, base?, shared?})` is `composition` with
+    staging in `<dir>/staging` (`WorkflowFiles`: a file per workflow, run journals under
+    `.runs/`) on AI SDK code mode; `shared` (the `--workflows` directory) is never written
+    and may not be that directory (it throws). `base` is the host's session tools, the
+    same for every session.
   - `nativeDream`'s `composer` and `tools` may be functions, called at the start of each
     dream.
   - `main.ts`, for `--worker model` and `--worker ensemble` with `--procedural`: the

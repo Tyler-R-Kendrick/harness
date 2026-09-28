@@ -2,7 +2,7 @@ import { getRandomValues } from "node:crypto";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
-import { authorize, composer, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, sessionTools, SnapshotProceduralStore, staging } from "@harness/procedural";
+import { authorize, composition, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore, staging } from "@harness/procedural";
 import type {
   AccessPolicy,
   Action,
@@ -15,14 +15,13 @@ import type {
   DreamResult,
   Evaluator,
   GraphId,
+  HostComposition,
   ProceduralStepHook,
   ProceduralStore,
   Reflector,
   Resolver,
   SessionLog,
   Settings,
-  Staging,
-  StepScope,
 } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { Effects } from "@harness/workflows";
@@ -260,17 +259,11 @@ export function nativeComposition(options: {
   readonly base?: () => ToolSet | Promise<ToolSet>;
   /** The shared workflow library's directory, if the host has one. */
   readonly shared?: string;
-}): { readonly staging: Staging; readonly tools: (scope: StepScope) => Promise<ToolSet>; readonly composer: () => Promise<Composer>; readonly catalog: () => Promise<string[]> } {
-  const { settings, step, ask, base = () => ({}) } = options;
+}): HostComposition {
+  const { settings, step, ask, base } = options;
   const dir = join(options.dir, "staging");
   if (options.shared !== undefined && resolve(options.shared) === resolve(dir)) throw new Error(`the shared workflow library (${options.shared}) cannot be procedural's staging library`);
-  const s = staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask });
-  return {
-    staging: s,
-    tools: sessionTools({ step, staging: s, base }),
-    composer: async () => composer({ settings, staging: s, tools: await base() }),
-    catalog: async () => Object.keys(await base()),
-  };
+  return composition({ staging: staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask }), settings, step, ...(base === undefined ? {} : { base }) });
 }
 
 /**
