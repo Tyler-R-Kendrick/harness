@@ -109,7 +109,12 @@ export class SnapshotProceduralStore implements ProceduralStore {
   };
 
   readonly guidance: ProceduralStore["guidance"] = {
-    put: (id, text) => this.#run((s) => s.guidance.put(id, text), always),
+    // Every guided step puts its text, cache hits included: one already kept under its id saves nothing.
+    put: (id, text) =>
+      this.#run(
+        async (s) => (await s.guidance.get(id)) !== text && (await s.guidance.put(id, text), true),
+        (stored) => stored,
+      ).then(() => undefined),
     get: (id) => this.#run((s) => s.guidance.get(id), never),
   };
 
