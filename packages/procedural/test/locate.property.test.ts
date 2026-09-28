@@ -113,6 +113,19 @@ describe("match", () => {
     }
     expect(loose !== undefined).toBe(g.nodes.some((n) => names(n).some((x) => x?.toLowerCase() === action.toLowerCase())));
   });
+
+  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PG3.P6 the state tracker takes a declared node the graph has; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
+    const tracked = match({ name: action, ...(declared === undefined ? {} : { declared }) }, g, "state-tracker");
+    if (declared !== undefined && g.nodes.some((n) => n.id === declared)) {
+      expect(tracked).toBe(declared);
+      return;
+    }
+    const exact = match(action, g, "exact");
+    expect(tracked !== undefined).toBe(exact !== undefined);
+    if (tracked !== undefined) expect(names(g.nodes.find((n) => n.id === tracked)!)).toContain(action);
+    const boundTo = g.nodes.find((n) => n.binding?.name === action);
+    if (boundTo !== undefined) expect(tracked).toBe(boundTo.id);
+  });
 });
 
 describe("serialization", () => {

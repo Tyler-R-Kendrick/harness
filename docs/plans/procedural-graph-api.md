@@ -1088,6 +1088,15 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   `type`. `acceptsArguments(predicate, args)` tests a call, compiling each predicate once.
   The predicate is part of the document, so of its revision id; like any binding, only
   seeding, import or dream's composition writes it (I5).
+- **State tracker.** `MatchMode` gains `"state-tracker"`, and `match` takes
+  `string | ObservedAction | undefined`, where
+  `ObservedAction = {name; arguments?; declared?}`: the tool called, the call's
+  arguments, and the node the tool's result declared active. Under `state-tracker` the
+  rules are, in order, each exact and each the first node in document order: the declared
+  node, when the graph has it; a node bound to the tool whose argument predicate accepts
+  the arguments; a node bound to the tool without a predicate; a node whose id is the
+  tool's name. A node whose predicate rejects the call is never matched by its binding.
+  `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
 
 ## Open issues
 

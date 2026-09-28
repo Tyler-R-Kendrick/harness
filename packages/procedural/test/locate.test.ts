@@ -97,6 +97,55 @@ describe("match", () => {
   });
 });
 
+describe("match: state-tracker (plan §5.2)", () => {
+  const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+  const edits = { type: "object", properties: { path: { type: "string", pattern: "\\.md$" } }, required: ["path"] };
+  const bash = (id: string, args?: object): DocInput["nodes"][number] => ({ id, type: "ACTION", description: `${id}.`, binding: args === undefined ? { kind: "tool", name: "Bash" } : { kind: "tool", name: "Bash", arguments: args } });
+  // Coarse harness tools: Bash runs tests, docs checks or anything else; a node is also named Edit.
+  const g = view(
+    graphOf(
+      [node("Start"), bash("Shell"), bash("Run_Tests", tests), bash("Check_Docs", edits), node("Edit"), node("Edit_Docs", { kind: "tool", name: "Edit" }), node("End")],
+      [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Check_Docs"), edge("Check_Docs", "Edit"), edge("Edit", "Edit_Docs"), edge("Edit_Docs", "End")],
+    ),
+  );
+
+  it("PG3.30 a node the tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Check_Docs");
+    expect(match({ name: "grep", declared: "End" }, g, "state-tracker")).toBe("End");
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, g, "state-tracker")).toBe("Run_Tests");
+    expect(match({ name: "Edit", declared: "Edit_Docs" }, g, "state-tracker")).toBe("Edit_Docs");
+  });
+
+  it("PG3.31 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test -w procedural" } }, g, "state-tracker")).toBe("Run_Tests");
+    expect(match({ name: "Bash", arguments: { path: "docs/features.md" } }, g, "state-tracker")).toBe("Check_Docs");
+    // Nodes with a predicate that holds come before a bare binding, whatever the document order.
+    expect(match({ name: "Bash", arguments: { command: "ls" } }, g, "state-tracker")).toBe("Shell");
+    expect(match({ name: "Bash" }, g, "state-tracker")).toBe("Shell");
+    expect(match("Bash", g, "state-tracker")).toBe("Shell");
+    const narrow = view(graphOf([node("Start"), bash("Run_Tests", tests), node("End")], [edge("Start", "Run_Tests"), edge("Run_Tests", "End")]));
+    expect(match({ name: "Bash", arguments: { command: "ls" } }, narrow, "state-tracker")).toBeUndefined();
+    expect(match({ name: "Bash", arguments: "npm test" }, narrow, "state-tracker")).toBeUndefined();
+  });
+
+  it("PG3.32 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
+    // Edit_Docs is bound to the tool Edit, and a node is named Edit: the tracker takes the binding.
+    expect(match({ name: "Edit" }, g, "state-tracker")).toBe("Edit_Docs");
+    expect(match("Edit", g, "exact")).toBe("Edit");
+    expect(match("Run_Tests", g, "state-tracker")).toBe("Run_Tests");
+    expect(match(undefined, g, "state-tracker")).toBe("Start");
+    expect(match("run_tests", g, "state-tracker")).toBeUndefined();
+    expect(match({ name: "grep", arguments: {} }, g, "state-tracker")).toBeUndefined();
+  });
+
+  it("PG3.33 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "exact")).toBe(match("Bash", g, "exact"));
+    expect(match({ name: "Bash", arguments: { command: "npm test" } }, g, "exact")).toBe("Shell");
+    expect(match({ name: "grep", declared: "End" }, g, "exact")).toBeUndefined();
+    expect(match({ name: "edit_docs", declared: "End" }, g, "case-insensitive")).toBe("Edit_Docs");
+  });
+});
+
 describe("neighborhood", () => {
   it("PG3.9 hop 1 is the active node's outgoing edges in document order, hop 2 the edges leaving what hop 1 reaches", () => {
     const g = view(hotpot());
