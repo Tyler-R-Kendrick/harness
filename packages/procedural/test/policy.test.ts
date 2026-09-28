@@ -79,4 +79,8 @@ describe("the access policy (plan §8.3)", () => {
     // The file may leave the default out.
     expect(schema.required).toEqual(["rules"]);
   });
+
+  it("PX1.46 a policy file's JSON Schema is generated from the parser (data/policy.schema.json), for the file's $schema", async () => {
+    await expect(`${JSON.stringify(policyJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/policy.schema.json");
+  });
 });
