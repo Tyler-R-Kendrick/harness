@@ -6,8 +6,8 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { sessionOf, stateContent, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { promptText } from "@harness/testkit";
-import { AgentWorker, rememberTurns, sessionAgent, userContent } from "@harness/workers";
+import { MemoryStorage, promptText } from "@harness/testkit";
+import { AgentWorker, rememberTurns, sessionAgent, storedConversations, userContent } from "@harness/workers";
 
 const finish = (unified: "stop" | "length" | "tool-calls" | "content-filter" | "other" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
 const text = (t: string, id = "0"): LanguageModelV4StreamPart[] => [
@@ -116,6 +116,18 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(finished).toBe(false);
     release();
     await done;
+  });
+
+  it("AW2.7 a turn that starts the moment the last one ends (from its end event) continues it: the save has begun, and the load waits for it", async () => {
+    const model = scripted([...text("first answer"), finish()], [...text("second answer"), finish()]);
+    const cells = new Map<string, MemoryStorage>();
+    const shared = new AgentWorker({ agent: sessionAgent({ model }), conversations: storedConversations((id) => cells.get(id) ?? (cells.set(id, new MemoryStorage()), cells.get(id)!)) });
+    let next: Promise<void> | undefined;
+    await shared.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "one" }], cwd: "/" }, (e) => {
+      if (e.type === "end") next = shared.run({ type: "prompt", sessionId: "s1", turnId: "t2", prompt: [{ type: "text", text: "two" }], cwd: "/" }, () => {});
+    });
+    await next;
+    expect(model.doStreamCalls[1]!.prompt.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
   });
 
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {

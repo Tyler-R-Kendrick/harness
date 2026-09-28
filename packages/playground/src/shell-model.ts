@@ -5,7 +5,7 @@
  * watched and tested without spending anyone's model usage.
  */
 import type { LanguageModelV4, LanguageModelV4Prompt, LanguageModelV4StreamPart, LanguageModelV4ToolResultOutput } from "@ai-sdk/provider";
-import { simulateReadableStream } from "ai";
+import { createIdGenerator, simulateReadableStream } from "ai";
 import { collectParts, finishReason, usage } from "@harness/cognitive";
 
 const HINT = "I run shell commands. Start a prompt with $ and a command line, for example: $ ls -la";
@@ -34,8 +34,8 @@ function parts(prompt: LanguageModelV4Prompt, id: () => string): LanguageModelV4
 }
 
 export function shellModel(): LanguageModelV4 {
-  let calls = 0;
-  const id = () => `shell-${++calls}`;
+  // Unique across page loads, since a conversation outlives the model that wrote it.
+  const id = createIdGenerator({ prefix: "shell" });
   return {
     specificationVersion: "v4",
     provider: "harness.playground",

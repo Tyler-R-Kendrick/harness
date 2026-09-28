@@ -198,23 +198,47 @@ export function tracingMiddleware(tracer: Tracer): LanguageModelV4Middleware {
     },
     wrapStream: async ({ doStream, params, model }) => {
       const span = start("stream", params, model.modelId);
-      const result = await doStream();
+      let ended = false;
+      const end = (detail: unknown) => {
+        if (!ended) span.end(detail);
+        ended = true;
+      };
+      let result: Awaited<ReturnType<typeof doStream>>;
+      try {
+        result = await doStream();
+      } catch (e) {
+        end({ error: message(e) });
+        throw e;
+      }
       const parts: LanguageModelV4StreamPart[] = [];
+      const reader = result.stream.getReader();
       return {
         ...result,
-        stream: result.stream.pipeThrough(
-          new TransformStream<LanguageModelV4StreamPart, LanguageModelV4StreamPart>({
-            transform(part, controller) {
-              parts.push(part);
-              controller.enqueue(part);
-            },
-            flush() {
+        // Pulled part by part, so the span ends however the stream does: finished, failed or cancelled by its reader.
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+          async pull(controller) {
+            let next: ReadableStreamReadResult<LanguageModelV4StreamPart>;
+            try {
+              next = await reader.read();
+            } catch (e) {
+              end({ error: message(e) });
+              throw e;
+            }
+            if (next.done) {
               const error = parts.find((p) => p.type === "error");
               const finish = parts.find((p) => p.type === "finish");
-              span.end(error ? { error: message(error.error) } : outcome(parts, finish?.finishReason.unified, finish?.usage));
-            },
-          }),
-        ),
+              end(error ? { error: message(error.error) } : outcome(parts, finish?.finishReason.unified, finish?.usage));
+              controller.close();
+              return;
+            }
+            parts.push(next.value);
+            controller.enqueue(next.value);
+          },
+          cancel(reason) {
+            end({ cancelled: true, ...outcome(parts, undefined, undefined) });
+            return reader.cancel(reason);
+          },
+        }),
       };
     },
   };

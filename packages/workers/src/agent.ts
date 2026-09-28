@@ -184,9 +184,12 @@ export class AgentWorker implements Worker {
     } finally {
       this.#running.delete(key);
     }
+    // The save begins before the turn ends, so a turn started from the end event loads after it
+    // (the store orders a session's load after its saves); it is awaited after, so a slow store
+    // does not hold the end back. Saving is best effort.
+    const saved = finished && loaded?.ok ? this.#conversations?.save(command.sessionId, finished).catch(() => undefined) : undefined;
     emit({ type: "end", ...base, stopReason });
-    // The turn has ended for everyone; its conversation is saved after (best effort).
-    if (finished && loaded?.ok) await this.#conversations?.save(command.sessionId, finished).catch(() => undefined);
+    await saved;
   }
 
   cancel(sessionId: string, turnId: string): void {

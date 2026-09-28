@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generateText, jsonSchema, streamText, tool } from "ai";
 import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { parseReply, sampleLanguageModel, sampleTurns } from "../src/sample-model.ts";
+import { parseReply, REPLY_SCHEMA, sampleLanguageModel, sampleTurns } from "../src/sample-model.ts";
 import type { Sample, SampleCallOptions, SampleInput } from "../src/sample-model.ts";
 
 /** A `sample` that answers each call with the next scripted reply, streamed in a few pieces, and records what it was asked. */
@@ -110,6 +110,40 @@ describe("the model behind the playground: Claude through the artifact's sample 
   });
 });
 
+describe("what a reply becomes", () => {
+  it("SM1.10 tool-call ids never repeat, across models too (a page reloaded onto a kept conversation starts a new model)", async () => {
+    const reply = '{"text": "", "toolCalls": [{"toolName": "t", "input": {}}, {"toolName": "t", "input": {}}]}';
+    const ids: string[] = [];
+    for (const model of [sampleLanguageModel(scripted(reply).sample), sampleLanguageModel(scripted(reply).sample)]) {
+      ids.push(...(await generateText({ model, prompt: "go", tools: { t: tool({ inputSchema: jsonSchema<object>({ type: "object" }) }) } })).toolCalls.map((c) => c.toolCallId));
+    }
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  it("SM1.11 the final text is the answer even when it does not continue what streamed", async () => {
+    const sample: Sample = async (_input, options) => {
+      options?.onText?.({ text: '{"text": "draft', delta: '{"text": "draft' });
+      return { text: '{"text": "final"}', truncated: false };
+    };
+    const texts: string[] = [];
+    const result = streamText({ model: sampleLanguageModel(sample), prompt: "hi" });
+    for await (const part of result.fullStream) if (part.type === "text-end") texts.push(part.id);
+    expect(await result.text).toMatch(/final$/);
+    expect(texts).toHaveLength(2);
+  });
+
+  it("SM1.12 a reply cut short reads as the text written so far, streamed or not", async () => {
+    const sample: Sample = async () => ({ text: '{"text": "partial ans', truncated: true });
+    const result = await generateText({ model: sampleLanguageModel(sample), prompt: "long" });
+    expect(result.text).toBe("partial ans");
+    expect(result.finishReason).toBe("length");
+  });
+
+  it("SM1.13 the model is named by its runtime, not a model", () => {
+    expect(sampleLanguageModel(scripted().sample)).toMatchObject({ provider: "claude.sample", modelId: "sample" });
+  });
+});
+
 describe("the sample input a call becomes", () => {
   it("SM2.1 instructions, tools and the reply format lead as a user turn; the conversation follows and ends on a user turn", () => {
     const turns = sampleTurns(
@@ -187,6 +221,12 @@ describe("the sample input a call becomes", () => {
     expect(turns[0]!.content).toContain('The value of "text" must itself be JSON.');
     expect(turns[0]!.content).toContain("- plain: \n");
     expect(turns[0]!.content).not.toContain("search");
+  });
+
+  it("SM2.6 the reply's shape is sent as its JSON Schema", () => {
+    const turns = sampleTurns(call([{ role: "user", content: [{ type: "text", text: "x" }] }]));
+    expect(turns[0]!.content).toContain(JSON.stringify(REPLY_SCHEMA));
+    expect(REPLY_SCHEMA).toMatchObject({ type: "object", required: ["text", "toolCalls"] });
   });
 
   it("SM2.5 a call with no tools says there are none", () => {

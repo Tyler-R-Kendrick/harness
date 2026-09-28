@@ -9,7 +9,7 @@ import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
 import { IndexedDbStorage } from "@harness/platform-browser";
 import { storedConversations } from "@harness/workers";
-import { Coalesced, parsePageState, parseTrace, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs, storableEvent } from "./persist.ts";
+import { Coalesced, parsePageState, parseTrace, parseVfsSnapshot, reported, resilient, restoreVfs, snapshotVfs, storableEvent } from "./persist.ts";
 import { Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
@@ -348,7 +348,7 @@ function renderFiles() {
 let bashRef: BashShell["bash"] = null;
 async function refreshFiles() {
   if (!bashRef) return;
-  files = await walk(bashRef.fs, HOME);
+  files = await walk(bashRef.fs, HOME, { previous: files });
   renderFiles();
 }
 
@@ -452,9 +452,21 @@ const kept = (key: string) => {
 };
 // `conversations` held every session's conversation in one record before they got a record each; reset still clears it.
 const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page"), trace: kept("trace") };
-/** Each session's conversation, in a record of its own (`conversation:<session id>`). */
-const conversationRecords = new Map<string, ReturnType<typeof kept>>();
-const conversationRecord = (sessionId: string) => conversationRecords.get(sessionId) ?? (conversationRecords.set(sessionId, kept(`conversation:${sessionId}`)), conversationRecords.get(sessionId)!);
+/**
+ * Each session's conversation, in a record of its own (`conversation:<session id>`). Its
+ * failures are passed on to the agent worker, whose fallback is right for them: a
+ * conversation it could not load is kept in memory and not saved over.
+ */
+const conversationRecords = new Map<string, SnapshotStorage & { clear(): Promise<void> }>();
+const conversationRecord = (sessionId: string) => {
+  const known = conversationRecords.get(sessionId);
+  if (known) return known;
+  const key = `conversation:${sessionId}`;
+  const storage = reported(() => new IndexedDbStorage({ name: "harness-playground", key }), (e) => storageProblem(`${key}: ${e}`));
+  const record = { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.save(undefined).catch(() => undefined) };
+  conversationRecords.set(sessionId, record);
+  return record;
+};
 let pageSaver: Coalesced | undefined;
 let vfsSaver: Coalesced | undefined;
 const saveAll = () => {

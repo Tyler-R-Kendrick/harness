@@ -35,4 +35,10 @@ describe("FileStorage", () => {
     expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ image: { "$bytes": "AAH/" }, text: "plain" });
     expect(await new FileStorage(path).load()).toEqual(value);
   });
+
+  it("FS1.5 a Buffer and an ArrayBuffer are bytes too (loaded as a Uint8Array); an object shaped like the tag, or like its escape, loads as itself", async () => {
+    const path = join(dir(), "state.json");
+    await new FileStorage(path).save({ buffer: Buffer.from([1, 2]), raw: new Uint8Array([3, 4]).buffer, tag: { "$bytes": "AQI=" }, escaped: { "$object": [["a", 1]] }, inner: { "$bytes": { "$bytes": "x" } } });
+    expect(await new FileStorage(path).load()).toEqual({ buffer: new Uint8Array([1, 2]), raw: new Uint8Array([3, 4]), tag: { "$bytes": "AQI=" }, escaped: { "$object": [["a", 1]] }, inner: { "$bytes": { "$bytes": "x" } } });
+  });
 });

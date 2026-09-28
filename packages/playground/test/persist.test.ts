@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import { Coalesced, parsePageState, parseTrace, storableEvent, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
+import { Coalesced, parsePageState, parseTrace, reported, storableEvent, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
 import { HOME, walk } from "../src/vfs.ts";
+
+/** A walk's entries without their times (a restore writes files anew). */
+const content = async (fs: Parameters<typeof walk>[0]) => new Map([...(await walk(fs, HOME))].map(([path, { mtime: _mtime, ...entry }]) => [path, entry]));
 
 describe("the filesystem across reloads", () => {
   it("PS1.1 a snapshot keeps every file's bytes and every directory under the root; restoring it into a fresh shell reproduces them", async () => {
@@ -13,7 +16,7 @@ describe("the filesystem across reloads", () => {
     expect(snapshot.dirs).toEqual([`${HOME}/d`, `${HOME}/d/e`, `${HOME}/empty`, `${HOME}/empty/inner`]);
     const to = new Bash({ cwd: HOME });
     await restoreVfs(to.fs, HOME, structuredClone(snapshot));
-    expect(await walk(to.fs, HOME)).toEqual(await walk(from.fs, HOME));
+    expect(await content(to.fs)).toEqual(await content(from.fs));
     expect([...(await to.fs.readFileBuffer(`${HOME}/bin.dat`))]).toEqual([0, 255, 7]);
     expect((await to.fs.stat(`${HOME}/empty/inner`)).isDirectory).toBe(true);
   });
@@ -44,7 +47,7 @@ describe("the filesystem across reloads", () => {
     await restoreVfs(to.fs, HOME, structuredClone(snapshot));
     expect(await to.fs.readlink(`${HOME}/up`)).toBe("..");
     expect(await to.readFile(`${HOME}/d/alias`)).toBe("a");
-    expect(await walk(to.fs, HOME)).toEqual(await walk(from.fs, HOME));
+    expect(await content(to.fs)).toEqual(await content(from.fs));
   });
 
   it("PS1.3 a stored snapshot is parsed: anything but the current shape is no snapshot", () => {
@@ -87,6 +90,27 @@ describe("storage that may not work (a private window, a blocked site)", () => {
     expect(await none.load()).toBeUndefined();
     await none.save(1);
     expect(errors).toEqual(["storage unavailable: indexedDB is not defined"]);
+  });
+});
+
+describe("storage whose reader has its own fallback (the agent worker's conversations)", () => {
+  it("PS4.4 failures are reported and passed on, not turned into no state; storage that cannot be opened fails each call", async () => {
+    const errors: string[] = [];
+    const flaky = reported({ load: () => Promise.reject(new Error("busy")), save: () => Promise.reject(new Error("quota")) }, (e) => errors.push(e));
+    await expect(flaky.load()).rejects.toThrow("busy");
+    await expect(flaky.save(1)).rejects.toThrow("quota");
+    let opened = 0;
+    const none = reported(() => {
+      opened++;
+      throw new Error("indexedDB is not defined");
+    }, (e) => errors.push(e));
+    await expect(none.load()).rejects.toThrow("indexedDB is not defined");
+    await expect(none.save(1)).rejects.toThrow("indexedDB is not defined");
+    expect(opened).toBe(1);
+    const fine = reported({ load: async () => "kept", save: async () => {} }, (e) => errors.push(e));
+    expect(await fine.load()).toBe("kept");
+    await fine.save(2);
+    expect(errors).toEqual(["load failed: busy", "save failed: quota", "storage unavailable: indexedDB is not defined", "load failed: indexedDB is not defined", "save failed: indexedDB is not defined"]);
   });
 });
 

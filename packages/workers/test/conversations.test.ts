@@ -32,8 +32,8 @@ describe("conversations kept in snapshot storage, a record per session", () => {
     expect(JSON.parse(all.get("s1")!.value!)).toEqual({ version: 1, messages: said("two") });
   });
 
-  it("AW2.3 what is stored is plain JSON-shaped data; anything else there is no conversation", async () => {
-    for (const junk of [["x"], { version: 2, messages: [] }, { version: 1, messages: {} }, "text"]) {
+  it("AW2.3 what is stored is plain JSON-shaped data; anything else there, messages the AI SDK would not take included, is no conversation", async () => {
+    for (const junk of [["x"], { version: 2, messages: [] }, { version: 1, messages: {} }, "text", { version: 1, messages: ["x"] }, { version: 1, messages: [{ role: "robot", content: "beep" }] }, { version: 1, messages: [{ role: "user", content: 3 }] }]) {
       expect(await storedConversations(() => new MemoryStorage({ value: JSON.stringify(junk) })).load("s1")).toBeUndefined();
     }
   });
@@ -55,5 +55,21 @@ describe("conversations kept in snapshot storage, a record per session", () => {
     fail = false;
     await store.save("s1", said("kept"));
     expect(await store.load("s1")).toEqual(said("kept"));
+  });
+
+  it("AW2.8 a load waits for the session's save in flight, not for other sessions'", async () => {
+    const { storageFor } = cells();
+    const gates = new Map<string, () => void>();
+    const store = storedConversations((id) => {
+      const inner = storageFor(id);
+      return { load: () => inner.load(), save: (v) => new Promise<void>((resolve) => gates.set(id, () => void inner.save(v).then(resolve))) };
+    });
+    void store.save("s1", said("latest"));
+    void store.save("s2", said("other"));
+    const s1 = store.load("s1");
+    expect(await store.load("s3")).toBeUndefined();
+    await Promise.resolve();
+    gates.get("s1")!();
+    expect(await s1).toEqual(said("latest"));
   });
 });

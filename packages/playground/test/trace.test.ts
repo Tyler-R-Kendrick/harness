@@ -216,6 +216,58 @@ describe("tracing model calls (AI SDK middleware)", () => {
     await streamText({ model: wrapped, prompt: "hi", onError: () => {} }).consumeStream();
     expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { error: "mid-stream" } });
   });
+  it("TR5.4 a streamed call that fails to start is recorded as failed and still fails", async () => {
+    const tracer = new Tracer(() => 0);
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        throw new Error("no stream");
+      },
+    });
+    const wrapped = wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) });
+    await expect(wrapped.doStream({ prompt: [] })).rejects.toThrow("no stream");
+    expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { error: "no stream" } });
+  });
+
+  it("TR5.6 a stream that breaks while being read is recorded as failed, and its reader still sees the failure", async () => {
+    const tracer = new Tracer(() => 0);
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          pull(controller) {
+            controller.error(new Error("connection lost"));
+          },
+        }),
+      }),
+    });
+    const { stream } = await wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) }).doStream({ prompt: [] });
+    await expect(stream.getReader().read()).rejects.toThrow("connection lost");
+    expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { error: "connection lost" } });
+  });
+
+  it("TR5.5 a streamed call its reader cancels (a cancelled turn) is recorded as cancelled, with what it streamed so far", async () => {
+    const tracer = new Tracer(() => 0);
+    let cancelled = false;
+    const model = new MockLanguageModelV4({
+      doStream: async () => ({
+        stream: new ReadableStream({
+          start(controller) {
+            controller.enqueue({ type: "text-start", id: "0" });
+            controller.enqueue({ type: "text-delta", id: "0", delta: "so far" });
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+      }),
+    });
+    const { stream } = await wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) }).doStream({ prompt: [] });
+    const reader = stream.getReader();
+    await reader.read();
+    await reader.read();
+    await reader.cancel("stop");
+    expect(cancelled).toBe(true);
+    expect(tracer.events().at(-1)).toMatchObject({ phase: "end", name: "stream", detail: { cancelled: true, text: "so far" } });
+  });
 });
 
 describe("hook events from a daemon snapshot", () => {

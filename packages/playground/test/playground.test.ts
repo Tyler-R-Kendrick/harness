@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Bash, defineCommand } from "just-bash";
+import { Bash, defineCommand, InMemoryFs } from "just-bash";
 import type { ModelMessage } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
@@ -56,7 +56,7 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     expect(await bash.readFile(`${HOME}/new.txt`)).toBe("made\n");
     expect(report).toMatchObject({ stopReason: "end_turn", diff: { added: [`${HOME}/new.txt`], modified: [`${HOME}/README.md`], removed: [] }, toolCalls: 1, modelCalls: 2 });
     expect(t.said()).toBe("exit 0\n");
-    expect(report.files.get(`${HOME}/new.txt`)).toEqual({ size: 5, text: "made\n" });
+    expect(report.files.get(`${HOME}/new.txt`)).toEqual({ size: 5, mtime: expect.any(Number), text: "made\n" });
     expect(tracer.events().find((e) => e.kind === "vfs")).toMatchObject({ name: "changes · 1 added, 1 modified, 0 removed" });
   });
 
@@ -131,6 +131,22 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     expect(t.said()).toMatch(/^exit 127\n.*command not found/s);
     await playground.prompt("$ echo mine > agent.txt", turn().handlers);
     expect(await bash.readFile(`${HOME}/agent.txt`)).toBe("mine\n");
+  });
+
+  it("PG1.11 a file no turn changes is read once, not twice a turn: each walk starts from the last", async () => {
+    const reads: string[] = [];
+    const inner = new InMemoryFs({ [`${HOME}/README.md`]: "hi\n" });
+    const fs = new Proxy(inner, {
+      get: (target, key) => {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key === "readFile") return (path: string, options?: never) => (reads.push(path), target.readFile(path, options));
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const { playground } = await start({ bash: new Bash({ fs, cwd: HOME }), worker: () => "echo" });
+    await playground.prompt("one", turn().handlers);
+    await playground.prompt("two", turn().handlers);
+    expect(reads.filter((p) => p === `${HOME}/README.md`)).toEqual([`${HOME}/README.md`]);
   });
 
   it("PG1.9 what the host cannot hand to anyone (a snapshot that fails to save) shows up in the trace", async () => {
