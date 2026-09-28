@@ -696,6 +696,8 @@ As built (P9). These are additions; nothing above changed meaning.
     A graph pattern's `*` is any run of characters (`globMatches(pattern, text)`).
   - `authorize(policy: AccessPolicy | undefined, …)`: no policy allows everything; else
     the first matching rule decides, then the default.
+  - `ACTIONS` also has `approve`: deciding the candidates in a graph's approvals inbox
+    (listing them included), so a policy can give that to fewer principals than `dream`.
 - `pinning.ts`:
   - `PinRequest` also takes `overlayRefresh?: "turn" | "session"` (default `"turn"`):
     with the core kept, `"turn"` moves the pin to the overlay's latest version on that

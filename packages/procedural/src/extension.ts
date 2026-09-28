@@ -8,8 +8,8 @@ import { presetOf } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
 
-/** What an operation does to a graph, as the access policy sees it (plan §8.3). */
-export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import";
+/** What an operation does to a graph, as the access policy sees it (plan §8.3); `approve` decides candidates waiting for approval. */
+export type ProceduralAction = "read" | "write" | "dream" | "revert" | "import" | "approve";
 
 export interface ProceduralExtensionOptions {
   readonly store: ProceduralStore;
