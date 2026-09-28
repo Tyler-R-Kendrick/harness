@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { jsonSchema, tool } from "ai";
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { z } from "zod";
 import { MemoryLibrary, parseWorkflow, quickjsCodeMode } from "@harness/workflows";
 import type { Workflow } from "@harness/workflows";
@@ -106,7 +106,17 @@ describe("composition on a host", () => {
     expect(Object.keys(await tools(scope("fresh")))).toEqual(["search"]);
   });
 
-  it("PC1.41 sessionTools: a core the step hook cannot give (a missing pin, a store that fails) leaves the turn its base tools and a warning, never a failed turn", async () => {
+  it("PC1.53 sessionTools hands the turn's conversation to core and to per-turn base tools, so a routing session is routed by its first prompt", async () => {
+    const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
+    const told: (readonly ModelMessage[] | undefined)[] = [];
+    const step = { core: async (sc: ToolsScope) => (told.push(sc.messages), undefined) };
+    const messages: ModelMessage[] = [{ role: "user", content: "fetch the page" }];
+    const tools = sessionTools({ step, staging: s, base: (sc) => (told.push(sc.messages), {}) });
+    await tools({ ...scope("s1"), messages });
+    expect(told).toEqual([messages, messages]);
+  });
+
+  it("PC1.54 sessionTools: a core the step hook cannot give (a missing pin, a store that fails) leaves the turn its base tools and a warning, never a failed turn", async () => {
     const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
     const base = { search: tool({ inputSchema: jsonSchema({ type: "object" }), execute: async () => [] }) };
     const reported: unknown[] = [];

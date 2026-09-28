@@ -206,23 +206,40 @@ The decision held; these details moved.
   or an import's record with the same id, and a commit that loses the head race puts
   back the record it replaced. Redaction follows the content into every graph. A revert
   writes no record: its target is already recorded, and the heads show the move back.
+- **Resolver rules may route.** A rule may name candidate graphs and a minimum
+  confidence instead of a graph; the cognitive router chooses among them by the session's
+  first prompt (a tool whose schema admits only the candidates, with the router's
+  calibrated confidence). Below the minimum, or with no router, the session has no graph,
+  and a routed session keeps its graph through its pin.
+- **Plans come from subgraphs.** Core's task graph carries opaque payloads and
+  serializes to JSON; `planFromSubgraph` turns the subgraph between two nodes into one,
+  a task per action node, with the graph's relations as data and control dependencies.
+  Nothing drives plans yet.
 - **A tool catalog is enforced only when a host gives one.** The daemon's dream has one
   only with composition (its session tools); the CLI's dream, and the daemon's without
   composition, have none: the harness preset's `enforceToolCatalog` then has nothing to
   check, and the refiner is shown no tools.
 - **Guidance follows the access policy.** A session's meta can name any graph the resolver
   templates, so the step hook guides (and pins) a session only when the policy allows it
-  to read and write that graph: its turns feed the graph's overlay.
+  to read and write that graph, whether resolved or routed: its turns feed the graph's
+  overlay.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
+- **Localization extensions are settings, off in both presets.** A `state-tracker` match
+  mode (a node a tool's result declares, then argument predicates on tool bindings, then
+  the id), a horizon counted in action hops, and successor-only `activeTools` (the hard
+  constraint the plan allows as an ablation) are data a deployment turns on; the paper
+  preset stays the paper's `Match`, edge hops and unconstrained tools.
 
 ## Revisit when
 
 - Live evidence shows the overlay's probation rules are too slow or too loose. Then tune
   the data, not the code.
 - A deployment needs per-caller access rules. Then pass the caller on model work.
-- The task graph gains payloads. Then dream can emit plans from subgraphs.
+- The daemon drives task graphs. Then dream, or a session, can run plans from subgraphs.
 - A write-ahead runtime lands. Then step records can become replayed effects.
 - A maintained TypeScript implementation of the paper appears.
+- An ablation shows that state tracking, action hops or successor-only tools help. Then
+  the harness preset turns them on in its data.
 - Operators need approvals routed to a person (a notification channel, a review UI).
   Then a plugin on `procedural.approval.*` does it; the inbox stays the record.

@@ -360,6 +360,39 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(seen.map((m) => m.map((x) => x.role))).toEqual([["user"], ["user", "assistant", "user"]]);
   });
 
+  it("AW1.22 tools given anew each turn are told the turn's conversation, ending with its prompt, so a routing step hook can route by it", async () => {
+    const told: (readonly ModelMessage[])[] = [];
+    const model = scripted([...text("one"), finish()], [...text("two"), finish()]);
+    const worker = new AgentWorker({
+      agent: sessionAgent({
+        model,
+        tools: (turn) => {
+          told.push([...turn.messages]);
+          return {};
+        },
+      }),
+    });
+    await run(worker, [{ type: "text", text: "first" }]).done;
+    await run(worker, [{ type: "text", text: "second" }], "s1", "t2").done;
+    expect(told.map((m) => m.filter((x) => x.role === "user").length)).toEqual([1, 2]);
+    expect(told.map((m) => JSON.stringify(m.at(-1)?.content))).toEqual([expect.stringContaining("first"), expect.stringContaining("second")]);
+  });
+
+  it("AW1.23 a turn given as a prompt, text or messages, is the conversation per-turn tools are told", async () => {
+    const told: (readonly ModelMessage[])[] = [];
+    const agent = sessionAgent({
+      model: scripted([...text("one"), finish()], [...text("two"), finish()]),
+      tools: (turn) => {
+        told.push([...turn.messages]);
+        return {};
+      },
+    });
+    await (await agent.stream({ prompt: "first", options: { sessionId: "s1" } })).consumeStream();
+    const asked: ModelMessage[] = [{ role: "user", content: [{ type: "text", text: "second" }] }];
+    await (await agent.stream({ prompt: asked, options: { sessionId: "s1" } })).consumeStream();
+    expect(told).toEqual([[{ role: "user", content: "first" }], asked]);
+  });
+
   it("AW1.12 an ACP prompt becomes AI SDK user content: text and image blocks, other blocks left out", () => {
     expect(userContent([{ type: "text", text: "a" }, { type: "image", data: "AQ==", mimeType: "image/png" }, { type: "resource" }, { type: "image", data: 1 }, null, "x"])).toEqual({
       content: [{ type: "text", text: "a" }, { type: "file", data: new Uint8Array([1]), mediaType: "image/png" }],

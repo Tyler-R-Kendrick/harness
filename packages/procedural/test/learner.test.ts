@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { edgeKey, entryId, exposed, OverlayEventSchema, parseGraph, ScoreSchema } from "@harness/procedural";
 import type { OverlayEvent } from "@harness/procedural";
-import { call, CORE, ended, GRAPH, record, revisionOf, said, started, user } from "./learner-fixtures.ts";
+import { call, CORE, ended, GRAPH, record, result, revisionOf, said, started, user } from "./learner-fixtures.ts";
 import { paper, preset, setup, turnEnded, turnOf } from "./learner-setup.ts";
 import { cautionOnCore, core, entry, idOf, noteOnCore, observed, proposed, saltWhere, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 
@@ -172,6 +172,21 @@ describe("the live learner on turn.ended", () => {
     loose.add("s1", turnOf("t1", ["scan_index"]));
     await loose.learner.onHookEvent(turnEnded("s1", "t1"));
     expect(observedOf(loose.store.events())[0]!.path).toEqual(["Start", "Scan_Index"]);
+  });
+
+  it("PL1.77 under a state-tracker preset a result's declared node counts only for a tool the core trusts to declare: an unbound grep's is ignored", async () => {
+    const declared = { stdout: "Nolan", _meta: { harness: { procedural: { node: "Bridge_Extract" } } } };
+    const turn = [started("t1"), user("q"), record({ node: "Start" }), call("t1-c0", "grep", { q: "film" }), result("t1-c0", declared), ended("t1")];
+    const tracker = setup({ preset: preset({}, { match: "state-tracker" }) });
+    tracker.pin("s1");
+    tracker.add("s1", turn);
+    await tracker.learner.onHookEvent(turnEnded("s1", "t1"));
+    expect(observedOf(tracker.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
+    const exact = setup();
+    exact.pin("s1");
+    exact.add("s1", turn);
+    await exact.learner.onHookEvent(turnEnded("s1", "t1"));
+    expect(observedOf(exact.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
   });
 
   it("PL1.39 a missing transition seen in minSupport distinct sessions is proposed after the observation; one session's many turns are not support", async () => {

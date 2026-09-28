@@ -70,7 +70,8 @@ export interface ToolsNotice {
 /**
  * A turn's scope as a session's tools see it: it reports step records and warnings, and
  * may carry the turn's conversation, by which the step hook tells a stream that resumes
- * its turn from a new one (`sessionAgent` gives it).
+ * its turn from a new one, and routes a routing session by its first prompt
+ * (`sessionAgent` gives it).
  */
 export type ToolsScope = StepScope<StepNotice | ToolsNotice> & { readonly messages?: readonly ModelMessage[] };
 

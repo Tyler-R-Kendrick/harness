@@ -27,7 +27,7 @@ describe("procedural settings (data/settings.json)", () => {
 
   it("PG1.36 the paper preset is the paper's mechanism: no overlay, exact match, reset at each turn, guidance in the system slot, the paper's gate", () => {
     const paper = presetOf(settings(), "paper");
-    expect(paper).toMatchObject({ overlay: false, match: "exact", turnBoundary: "start", delivery: "system", guidancePrompt: "paper", guidanceCache: false });
+    expect(paper).toMatchObject({ overlay: false, match: "exact", turnBoundary: "start", delivery: { to: "system", activeTools: "all" }, guidancePrompt: "paper", guidanceCache: false });
     expect(paper.live).toBeUndefined();
     expect(paper.dream).toMatchObject({
       mode: "incremental",
@@ -44,7 +44,7 @@ describe("procedural settings (data/settings.json)", () => {
 
   it("PG1.37 the harness preset learns live under probation and gates dream on structure, evidence and approval", () => {
     const harness = presetOf(settings(), "harness");
-    expect(harness).toMatchObject({ overlay: true, turnBoundary: "carry", delivery: "trailing-message", guidancePrompt: "harness", guidanceCache: true, overlayRefresh: "turn", repinOnDream: "turn" });
+    expect(harness).toMatchObject({ overlay: true, turnBoundary: "carry", delivery: { to: "trailing-message", activeTools: "all" }, guidancePrompt: "harness", guidanceCache: true, overlayRefresh: "turn", repinOnDream: "turn" });
     expect(harness.live).toEqual({ reflection: "off", probationShare: 0.2, minSupport: 3, promote: { confidence: 0.9 }, halfLifeDays: 30, maxEntries: 64 });
     expect(harness.dream).toMatchObject({
       context: "tail-per-trajectory",
@@ -149,6 +149,32 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
+  it("PG1.52 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
+    expect(presetOf(settings(), "paper").hopUnit).toBe("edge");
+    expect(presetOf(settings(), "harness").hopUnit).toBe("edge");
+    expect(presetOf(edit(["presets", "harness", "hopUnit"], "action")(), "harness").hopUnit).toBe("action");
+    expect(presetOf(edit(["presets", "harness", "hopUnit"], undefined)(), "harness").hopUnit).toBe("edge");
+    expect(edit(["presets", "paper", "hopUnit"], "node")).toThrow(/presets\.paper\.hopUnit/);
+  });
+
+  it("PG1.55 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
+    expect(presetOf(settings(), "paper").match).toBe("exact");
+    expect(presetOf(settings(), "harness").match).toBe("exact");
+    expect(presetOf(edit(["presets", "harness", "match"], "state-tracker")(), "harness").match).toBe("state-tracker");
+  });
+
+  it("PG1.56 delivery names where guidance goes and which tools a step offers: every one in both presets, or only the active node's successors' as an ablation", () => {
+    expect(file["presets"]).toMatchObject({ paper: { delivery: { to: "system", activeTools: "all" } }, harness: { delivery: { to: "trailing-message", activeTools: "all" } } });
+    expect(presetOf(edit(["presets", "harness", "delivery"], { to: "trailing-message", activeTools: "successors" })(), "harness").delivery).toEqual({ to: "trailing-message", activeTools: "successors" });
+    // Unset, every tool; a placement alone is read as that placement with every tool.
+    expect(presetOf(edit(["presets", "harness", "delivery"], { to: "system" })(), "harness").delivery).toEqual({ to: "system", activeTools: "all" });
+    expect(presetOf(edit(["presets", "paper", "delivery"], "system")(), "paper").delivery).toEqual({ to: "system", activeTools: "all" });
+    expect(presetOf(edit(["presets", "paper", "delivery"], "trailing-message")(), "paper").delivery).toEqual({ to: "trailing-message", activeTools: "all" });
+    expect(edit(["presets", "paper", "delivery"], { to: "system", activeTools: "none" })).toThrow(/presets\.paper\.delivery/);
+    expect(edit(["presets", "paper", "delivery"], { activeTools: "all" })).toThrow(/presets\.paper\.delivery/);
+    expect(edit(["presets", "paper", "delivery"], "inline")).toThrow(/presets\.paper\.delivery/);
+  });
+
   it("PG1.51 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
     expect(presetOf(settings(), "harness").dream).toMatchObject({ every: 7 * 24 * 3_600_000, afterTurns: 50 });
     expect(presetOf(settings(), "paper").dream.every).toBeUndefined();
@@ -207,5 +233,13 @@ describe("procedural settings (data/settings.json)", () => {
     delete bare.presets.harness["overlayRefresh"];
     delete bare.presets.harness["repinOnDream"];
     expect(presetOf(parseSettings(bare), "harness")).toMatchObject({ overlayRefresh: "turn", repinOnDream: "turn" });
+  });
+
+  it("PG1.57 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
+    const { prompts } = settings();
+    expect(PLACEHOLDERS.route).toEqual(["graphs"]);
+    expect(prompts.route).toContain("{graphs}");
+    expect(prompts.route).toMatch(/call nothing/i);
+    expect(edit(["prompts", "route"], "Choose a graph.")).toThrow(/missing placeholders \{graphs\}\n.*at prompts\.route$/);
   });
 });

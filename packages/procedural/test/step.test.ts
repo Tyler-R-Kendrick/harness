@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ModelMessage, SystemModelMessage } from "ai";
-import { HARNESS } from "@harness/cognitive";
+import type { ModelMessage, SystemModelMessage, ToolResultPart } from "ai";
+import { HARNESS, probability } from "@harness/cognitive";
 import { ManualClock, promptText, SeededEntropy } from "@harness/testkit";
 import {
   ADVISORY,
@@ -19,10 +19,11 @@ import {
   StepRecordSchema,
   StepUsageSchema,
 } from "@harness/procedural";
-import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, StepUsageNotice } from "@harness/procedural";
+import type { GraphRouter, OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, StepUsageNotice, TurnInput } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
+import { edge, hotpot } from "./fixtures.ts";
 
 /** Settings with an extra preset built from `base` (paper or harness). */
 function withPreset(base: "paper" | "harness", changes: Record<string, unknown>): Settings {
@@ -81,6 +82,13 @@ const pinCount = (s: Setup) => vi.spyOn(s.store.pins, "get");
 async function pinned(s: Setup, session: string, pin: Partial<Pin>): Promise<void> {
   const head = (await s.store.heads.get(GRAPH))!.revision;
   await s.store.pins.set(session, { graph: GRAPH, core: head, overlay: 0, salt: "salt", at: 0, ...pin });
+}
+
+/** The hotpot graph with its nodes listed from End back to Start. */
+function reordered() {
+  const parsed = parseGraph({ ...hotpot(), nodes: [...hotpot().nodes].reverse() });
+  if (!parsed.ok) throw new Error("fixture");
+  return parsed.graph;
 }
 
 const prompts = (s: Setup) => s.guidance.doGenerateCalls.map((c) => promptText(c.prompt));
@@ -307,6 +315,179 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(s.records.at(-1)).toMatchObject({ node: "Start", inert: false });
   });
 
+  it("PW1.74 a preset counting hops in actions shows the next tool that two reasoning nodes hide from edge hops", async () => {
+    const hiding = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Retrieve", type: "ACTION", description: "Retrieve." },
+        { id: "Scan_Index", type: "REASONING", description: "Scan." },
+        { id: "Decide_Capital", type: "REASONING", description: "Decide." },
+        { id: "Answer_Lookup", type: "ACTION", description: "Look up." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [edge("Start", "Retrieve"), edge("Retrieve", "Scan_Index"), edge("Scan_Index", "Decide_Capital"), edge("Decide_Capital", "Answer_Lookup"), edge("Answer_Lookup", "End")],
+    });
+    if (!hiding.ok) throw new Error("fixture");
+    const at = async (preset: string, settings?: Settings) => {
+      const s = await setup(preset, settings ? { settings } : {});
+      await seed(s.store, hiding.graph);
+      await proceduralStep(s.deps).prepare(input(s, [user("q"), calls("Retrieve"), result("Retrieve")]));
+      return prompts(s)[0]!;
+    };
+    const edges = await at("paper");
+    expect(edges).not.toContain("[Decide_Capital] → [Answer_Lookup]");
+    const actions = await at("custom", withPreset("paper", { hopUnit: "action" }));
+    expect(actions).toContain("Immediate Transition Options (Hop 1):\n- Transition: [Retrieve] → [Scan_Index]");
+    expect(actions).toContain("- Transition: [Decide_Capital] → [Answer_Lookup]");
+    expect(actions).toContain("Subsequent Horizon (Hop 2):\n- Transition: [Answer_Lookup] → [End]");
+  });
+
+  describe("state-tracker localization", () => {
+    const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+    const tracked = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "Bash", declares: true } },
+        { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "Bash", arguments: tests } },
+        { id: "Review", type: "REASONING", description: "Read the failures." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Review"), edge("Review", "End")],
+    });
+    if (!tracked.ok) throw new Error("fixture");
+    const bash = (command: string): ModelMessage => ({ role: "assistant", content: [{ type: "tool-call", toolCallId: "b1", toolName: "Bash", input: { command } }] });
+    const bashResult = (output: ToolResultPart["output"], toolCallId = "b1"): ModelMessage => ({ role: "tool", content: [{ type: "tool-result", toolCallId, toolName: "Bash", output }] });
+    const declaring = (node: string | number): ToolResultPart["output"] => ({ type: "json", value: { stdout: "ok", _meta: { harness: { procedural: { node } } } } });
+    const nodeAt = async (preset: string, messages: ModelMessage[]) => {
+      const s = await setup("custom", { settings: withPreset(preset === "harness" ? "harness" : "paper", preset === "paper" || preset === "harness" ? {} : { match: preset }) });
+      await seed(s.store, tracked.graph);
+      await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages]));
+      return s.records[0]!.node;
+    };
+
+    it("PW1.75 a state-tracker preset localizes a coarse tool's call by its arguments, where exact takes the bare binding", async () => {
+      expect(await nodeAt("state-tracker", [bash("npm test -w procedural"), bashResult({ type: "text", value: "ok" })])).toBe("Run_Tests");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "text", value: "ok" })])).toBe("Shell");
+      expect(await nodeAt("paper", [bash("npm test -w procedural"), bashResult({ type: "text", value: "ok" })])).toBe("Shell");
+    });
+
+    it("PW1.76 a node the call's tool result declares under _meta.harness.procedural.node is the active node, in a JSON result, error or not", async () => {
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review"))])).toBe("Review");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "error-json", value: { _meta: { harness: { procedural: { node: "Review" } } } } })])).toBe("Review");
+      // Only the last call's own result declares; a declaration that is not a string, or a result of another call, says nothing.
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review"), "other")])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring(7))])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult({ type: "json", value: ["Review"] })])).toBe("Shell");
+      expect(await nodeAt("state-tracker", [bash("ls")])).toBe("Shell");
+      // A result before the call, even under the same id, is not its result.
+      expect(await nodeAt("state-tracker", [bash("ls"), bashResult(declaring("Review")), bash("ls")])).toBe("Shell");
+      // The paper's exact Match ignores the declaration.
+      expect(await nodeAt("paper", [bash("ls"), bashResult(declaring("Review"))])).toBe("Shell");
+    });
+
+    it("PW1.79 the turn variant tracks a harness's last call too: its input picks the node, and its output may declare one", async () => {
+      const s = await setup("custom", { settings: withPreset("harness", { match: "state-tracker" }) });
+      await seed(s.store, tracked.graph);
+      const hook = proceduralStep(s.deps);
+      const turn = (turnId: string, lastCall: TurnInput["lastCall"]) => hook.turn({ ...input(s, [user("q")], { turnId }), lastAction: lastCall?.name, ...(lastCall ? { lastCall } : {}) });
+      await turn("t1", { name: "Bash", input: { command: "npm test" } });
+      await turn("t2", { name: "Bash", input: { command: "ls" }, output: { _meta: { harness: { procedural: { node: "Review" } } } } });
+      await turn("t3", { name: "Bash", input: { command: "ls" }, output: { _meta: { harness: { procedural: { node: 3 } } } } });
+      await turn("t4", undefined);
+      // Without the call, the name alone: the bare binding.
+      await hook.turn({ ...input(s, [user("q")], { turnId: "t5" }), lastAction: "Bash" });
+      expect(s.records.map((r) => [r.node, r.action])).toEqual([
+        ["Run_Tests", "Bash"],
+        ["Review", "Bash"],
+        ["Shell", "Bash"],
+        ["Start", null],
+        ["Shell", "Bash"],
+      ]);
+    });
+  });
+
+  describe("successor-only tools (an ablation)", () => {
+    const successors = (changes: Record<string, unknown> = {}, base: "paper" | "harness" = "paper") => withPreset(base, { delivery: { to: base === "paper" ? "system" : "trailing-message", activeTools: "successors" }, ...changes });
+    const OFFERED = ["first_hop_retrieve", "Scan_Index", "grep"];
+    /** A step offered `tools` (null: the tools are unknown). */
+    const at = async (settings: Settings, messages: ModelMessage[], tools: string[] | null = OFFERED) => {
+      const s = await setup("custom", { settings });
+      const out = await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages], tools === null ? {} : { tools }));
+      return { out, record: s.records[0]! };
+    };
+
+    it("PW1.82 a step offers only the tools of the active node's successor actions, by binding name or id, and says so in its record", async () => {
+      const start = await at(successors(), []);
+      expect(start.out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
+      expect(start.out).toHaveProperty("instructions");
+      expect(start.record.activeTools).toEqual(["first_hop_retrieve"]);
+      const retrieved = await at(successors({}, "harness"), [calls("first_hop_retrieve"), result("first_hop_retrieve")]);
+      expect(retrieved.out).toMatchObject({ activeTools: ["Scan_Index"] });
+      expect(retrieved.out).toHaveProperty("messages");
+    });
+
+    it("PW1.83 with no successor action the session offers, or no matched node, every tool stays offered and the record names none", async () => {
+      // Scan_Index leads to a reasoning node; grep matches nothing; the successor's tool is not offered.
+      for (const [messages, tools] of [[[calls("Scan_Index"), result("Scan_Index")], [...OFFERED, "Bridge_Extract"]], [[calls("grep"), result("grep")], OFFERED], [[], ["grep"]]] as const) {
+        const { out, record } = await at(successors(), [...messages], [...tools]);
+        expect(out).not.toHaveProperty("activeTools");
+        expect(record).not.toHaveProperty("activeTools");
+      }
+      // Tools unknown: the successors' names as they are.
+      expect((await at(successors(), [], null)).out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
+    });
+
+    it("PW1.84 both shipped presets offer every tool; successors follow the preset's hop unit", async () => {
+      for (const preset of ["paper", "harness"]) {
+        const s = await setup(preset);
+        const out = await proceduralStep(s.deps).prepare(input(s, [user("q")], { tools: OFFERED }));
+        expect(out).not.toHaveProperty("activeTools");
+        expect(s.records[0]).not.toHaveProperty("activeTools");
+      }
+      // In action hops the reasoning node after Scan_Index is passed through, but only End lies beyond it.
+      expect((await at(successors({ hopUnit: "action" }), [calls("Scan_Index"), result("Scan_Index")])).out).not.toHaveProperty("activeTools");
+      const hiding = parseGraph({
+        ...hotpot(),
+        nodes: [
+          { id: "Start", type: "STATUS", description: "Begin." },
+          { id: "Retrieve", type: "ACTION", description: "Retrieve." },
+          { id: "Decide", type: "REASONING", description: "Decide." },
+          { id: "Answer_Lookup", type: "ACTION", description: "Look up.", binding: { kind: "tool", name: "lookup" } },
+          { id: "End", type: "STATUS", description: "Done." },
+        ],
+        edges: [edge("Start", "Retrieve"), edge("Retrieve", "Decide"), edge("Decide", "Answer_Lookup"), edge("Answer_Lookup", "End")],
+      });
+      if (!hiding.ok) throw new Error("fixture");
+      const through = async (hopUnit: string) => {
+        const s = await setup("custom", { settings: successors({ hopUnit }) });
+        await seed(s.store, hiding.graph);
+        return proceduralStep(s.deps).prepare(input(s, [user("q"), calls("Retrieve"), result("Retrieve")], { tools: ["Retrieve", "lookup"] }));
+      };
+      expect(await through("edge")).not.toHaveProperty("activeTools");
+      expect(await through("action")).toMatchObject({ activeTools: ["lookup"] });
+      // A harness turn cannot limit its harness's tools: it is guided as usual, and its record names no limit.
+      const s = await setup("custom", { settings: successors({}, "harness") });
+      await proceduralStep(s.deps).turn({ ...input(s, [user("q")], { tools: OFFERED }), lastAction: undefined });
+      expect(s.records[0]).toMatchObject({ node: "Start" });
+      expect(s.records[0]).not.toHaveProperty("activeTools");
+    });
+  });
+
+  it("PW1.86 a user message in plain text after a call does not hide it, and a harness turn with no call yet is at Start", async () => {
+    const s = await setup("harness");
+    // Nodes listed with End first: a lookup by an absent name must not fall on the first node.
+    await seed(s.store, reordered());
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q"), calls("Scan_Index"), result("Scan_Index"), { role: "user", content: "and then?" }]));
+    await hook.turn({ ...input(s, [user("q")], { turnId: "t2" }), lastAction: undefined });
+    expect(s.records.map((r) => [r.node, r.action])).toEqual([
+      ["Scan_Index", "Scan_Index"],
+      ["Start", null],
+    ]);
+  });
+
   it("PW1.59 a message tagged by another provider is not an advisory", async () => {
     const s = await setup("harness");
     const other: ModelMessage = { role: "user", content: "keep me", providerOptions: { other: { advisory: "procedural" } } };
@@ -408,7 +589,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(await proceduralStep(none.deps).core(input(none, [user("q")]))).toBeUndefined();
   });
 
-  it("PW1.74 core at a stream that continues its turn after eviction (its conversation ends with tool results) reads the pin it had; a new prompt re-pins", async () => {
+  it("PW1.96 core at a stream that continues its turn after eviction (its conversation ends with tool results) reads the pin it had; a new prompt re-pins", async () => {
     const s = await setup("harness");
     const hook = proceduralStep(s.deps);
     await hook.prepare(input(s, [user("q")]));
@@ -715,5 +896,120 @@ describe("step records", () => {
     expect(StepRecordSchema.parse(JSON.parse(canonicalJson(record)))).toEqual(record);
     expect(StepRecordSchema.safeParse({ ...record, text: "advice" }).success).toBe(false);
     expect(StepRecordSchema.safeParse({ ...record, digest: "short" }).success).toBe(false);
+  });
+});
+
+describe("proceduralStep with a routing resolver (plan §8.1)", () => {
+  const OTHER = GraphIdSchema.parse("team/other");
+  const routing = parseResolver({ rules: [{ when: { meta: { procedural: "off" } }, graph: null }, { when: {}, route: { candidates: [GRAPH, { graph: OTHER, description: "Other work." }], minConfidence: 0.8 } }] });
+
+  /** A router answering `graph` at `confidence` (or throwing), recording the prompts it is asked. */
+  function router(answer: { graph?: string; confidence: number } | Error) {
+    const asked: string[] = [];
+    const route: GraphRouter = async (request) => {
+      asked.push(request.prompt);
+      if (answer instanceof Error) throw answer;
+      return { graph: answer.graph === undefined ? undefined : GraphIdSchema.parse(answer.graph), confidence: probability(answer.confidence) };
+    };
+    return { route, asked };
+  }
+
+  async function routed(answer: Parameters<typeof router>[0], preset = "harness") {
+    const s = await setup(preset, { resolver: routing });
+    await seed(s.store, variant(" (other)"), OTHER);
+    const r = router(answer);
+    return { s, r, hook: proceduralStep({ ...s.deps, router: r.route }) };
+  }
+
+  it("PW1.97 the access policy applies to a routed graph as to a resolved one: a session routed to a graph it may not write is left unguided and unpinned", async () => {
+    const { s, r } = await routed({ graph: OTHER, confidence: 0.9 });
+    const policy = parsePolicy({ rules: [{ when: { graph: "team/other", actions: ["write"] }, allow: false }] });
+    const hook = proceduralStep({ ...s.deps, router: r.route, policy });
+    expect(await hook.prepare(input(s, [user("first question")]))).toBeUndefined();
+    expect(await hook.core(input(s, [user("first question")]))).toBeUndefined();
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records).toEqual([]);
+    expect(await s.store.pins.get("s1")).toBeUndefined();
+    // Routed to a graph the policy allows, the same session is guided.
+    const allowed = await routed({ graph: GRAPH, confidence: 0.9 });
+    await proceduralStep({ ...allowed.s.deps, router: allowed.r.route, policy }).prepare(input(allowed.s, [user("first question")]));
+    expect(allowed.s.records[0]).toMatchObject({ graph: GRAPH });
+  });
+
+  it("PW1.87 a session whose rule routes is guided on the graph the router chooses by its first prompt, and keeps it on later turns without asking again", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.9 });
+    await hook.prepare(input(s, [user("first question")]));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[0]).toMatchObject({ graph: OTHER, core: (await s.store.heads.get(OTHER))!.revision });
+    await hook.prepare(input(s, [user("first question"), calls("Scan_Index"), result("Scan_Index"), user("second question")], { turnId: "t2" }));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[1]).toMatchObject({ graph: OTHER });
+    // after a restart the pin keeps the routed graph, and the router is not asked
+    const again = router({ graph: GRAPH, confidence: 1 });
+    await proceduralStep({ ...s.deps, router: again.route }).prepare(input(s, [user("first question")], { turnId: "t3" }));
+    expect(again.asked).toEqual([]);
+    expect(s.records[2]).toMatchObject({ graph: OTHER });
+  });
+
+  it("PW1.92 core routes a routing session by the turn's first prompt, so the turn's tools and its steps read the routed graph; a step's usage is kept once the session is pinned", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.9 });
+    const usages: StepUsageNotice[] = [];
+    const usage = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n), stepNumber: 0, usage: { inputTokens: 3, outputTokens: 1 } };
+    // Before the session has a prompt or a pin, it has no graph: nothing is recorded.
+    await hook.end(usage);
+    expect(usages).toEqual([]);
+    expect(await hook.core(input(s, [user("first question")]))).toEqual(variant(" (other)"));
+    expect(r.asked).toEqual(["first question"]);
+    await hook.prepare(input(s, [user("first question")]));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[0]).toMatchObject({ graph: OTHER, core: (await s.store.heads.get(OTHER))!.revision });
+    await hook.end(usage);
+    expect(usages).toHaveLength(1);
+    // Without the turn's messages, a routing session has no prompt to route by, and no graph.
+    const other = await routed({ graph: OTHER, confidence: 0.9 });
+    const { messages: _, ...scope } = input(other.s, [user("first question")]);
+    expect(await other.hook.core(scope)).toBeUndefined();
+    expect(other.r.asked).toEqual([]);
+  });
+
+  it("PW1.88 a choice below the minimum confidence, or no router, leaves the session unguided; a session's routing is asked once per prompt", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.79 });
+    expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
+    expect(await hook.prepare(input(s, [user("q"), calls("grep"), result("grep"), user("more")], { turnId: "t2" }))).toBeUndefined();
+    expect(r.asked).toEqual(["q"]);
+    expect(await hook.prepare(input(s, [user("q")], { sessionId: "s2" }))).toBeUndefined();
+    expect(r.asked).toEqual(["q", "q"]);
+    const bare = await setup("harness", { resolver: routing });
+    expect(await proceduralStep(bare.deps).prepare(input(bare, [user("q")]))).toBeUndefined();
+    expect(s.notices).toEqual([]);
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+  });
+
+  it("PW1.89 the router reads the first user message, not system or advisory messages, and is not asked before there is one", async () => {
+    const { s, r, hook } = await routed({ graph: GRAPH, confidence: 0.95 });
+    const advisory: ModelMessage = { role: "user", content: `${GUIDANCE_LABEL}old`, providerOptions: { [HARNESS]: ADVISORY } };
+    expect(await hook.prepare(input(s, [{ role: "assistant", content: "Hello." }]))).toBeUndefined();
+    expect(r.asked).toEqual([]);
+    await hook.prepare(input(s, [{ role: "system", content: "sys" }, advisory, user("the task"), user("later")], { turnId: "t2" }));
+    expect(r.asked).toEqual(["the task"]);
+    expect(s.records[0]).toMatchObject({ graph: GRAPH });
+  });
+
+  it("PW1.90 a harness turn routes by its first prompt too; a failing router leaves the turn unguided and is asked again next turn", async () => {
+    const { s, r, hook } = await routed(new Error("no router member"));
+    expect(await hook.turn({ ...input(s, [user("do it")]), lastAction: undefined })).toBeUndefined();
+    expect(await hook.turn({ ...input(s, [user("do it")], { turnId: "t2" }), lastAction: undefined })).toBeUndefined();
+    expect(r.asked).toEqual(["do it", "do it"]);
+    const ok = await routed({ graph: OTHER, confidence: 0.9 });
+    expect(await ok.hook.turn({ ...input(ok.s, [user("do it")]), lastAction: undefined })).toBe(`${GUIDANCE_LABEL}advice 0`);
+    expect(ok.s.records[0]).toMatchObject({ graph: OTHER });
+  });
+
+  it("PW1.91 a session whose rule does not route never has its pin read for resolving, and never asks the router", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 1 });
+    const pins = pinCount(s);
+    expect(await hook.prepare(input(s, [user("q")], { sessionMeta: { procedural: "off" } }))).toBeUndefined();
+    expect(pins).not.toHaveBeenCalled();
+    expect(r.asked).toEqual([]);
   });
 });

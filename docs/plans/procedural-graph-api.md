@@ -1178,6 +1178,172 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Localization extensions (plan §5.2's later list)
+
+As built. These are additions; the paper preset keeps the paper's mechanism exactly.
+
+- **Action hops.** `neighborhood(g, node, hops, unit?: HopUnit)` with
+  `type HopUnit = "edge" | "action"` (default `edge`, the paper's). In `action` hops a
+  step ends only at an `ACTION` node: the outgoing edges of a non-action node a hop
+  reaches first belong to that same hop (breadth first), and the action nodes it reaches
+  start the next. Two reasoning nodes after an action (research §2.2 item 3) then no
+  longer hide the next tool: from `Retrieve → Scan_Index → Decide_Capital → Answer_Lookup`,
+  hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
+  two units agree. `Preset.hopUnit: "edge" | "action"` (default `edge`; both shipped
+  presets say `edge`) is the unit `proceduralStep` passes; `h` stays `HOPS`.
+- **Argument predicates.** A tool binding may carry `arguments: ArgumentPredicate`, a
+  JSON Schema over the call's arguments (`{kind: "tool", name: "Bash", arguments: {type: "object", properties: {command: {type: "string", pattern: "^npm test"}}}}`).
+  `ArgumentPredicateSchema` refuses a schema whose top-level `type` is not `"object"` or
+  that zod's `z.fromJSONSchema` cannot compile (a `malformed` diagnostic at
+  `nodes[i].binding.arguments`). The converter reads a keyword only under a declared
+  `type`. `acceptsArguments(predicate, args)` tests a call, compiling each predicate once.
+  The predicate is part of the document, so of its revision id; like any binding, only
+  seeding, import or dream's composition writes it (I5).
+- **State tracker.** `MatchMode` gains `"state-tracker"`, and `match` takes
+  `string | ObservedAction | undefined`, where
+  `ObservedAction = {name; arguments?; declared?}`: the tool called, the call's
+  arguments, and the node the tool's result declared active. Under `state-tracker` the
+  rules are, in order, each exact and each the first node in document order: the declared
+  node, when the graph has it; a node bound to the tool whose argument predicate accepts
+  the arguments; a node bound to the tool without a predicate; a node whose id is the
+  tool's name. A node whose predicate rejects the call is never matched by its binding.
+  `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
+  `Preset.match` accepts `"state-tracker"`; both shipped presets stay `exact`.
+  A result's declared node counts only when the core binds the calling tool with
+  `declares: true` (a tool binding field that only dream, a seed or an import can set;
+  neither the refiner nor the overlay writes bindings). A tool that passes outside
+  content through, such as a fetched page, therefore cannot steer localization,
+  successor-only tools or the learner's projected path (PG3.37).
+- **The step hook as a state tracker.** `proceduralStep` observes the last action with its
+  call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
+  string) of the call's own result (the `tool-result` with its `toolCallId` in a later
+  tool message, `json` or `error-json` output). A tool, an MCP server (whose
+  `CallToolResult._meta` is where the AI SDK puts it) or an environment wrapping tools
+  declares the state this way. The step record's `action` is still the tool name.
+- **Harness turns as a state tracker.** The workers' `TurnContext` gains
+  `lastCall?: LastCall` (`{name, input, output?}`): `harnessSessions` remembers the
+  session's last tool call from `onStepEnd` with its id, and pairs it with the result a
+  later step reports (a host-executed tool's result arrives in the next step); a call
+  whose result never came has no `output`. `lastAction` is its name, as before.
+  `TurnInput.lastCall` is the same; the turn variant observes `{name, arguments: input,
+  declared: _meta.harness.procedural.node of output}`, and falls back to `lastAction`
+  alone without it.
+- **Learning and composition locate as guidance did.** `declaredNode(result)` (in
+  `locate.ts`) is the one reader of `_meta.harness.procedural.node`. `ProjectionContext.locate`
+  takes an `ObservedAction`: each `tool_call` is `{name: title, arguments: rawInput}`, and a
+  `completed` or `failed` `tool_call_update` with the same `toolCallId` adds the node its
+  `rawOutput` declared (results may arrive in any order; one of no call in view declares
+  nothing). `unmatched` still lists names. The live learner locates with the preset's
+  mode over these, so a state tracker's paths are the ones guidance saw. `recordedRuns`
+  matches each recorded call with its arguments; recorded steps keep a tool's result as
+  text, so a declared node is not read there (a path through a declared node that its
+  calls' names and arguments do not reach has no recorded run, and composition reports
+  it as not composable).
+- **Successor-only tools (an ablation).** `Preset.delivery` is now
+  `Delivery = {to: "system" | "trailing-message"; activeTools: "all" | "successors"}`
+  (`activeTools` defaults to `all`; a bare placement string still parses, as that
+  placement with every tool). Both shipped presets say `all`. Under `successors`,
+  `prepare` also returns `activeTools`: for each `ACTION` node an edge of hop 1 of the
+  neighborhood reaches (so under action hops the first actions past reasoning and status
+  nodes), the first of its binding's name and its id that the step's `tools` offer (the
+  first, when the tools are unknown), once each. With no matched node, or none of these
+  offered, it returns none, and every tool stays offered. The step record then carries
+  `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
+  may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
+  step only. The turn variant cannot limit a harness's tools and ignores the setting.
+
+## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
+
+As built. A resolver rule may route instead of naming a graph (plan §8.1).
+
+- A rule is `{ when, graph }` or `{ when, route }`, never both or neither.
+  `route = { candidates: (GraphId | { graph: GraphId; description: string })[]; minConfidence: Probability }`
+  (`RouteSchema`), with at least one candidate, each named once. `data/resolver.schema.json`
+  is regenerated.
+- `ResolveContext` gains `prompt?` (the session's first prompt) and `pinned?: GraphId`
+  (the graph the session is pinned to).
+- `GraphRouter = (request: RouteRequest) => Promise<RouteAnswer>`, where
+  `RouteRequest = { prompt; candidates: RouteCandidate[] }` (`{ graph, description? }`) and
+  `RouteAnswer = { graph: GraphId | undefined; confidence: Probability }`.
+- `explainRoute(resolver, context, router?): Promise<Resolution>` and
+  `routeGraph(…)`: template rules resolve as in `explainResolve`. For a route rule:
+  - a session pinned to a candidate keeps it without asking the router, so a session is
+    routed once and keeps its graph across restarts;
+  - otherwise no router, or no prompt yet (empty or blank), is no graph;
+  - the router's choice is the graph when it is a candidate chosen at `minConfidence` or
+    above; below it, no choice, a choice outside the candidates, or a router that throws
+    is no graph, with the reason (the rule still decides: no fall-through).
+- `explainResolve` (synchronous) gives a route rule the pinned candidate, or no graph with
+  "needs the router".
+- `modelGraphRouter({ model, settings }): GraphRouter` calls cognitive's `route` (the
+  cascade's router step, with its calibrated confidence from provider metadata
+  `harness.confidence`, 0 without it) with the first prompt as input and one tool,
+  `GRAPH_TOOL` (`choose_graph`). The tool's description is `settings.prompts.route` with
+  `{graphs}` filled by one line per candidate (`- id` or `- id: description`); its input
+  schema is `{ graph: { enum: candidates } }`, the constraint. A valid call names the
+  choice; no call chooses none. `settings.json` gains `prompts.route`
+  (`PLACEHOLDERS.route = ["graphs"]`).
+- `routes(resolver, context): boolean` says whether the deciding rule routes.
+- The step hook: `ProceduralStepDeps.router?: GraphRouter`. At a turn boundary a session
+  whose rule routes is resolved with `explainRoute`, its prompt the first user message of
+  the conversation (system and advisory messages aside) and `pinned` its stored pin's
+  graph; other sessions resolve as before, without reading the pin. The router's answers
+  are kept per session by request, so a session routed to no graph is not asked again for
+  the same prompt; a router that throws is asked again at the next turn. Harness turns
+  (`turn`) route the same way. `core(scope)`, which composition asks for a turn's tools
+  before its first step, routes by `scope.messages` (the turn's conversation): workers'
+  per-turn `tools` are told it (`ToolContext`), and `sessionTools` passes it on
+  (`ToolsScope`), so a routed session is offered the workflows of the graph it is
+  routed to (PW1.92, PC1.53, AW1.22). Without the messages a routing session has no graph
+  for that turn. A step's usage record (`end`) finds a routed session's graph by its pin.
+- Native host: `nativeProceduralStep({ …, router?: LanguageModel })` wraps it in
+  `modelGraphRouter` with the host's settings. With the cognitive core, `main.ts` passes
+  the ensemble's `languageModel("tool-calling", "router")`; without it a routing rule
+  gives no graph, and an ensemble with no router member fails the route (no graph) at
+  each turn until one serves.
+
+## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
+
+As built. Plan §7.6's task-graph item and ADR 0011's "the task graph gains payloads".
+
+- Core's `TaskGraph<P = unknown>`:
+  - `NodeSpec<P>` gains `payload?: P`, opaque to the graph; `payload(id): P | undefined`.
+  - `toJSON(): TaskGraphData<P>` is `{ nodes: TaskNodeData<P>[]; edges: TaskEdgeData[] }`
+    in the order added (`TaskNodeData = { id, join, resources, awaits, status, sealed, payload? }`,
+    `TaskEdgeData = { from, to, kind }`). The revision is not stored: it is the count of
+    structural changes, which rebuilding repeats.
+  - `static fromJSON<P>(data: unknown, payload?: (raw: unknown) => P): TaskGraph<P>`
+    rebuilds nodes, edges and seals through `addNode`, `addEdge` and `seal`, so restored
+    data obeys every rule they enforce, then sets statuses and refuses any no execution
+    reaches: a running, succeeded or failed node that was never ready (its join unmet or
+    an awaited group unsealed), or a skipped node that can still be satisfied. `payload`
+    checks each payload (its error is named); without it payloads are kept as given.
+    Anything invalid throws an `Error` saying what and where.
+- `planFromSubgraph(graph: EffectiveGraph, from: string, to: string, options?: PlanOptions): PlanResult`:
+  - The subgraph is every node on some path from `from` to `to` (both included), over
+    edges whose relation is a dependency.
+  - Its `ACTION` nodes become tasks, in the graph's node order, each with
+    `PlanPayload = { node: { id, type, description }; binding: Binding | null }`
+    (`PlanPayloadSchema`).
+  - `PlanOptions.relations: PlanRelations` maps each relation to a `DependencyKind` or
+    null (no dependency). The default `PLAN_RELATIONS` makes `PROVIDES_INPUT_FOR` data and
+    `LEADS_TO`, `TRIGGERS` and `CONVERGES_TO` control. An edge whose relation it does not
+    name is an `unknown-relation` diagnostic (at `edges[i]`), so a custom vocabulary says
+    what its relations mean.
+  - Reasoning and status nodes contract away: a task depends on every task it reaches
+    through them, nearest first. Such a dependency is data only when every edge on the way
+    is data (the same kind when they agree, else control); two ways of different kinds
+    give an edge of each kind.
+  - `PlanResult = { ok: true; plan: TaskGraph<PlanPayload> } | { ok: false; diagnostics }`.
+    Diagnostics: `missing-endpoint` (at `from` or `to`), `unreachable` (a new
+    `DiagnosticCode`: `to` is not reachable from `from`) and `cycle`, for a cycle through a
+    task, which the task graph refuses (a plan runs each task once, though the paper allows
+    cycles). A loop among reasoning and status nodes alone contracts away.
+  - `parsePlan(data): TaskGraph<PlanPayload>` is `TaskGraph.fromJSON` with every payload
+    parsed by `PlanPayloadSchema`.
+  - Nothing runs plans yet: the task graph is a library the daemon does not drive, and
+    dream does not emit plans.
+
 ## Scheduled dream and the task-suite evaluator
 
 As built. These close the gap "dream runs on demand only; no host configures an

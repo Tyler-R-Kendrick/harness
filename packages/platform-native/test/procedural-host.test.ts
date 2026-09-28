@@ -5,11 +5,12 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
-import { invokeCognitive } from "@harness/cognitive";
+import { MockLanguageModelV4 } from "ai/test";
+import { Ensemble, HARNESS, invokeCognitive, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
+import { GRAPH_TOOL, GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
-import { scriptedHarness, scriptedModel } from "@harness/testkit";
+import { promptText, scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
   daemonSessions,
@@ -261,6 +262,30 @@ describe("procedural guidance and access on the native host", () => {
     writeFileSync(file, JSON.stringify({ rules: "none" }));
     expect(() => loadProceduralResolver(file)).toThrow(/invalid procedural resolver/);
     expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
+  });
+
+  it("PX2.119 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
+    const routing = parseResolver({ rules: [{ when: {}, route: { candidates: ["default", "other"], minConfidence: 0.8 } }] });
+    const input = (sessionId: string) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Start by searching."), report: () => undefined });
+    const router = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "tool-call", toolCallId: "c0", toolName: GRAPH_TOOL, input: JSON.stringify({ graph: "default" }) }],
+        finishReason: { unified: "tool-calls", raw: undefined },
+        usage: usage(),
+        providerMetadata: { [HARNESS]: { confidence: 0.9 } },
+        warnings: [],
+      }),
+    });
+    const store = await seeded();
+    const routed = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing, router });
+    expect(JSON.stringify((await routed.prepare(input("s1")))?.messages?.at(-1))).toContain("Start by searching.");
+    expect(await store.pins.get("s1")).toMatchObject({ graph: "default" });
+    expect(promptText(router.doGenerateCalls[0]!.prompt)).toContain("Find it.");
+    expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing }).prepare(input("s2"))).toBeUndefined();
+    const memberless = new Ensemble({ platform: "native" }).languageModel("tool-calling", "router");
+    expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing, router: memberless }).prepare(input("s3"))).toBeUndefined();
+    expect(await store.pins.get("s2")).toBeUndefined();
+    expect(await store.pins.get("s3")).toBeUndefined();
   });
 });
 

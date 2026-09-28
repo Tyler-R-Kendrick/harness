@@ -23,6 +23,7 @@ export const PLACEHOLDERS = {
   refiner: REFINER_SLOTS,
   dream: [...REFINER_SLOTS, "overlay_entries_block", "cautioned_edges_block", "rejection_reasons_block"],
   reflection: ["graph_context", "trajectory"],
+  route: ["graphs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Gates dream can apply (plan §7.4). An evaluator gate with a trailing `?` applies only when the graph has an evaluator. */
@@ -126,19 +127,34 @@ const DreamSettingsSchema = z
   });
 export type DreamSettings = z.output<typeof DreamSettingsSchema>;
 
+/** Where guidance goes: `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
+const PlacementSchema = z.enum(["system", "trailing-message"]);
+
+/**
+ * How guidance is delivered: where it goes (`to`), and which tools a step offers
+ * (`activeTools`): `all`, or only the tools of the active node's successor actions, a
+ * strict ablation (AI SDK `activeTools`). A placement alone is that placement with every tool.
+ */
+const DeliverySchema = z.union([
+  PlacementSchema.transform((to) => ({ to, activeTools: "all" as const })),
+  z.strictObject({ to: PlacementSchema, activeTools: z.enum(["all", "successors"]).default("all") }),
+]);
+export type Delivery = z.output<typeof DeliverySchema>;
+
 const PresetSchema = z
   .strictObject({
     /** Learn a dynamic layer from live traffic. */
     overlay: z.boolean(),
-    /** `exact` is the paper's written Match. */
-    match: z.enum(["exact", "case-insensitive"]),
+    /** `exact` is the paper's written Match; `state-tracker` also reads a node the tool's result declares and bindings' argument predicates (plan §5.2). */
+    match: z.enum(["exact", "case-insensitive", "state-tracker"]),
     /** `start` resets to Start at each turn (the paper); `carry` keeps the previous turn's last action. */
     turnBoundary: z.enum(["start", "carry"]),
-    /** `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
-    delivery: z.enum(["system", "trailing-message"]),
+    delivery: DeliverySchema,
     /** Which guidance prompt: the paper's, or the harness variant (plan §9). */
     guidancePrompt: z.enum(["paper", "harness"]),
     guidanceCache: z.boolean(),
+    /** What a hop of the horizon counts: an `edge` (the paper), or an `action`, running through reasoning and status nodes to the next action node. */
+    hopUnit: z.enum(["edge", "action"]).default("edge"),
     /** Re-read the overlay at each turn boundary, or freeze it for the session (plan §5.1). */
     overlayRefresh: z.enum(["turn", "session"]).default("turn"),
     /** When dream moves the head mid-session: re-pin at the next turn, or keep the old core. */
@@ -167,6 +183,8 @@ const PromptsSchema = z
     dream: text,
     /** Live reflection: proposes overlay entries (plan §6.2). */
     reflection: text,
+    /** The graph router's tool description: choose a candidate graph for the session's first prompt (a resolver's route rule). */
+    route: text,
     /** The question a task suite's `judge` scorer asks about an answer (the state holds the task, the expected answer and the answer). */
     taskJudge: text.exactOptional(),
   })

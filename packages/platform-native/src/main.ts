@@ -161,6 +161,7 @@ const procedural = proceduralFiles && { store: proceduralFiles, settings: proced
 // the ensemble's reasoning model, or else the gateway model.
 const generator = procedural && (cognitive?.ensemble.languageModel("reasoning") ?? gateway(values.model));
 // Agent workers are guided by their session's own model; a harness is guided once per turn, by the ensemble's chat model or the gateway model.
+// A resolver rule that routes asks the ensemble's tool router; without the cognitive core such a session has no graph.
 const step =
   procedural &&
   nativeProceduralStep({
@@ -169,6 +170,7 @@ const step =
     principal,
     ...(proceduralPolicy === undefined ? {} : { policy: proceduralPolicy }),
     ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
+    ...(cognitive ? { router: cognitive.ensemble.languageModel("tool-calling", "router") } : {}),
   });
 // Composition (agent workers): dream compiles well-trodden paths into workflows staged in the procedural
 // directory (never the shared --workflows library), with the session tools as its catalog, and each session
