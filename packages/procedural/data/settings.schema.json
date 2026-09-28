@@ -30,10 +30,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -300,10 +328,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -575,10 +631,38 @@
             ]
           },
           "delivery": {
-            "type": "string",
-            "enum": [
-              "system",
-              "trailing-message"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "trailing-message"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "enum": [
+                      "system",
+                      "trailing-message"
+                    ]
+                  },
+                  "activeTools": {
+                    "default": "all",
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "successors"
+                    ]
+                  }
+                },
+                "required": [
+                  "to"
+                ],
+                "additionalProperties": false
+              }
             ]
           },
           "guidancePrompt": {

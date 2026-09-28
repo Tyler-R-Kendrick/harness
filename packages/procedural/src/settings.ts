@@ -95,6 +95,20 @@ const DreamSettingsSchema = z
   });
 export type DreamSettings = z.output<typeof DreamSettingsSchema>;
 
+/** Where guidance goes: `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
+const PlacementSchema = z.enum(["system", "trailing-message"]);
+
+/**
+ * How guidance is delivered: where it goes (`to`), and which tools a step offers
+ * (`activeTools`): `all`, or only the tools of the active node's successor actions, a
+ * strict ablation (AI SDK `activeTools`). A placement alone is that placement with every tool.
+ */
+const DeliverySchema = z.union([
+  PlacementSchema.transform((to) => ({ to, activeTools: "all" as const })),
+  z.strictObject({ to: PlacementSchema, activeTools: z.enum(["all", "successors"]).default("all") }),
+]);
+export type Delivery = z.output<typeof DeliverySchema>;
+
 const PresetSchema = z
   .strictObject({
     /** Learn a dynamic layer from live traffic. */
@@ -103,8 +117,7 @@ const PresetSchema = z
     match: z.enum(["exact", "case-insensitive", "state-tracker"]),
     /** `start` resets to Start at each turn (the paper); `carry` keeps the previous turn's last action. */
     turnBoundary: z.enum(["start", "carry"]),
-    /** `system` rebuilds the instructions with the guidance slot (the paper); `trailing-message` adds one advisory message. */
-    delivery: z.enum(["system", "trailing-message"]),
+    delivery: DeliverySchema,
     /** Which guidance prompt: the paper's, or the harness variant (plan §9). */
     guidancePrompt: z.enum(["paper", "harness"]),
     guidanceCache: z.boolean(),

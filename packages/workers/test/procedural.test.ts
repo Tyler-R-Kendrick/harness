@@ -65,6 +65,18 @@ const contents = (m: LanguageModelV4CallOptions["prompt"][number]): string => (t
 const advisories = (o: LanguageModelV4CallOptions) => o.prompt.filter((m) => m.role === "user" && contents(m).startsWith(GUIDANCE_LABEL));
 
 describe("procedural guidance in a session worker (sessionAgent + proceduralStep)", () => {
+  it("PW1.75 successor-only delivery offers each step only the tools of its node's successor actions, and every tool where there are none", async () => {
+    const successors = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, strict: { ...settingsFile.presets.harness, delivery: { to: "trailing-message", activeTools: "successors" } } } });
+    const d = await deps("strict", successors);
+    const model = scripted([call("first_hop_retrieve"), finish("tool-calls")], [call("Scan_Index", "c2"), finish("tool-calls")], [...text("Answer."), finish()]);
+    const tools = { first_hop_retrieve: retrieve, Scan_Index: retrieve, grep: retrieve };
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools, step: proceduralStep(d) }) });
+    const { events, done } = run(worker, "Who directed the film?");
+    await done;
+    expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([["first_hop_retrieve"], ["Scan_Index"], ["first_hop_retrieve", "Scan_Index", "grep"]]);
+    expect(records(events).map((r) => r.activeTools)).toEqual([["first_hop_retrieve"], ["Scan_Index"], undefined]);
+  });
+
   it("PW1.15 the paper preset puts the guidance in the system prompt of every step, once, and each step's record lands before its tool call", async () => {
     const d = await deps("paper");
     const model = scripted([call("first_hop_retrieve"), finish("tool-calls")], [...text("Answer."), finish()]);

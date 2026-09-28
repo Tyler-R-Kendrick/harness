@@ -1123,6 +1123,18 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   text, so a declared node is not read there (a path through a declared node that its
   calls' names and arguments do not reach has no recorded run, and composition reports
   it as not composable).
+- **Successor-only tools (an ablation).** `Preset.delivery` is now
+  `Delivery = {to: "system" | "trailing-message"; activeTools: "all" | "successors"}`
+  (`activeTools` defaults to `all`; a bare placement string still parses, as that
+  placement with every tool). Both shipped presets say `all`. Under `successors`,
+  `prepare` also returns `activeTools`: for each `ACTION` node an edge of hop 1 of the
+  neighborhood reaches (so under action hops the first actions past reasoning and status
+  nodes), the first of its binding's name and its id that the step's `tools` offer (the
+  first, when the tools are unknown), once each. With no matched node, or none of these
+  offered, it returns none, and every tool stays offered. The step record then carries
+  `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
+  may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
+  step only. The turn variant cannot limit a harness's tools and ignores the setting.
 
 ## Open issues
 

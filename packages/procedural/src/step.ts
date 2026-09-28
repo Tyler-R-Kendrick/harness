@@ -16,7 +16,7 @@ import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, Rev
 import type { GraphId } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
 import { declaredNode, match, neighborhood } from "./locate.ts";
-import type { ObservedAction } from "./locate.ts";
+import type { Neighborhood, ObservedAction } from "./locate.ts";
 import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
@@ -50,6 +50,8 @@ export const StepRecordSchema = z.strictObject({
   /** The probationary overlay entries the step showed (plan §6.3). */
   exposure: z.array(EntryIdSchema),
   usage: z.strictObject({ inputTokens: z.int().min(0), outputTokens: z.int().min(0) }),
+  /** The only tools the step offered, under successor-only delivery; absent when it offered every tool. */
+  activeTools: z.array(z.string()).exactOptional(),
 });
 export type StepRecord = z.output<typeof StepRecordSchema>;
 
@@ -92,7 +94,7 @@ export interface TurnInput extends StepScope {
 
 /** A step hook: structurally the workers' `StepHook`. */
 export interface ProceduralStepHook {
-  prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[] } | undefined>;
+  prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[]; activeTools?: string[] } | undefined>;
   turn(input: TurnInput): Promise<string | undefined>;
 }
 
@@ -203,6 +205,24 @@ function exposureOf(nodes: readonly EffectiveNode[], edges: readonly EffectiveEd
   return [...ids];
 }
 
+/**
+ * The tools of the active node's successor actions (hop 1 of its neighborhood, so under
+ * action hops the first actions past any reasoning or status nodes), each by the first of
+ * its binding's name and its id the session offers (the first, when the tools are
+ * unknown). Undefined when there are none, so every tool stays offered.
+ */
+function successorTools(view: EffectiveGraph, around: Neighborhood, tools: readonly string[] | undefined): string[] | undefined {
+  const names = new Set<string>();
+  for (const e of around.hops[0] ?? []) {
+    const next = nodeById(view, e.to);
+    if (next?.type !== "ACTION") continue;
+    const candidates = next.binding === undefined ? [next.id] : [next.binding.name, next.id];
+    const offered = tools === undefined ? candidates[0] : candidates.find((c) => tools.includes(c));
+    if (offered !== undefined) names.add(offered);
+  }
+  return names.size > 0 ? [...names] : undefined;
+}
+
 /** What a session reads until its next turn boundary: one version pair (I3). */
 interface View {
   readonly graph: GraphId;
@@ -250,8 +270,11 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     return session;
   };
 
-  /** Guidance for the step at `action`, reported as a step record; the delivered text is returned. */
-  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel): Promise<string> => {
+  /**
+   * Guidance for the step at `action`, reported as a step record; the delivered text is
+   * returned, with the tools the step may offer when `limit` asks for them.
+   */
+  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel, limit: boolean): Promise<{ block: string; activeTools?: string[] }> => {
     const { messages, tools } = scope;
     const view = session.view.effective;
     const action = observed?.name;
@@ -262,6 +285,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     const shownEdges = around === undefined ? view.edges : around.hops.flat();
     const named = new Set<string>(around === undefined ? view.nodes.map((n) => n.id) : [around.active, ...shownEdges.flatMap((e) => [e.from, e.to])]);
     const words = around === undefined ? deps.settings.graphContext.full : deps.settings.graphContext.local;
+    const activeTools = limit && around !== undefined ? successorTools(view, around, tools) : undefined;
     const own = scoped(messages, "carry");
     const users = own.filter((m) => m.role === "user");
     const task = users.length > 0 ? textOf(users[0]!) : "";
@@ -308,9 +332,10 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
         shownEdges,
       ),
       usage,
+      ...(activeTools === undefined ? {} : { activeTools }),
     };
     scope.report({ sessionUpdate: "notice", severity: "info", title: "Procedural step", description: node === undefined ? "No node matched: the whole graph" : `At ${node}`, _meta: { harness: { procedural: { step } } } });
-    return `${GUIDANCE_LABEL}${text}`;
+    return { block: `${GUIDANCE_LABEL}${text}`, ...(activeTools === undefined ? {} : { activeTools }) };
   };
 
   return {
@@ -319,10 +344,11 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const session = await enter(input, (known) => (input.turnId === undefined ? input.stepNumber > 0 : known.turnId === input.turnId));
       if (session.view === undefined) return undefined;
       const call = lastCall(scoped(input.messages, preset.turnBoundary));
-      const block = await advise(input, { ...session, view: session.view }, call?.action, call?.others ?? [], deps.model ?? input.model);
-      if (preset.delivery === "system") return { instructions: withGuidance(input.initialInstructions, block) };
+      const { block, activeTools } = await advise(input, { ...session, view: session.view }, call?.action, call?.others ?? [], deps.model ?? input.model, preset.delivery.activeTools === "successors");
+      const tools = activeTools === undefined ? {} : { activeTools };
+      if (preset.delivery.to === "system") return { instructions: withGuidance(input.initialInstructions, block), ...tools };
       const advisory: ModelMessage = { role: "user", content: block, providerOptions: { [HARNESS]: ADVISORY } };
-      return { messages: [...input.messages.filter((m) => !isAdvisory(m)), advisory] };
+      return { messages: [...input.messages.filter((m) => !isAdvisory(m)), advisory], ...tools };
     },
 
     async turn(input) {
@@ -332,7 +358,8 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const call = input.lastCall;
       const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredNode(call.output));
       const last = preset.turnBoundary === "start" ? undefined : known;
-      return advise(input, { ...session, view: session.view }, last, [], deps.model);
+      // A harness turn cannot limit the harness's tools, so successor-only delivery guides it as usual.
+      return (await advise(input, { ...session, view: session.view }, last, [], deps.model, false)).block;
     },
   };
 }

@@ -26,7 +26,7 @@ export { refine, type RefineRequest, type RefineResult } from "./refine.ts";
 export { modelReflector, reflect, reflectionJsonSchema, type Reflector, type ReflectRequest } from "./reflect.ts";
 export { explainResolve, matches, parseResolver, ResolverSchema, resolveGraph, resolverJsonSchema, WhenSchema, type Resolution, type ResolveContext, type Resolver, type When } from "./resolver.ts";
 export { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
-export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
+export { GATES, guidancePromptOf, HOPS, parseSettings, PLACEHOLDERS, presetOf, SettingsSchema, settingsJsonSchema, WINDOW, type Delivery, type DreamSettings, type Gate, type LiveSettings, type Preset, type Settings } from "./settings.ts";
 export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
 export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepRecord, type StepScope, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";

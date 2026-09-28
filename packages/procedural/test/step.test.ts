@@ -359,6 +359,67 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     });
   });
 
+  describe("successor-only tools (an ablation)", () => {
+    const successors = (changes: Record<string, unknown> = {}, base: "paper" | "harness" = "paper") => withPreset(base, { delivery: { to: base === "paper" ? "system" : "trailing-message", activeTools: "successors" }, ...changes });
+    const OFFERED = ["first_hop_retrieve", "Scan_Index", "grep"];
+    const at = async (settings: Settings, messages: ModelMessage[], tools: string[] | undefined = OFFERED) => {
+      const s = await setup("custom", { settings });
+      const out = await proceduralStep(s.deps).prepare(input(s, [user("q"), ...messages], tools === undefined ? {} : { tools }));
+      return { out, record: s.records[0]! };
+    };
+
+    it("PW1.72 a step offers only the tools of the active node's successor actions, by binding name or id, and says so in its record", async () => {
+      const start = await at(successors(), []);
+      expect(start.out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
+      expect(start.out).toHaveProperty("instructions");
+      expect(start.record.activeTools).toEqual(["first_hop_retrieve"]);
+      const retrieved = await at(successors({}, "harness"), [calls("first_hop_retrieve"), result("first_hop_retrieve")]);
+      expect(retrieved.out).toMatchObject({ activeTools: ["Scan_Index"] });
+      expect(retrieved.out).toHaveProperty("messages");
+    });
+
+    it("PW1.73 with no successor action the session offers, or no matched node, every tool stays offered and the record names none", async () => {
+      // Scan_Index leads to a reasoning node; grep matches nothing; the successor's tool is not offered.
+      for (const [messages, tools] of [[[calls("Scan_Index"), result("Scan_Index")], OFFERED], [[calls("grep"), result("grep")], OFFERED], [[], ["grep"]]] as const) {
+        const { out, record } = await at(successors(), [...messages], [...tools]);
+        expect(out).not.toHaveProperty("activeTools");
+        expect(record).not.toHaveProperty("activeTools");
+      }
+      // Tools unknown: the successors' names as they are.
+      expect((await at(successors(), [], undefined)).out).toMatchObject({ activeTools: ["first_hop_retrieve"] });
+    });
+
+    it("PW1.74 both shipped presets offer every tool; successors follow the preset's hop unit", async () => {
+      for (const preset of ["paper", "harness"]) {
+        const s = await setup(preset);
+        const out = await proceduralStep(s.deps).prepare(input(s, [user("q")], { tools: OFFERED }));
+        expect(out).not.toHaveProperty("activeTools");
+        expect(s.records[0]).not.toHaveProperty("activeTools");
+      }
+      // In action hops the reasoning node after Scan_Index is passed through, but only End lies beyond it.
+      expect((await at(successors({ hopUnit: "action" }), [calls("Scan_Index"), result("Scan_Index")])).out).not.toHaveProperty("activeTools");
+      const hiding = parseGraph({
+        ...hotpot(),
+        nodes: [
+          { id: "Start", type: "STATUS", description: "Begin." },
+          { id: "Retrieve", type: "ACTION", description: "Retrieve." },
+          { id: "Decide", type: "REASONING", description: "Decide." },
+          { id: "Answer_Lookup", type: "ACTION", description: "Look up.", binding: { kind: "tool", name: "lookup" } },
+          { id: "End", type: "STATUS", description: "Done." },
+        ],
+        edges: [edge("Start", "Retrieve"), edge("Retrieve", "Decide"), edge("Decide", "Answer_Lookup"), edge("Answer_Lookup", "End")],
+      });
+      if (!hiding.ok) throw new Error("fixture");
+      const through = async (hopUnit: string) => {
+        const s = await setup("custom", { settings: successors({ hopUnit }) });
+        await seed(s.store, hiding.graph);
+        return proceduralStep(s.deps).prepare(input(s, [user("q"), calls("Retrieve"), result("Retrieve")], { tools: ["Retrieve", "lookup"] }));
+      };
+      expect(await through("edge")).not.toHaveProperty("activeTools");
+      expect(await through("action")).toMatchObject({ activeTools: ["lookup"] });
+    });
+  });
+
   it("PW1.59 a message tagged by another provider is not an advisory", async () => {
     const s = await setup("harness");
     const other: ModelMessage = { role: "user", content: "keep me", providerOptions: { other: { advisory: "procedural" } } };
