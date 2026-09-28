@@ -900,6 +900,10 @@
         "reflection": {
           "type": "string",
           "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -908,7 +912,8 @@
         "guidanceHarness",
         "refiner",
         "dream",
-        "reflection"
+        "reflection",
+        "route"
       ],
       "additionalProperties": false
     }

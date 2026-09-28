@@ -162,4 +162,12 @@ describe("procedural settings (data/settings.json)", () => {
     delete bare.presets.harness["repinOnDream"];
     expect(presetOf(parseSettings(bare), "harness")).toMatchObject({ overlayRefresh: "turn", repinOnDream: "turn" });
   });
+
+  it("PG1.48 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
+    const { prompts } = settings();
+    expect(PLACEHOLDERS.route).toEqual(["graphs"]);
+    expect(prompts.route).toContain("{graphs}");
+    expect(prompts.route).toMatch(/call nothing/i);
+    expect(edit(["prompts", "route"], "Choose a graph.")).toThrow(/missing placeholders \{graphs\}\n.*at prompts\.route$/);
+  });
 });

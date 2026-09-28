@@ -536,6 +536,12 @@ A rule may match on anything in the session context:
 A rule names a graph by a template. Per user, per team, per repository, per project, one
 shared graph, or no graph at all are all resolver files. None is architecture.
 
+A rule may instead route: `{ "route": { "candidates": ["repo/harness", {"graph": "team/web",
+"description": "…"}], "minConfidence": 0.8 } }` asks the cognitive router (its `route`, with
+calibrated confidence) to choose among the candidates by the session's first prompt. A
+choice below `minConfidence`, no choice, or no router is no graph, and a session pinned to
+a candidate keeps it.
+
 ### 8.2 Merging
 
 A revision record has `parents[]`, so a merge is a first-class revision. Merging two

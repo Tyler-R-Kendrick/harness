@@ -1067,6 +1067,38 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
+
+As built. A resolver rule may route instead of naming a graph (plan §8.1).
+
+- A rule is `{ when, graph }` or `{ when, route }`, never both or neither.
+  `route = { candidates: (GraphId | { graph: GraphId; description: string })[]; minConfidence: Probability }`
+  (`RouteSchema`), with at least one candidate, each named once. `data/resolver.schema.json`
+  is regenerated.
+- `ResolveContext` gains `prompt?` (the session's first prompt) and `pinned?: GraphId`
+  (the graph the session is pinned to).
+- `GraphRouter = (request: RouteRequest) => Promise<RouteAnswer>`, where
+  `RouteRequest = { prompt; candidates: RouteCandidate[] }` (`{ graph, description? }`) and
+  `RouteAnswer = { graph: GraphId | undefined; confidence: Probability }`.
+- `explainRoute(resolver, context, router?): Promise<Resolution>` and
+  `routeGraph(…)`: template rules resolve as in `explainResolve`. For a route rule:
+  - a session pinned to a candidate keeps it without asking the router, so a session is
+    routed once and keeps its graph across restarts;
+  - otherwise no router, or no prompt yet (empty or blank), is no graph;
+  - the router's choice is the graph when it is a candidate chosen at `minConfidence` or
+    above; below it, no choice, a choice outside the candidates, or a router that throws
+    is no graph, with the reason (the rule still decides: no fall-through).
+- `explainResolve` (synchronous) gives a route rule the pinned candidate, or no graph with
+  "needs the router".
+- `modelGraphRouter({ model, settings }): GraphRouter` calls cognitive's `route` (the
+  cascade's router step, with its calibrated confidence from provider metadata
+  `harness.confidence`, 0 without it) with the first prompt as input and one tool,
+  `GRAPH_TOOL` (`choose_graph`). The tool's description is `settings.prompts.route` with
+  `{graphs}` filled by one line per candidate (`- id` or `- id: description`); its input
+  schema is `{ graph: { enum: candidates } }`, the constraint. A valid call names the
+  choice; no call chooses none. `settings.json` gains `prompts.route`
+  (`PLACEHOLDERS.route = ["graphs"]`).
+
 ## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
 
 As built. Plan §7.6's task-graph item and ADR 0011's "the task graph gains payloads".

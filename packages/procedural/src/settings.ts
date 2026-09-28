@@ -23,6 +23,7 @@ export const PLACEHOLDERS = {
   refiner: REFINER_SLOTS,
   dream: [...REFINER_SLOTS, "overlay_entries_block", "cautioned_edges_block", "rejection_reasons_block"],
   reflection: ["graph_context", "trajectory"],
+  route: ["graphs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Gates dream can apply (plan §7.4). An evaluator gate with a trailing `?` applies only when the graph has an evaluator. */
@@ -135,6 +136,8 @@ const PromptsSchema = z
     dream: text,
     /** Live reflection: proposes overlay entries (plan §6.2). */
     reflection: text,
+    /** The graph router's tool description: choose a candidate graph for the session's first prompt (a resolver's route rule). */
+    route: text,
   })
   .superRefine((prompts, ctx) => {
     for (const [name, slots] of Object.entries(PLACEHOLDERS)) {
