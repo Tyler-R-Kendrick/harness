@@ -10,7 +10,8 @@ import { collectParts, finishReason, usage } from "@harness/cognitive";
 
 const HINT = "I run shell commands. Start a prompt with $ and a command line, for example: $ ls -la";
 
-function report(output: LanguageModelV4ToolResultOutput): string {
+/** A tool result as a reply: a command's exit code and output, a denial, or the result as JSON. */
+export function report(output: LanguageModelV4ToolResultOutput): string {
   if (output.type === "execution-denied") return "The command did not run: denied by the person.";
   const r = output.value as { exitCode?: unknown; stdout?: unknown; stderr?: unknown } | null;
   return typeof r?.exitCode === "number" ? `exit ${r.exitCode}\n${String(r.stdout)}${String(r.stderr)}` : JSON.stringify(output.value);
