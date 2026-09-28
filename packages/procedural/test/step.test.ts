@@ -490,6 +490,91 @@ describe("proceduralStep with an overlay (plan §5.1, §6.3)", () => {
   });
 });
 
+describe("per-session state: evicted when a session is forgotten, idle or least recently used", () => {
+  /** Settings whose session state lasts `idleMs` and holds `max` sessions. */
+  const bounded = (idleMs: number, max: number) => parseSettings({ ...settingsFile, sessions: { idleMs, max } });
+
+  it("PW1.69 forget evicts a session's state: its next step has no cached guidance; forgetting an unknown session changes nothing", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    await hook.prepare(input(s, [user("q")], { stepNumber: 1 }));
+    expect(s.records.at(-1)!.cached).toBe(true);
+    hook.forget("s1");
+    hook.forget("nobody");
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    expect(s.records.map((r) => r.cached)).toEqual([false, true, false]);
+    expect(s.guidance.doGenerateCalls).toHaveLength(2);
+  });
+
+  it("PW1.70 a session idle for longer than the settings' idle time, by the clock, is evicted at the next step of any session", async () => {
+    const s = await setup("harness", { settings: bounded(1000, 16) });
+    const clock = s.deps.clock as ManualClock;
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    clock.advance(1000);
+    await hook.prepare(input(s, [user("q")], { stepNumber: 1 }));
+    expect(s.records.at(-1)!.cached).toBe(true);
+    clock.advance(1001);
+    // Another session's step sweeps the idle one; the sweeper itself is new, so it is guided afresh.
+    await hook.prepare(input(s, [user("q")], { sessionId: "s2" }));
+    await hook.prepare(input(s, [user("q")], { stepNumber: 2 }));
+    expect(s.records.at(-1)!.cached).toBe(false);
+    // Its own late step finds it gone too.
+    clock.advance(1001);
+    await hook.prepare(input(s, [user("q")], { stepNumber: 3 }));
+    expect(s.records.at(-1)!.cached).toBe(false);
+    // Harness turns count as use, and are swept alike.
+    await hook.turn({ ...input(s, [user("q")], { sessionId: "h1" }), lastAction: undefined });
+    clock.advance(1001);
+    await hook.turn({ ...input(s, [user("q")], { sessionId: "h1", turnId: "t2" }), lastAction: undefined });
+    expect(s.records.at(-1)!.cached).toBe(false);
+  });
+
+  it("PW1.71 beyond the settings' cap the least recently used session is evicted", async () => {
+    const s = await setup("harness", { settings: bounded(1_000_000, 2) });
+    const hook = proceduralStep(s.deps);
+    const step = async (sessionId: string, stepNumber: number) => {
+      await hook.prepare(input(s, [user("q")], { sessionId, stepNumber }));
+      return s.records.at(-1)!.cached;
+    };
+    await step("s1", 0);
+    await step("s2", 0);
+    expect(await step("s1", 1)).toBe(true);
+    await step("s3", 0);
+    // s2 was the least recently used of three.
+    expect(await step("s1", 2)).toBe(true);
+    expect(await step("s3", 1)).toBe(true);
+    expect(await step("s2", 1)).toBe(false);
+    // s2 came back and pushed out s1, now the least recent.
+    expect(await step("s1", 3)).toBe(false);
+  });
+
+  it("PW1.72 a step that continues its turn after eviction reads the pin it had (one version pair per turn); a new turn re-pins", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    await hook.prepare(input(s, [user("q")]));
+    const first = s.records[0]!.core;
+    const next = await seed(s.store, variant("."), GRAPH, "dream");
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 1 }));
+    // An approval round restarts the stream at step 0 on a conversation ending with tool results: the same turn.
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { stepNumber: 0 }));
+    expect(s.records.map((r) => r.core)).toEqual([first, first, first]);
+    hook.forget("s1");
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve"), user("again")], { turnId: "t2" }));
+    expect(s.records[3]!.core).toBe(next);
+    // A continuing step with no pin, or a pin on another graph, is pinned as at a boundary.
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "fresh", stepNumber: 1 }));
+    expect(s.records[4]!.core).toBe(next);
+    await pinned(s, "moved", { graph: GraphIdSchema.parse("team/other"), core: first });
+    await hook.prepare(input(s, [user("q"), calls("first_hop_retrieve"), result("first_hop_retrieve")], { sessionId: "moved", stepNumber: 1 }));
+    expect(s.records[5]).toMatchObject({ graph: GRAPH, core: next });
+    expect(await s.store.pins.get("moved")).toMatchObject({ graph: GRAPH, core: next });
+  });
+});
+
 describe("step usage", () => {
   it("PW1.67 a step's model usage is reported, once the step ends, as a usage record of a session with a graph; a session without one reports nothing", async () => {
     const s = await setup("harness");

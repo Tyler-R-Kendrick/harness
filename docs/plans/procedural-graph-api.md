@@ -222,6 +222,8 @@ As built (P1). These are additions; nothing above changed meaning.
   `evaluator-anchored-noninferiority`, `approval` and `approval-for-side-effects`. A
   `Gate` is one of them, or an evaluator gate with a trailing `?`.
 - `decoding` holds `temperature`, `topK`, `solverMaxTokens` and `refinerMaxTokens`.
+- `sessions: {idleMs, max}` (positive ints; shipped as 30 minutes and 1024) bounds the
+  step hook's per-session state (P10).
 - `graphContext: {local: {desc, source}, full: {desc, source}}` fills
   `{graph_context_desc}` and `{graph_source}`. `full` is App. B.5's wording.
 - `prompts` holds `solver`, `guidance`, `guidanceHarness`, `refiner`, `dream` and
@@ -768,6 +770,15 @@ changed.
     overlay at the pin (`readOverlay`). An overlay whose base is not the pinned core is
     replaced by an empty one. Every step until the next boundary reads that pair (I3). A
     missing or unparsable (for example redacted) pinned revision throws.
+  - Per-session state (the pinned view and the guidance cache) is kept in least recently
+    used order and evicted: by `forget(sessionId)` (the host's call when the daemon
+    detaches the session; the daemon has no session close), when the session has been
+    idle for longer than `settings.sessions.idleMs` by the `clock` (swept at the next step
+    or turn of any session), and, beyond `settings.sessions.max` sessions, the least
+    recently used one. A step of a session whose state is gone that continues its turn
+    (`stepNumber > 0`, or a restarted stream whose conversation does not end with a user
+    message, as after an approval round) reads the stored pin as it is when it is on the
+    resolved graph, so the turn keeps its pair (I3); otherwise the step is a boundary.
   - Localization reads `messages` without system messages and advisories; under `start`
     only from the last user message on. The action is the last `tool-call` of the last
     assistant message that has one. The task is the first user message's text, the query
@@ -963,6 +974,9 @@ As built (P12). These refine the shapes above; no name another phase uses change
     P10's `proceduralStep` with `resolveGraph` (the host's principal as the owner),
     `pinSession`, and the host's clock and entropy (`hostPorts`).
     `hostAuthorizer(policy, principal)` is P9's `authorize` bound to the host's principal.
+  - `nativeStepEvictions({runtime, step, intervalMs?, log?})` pumps the daemon's
+    `session.detached` hook events (plugin `procedural-step`) to `step.forget`; `main.ts`
+    starts it with the daemon when it has a step hook.
   - `pumpHookEvents(runtime, {plugin, types, onEvent, intervalMs?, log?})` is an in-process
     plugin connection with a durable hook-bus cursor, acknowledging each event after its
     handler resolves; `sessionLogReader(daemon)` reads a session's log entries in
