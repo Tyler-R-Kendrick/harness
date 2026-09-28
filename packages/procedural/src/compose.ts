@@ -93,6 +93,7 @@ export function pathCandidates(core: ProceduralGraph, events: readonly OverlayEv
     const known = turns.get(e.turnKey);
     // Feedback re-observes a turn with a new score: the latest (by seq) is the turn's.
     if (e.rescore !== undefined) {
+      // Stryker disable next-line EqualityOperator: equivalent; a re-observation redelivered with the same seq carries the same score
       if (known !== undefined && e.rescore.seq > known.seq) turns.set(e.turnKey, { ...known, score: e.score, seq: e.rescore.seq });
     } else if (known === undefined) turns.set(e.turnKey, { session: e.turnKey.slice(0, e.turnKey.indexOf("/")), path: e.path, score: e.score, seq: 0 });
   }

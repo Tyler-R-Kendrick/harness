@@ -347,6 +347,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     const pins = pinCount(s);
     const before = (await s.store.heads.get(GRAPH))!.revision;
     expect(await hook.core(input(s, [user("q")]))).toEqual(hotpotGraph());
+    await hook.core(input(s, [user("q")]));
     const after = await seed(s.store, variant("?"), GRAPH, "dream");
     await hook.prepare(input(s, [user("q")]));
     expect(s.records.map((r) => r.core)).toEqual([before]);

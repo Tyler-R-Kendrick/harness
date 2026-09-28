@@ -79,7 +79,7 @@ describe("composition on a host", () => {
     const s = staging({ files: files(), codeMode: quickjsCodeMode(), ask: async () => "" });
     const tools: ToolSet = { search: tool({ description: "Search.", inputSchema: jsonSchema({ type: "object" }), execute: async () => [] }) };
     const c = await composer({ settings: settings(), staging: s, tools });
-    expect(c).toEqual({ settings: settings(), toolSpecs: { search: { description: "Search.", inputSchema: { type: "object" } } }, staging: s.library });
+    expect(c).toStrictEqual({ settings: settings(), toolSpecs: { search: { description: "Search.", inputSchema: { type: "object" } } }, staging: s.library });
     expect(await composer({ settings: settings(), staging: s, tools, runs: 7 })).toMatchObject({ runs: 7 });
   });
 
