@@ -184,7 +184,7 @@ describe("recordedRuns", () => {
     expect(recordedRuns(g, [t], names(PATH), "case-insensitive")).toEqual([shouted]);
   });
 
-  it("PC1.35 under a state tracker a call is matched with its arguments: a node whose argument predicate rejects them is not its node", () => {
+  it("PC1.46 under a state tracker a call is matched with its arguments: a node whose argument predicate rejects them is not its node", () => {
     const markdown = { type: "object", properties: { format: { type: "string", enum: ["md"] } }, required: ["format"] };
     const doc = chainDoc();
     const narrow = graphOf({ ...doc, nodes: doc.nodes.map((n) => (n.id === "Fetch_Page" ? { ...n, binding: { kind: "tool", name: "fetch", arguments: markdown } } : n)) });

@@ -156,6 +156,7 @@ export const DIAGNOSTIC_CODES = [
   "missing-start",
   "no-terminal",
   "cycle",
+  "unreachable",
   "tool-not-in-catalog",
   "binding-not-allowed",
   "filtered",

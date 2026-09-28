@@ -518,8 +518,11 @@ Dream is a separate process that runs out of band, away from the request path:
   pinned core binds.
 - **Journals.** A workflow run's journal links to its session's `tool_call` by run id
   (`tool/<toolCallId>`), so a compiled node's inner steps remain evidence.
-- **Task graph.** Instantiating a `TaskGraph` from a subgraph waits for task-graph
-  payloads and serialization.
+- **Task graph.** `planFromSubgraph(graph, from, to)` instantiates a `TaskGraph` from the
+  subgraph between two nodes: its action nodes become tasks whose payload holds the node
+  and its binding, `PROVIDES_INPUT_FOR` becomes data edges and `LEADS_TO`/`TRIGGERS` control
+  edges, and a cycle through a task is refused with a diagnostic. Task graphs have
+  payloads and JSON serialization.
 
 ## 8. Scoping, merging and access are configuration
 

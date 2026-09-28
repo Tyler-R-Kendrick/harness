@@ -1136,6 +1136,48 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
   step only. The turn variant cannot limit a harness's tools and ignores the setting.
 
+## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
+
+As built. Plan §7.6's task-graph item and ADR 0011's "the task graph gains payloads".
+
+- Core's `TaskGraph<P = unknown>`:
+  - `NodeSpec<P>` gains `payload?: P`, opaque to the graph; `payload(id): P | undefined`.
+  - `toJSON(): TaskGraphData<P>` is `{ nodes: TaskNodeData<P>[]; edges: TaskEdgeData[] }`
+    in the order added (`TaskNodeData = { id, join, resources, awaits, status, sealed, payload? }`,
+    `TaskEdgeData = { from, to, kind }`). The revision is not stored: it is the count of
+    structural changes, which rebuilding repeats.
+  - `static fromJSON<P>(data: unknown, payload?: (raw: unknown) => P): TaskGraph<P>`
+    rebuilds nodes, edges and seals through `addNode`, `addEdge` and `seal`, so restored
+    data obeys every rule they enforce, then sets statuses and refuses any no execution
+    reaches: a running, succeeded or failed node that was never ready (its join unmet or
+    an awaited group unsealed), or a skipped node that can still be satisfied. `payload`
+    checks each payload (its error is named); without it payloads are kept as given.
+    Anything invalid throws an `Error` saying what and where.
+- `planFromSubgraph(graph: EffectiveGraph, from: string, to: string, options?: PlanOptions): PlanResult`:
+  - The subgraph is every node on some path from `from` to `to` (both included), over
+    edges whose relation is a dependency.
+  - Its `ACTION` nodes become tasks, in the graph's node order, each with
+    `PlanPayload = { node: { id, type, description }; binding: Binding | null }`
+    (`PlanPayloadSchema`).
+  - `PlanOptions.relations: PlanRelations` maps each relation to a `DependencyKind` or
+    null (no dependency). The default `PLAN_RELATIONS` makes `PROVIDES_INPUT_FOR` data and
+    `LEADS_TO`, `TRIGGERS` and `CONVERGES_TO` control. An edge whose relation it does not
+    name is an `unknown-relation` diagnostic (at `edges[i]`), so a custom vocabulary says
+    what its relations mean.
+  - Reasoning and status nodes contract away: a task depends on every task it reaches
+    through them, nearest first. Such a dependency is data only when every edge on the way
+    is data (the same kind when they agree, else control); two ways of different kinds
+    give an edge of each kind.
+  - `PlanResult = { ok: true; plan: TaskGraph<PlanPayload> } | { ok: false; diagnostics }`.
+    Diagnostics: `missing-endpoint` (at `from` or `to`), `unreachable` (a new
+    `DiagnosticCode`: `to` is not reachable from `from`) and `cycle`, for a cycle through a
+    task, which the task graph refuses (a plan runs each task once, though the paper allows
+    cycles). A loop among reasoning and status nodes alone contracts away.
+  - `parsePlan(data): TaskGraph<PlanPayload>` is `TaskGraph.fromJSON` with every payload
+    parsed by `PlanPayloadSchema`.
+  - Nothing runs plans yet: the task graph is a library the daemon does not drive, and
+    dream does not emit plans.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
