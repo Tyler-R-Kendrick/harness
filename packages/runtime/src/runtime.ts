@@ -1,5 +1,5 @@
 import { Daemon, newId } from "@harness/core";
-import type { AgentInfo, Clock, CognitiveWork, Entropy, Identity, Output, SnapshotStorage, WorkerCommand } from "@harness/core";
+import type { AgentInfo, Clock, CognitiveWork, Entropy, HookError, HookEvent, Identity, Output, PublishInput, Result, SnapshotStorage, WorkerCommand } from "@harness/core";
 import { invokeCognitive, mirrorCapabilities } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
 import type { Worker } from "@harness/workers";
@@ -93,6 +93,16 @@ export class DaemonRuntime {
   /** Expire deadlines; hosts call this periodically. */
   tick(): void {
     this.#apply(this.daemon.tick());
+  }
+
+  /**
+   * Publish a host event on the hook bus (the core's host publish API: the host picks the
+   * `source`, peers never do), and save: hook events are part of the snapshot.
+   */
+  publish(input: PublishInput): Result<HookEvent, HookError> {
+    const published = this.daemon.publish(input);
+    if (published.ok) this.#persist();
+    return published;
   }
 
   /** Turns and cognitive work in flight. */
