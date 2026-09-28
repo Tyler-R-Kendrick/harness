@@ -151,8 +151,12 @@ The decision held; these details moved.
   (and `compose` in its settings) compiles the best-supported path into a workflow, stages
   it and binds it to a new node. The path's distinct-session support is that node's
   evidence, and it goes through the same gates as any candidate. By default approval is
-  needed, because a workflow counts as a tool with side effects. No host gives dream a
-  composer yet, and no worker takes `revisionTools` yet, so composition is a library.
+  needed, because a workflow counts as a tool with side effects. Hosts give dream a
+  composer over their session tools and a staging library of their own (a directory under
+  `--procedural` natively, an IndexedDB database in a browser; never the shared workflow
+  library), and agent workers take their tools per turn from the core the step hook pins
+  for the turn, so a session is offered exactly the workflows its pinned core binds.
+  Opaque harness workers keep their harness's own tools and are not offered workflows.
 - **Approval outside a session is an inbox.** The permission flow belongs to a session's
   turn, and dream runs outside any session, so a dream with no one to ask stores each
   candidate that needs approval as `pending-approval` and moves on without blocking. The

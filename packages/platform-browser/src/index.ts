@@ -12,5 +12,5 @@ export type { CacheStorageLike } from "./byte-cache.ts";
 export { xgrammarFromSource } from "./xgrammar.ts";
 export { browserWorkflows, IndexedDbWorkflows } from "./workflows.ts";
 export { packagedEmscripten, xgrammarFromFactory } from "./packaged.ts";
-export { browserProcedural } from "./procedural.ts";
+export { browserComposition, browserProcedural } from "./procedural.ts";
 export type { PackagedModule } from "./packaged.ts";

@@ -951,7 +951,7 @@ As built (P12). These refine the shapes above; no name another phase uses change
     `pumpHookEvents` as plugin `procedural-learner` on `turn.ended`; `main.ts` starts it
     with the daemon, and the extension's `feedback` goes to `learner.feedback`.
   - `main.ts` takes `--procedural <dir>` with `--procedural-settings`,
-    `--procedural-resolver` and `--procedural-policy` files. The step hook goes to
+    `--procedural-resolver`, `--procedural-policy` and (P13) `--procedural-composition` files. The step hook goes to
     `sessionAgent` for the model and ensemble workers (guided by the session's own model)
     and to `harnessWorker({ step })` for harness workers (guided by the ensemble's chat
     model, or the gateway model). With the cognitive core, `procedural.*` is served under the
@@ -1191,6 +1191,15 @@ above keep their meaning.
     library's `workflowTools` for the ensemble worker), `ask` is the ensemble's default
     model or the gateway model, and the daemon's dream gets `composer` and `catalog` as
     its tool catalog (so `enforceToolCatalog` sees the session tools).
+  - `harness-procedural dream` runs outside the daemon and does not know which worker's
+    tools its sessions had, so it refines without a composition round; the daemon's
+    `procedural.dream` composes.
+- **Browser host.** `browserComposition(ensemble, {settings, step, base?, name?, shared?,
+  factory?, codeMode?})` is `composition` with staging in an IndexedDB database of its own
+  (`IndexedDbWorkflows`, `harness-procedural-staging` by default; the shared library's,
+  `harness-workflows` by default, may not be the same one), on QuickJS by default, the
+  ensemble's default model answering `tools.ask`. The page, which runs its own dream and
+  workers, hands `tools` to `sessionAgent` and `composer` and `catalog` to `runDream`.
 
 ## Open issues
 
@@ -1198,10 +1207,11 @@ The finalization resolved the cross-phase wiring the phases recorded here (compo
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
 the evaluator contract and scripted environment, rejection records). Still open:
 
-- P6 × P12: dream on the daemon has no configured `Evaluator` and no session tool
-  catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
-  `approval-for-side-effects` see no real tools there; the gates do what the preset says
-  for their absence. Candidates that need approval wait in the approvals inbox.
+- P6 × P12: dream on the daemon has no configured `Evaluator` and no tools declared free
+  of side effects (`sideEffectFree`), so `approval-for-side-effects` treats every tool as
+  having them; with a harness worker it also has no tool catalog (the harness's tools are
+  its own), so `enforceToolCatalog` sees none there. With an agent worker the session
+  tools are its catalog. Candidates that need approval wait in the approvals inbox.
 - P12: content-id keying means two graphs holding the same document share one record (its
   `graph` is whichever wrote last), and a revert replaces its target's record;
   `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by
