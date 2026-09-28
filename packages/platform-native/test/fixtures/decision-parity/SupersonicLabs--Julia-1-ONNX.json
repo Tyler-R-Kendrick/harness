@@ -1,0 +1,1972 @@
+{
+ "artifact": "SupersonicLabs/Julia-1-ONNX@82a2fadf8fccfccdc5fd4e1009ba8f1a265eb7a8",
+ "source": "https://huggingface.co/SupersonicLabs/Julia-1-ONNX/blob/82a2fadf8fccfccdc5fd4e1009ba8f1a265eb7a8/parity-cases.json",
+ "license": "Apache-2.0",
+ "reference": "PyTorch logits of SupersonicLabs/Julia-1 (weights sha256 df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72), strict encoding, as its publisher recorded them for the ONNX export",
+ "cases": [
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nHe couldn't fit the soda bottle on the refrigerator shelf because the _ was too tall.",
+    "options": [
+     "shelf",
+     "bottle"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.739211082458496,
+    -1.2241696119308472
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nShe changed her university course from mathematics to history, because the _ course is more simple.",
+    "options": [
+     "history",
+     "mathematics"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.5680459141731262,
+    -2.9254631996154785
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe coffee machine used more energy in the morning than at night because there were more workers in the _ .",
+    "options": [
+     "morning",
+     "night"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -0.6038699150085449,
+    1.670423984527588
+   ]
+  },
+  {
+   "request": {
+    "state": "Opening The Desktop The Mozilla Foundation #39;s new Thunderbird E-mail client, released last week, is positioned as a simple-but-secure alternative to Microsoft #39;s widely used Outlook Express.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "Science and Technology",
+     "Sports",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.6811761856079102,
+    4.631539344787598,
+    -3.997696876525879,
+    -2.9947779178619385
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nSarah washed their countertops frequently to keep them clean but Monica's were always a mess because _ was very careless.",
+    "options": [
+     "Sarah",
+     "Monica"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.9270583391189575,
+    -1.6653205156326294
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nTwo women, one holding a mop, dance together. the first woman with the broom",
+    "options": [
+     "dances with the other woman instead.",
+     "blows the leaves into a pile.",
+     "begins to mop the floor.",
+     "gestures the female and then the second woman."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.243859052658081,
+    0.6539881229400635,
+    6.217052459716797,
+    4.978828430175781
+   ]
+  },
+  {
+   "request": {
+    "state": "My transfer to a beneficiary did not go through.  Why?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "cash withdrawal not recognised",
+     "beneficiary not allowed",
+     "visa or mastercard",
+     "request refund",
+     "virtual card not working",
+     "supported cards and currencies",
+     "unable to verify identity",
+     "exchange charge"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.977374076843262,
+    1.7996076345443726,
+    -9.917539596557617,
+    -8.419238090515137,
+    -8.202163696289062,
+    -10.241336822509766,
+    -8.469493865966797,
+    -10.411487579345703
+   ]
+  },
+  {
+   "request": {
+    "state": "Shell in Dutch gas grid disposal Energy giant Shell is to sell its stake in the pipeline unit of Dutch gas firm Gasunie to the Dutch government. Both Shell and ExxonMobil are selling their stakes, with the Dutch government paying 2.78bn euros (\\$3.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Sports",
+     "Business",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.404294967651367,
+    -8.055791854858398,
+    3.8025949001312256,
+    -2.0688798427581787
+   ]
+  },
+  {
+   "request": {
+    "state": "Bomb Kills Venezuela Prosecutor, Gov't Swipes at U.S. &lt;p&gt;&lt;/p&gt;&lt;p&gt; By Patrick Markey&lt;/p&gt;&lt;p&gt; CARACAS, Venezuela (Reuters) - A Venezuelan prosecutorprobing a 2002 coup against President Hugo Chavez was killed bya car bomb that the government blamed on Friday on radicalopponents it said were training in the United States.&lt;/p&gt;",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "World",
+     "Business",
+     "Sports",
+     "Science and Technology"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.3920938968658447,
+    -2.271542549133301,
+    -6.952352523803711,
+    -3.903444290161133
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel decently intelligent",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "love",
+     "anger",
+     "sadness",
+     "surprise",
+     "joy",
+     "fear"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.306061744689941,
+    -6.961029052734375,
+    -7.1029863357543945,
+    -7.992772102355957,
+    3.8502018451690674,
+    -7.735324859619141
+   ]
+  },
+  {
+   "request": {
+    "state": "There is a direct debit charge that I don't recognize, what can I do?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "change pin",
+     "topping up by card",
+     "card linking",
+     "direct debit payment not recognised",
+     "card payment fee charged",
+     "cash withdrawal not recognised",
+     "card about to expire",
+     "beneficiary not allowed"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.347526550292969,
+    -10.661932945251465,
+    -10.693135261535645,
+    2.4452319145202637,
+    -7.745060920715332,
+    -6.815810680389404,
+    -10.882614135742188,
+    -9.22293472290039
+   ]
+  },
+  {
+   "request": {
+    "state": "Caribbean islands prepare for Ivan Bridgetown - Islanders scrambled to put up storm shutters and buy water as Hurricane Ivan churned toward Barbados just days after Hurricane Frances tore across the Caribbean.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "World",
+     "Sports",
+     "Business",
+     "Science and Technology"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.6663727760314941,
+    -6.3566999435424805,
+    -7.222431182861328,
+    -5.23406982421875
+   ]
+  },
+  {
+   "request": {
+    "state": "Pitney Bowes wins Bank of America mailing contract STAMFORD, Conn. -- Mail and document management company Pitney Bowes Inc. said Thursday it has signed a \\$112 million mailing services contract with banking giant Bank of America Corp.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "Sports",
+     "World",
+     "Science and Technology"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    5.216204643249512,
+    -5.2650322914123535,
+    -2.6217849254608154,
+    -3.58345103263855
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nLexi used her paychecks to get her medications, but the _ were usually not enough.",
+    "options": [
+     "paychecks",
+     "medications"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -3.220974922180176,
+    -3.0055654048919678
+   ]
+  },
+  {
+   "request": {
+    "state": "Judge Says PeopleSoft's Revision 'Closer' (AP) AP - The judge who must decide whether PeopleSoft Inc.'s corporate takeover defenses will stand up against a hostile takeover attempt by Oracle Corp. said Friday the latest revision of a key defense was \"a lot closer\" to meeting concerns raised about it in court.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "World",
+     "Science and Technology",
+     "Business",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -2.9958016872406006,
+    3.381242036819458,
+    3.479891777038574,
+    -5.982210159301758
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nBob the builder had to go to Home Depot and get glue for the construction but kept his material because the _ had run out.",
+    "options": [
+     "material",
+     "glue"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.3403997421264648,
+    -4.996218681335449
+   ]
+  },
+  {
+   "request": {
+    "state": "I tried to withdraw money, but was unable to. Still says that the transaction is pending? Will this money disappear??",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "card swallowed",
+     "pending card payment",
+     "pending top up",
+     "balance not updated after bank transfer",
+     "card arrival",
+     "pending cash withdrawal",
+     "verify top up",
+     "declined card payment"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -9.971794128417969,
+    -9.601638793945312,
+    -7.785171985626221,
+    -9.078368186950684,
+    -9.930214881896973,
+    -0.04315986856818199,
+    -9.932052612304688,
+    -8.956588745117188
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Today more and more cars go into families. Which car is the best for people? Different people have different ideas. Some people like the bright colour car made in China. It's really a good choice . The bright colour car made in China is cheap, nice and safe. This kind of cars is suit for  the general income   family. Some people love famous foreign cars like Japanese cars, American cars and German cars. They're good but too expensive. But most people think famous foreign cars of better quality are better in safety. These are suit for the high income family or for business. Some people like sports cars, because they're fast and exciting. Some sports cars are very nice but very expensive. Only rich people can afford them. Some people like travelling, so they need a travel car. Travel cars are comfortable. But they use much oil . What's the best car for us? Maybe it's a new and popular topic in life. What does the writer think of the bright colour car made in China?",
+    "options": [
+     "It's good but too expensive.",
+     "It's comfortable.",
+     "It's nice but expensive.",
+     "It's cheap, nice and safe."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.9387046098709106,
+    -6.722776412963867,
+    -1.618680715560913,
+    -0.8641230463981628
+   ]
+  },
+  {
+   "request": {
+    "state": "Shooting At Arafat Mourning Tent Gunfire erupted Sunday at the tent set up for mourners to gather in memory of Yasser Arafat, witnesses said, just after Arafat #39;s successor, Mahmoud Abbas, arrived at the site.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Sports",
+     "Business",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.571033000946045,
+    -5.566885948181152,
+    -6.912628173828125,
+    1.1329553127288818
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nEmily has a chronic diarrhea so she goes to doctor Betty for an advice, because _ feels miserable.",
+    "options": [
+     "Emily",
+     "Betty"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.8204981088638306,
+    -2.429279088973999
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe cook wanted to put the brisket in the oven but the _ was too big.",
+    "options": [
+     "brisket",
+     "oven"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.7210160493850708,
+    2.05135178565979
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe scarf Bob's mother made for him would not fit around his neck, the _ was too large.",
+    "options": [
+     "neck",
+     "scarf"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -2.215818166732788,
+    0.15576671063899994
+   ]
+  },
+  {
+   "request": {
+    "state": "Financial World Focuses on Next Fed Chief (AP) AP - While President Bush is busy putting together his Cabinet for a second term, the financial world's attention is on a job vacancy 14 months away: Who will succeed Federal Reserve Chairman Alan Greenspan?",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "World",
+     "Business",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -5.985452651977539,
+    1.9212149381637573,
+    4.401728630065918,
+    -4.78814697265625
+   ]
+  },
+  {
+   "request": {
+    "state": "Can I make a withdraw in my home currency at an ATM? I'm on vacation and don't have cash with me. This is cause for a bit of concern. Is it possible to withdraw here without additional fees?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "card payment fee charged",
+     "pending card payment",
+     "wrong exchange rate for cash withdrawal",
+     "cash withdrawal charge",
+     "terminate account",
+     "failed transfer",
+     "getting virtual card",
+     "virtual card not working"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.348920822143555,
+    -10.8309326171875,
+    -0.4096048176288605,
+    -1.5548969507217407,
+    -9.4616060256958,
+    -10.40786361694336,
+    -10.55077838897705,
+    -10.35932731628418
+   ]
+  },
+  {
+   "request": {
+    "state": "PluggedIn: New Gadgets May Divert Drivers' Eyes from the Road (Reuters) Reuters - Drivers still learning how to talk\\on cell phones and maneuver at the same time are headed for an\\even more complex world.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Business",
+     "World",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.083357810974121,
+    -1.4825655221939087,
+    -1.3902642726898193,
+    -4.951394557952881
+   ]
+  },
+  {
+   "request": {
+    "state": "What should I do after I've moved and need to update my personal details?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "top up failed",
+     "fiat currency support",
+     "declined card payment",
+     "get disposable virtual card",
+     "lost or stolen phone",
+     "edit personal details",
+     "pin blocked",
+     "verify source of funds"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.992551803588867,
+    -10.253701210021973,
+    -10.170797348022461,
+    -9.493467330932617,
+    -10.361862182617188,
+    -0.616073489189148,
+    -10.74378490447998,
+    -10.423221588134766
+   ]
+  },
+  {
+   "request": {
+    "state": "Tornado kills four, injures hundreds in central Bangladesh (AFP) AFP - Four people died and hundreds were injured when a tornado bore down on a field where a large number of Muslim devotees had gathered to pray in central Bangladesh, police said.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Business",
+     "World",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.043259620666504,
+    -6.8226847648620605,
+    4.35749626159668,
+    -7.264975547790527
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nSamantha couldn't stop oogling at Cynthia's new and sexy dress so _ got out a little further.",
+    "options": [
+     "Cynthia",
+     "Samantha"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.6371892094612122,
+    -1.1257518529891968
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which likely sustains a bamboo shoot?",
+    "options": [
+     "darkness",
+     "bees",
+     "pandas",
+     "nutrients"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.139766216278076,
+    -6.723075866699219,
+    -6.64909553527832,
+    -1.8141638040542603
+   ]
+  },
+  {
+   "request": {
+    "state": "Please help me with my card payments which keeps getting reverted whenever i do online shopping. I am having this problem since last two weeks.",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "transfer timing",
+     "card linking",
+     "country support",
+     "receiving money",
+     "transaction charged twice",
+     "get disposable virtual card",
+     "card delivery estimate",
+     "reverted card payment?"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.416502952575684,
+    -9.830684661865234,
+    -10.596266746520996,
+    -10.298381805419922,
+    -10.465890884399414,
+    -10.061660766601562,
+    -9.933655738830566,
+    0.17863722145557404
+   ]
+  },
+  {
+   "request": {
+    "state": "Lawmakers to Get Federal Pay Raise (AP) AP - With little debate, House lawmakers on Tuesday included themselves as part of a pay raise that all federal employees will receive next year.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "World",
+     "Business",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.034670829772949,
+    1.5077787637710571,
+    2.5303070545196533,
+    -8.029263496398926
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nMegan shoveled the hay from the horse stall with no help from Laura because _ was lazy.",
+    "options": [
+     "Megan",
+     "Laura"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.09753415733575821,
+    1.6744836568832397
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nA woman is seen wiping off her feet and stepping into a circle pit. the woman",
+    "options": [
+     "begins throwing balls at a little girl while the girl pretends to hit her.",
+     "then circles around herself with a rope pushing her down.",
+     "then spins around and throws a discuss off into the air while the camera follows her.",
+     "is seen kicking around and walking around."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    6.251424789428711,
+    1.799116849899292,
+    2.928203821182251,
+    4.472468852996826
+   ]
+  },
+  {
+   "request": {
+    "state": "Iressa Drug Failure Deals AstraZeneca Fresh Blow AstraZeneca Plc suffered its third setback in two months on Friday as lung cancer drug Iressa failed to help patients live longer ",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "Science and Technology",
+     "Sports",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.858320951461792,
+    -2.3272297382354736,
+    -4.039790153503418,
+    -1.1230112314224243
+   ]
+  },
+  {
+   "request": {
+    "state": "i wish i could take my feelings and sort them as i would a messy file",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "sadness",
+     "joy",
+     "surprise",
+     "fear",
+     "anger",
+     "love"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.992375135421753,
+    -5.862086296081543,
+    -8.136652946472168,
+    -7.28704309463501,
+    -6.506386756896973,
+    -5.367234706878662
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nWhile the landlord was on vacation Jesse broke a vase. He replace it with a bottle and was happy because the _ looked nicer.",
+    "options": [
+     "bottle",
+     "vase"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -0.1161559447646141,
+    -0.8011264801025391
+   ]
+  },
+  {
+   "request": {
+    "state": "Fergie stands by selection policy Manchester United boss Sir Alex Ferguson insists he has no regrets about fielding a second-string side against Fenerbahce. Sanli Tuncay #39;s second-half hat-trick consigned the Red Devils to a 3-0 defeat in Istanbul ",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "Science and Technology",
+     "Sports",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -5.681879997253418,
+    -6.752503395080566,
+    5.320816993713379,
+    -0.9991661906242371
+   ]
+  },
+  {
+   "request": {
+    "state": "Referee attack lands Keegan in the dock (AFP) AFP - Manchester City boss Kevin Keegan has been charged by the Football Association for his confrontation with referee Steve Dunn in the tunnel after Sunday's 4-3 defeat to Newcastle.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Sports",
+     "Science and Technology",
+     "Business",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    5.010004043579102,
+    -6.676976203918457,
+    -5.618955612182617,
+    2.1833839416503906
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Deer eat different types of plants in an ecosystem. Which method would best show the percentages of the plant types in the deer diet?",
+    "options": [
+     "line graph",
+     "pie chart",
+     "bar graph",
+     "scatterplot"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.5105791091918945,
+    -1.3224234580993652,
+    -8.497366905212402,
+    -6.69215726852417
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe boat started to sink when James added more luggage into it. The _ is heavy.",
+    "options": [
+     "boat",
+     "luggage"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.4497629404067993,
+    0.8432572484016418
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "1Forests help to keep water from running away, so drought does not often happen. The trees in the forests can keep raindrops from hitting the soil directly, and the dead leaves on the ground can also keep the water from running away.2 Chinese people don't want to see more floods and droughts. We have built the \" Great Green Wall\" of trees across the northern part of our country.3 Thanks to the \" Great Green Wall\", we can prevent the wind from blowing the earth away. It will stop the sand from moving towards the rich farmland. That's why more \" Great Green Walls\" are needed. Trees must be planted all over the world.4 ,A, B, C, D,. (10) The reason of building \" Great Green Wall\"is  _  .",
+    "options": [
+     "to make the city beautiful",
+     "to stop the rain from hitting the soil directly.",
+     "to stop the sand from moving towards the rich farmland.",
+     "to move the sand"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.713595867156982,
+    -7.571101665496826,
+    -2.3450982570648193,
+    -8.67783260345459
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nA woman is in a driveway, doing tricks and stunts as she jumps rope. She increases speed, then stops as a man approaches her to discuss her technique. she",
+    "options": [
+     "then returns to demonstrating how to jump rope, and the various names of the moves.",
+     "jumps once, hopping and flipping on the rope.",
+     "signals him in a funny way, and he helps her hopscotch the ground.",
+     "jumps on the rope one more time as a man begins to interview her after she secures the rope."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.7291802167892456,
+    -3.1129820346832275,
+    -5.096353054046631,
+    -5.150676727294922
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nSo _ was embarrassed because Mary wears a wig and Kayla doesn't and have really nice hair.",
+    "options": [
+     "Mary",
+     "Kayla"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.1662217378616333,
+    -3.24656081199646
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nA woman is in a kitchen, stirring food in a pot. She adds her gathered ingredients one a time as she talks, showing the pasta she is using. she",
+    "options": [
+     "turns the pot to show thinner ingredients.",
+     "then adds a bowlful of vegetables she has mixed.",
+     "then shows ice cream in a bowl.",
+     "sautes small amounts of the miso and cooks them against the pasta."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.2278767824172974,
+    1.2604137659072876,
+    1.1240993738174438,
+    3.8522748947143555
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to make caramelized bananas [title] Cut the bananas down the long side. [step] Then cut them in half, splitting the bananas into quarters. Place the banana quarters aside.",
+    "options": [
+     "[title] Peel the banana flesh in a blender or food processor. [step] If you don't have a food processor, download an app.",
+     "[title] Melt half of the butter and place aside. [title] Take the other half of the butter and add it to a skillet.",
+     "[title] Place the halved bananas into a food processor or pestle. [step] Add the cooled water, curry leaves, salt, whey powder and caramelized banana wedges to the processor or pestle.",
+     "[title] Grate the bananas with a mortar and pestle. [step] The mortar should be placed on a flat surface with a grease seal on it."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.2823448181152344,
+    1.8336139917373657,
+    3.3173558712005615,
+    0.18310856819152832
+   ]
+  },
+  {
+   "request": {
+    "state": "i make this blog post i am feeling the melancholy running through my veins",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "fear",
+     "sadness",
+     "joy",
+     "surprise",
+     "anger",
+     "love"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.961752891540527,
+    2.5530073642730713,
+    -7.911993503570557,
+    -8.82308292388916,
+    -8.435190200805664,
+    -8.60375690460205
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel i was intimidated by the college and people at home",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "love",
+     "joy",
+     "fear",
+     "surprise",
+     "anger",
+     "sadness"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.44601821899414,
+    -6.814445495605469,
+    4.06752347946167,
+    -5.227630615234375,
+    -4.75295352935791,
+    -8.457048416137695
+   ]
+  },
+  {
+   "request": {
+    "state": "Can you change my currency to EUR?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "age limit",
+     "failed transfer",
+     "why verify identity",
+     "exchange rate",
+     "order physical card",
+     "cancel transfer",
+     "cash withdrawal not recognised",
+     "fiat currency support"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.597859382629395,
+    -10.745746612548828,
+    -10.734381675720215,
+    -3.1852781772613525,
+    -10.341865539550781,
+    -10.734346389770508,
+    -11.028905868530273,
+    -1.6301149129867554
+   ]
+  },
+  {
+   "request": {
+    "state": "How can I investigate a missing refund?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "virtual card not working",
+     "automatic top up",
+     "unable to verify identity",
+     "card acceptance",
+     "transfer fee charged",
+     "activate my card",
+     "Refund not showing up",
+     "transfer into account"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.008626937866211,
+    -10.545923233032227,
+    -10.361138343811035,
+    -10.354692459106445,
+    -10.60568618774414,
+    -10.0866117477417,
+    0.8519176244735718,
+    -9.434709548950195
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to write a christmas newsletter [title] Tailor your news to your recipient. [step] Think about who you're sending your newsletter to. What sort of information would you like to include for that recipient? Possibilities might include marriage, moving in with your partner, vacations, new pets, children's news, graduations, new job and any significant changes in your life.",
+    "options": [
+     "[title] Change everything from a simple email to a newsletter. [step] Change your subject line to add a bit of interest.",
+     "There's no need to go into great detail. Just mention milestones and happy events that have occurred within the past year.",
+     "Try to make people into people you really like by giving out the information for their interest. [title] Consider who you'll be handing out the newsletter to.",
+     "[substeps] Do not remove all of your information from your newsletter. This will make it more likely that your target audience will contact you."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -0.28924161195755005,
+    -9.252218246459961,
+    -3.3205413818359375,
+    -1.1559417247772217
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to know if your child is too skinny [title] Weigh your child regularly. [step] A good sign your child is is healthy and not too skinny is if they are steadily gaining weight as they grow. Weighing your child regularly can help you calculate things such as body mass index (bmi) as well as ensure your child is adding weight as they get taller.",
+    "options": [
+     "This can also show your child that healthy weight is a sign of age. Bmi is the \" weight required \" of any person over the age of 12 in any sexual situation.",
+     "This can help you place him where he fits best in the equation. Generally, bmi ranges between 130 and 69.6.",
+     "[substeps] Use a scale that is properly calibrated. You may even want one that can weigh to fractions of a pound this will give you the most accurate reading of your child's weight.",
+     "Bmi refers to how many calories someone is consuming each day and how many calories they eat in a day. People who weigh too heavy weigh themselves as a percentage based on age or gender."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.0828903913497925,
+    -1.513454556465149,
+    1.2973767518997192,
+    -5.624414443969727
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nA website address is seen and then the words \"introduction to rope skipping\". Then there is a girl in shorts and a tank top jumping rope. she",
+    "options": [
+     "does several tricks on the rope as it moves, jumps, and does tricks on fake feet.",
+     "then does some jumping with her legs out to the sides, front to back, then crossing her arms.",
+     "jumps and does a flip across the rope and lands back onto the mat on her left.",
+     "jumps the basketball bar at the end as she spins in the air."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.7293778657913208,
+    5.377902030944824,
+    -7.11385440826416,
+    -2.9846699237823486
+   ]
+  },
+  {
+   "request": {
+    "state": "China launches science satellite A recoverable science experimental satellite is launched atop a Long March 2C carrier rocket at the Jiuquan Satellite Launch Center in Gansu Province, northwest China Aug. 29, 2004.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Sports",
+     "World",
+     "Business"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    4.52362060546875,
+    -4.892765998840332,
+    0.7017343640327454,
+    -4.835589408874512
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel guilty that we will do nothing special on thanksgiving",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "surprise",
+     "love",
+     "anger",
+     "fear",
+     "sadness",
+     "joy"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.45783805847168,
+    -8.742530822753906,
+    -7.608417510986328,
+    -7.675124168395996,
+    4.591355323791504,
+    -3.25435471534729
+   ]
+  },
+  {
+   "request": {
+    "state": "Woolmer:  #39;We need to bat like Jayasuriya #39; Bob Woolmer has already worked some minor miracles in his short stint as Pakistan #39;s coach, but he is well aware that something special will be required on the final day at Faisalabad, if Pakistan are to avoid slumping to defeat against Sri Lanka ",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "World",
+     "Sports",
+     "Science and Technology"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -3.3889272212982178,
+    4.243156433105469,
+    5.492005348205566,
+    -3.7214229106903076
+   ]
+  },
+  {
+   "request": {
+    "state": "KarstadtQuelle, Union Reach Agreement (AP) AP - Struggling German retailer KarstadtQuelle on Thursday agreed with employee representatives on a cost-cutting plan that will include eliminating some 5,500 jobs, or 12 percent of its work force, and a three-year pay freeze.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "Science and Technology",
+     "World",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.1145622730255127,
+    0.13692665100097656,
+    0.9228696227073669,
+    -7.222764492034912
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe doctor tried to use the medicine on the snake bite but the _ was too weak.",
+    "options": [
+     "medicine",
+     "bite"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -0.47898727655410767,
+    0.7229364514350891
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "John is my best friend. We live in the same building. We study in the same school but not in the same class. We often play football together after school. We have been good friends for two years. John is tall and strong with black hair. He has a round face, a small nose and big, brown eyes. I like his eyes because they are always bright and smiling. John is always friendly and helpful. When I feel bored or unhappy, he tells me funny jokes and makes me laugh. He'll give me help when I need. John is very smart. He reads a lot of books. He is good at singing and acts very well. He would like to make people happy with his songs and performance when he grows up. I believe that he can become as popular as Jackie Chan and travel around the world in the future. What is John like?",
+    "options": [
+     "He's helpful and polite.",
+     "He's very smart.",
+     "He's tall and strong with black hair.",
+     "He's friendly and helpful."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -3.084954023361206,
+    -0.30509427189826965,
+    -5.549956798553467,
+    -0.543511688709259
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nMy dog barked more during the night than during the day because more people were on the street during the _ .",
+    "options": [
+     "night",
+     "day"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.0005195140838623,
+    0.022312864661216736
+   ]
+  },
+  {
+   "request": {
+    "state": "Can I use this app to exchange between dollars and pounds?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "card linking",
+     "topping up by card",
+     "unable to verify identity",
+     "pending transfer",
+     "top up by card charge",
+     "wrong amount of cash received",
+     "card acceptance",
+     "exchange via app"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.390413284301758,
+    -10.983898162841797,
+    -10.48206901550293,
+    -11.180846214294434,
+    -10.998714447021484,
+    -10.827451705932617,
+    -10.287738800048828,
+    0.4308697581291199
+   ]
+  },
+  {
+   "request": {
+    "state": "i haven t yet experienced the totality of this is that i am getting to use my gifts again without feeling like someone is threatened jealous or competing against me",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "love",
+     "joy",
+     "fear",
+     "sadness",
+     "anger",
+     "surprise"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.213756084442139,
+    -6.672751426696777,
+    2.365201711654663,
+    -7.708396911621094,
+    -3.2496190071105957,
+    -8.363122940063477
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which of the following is not an inherited trait of humans?",
+    "options": [
+     "hair color",
+     "height",
+     "eye color",
+     "favorite food"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.178194046020508,
+    -7.547229766845703,
+    -9.960996627807617,
+    -7.975372791290283
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to train a bird and a cat to live together [title] Bring the cat in front of the bird's cage (with the bird inside of it). [title] Place the cat on the ground; it is recommended that you leash the cat, so that it won't run away. [title] Stand closely behind, with a spray bottle filled with water.",
+    "options": [
+     "[title] Observe the cat and be ready to react. [step] If the cat jumps up to the cage and tries to attack the bird, spray water at the cat.",
+     "[step] With the bird balancing on your shoulder, open the bottle, set it onto the palm of your hand, and shake it. When the cat resists, you may even advise it to restart using your arm.",
+     "[step] Use a towel to help with this. [substeps] Do not pet the cat as it is sitting.",
+     "[step] Let the cat sniff and lick the spray bottle. [title] Get a chew toy to use in your garden."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.322431802749634,
+    0.9952937960624695,
+    0.2979462742805481,
+    -3.2323720455169678
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nGood communication comes easily to Rachel but not Patricia since _ is a good talker.",
+    "options": [
+     "Rachel",
+     "Patricia"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.6555354595184326,
+    -3.454577684402466
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "In London, everyone is busy in the early morning. Some are running to the stations, buses and cars. Some are stopping only to drink a cup of coffee. They usually have no time for breakfast. At about eight thirty, one after another, the shops open for business .Taxis and buses are running in the streets. People work busily all day. At six o'clock in the evening, people go home quickly from work. Most of the shops closed , but some  are still open. Many people work at night in a big city. In newspaper offices, reporters work hard. Doctors and nurses work in the hospital. Taxis and buses take people around the city all night. Some people are going to the movies. Some people are going to watch  the plays. You can hear people talking, laughing and singing. You can listen to music, too. Every night, there are many people on the sidewalks . Some stop to look at shop windows, but they never buy clothes. Others are waiting for buses and taxis. Day and night you can find people working and playing in London. A big city never sleeps. This passage tells us  _   in London.",
+    "options": [
+     "busy morning",
+     "busy days",
+     "busy nights",
+     "busy life"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.226920127868652,
+    -8.374189376831055,
+    -4.331506252288818,
+    -4.371795654296875
+   ]
+  },
+  {
+   "request": {
+    "state": "Intel Strikes Up Tri-Band Wireless Technology For Centrino Intel, looking to maintain mind share and market share in the mobile PC space, said Thursday it will begin shipping new, tri-band wireless functionality in its Centrino platform next month and will boost software and security support.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "World",
+     "Science and Technology",
+     "Sports",
+     "Business"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -3.5878939628601074,
+    6.038570404052734,
+    -4.2641754150390625,
+    -0.6909582614898682
+   ]
+  },
+  {
+   "request": {
+    "state": "i come home i am usually feel drained and exhausted",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "love",
+     "joy",
+     "sadness",
+     "surprise",
+     "anger",
+     "fear"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.304349899291992,
+    -7.042706489562988,
+    4.299933433532715,
+    -7.267230987548828,
+    -7.603919982910156,
+    -6.990342140197754
+   ]
+  },
+  {
+   "request": {
+    "state": "Japan #39;s powerful quakes leave 19 dead, four missing: police TOKYO : A series of powerful earthquakes in central Japan, with an initial tremor measuring 6.8 on the Richter scale, left 19 people dead and four missing and injured nearly 900 people, police said.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "World",
+     "Science and Technology",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -5.513191223144531,
+    3.2904441356658936,
+    -3.419787645339966,
+    -6.944111347198486
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nWe see the gate open and see the field. The rider takes off down the course. We see riders perform jumps and people riding bikes. we",
+    "options": [
+     "see trophies on flying colors.",
+     "see the riders rent from bulls over winter.",
+     "see another start and a group of people take off in an indoor track.",
+     "see more jumps and people gearing up."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.805242538452148,
+    -8.914090156555176,
+    -3.6007025241851807,
+    -0.5730795860290527
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel so much more myself and i missed me",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "anger",
+     "surprise",
+     "sadness",
+     "joy",
+     "love",
+     "fear"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.846184730529785,
+    -7.798929214477539,
+    4.324399948120117,
+    -5.241967678070068,
+    -6.788055419921875,
+    -7.178199768066406
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel so agitated about this",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "joy",
+     "fear",
+     "love",
+     "sadness",
+     "anger",
+     "surprise"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.497223854064941,
+    1.552944302558899,
+    -9.308699607849121,
+    -6.116147994995117,
+    0.23398582637310028,
+    -6.0493950843811035
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nWomen are playing beach soccer on a large field. People are walking around the court next to the stands. peolpe",
+    "options": [
+     "are walking next to the court.",
+     "are see playing soccer on the field.",
+     "are standing behind playing soccer.",
+     "are sitting on stands watching the game."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    4.808473587036133,
+    5.42000150680542,
+    3.578545093536377,
+    5.633211135864258
+   ]
+  },
+  {
+   "request": {
+    "state": "Russia Developing New Nuclear Missile (AP) AP - Russia is developing a new nuclear missile system unlike any weapon held by other countries, President Vladimir Putin said Wednesday, a move that could serve as a signal to the United States as Washington pushes forward with a missile defense system.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Sports",
+     "World",
+     "Science and Technology",
+     "Business"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.0246734619140625,
+    3.760024070739746,
+    -3.753082513809204,
+    -4.766549110412598
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nJoel wanted to play the drums in Aaron's band so _ auditioned for the band.",
+    "options": [
+     "Joel",
+     "Aaron"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    4.657158851623535,
+    4.0693511962890625
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nFinding information on the internet suited Patricia more than Jessica because _ was younger and used the internet more.",
+    "options": [
+     "Patricia",
+     "Jessica"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.4344642162322998,
+    -1.3562911748886108
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nA little boy is holding a tube of toothpaste. his mom",
+    "options": [
+     "comes up behind him to wash him before leaving.",
+     "pees all over his face.",
+     "helps him put it on his toothbrush.",
+     "sprays some milk into his mouth."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -3.9579641819000244,
+    -5.2118916511535645,
+    -1.7244608402252197,
+    -3.9326171875
+   ]
+  },
+  {
+   "request": {
+    "state": "Ultimate Salesman, Pitching the Biggest Stars in Baseball Scott Boras, the most successful agent in baseball history, tells players what they are worth, tells teams the same and waits for the financial outcome to satisfy him.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "Business",
+     "World",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.12392520904541,
+    1.0390288829803467,
+    -2.313991069793701,
+    3.03254771232605
+   ]
+  },
+  {
+   "request": {
+    "state": "He #39;s glad to stand, cheer for old  #39;SC Indians pitcher Kyle Denney will never complain about having to dress like a cheerleader again. The white go-go boots that went with the outfit might have prevented a bullet from seriously injuring his leg.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "World",
+     "Science and Technology",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.056506633758545,
+    -1.5425609350204468,
+    -7.085603713989258,
+    5.299241542816162
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Saturday, June 30th, 2012 I asked to have a dinner party at the biggest hotel in my hometown--New York today. I was very busy,so I had no time to change my clothes for dinner.Then I drove there as soon as possible.But when I came in, no one saw me and gave me a seat.I got angry. Then I went back home,put on my best clothes.At about nine o'clock,I returned again.This time,everyone stood up at once and said\"hello\"to me.And I was taken to the best table and given the best food.I got much angrier.I took off my coat,put it in the food and said: _ They were very surprised and asked,\"Why are you doing this?\" I said\" _ \" What does the sentence \"Please eat,my dear coat.\" mean?",
+    "options": [
+     "Don't judge  men by clothes.",
+     "He made a mistake.",
+     "He liked the coat very much",
+     "He thought they liked the coat better than him"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -8.524893760681152,
+    0.7738084197044373,
+    -9.021486282348633,
+    -8.164730072021484
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to plant redbud trees [title] Choose a good location. [step] Redbud trees prefer light shade, especially in the summer. The tree is fairly adaptable, however, and can also tolerate full sun.",
+    "options": [
+     "Choosing a tree in an area that receives indirect sunlight can help reduce the number of stunted growth that may develop during the growing season. [title] Purchase a location with deep soil to plant your redbud trees.",
+     "If you're planting a tree on a hilltop, they do well without shade. [substeps] The wind cannot blow the branch deeply into the ground.",
+     "[substeps] Choose a location with enough shade, and where the trees are not visible. Be sure your tree is at least 6-12 inches (15.",
+     "In fact, the more sun it receives during the cold months of winter, the better. The only locations that need to be avoided are those with heavy shade."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.7965853214263916,
+    -3.521470069885254,
+    6.325308799743652,
+    -2.7303707599639893
+   ]
+  },
+  {
+   "request": {
+    "state": "I want to know where my money comes from.",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "card arrival",
+     "top up by bank transfer charge",
+     "balance not updated after bank transfer",
+     "declined cash withdrawal",
+     "activate my card",
+     "card about to expire",
+     "unable to verify identity",
+     "verify source of funds"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.054008483886719,
+    -10.400673866271973,
+    -7.097329139709473,
+    -9.843481063842773,
+    -10.38551139831543,
+    -9.103523254394531,
+    -8.14134407043457,
+    1.0941746234893799
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nAs we prepared the vegetables for dinner, we kept the carrot but threw out the broccoli as the _ was moldy.",
+    "options": [
+     "broccoli",
+     "carrot"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.7566494941711426,
+    -1.9143728017807007
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "The ice cubes in a freezer are melting. Which change most likely is causing the ice cubes to melt?",
+    "options": [
+     "a decrease in the temperature inside the freezer",
+     "an increase in the mass of the ice cubes",
+     "a decrease in the mass of the ice cubes",
+     "an increase in the temperature inside the freezer"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -5.337526321411133,
+    -5.556840896606445,
+    -6.659693241119385,
+    -7.302072048187256
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\n[header] How to prevent flare ups of external hemorrhoidal tags [title] Keep your anus clean and dry. [step] You should do this following each bowel movement and right before bed. You can gently clean the area with warm water (try moistened toilet paper if you are away from home) or, if possible, allow yourself to sit in warm water for 10 minutes.",
+    "options": [
+     "This will give you a chance to relax and to let go of the fear of wetness. [substeps] Babies under the age of two do not need to be cleaned as frequently as adults.",
+     "Be gentle and use a soft towel to dry off. This will help keep the area from becoming irritated due to chafing.",
+     "When you are finished, dry your anus gently with a paper towel as a dry rub. [title] Cover your skin with cotton to prevent flare-ups from bouncing.",
+     "Slowly increase the amount of time you allow the anus to remain clean. [substeps] If desired, you can also wash the area with warm water following each bowel movement."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.6754049062728882,
+    2.237614393234253,
+    -1.4065470695495605,
+    -3.4852607250213623
+   ]
+  },
+  {
+   "request": {
+    "state": "National League Game Summary - Philadelphia At Florida Miami, FL -- Eric Milton pitched 6 1/3 strong innings, and Philadelphia used four home runs to beat Florida, 12-4, in the second of a three-game series.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Science and Technology",
+     "World",
+     "Sports",
+     "Business"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -7.417390823364258,
+    0.2692409157752991,
+    5.474137306213379,
+    -6.529565811157227
+   ]
+  },
+  {
+   "request": {
+    "state": "i hate falling asleep napping during the day i wake up feeling so groggy",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "anger",
+     "sadness",
+     "joy",
+     "fear",
+     "love",
+     "surprise"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -4.774418354034424,
+    3.715172290802002,
+    -7.532822608947754,
+    -7.047602653503418,
+    -8.171018600463867,
+    -7.3520989418029785
+   ]
+  },
+  {
+   "request": {
+    "state": "Who? Who? And Clemens The Houston Astros and their fans patiently waited 42 years before winning their first post-season series on Monday and what do they get for a payoff?",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Sports",
+     "Science and Technology",
+     "Business",
+     "World"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    4.413984298706055,
+    -6.870308876037598,
+    -3.8162879943847656,
+    -3.5247724056243896
+   ]
+  },
+  {
+   "request": {
+    "state": "i just have a general feeling of this unpleasant heaviness from my stomach up",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "sadness",
+     "surprise",
+     "anger",
+     "love",
+     "joy",
+     "fear"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.962766170501709,
+    -6.78034782409668,
+    -6.7829976081848145,
+    -8.373035430908203,
+    -7.2310686111450195,
+    -5.4772515296936035
+   ]
+  },
+  {
+   "request": {
+    "state": "And they #39;re ready ... After years of preparation and US\\$325 million of investment, Shanghai is ready to host the Formula One Grand Prix for the first time this weekend, on September 26.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "World",
+     "Sports",
+     "Science and Technology"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.2676747441291809,
+    -2.353680372238159,
+    4.999618053436279,
+    -4.278803825378418
+   ]
+  },
+  {
+   "request": {
+    "state": "i can hear the hum you make at the feeling of my warmth and my legs shift a little in a strange need",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "anger",
+     "love",
+     "sadness",
+     "fear",
+     "surprise",
+     "joy"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -5.310319900512695,
+    -6.289453029632568,
+    -6.032094955444336,
+    0.41459113359451294,
+    -2.1637930870056152,
+    -4.715590953826904
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which option correctly fills the blank?\nThe librarian charged William a fine but not Steven because _ returned the book late.",
+    "options": [
+     "William",
+     "Steven"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -2.811373472213745,
+    -3.850348949432373
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Which continuation is most plausible?\nThe man then kneels slightly to prepare for the run and begins to run down a stretch of narrow lane before catapulting in the air over the sandpit. the man",
+    "options": [
+     "then begins to carry a large vacuum cleaner and vacuums the same area where he was standing.",
+     "then does a backwards somersault over the sand pit and lands in a hot pit full of rolling spectators as the men cheer and congratulate him as he stands up and goes backstage.",
+     "lands on the other side of the pit and gestures to the audience again for applause as men smooth sand over with long handled and wide brush brooms, the audience claps and waves flags and camera people rush around the event capturing it on film.",
+     "lands on a mat and gets up to celebrate when someone walks up to him and places and removes the backpack on his lap."
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.9782665967941284,
+    5.297701835632324,
+    2.0018410682678223,
+    0.3921150267124176
+   ]
+  },
+  {
+   "request": {
+    "state": "Weinsteins look to stay with Disney The brothers who founded and run Disney Corp. #39;s Miramax Films unit are sticking together, The New York Post is reporting. Harvey and Bob Weinstein now hope to work things with out with Disney, and stay within the Disney fold, the report stated.",
+    "question": "Which topic best describes this article?",
+    "options": [
+     "Business",
+     "World",
+     "Science and Technology",
+     "Sports"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    3.391929864883423,
+    -3.8427135944366455,
+    -2.7951207160949707,
+    -6.391012191772461
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "The Blacks are English . Now they are in Beijing . This is their first visit to China. They are going to stay in China for three weeks . They want to learn some Chinese ,too. He likes driving in Beijing very much .Mrs Blacks is a teacher .She often visits a middle school in Beijing ,and she likes to speak with students. They take a lot of photos in China .When they are back to English ,They're going to show the photos to their friends. They want the English People to know more about China. The Blacks are from  _",
+    "options": [
+     "American",
+     "Canada",
+     "Australia",
+     "England"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -2.188955307006836,
+    -5.799585819244385,
+    -6.348989963531494,
+    -4.111389636993408
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "What would an insect run from?",
+    "options": [
+     "insect",
+     "lizard",
+     "cloud",
+     "wind"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    0.985717236995697,
+    -2.362260580062866,
+    -2.5496103763580322,
+    -6.656196594238281
+   ]
+  },
+  {
+   "request": {
+    "state": "i feel like i kinda gettin lil bitchy with him but gimme a break i get my rag in a few hours",
+    "question": "Which emotion best describes this text?",
+    "options": [
+     "love",
+     "fear",
+     "anger",
+     "sadness",
+     "joy",
+     "surprise"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -6.957088947296143,
+    -8.078969955444336,
+    2.439997911453247,
+    -6.41737174987793,
+    -6.967930316925049,
+    -7.52327299118042
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "We do the shopping on Sundays . I often go to the supermarket with my mother on Sunday morning in a car . Father likes fruit very much. We buy some red apples for him. Mother likes yellow bananas , but they're green. \"Look! The strawberries are very nice, mum. Do you like them?\" I say to Mum. \"Yes, I like strawberries very much . \" Mother buys some for herself. The oranges are very nice. Mother buys some for me . I like orange very much. We need some vegetables . The vegetables in the supermarket are very good . We buy some tomatoes, carrots and broccoli . I don't like broccoli, but my parents like it . I like carrots very much. We buy lots of carrots. After shopping , mother and I have some French fries, milk and ice cream. And then we go back home with the fruit and vegetables . Mother buys some oranges for   _   .",
+    "options": [
+     "me",
+     "father",
+     "herself",
+     "us"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -1.5972994565963745,
+    1.4107426404953003,
+    -2.7359492778778076,
+    -1.3389722108840942
+   ]
+  },
+  {
+   "request": {
+    "state": "",
+    "question": "Look at this photo of my family. There are six people in my family. This woman is my mother. She is nice and looks so young.She is a policewoman . She works in a police station . She is a hero  in my heart . That man in the black coat is my father. He is a scientist . He works in an institute . He is very busy. Look at this lovely  boy. It is my little brother. My grandma looks after him. She is a nurse. My grandpa is that man in the brown coat. My father looks like him. He is a teacher. Can you see me? I'm behind my brother. I have a happy family. My grandpa wears  a   _  coat.",
+    "options": [
+     "black",
+     "brown",
+     "red",
+     "green"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    2.257570266723633,
+    3.5988805294036865,
+    -4.128482341766357,
+    -7.211996555328369
+   ]
+  },
+  {
+   "request": {
+    "state": "Where do I find the verification code for the card I'm topping up?",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "verify top up",
+     "balance not updated after bank transfer",
+     "declined card payment",
+     "declined transfer",
+     "top up by cash or cheque",
+     "top up by card charge",
+     "apple pay or google pay",
+     "pending cash withdrawal"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    1.2324496507644653,
+    -10.739173889160156,
+    -10.500585556030273,
+    -10.549796104431152,
+    -5.40307092666626,
+    -8.188359260559082,
+    -10.478866577148438,
+    -10.784233093261719
+   ]
+  },
+  {
+   "request": {
+    "state": "i need help finding the auto top up option.",
+    "question": "Which banking intent best describes this request?",
+    "options": [
+     "beneficiary not allowed",
+     "cash withdrawal charge",
+     "activate my card",
+     "transaction charged twice",
+     "Refund not showing up",
+     "automatic top up",
+     "declined transfer",
+     "balance not updated after bank transfer"
+    ],
+    "type": "choice"
+   },
+   "logits": [
+    -10.403569221496582,
+    -10.771327018737793,
+    -10.345458030700684,
+    -11.266644477844238,
+    -11.14059829711914,
+    3.192518472671509,
+    -10.444396018981934,
+    -10.69239330291748
+   ]
+  }
+ ]
+}

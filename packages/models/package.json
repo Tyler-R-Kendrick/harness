@@ -15,6 +15,7 @@
     "@ai-sdk/typesafe-ai": "3.0.6",
     "@harness/behavior": "0.0.0",
     "@harness/cognitive": "0.0.0",
+    "@huggingface/tokenizers": "0.2.0",
     "@huggingface/transformers": "4.3.0",
     "@scure/base": "2.4.0",
     "ai": "7.0.114",

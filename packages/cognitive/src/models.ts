@@ -53,7 +53,7 @@ export const TASK_PORTS: Readonly<Record<TaskCategory, readonly PortKind[]>> = {
 
 export const LOCALITIES = ["local", "hosted"] as const;
 export type Locality = (typeof LOCALITIES)[number];
-export const RUNTIMES = ["ai-gateway", "typesafe-api", "cactus-wasm", "transformers.js", "llama.cpp-server", "onnxruntime"] as const;
+export const RUNTIMES = ["ai-gateway", "typesafe-api", "cactus-wasm", "transformers.js", "llama.cpp-server", "onnxruntime", "onnxruntime-decision"] as const;
 export type Runtime = (typeof RUNTIMES)[number];
 
 export interface BenchmarkResult {
