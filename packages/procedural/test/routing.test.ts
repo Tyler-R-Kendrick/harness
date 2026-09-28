@@ -57,6 +57,23 @@ describe("the model graph router (the cognitive router's route with confidence)"
     expect(await ask(routerModel({ graph: "a" }))).toEqual({ graph: "a", confidence: 0 });
   });
 
+  it("PX1.58 valid calls that name different candidates choose nothing, whatever the candidates' order; calls that agree choose their graph", async () => {
+    const calls = (...graphs: string[]) =>
+      new MockLanguageModelV4({
+        doGenerate: async () => ({
+          content: graphs.map((graph, i) => ({ type: "tool-call" as const, toolCallId: `call_${i}`, toolName: GRAPH_TOOL, input: JSON.stringify({ graph }) })),
+          finishReason: { unified: "tool-calls", raw: undefined },
+          usage: usage(),
+          providerMetadata: { [HARNESS]: { confidence: 0.95 } },
+          warnings: [],
+        }),
+      });
+    const ask = (model: MockLanguageModelV4) => modelGraphRouter({ model, settings: settings() })({ prompt: "p", candidates: [{ graph: id("a") }, { graph: id("b") }] });
+    expect(await ask(calls("b", "a"))).toEqual({ graph: undefined, confidence: 0.95 });
+    expect(await ask(calls("a", "b"))).toEqual({ graph: undefined, confidence: 0.95 });
+    expect(await ask(calls("b", "b"))).toEqual({ graph: "b", confidence: 0.95 });
+  });
+
   it("PX1.57 a route rule on the model router: a confident router's choice is the session's graph, a hesitant one's is not", async () => {
     const r = resolver(routeRule(["a", "b"], 0.8));
     const context = { prompt: "p" };
