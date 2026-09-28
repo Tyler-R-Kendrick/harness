@@ -1,0 +1,37 @@
+{
+  "$schema": "./evolution.schema.json",
+  "description": "A template for harness-evolution: evolve the dialogue's settings against a suite. Copy it, point `evaluator` at a command that runs the harness with the documents it is sent and scores the tasks, and list your own tasks.",
+  "documents": {
+    "dialogue": {
+      "path": "../../dialogue/data/settings.json",
+      "schema": "../../dialogue/data/settings.schema.json"
+    }
+  },
+  "components": ["prompt", "threshold", "lexicon", "config"],
+  "structural": [],
+  "classify": {
+    "rules": [
+      { "prefix": "/draft/system", "component": "prompt" },
+      { "prefix": "/generate/instruction", "component": "prompt" },
+      { "prefix": "/match", "component": "threshold" },
+      { "prefix": "/promote", "component": "threshold" },
+      { "prefix": "/promote/question", "component": "prompt" },
+      { "prefix": "/confirm", "component": "lexicon" }
+    ],
+    "fallback": "config"
+  },
+  "tasks": {
+    "evolve": [
+      { "id": "order-status-1", "text": "A customer asks where their order is, twice, in different words.", "group": "orders" },
+      { "id": "booking-1", "text": "A customer books a table and changes the time once.", "group": "bookings" }
+    ],
+    "holdout": [{ "id": "refund-1", "text": "A customer asks for a refund on a late order.", "group": "orders" }]
+  },
+  "evaluator": {
+    "command": ["node", "./evaluate-dialogue.ts"],
+    "timeoutMs": 600000,
+    "concurrency": 2
+  },
+  "settings": "../../evolution/data/settings.json",
+  "state": "evolution.state.json"
+}

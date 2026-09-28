@@ -59,6 +59,9 @@
     },
     {
       "path": "../dialogue-standards"
+    },
+    {
+      "path": "../evolution"
     }
   ]
 }

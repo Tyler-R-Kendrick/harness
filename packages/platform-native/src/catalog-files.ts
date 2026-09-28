@@ -5,6 +5,8 @@ import { parseCatalog } from "@harness/cognitive";
 import type { Catalog } from "@harness/cognitive";
 import { parseSettings as parseDialogueSettings } from "@harness/dialogue";
 import type { Settings as DialogueSettings } from "@harness/dialogue";
+import { parseSettings as parseEvolutionSettings } from "@harness/evolution";
+import type { Settings as EvolutionSettings } from "@harness/evolution";
 import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
@@ -35,4 +37,9 @@ export function loadPluginSettings(file: string = require.resolve("@harness/lear
 /** Read and parse the dialogue's settings (thresholds, the drafter's prompt): its own data file by default, or a tweaked copy. */
 export function loadDialogueSettings(file: string = require.resolve("@harness/dialogue/data/settings.json")): DialogueSettings {
   return parseDialogueSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse the evolution settings (rounds, selection rule, the proposer's prompt): its own data file by default, or a tweaked copy. */
+export function loadEvolutionSettings(file: string = require.resolve("@harness/evolution/data/settings.json")): EvolutionSettings {
+  return parseEvolutionSettings(JSON.parse(readFileSync(file, "utf8")));
 }
