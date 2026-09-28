@@ -120,9 +120,10 @@ export interface ProceduralStepHook {
    * The core revision the session reads this turn, or undefined when it has no graph. It
    * resolves and pins at a turn boundary as a step does, so the turn's steps read the same
    * core: a host builds the turn's tools from it (`sessionTools`, plan §7.6). Without a
-   * turn id every call is a boundary.
+   * turn id every call is a boundary. A session whose resolver rule routes is routed by
+   * the first prompt of `messages`, the turn's conversation; without them it has no graph.
    */
-  core(scope: StepScope): Promise<ProceduralGraph | undefined>;
+  core(scope: StepScope & { readonly messages?: readonly ModelMessage[] }): Promise<ProceduralGraph | undefined>;
   /** Records a step's model usage in the session log, for a session with a graph (the trajectory's input and output tokens). */
   end(input: StepEndInput): Promise<void>;
   /** Evicts a session's state (its pinned view and guidance cache), e.g. when it is detached. */
@@ -473,7 +474,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
 
     async core(scope) {
       // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows.
-      const session = await enter({ ...scope, messages: [] }, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, false);
+      const session = await enter({ ...scope, messages: scope.messages ?? [] }, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, false);
       return session.view?.core;
     },
 

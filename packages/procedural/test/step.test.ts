@@ -865,6 +865,27 @@ describe("proceduralStep with a routing resolver (plan §8.1)", () => {
     expect(s.records[2]).toMatchObject({ graph: OTHER });
   });
 
+  it("PW1.92 core routes a routing session by the turn's first prompt, so the turn's tools and its steps read the routed graph; a step's usage is kept once the session is pinned", async () => {
+    const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.9 });
+    const usages: StepUsageNotice[] = [];
+    const usage = { sessionId: "s1", turnId: "t1", cwd: "/repo", report: (n: StepUsageNotice) => void usages.push(n), stepNumber: 0, usage: { inputTokens: 3, outputTokens: 1 } };
+    // Before the session has a prompt or a pin, it has no graph: nothing is recorded.
+    await hook.end(usage);
+    expect(usages).toEqual([]);
+    expect(await hook.core(input(s, [user("first question")]))).toEqual(variant(" (other)"));
+    expect(r.asked).toEqual(["first question"]);
+    await hook.prepare(input(s, [user("first question")]));
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records[0]).toMatchObject({ graph: OTHER, core: (await s.store.heads.get(OTHER))!.revision });
+    await hook.end(usage);
+    expect(usages).toHaveLength(1);
+    // Without the turn's messages, a routing session has no prompt to route by, and no graph.
+    const other = await routed({ graph: OTHER, confidence: 0.9 });
+    const { messages: _, ...scope } = input(other.s, [user("first question")]);
+    expect(await other.hook.core(scope)).toBeUndefined();
+    expect(other.r.asked).toEqual([]);
+  });
+
   it("PW1.88 a choice below the minimum confidence, or no router, leaves the session unguided; a session's routing is asked once per prompt", async () => {
     const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.79 });
     expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
