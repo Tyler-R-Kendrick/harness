@@ -163,7 +163,7 @@ candidates are measured with the incumbent in the same window, a change is accep
 gain only when a paired randomization test bounds its gain above zero at a run-wide error
 rate (spent uniformly or front-loaded), cost is paid for by that lower bound, clearly bad
 candidates are abandoned after a prefix of the tasks, accepted mechanisms are pruned by
-ablation, and a holdout confirms gains through Thresholdout. With no candidate that
+ablation, and a budgeted holdout confirms winners on tasks the proposer never saw. With no candidate that
 helps, the paper's rule accepts noise in 33 of 40 seeded runs of a simulated null world
 (the workspace instance's weights, 60 tasks, 10 rounds); this one in 2. The paper's rule is kept (`select.rule: "paper"`) to compare against. A run
 needs enough groups of tasks for its error level (it says so before spending anything).

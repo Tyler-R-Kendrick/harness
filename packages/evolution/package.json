@@ -2,7 +2,7 @@
   "name": "@harness/evolution",
   "version": "0.0.0",
   "private": true,
-  "description": "Regularized self-improvement of the harness's data (RRSI's proposal and selection regularizers, with acceptance calibrated by paired cluster bootstraps, multiplicity control, pruning by ablation and a reusable holdout). Pure.",
+  "description": "Regularized self-improvement of the harness's data (RRSI's proposal and selection regularizers, with acceptance by paired randomization tests, a run-wide error rate, cost claims with bounds, pruning by ablation and a budgeted holdout). Pure.",
   "license": "MIT",
   "type": "module",
   "exports": {

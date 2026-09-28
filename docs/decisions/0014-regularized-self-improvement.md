@@ -22,7 +22,7 @@ at most one. Regularization acts on the search, not on what the harness may cont
 
 | Paper | Its code | Here |
 |---|---|---|
-| Annealed edit budget b_t (Eq. 4) | `schedule.py` | `editBudget` (RS3.1), unchanged |
+| Annealed edit budget b_t (Eq. 4) | `schedule.py` | `editBudget` (RS3.1, RS19.47), with one fix: the paper's `ceil` never reaches b_min inside a run |
 | Edit history L_t in the proposer's context | `history.py` | `ledger.ts`, with three-valued verdicts (RS7.1, RS7.6) |
 | Stall flag and reserved exploration slots | `history.py: stall_flag, exploration` | both: `paperStall` (RS7.4) and `stalled` (RS7.3); slots judged by the diff (RS9.5) |
 | Leakage critic before evaluation | `critic.py` (regex + LLM) | `leaks` (n-gram overlap with task texts and references, RS6.1–RS6.2) + `judgeCritic` (RS12.3) |
@@ -201,20 +201,24 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
 
 - **The harness is data, edited by JSON Patch.** A surface names documents and their zod
   schemas; a candidate is edits, each a JSON Patch with its hypothesis
-  (`fast-json-patch` applies and diffs them). What the paper takes on the proposer's word is
-  computed: edits touching the same part are one edit, so the L0 count is real (RS5.3); a
+  (`fast-json-patch` applies them; what each edit did is recorded from the ops themselves,
+  so an array insert is one added value, not a positional diff of every shifted element).
+  What the paper takes on the proposer's word is computed: edits touching the same part,
+  or the same array, are one edit, so the L0 count is real (RS5.3, RS18.14–RS18.26); a
   change's components come from the paths it changed, not from its tag (RS5.1, RS5.6); a
   document its schema refuses is the liveness failure (RS5.4); every accepted edit keeps
   its inverse, so it can be taken out again (RS5.5).
 - **Code is a surface too: text documents.** A source file is a document of `kind: "text"`,
   edited by `edit` ops (`old` must occur exactly once, as in the reference implementation's
   `edit_file`). Independence is computed from the character ranges the edits occupy
-  (touching is not overlapping; an edit that depends on another's output is not
-  independent), the footprint is the changed lines, the host's `check` (it parses, it
+  (touching counts as overlapping; an edit that depends on another's output, or that could
+  not be taken out on its own, is not independent), the footprint is the changed lines, the host's `check` (it parses, it
   compiles) is the liveness test and also runs on the base harness, `classifyText` maps a
   changed region to a component, an inverse carries the least surrounding context that
   makes a repeated or deleted text findable again, and the leakage screen reads the text
-  an edit adds. Ablation and entanglement work as for JSON (RS13.1–RS13.43).
+  an edit adds. Ablation and entanglement work as for JSON (RS13.1–RS13.43,
+  RS18.1–RS18.45); a revert that cannot be done is refused (the mechanism is then
+  entangled), never thrown.
 - **Paired, same-window measurement.** Each round evaluates the incumbent again with the
   candidates. Its evidence is what was measured *after* it was chosen, never the
   measurement it won on, which removes the winner's curse (RS9.2, RS10.1). Earlier fresh
@@ -222,14 +226,22 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
 - **Acceptance by an inverted randomization test.** Under the null that candidate and
   incumbent are the same harness, which produced which measurement of a task is
   exchangeable, so groups of tasks flip the signs of their differences. The test is exact
-  whatever the reward distribution, however few tasks are informative, and with ties.
-  Inverted under a shift model, its bounds are quantiles of the weighted mean difference of
-  randomly flipped groups: closed form, no search (`compare`, RS2.1–RS2.7). Tasks are the
-  unit, groups when tasks name them, so the bounds carry task sampling as well as trial
-  noise.
+  whatever the reward distribution and with ties: by enumeration of all 2^G sign vectors
+  up to 14 groups, by Monte Carlo above (RS19.31–RS19.35). Inverted under a shift model,
+  its bounds are quantiles of the weighted mean difference of flipped groups: closed
+  form, no search (`compare`, RS2.1–RS2.7). Tasks are the unit, and groups (which come
+  from the task set, never from the evaluator, as do weights; RS19.40–RS19.45) when tasks
+  name them. What this certifies is a gain on the evolve tasks, given the history: the
+  sharp null "same harness" with fresh trial noise. It is not a guarantee about new
+  tasks, because the proposer reads the evolve tasks' failures and designs edits at them;
+  the holdout is what checks that. A group with no difference never certifies anything,
+  so the guard on group counts is necessary, not sufficient.
 - **A run-wide error rate.** Every acceptance test gets alpha / (T (m + 1)), a union bound
   valid under the arbitrary dependence an adaptive search has (RS3.2). The cost is power,
-  stated in the table above and chosen in data (`select.alpha`, `rounds`, `trials`).
+  stated in the table above and chosen in data (`select.alpha`, `rounds`, `trials`). The
+  settings that fix the error rate are kept in the saved state, and a resume that changes
+  one of them (a run extended from 20 to 30 rounds would silently spend more than alpha)
+  is refused, naming which (RS19.70–RS19.76).
 - **The error budget can be spent front-loaded, and must be spendable.** `select.spending`
   is `uniform` (equal shares) or `geometric` (round t gets alpha ratio^t / sum ratio^s,
   split among the round's tests). Both are functions of (round, rounds, tests) alone and
@@ -263,15 +275,23 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   `futility.simulation.test.ts` (0 of 300 real +0.05 gains abandoned) are not asserted.
   Ablations are never staged. What is not claimed: a paired power comparison, since
   staging changes which random trials each candidate gets.
-- **Gains, savings and removals are different claims.** A change is a gain only when its
-  lower bound is above zero, and its added cost must be paid for by that lower bound, not
-  the point estimate (RS8.4). Anything else, a saving of at least `saving` or a removal, is
-  a non-inferiority claim: lower bound at least −margin, with the losses of such steps
-  since the last supported gain within the margin in total. That keeps what the paper's
-  floor was for (no walking downhill by small steps) without a reference that ratchets on
-  luck (RS8.5–RS8.6). Cost is also capped against H_0, so allowances do not compound
-  (RS8.7). There is no novelty bonus: exploration is the proposer's job (reserved slots),
-  not a reason to accept.
+- **Gains, savings and removals are different claims, and every claim is tested.** A
+  change is a gain only when its lower bound is above zero and its cost is not clearly
+  over budget (the cost's lower bound within beta0 + beta1 × the gain's lower bound,
+  RS8.4). A saving of at least `saving` and a removal are non-inferiority claims: the
+  lower bound above −margin (strictly: a bound exactly at the margin certifies nothing,
+  RS19.30), and the cost claim (the saving, or a cost within beta0 for a removal) proved by
+  the same paired randomization bounds on per-task token differences, because a point cost
+  ratio has no error control and noisy tokens made a do-nothing candidate look like a
+  saver in 9 to 19 of 20 runs (RS19.1–RS19.11; with the bounds, 0 of 40 null runs at token
+  noise 0.6 and 1.0, and a real 40% saving still found, RS19.20–RS19.21). No extra error
+  budget is needed: an acceptance is the intersection of its claims, so it happens with
+  probability at most the level of any one false claim. Losses are a CUSUM on lower
+  bounds with no reset (drift' = max(0, drift − lower), refused above margin, RS19.12–
+  RS19.17): a sawtooth of small saves each followed by a tiny supported gain no longer
+  walks downhill. Cost is capped against H_0 by the certified running sum of accepted
+  lower bounds, not noisy point scores (RS8.7). There is no novelty bonus: exploration is
+  the proposer's job (reserved slots), not a reason to accept.
 - **The winner has the best evidence,** the highest lower bound, not the highest point
   estimate (RS8.9).
 - **Pruning by ablation.** Each round, the accepted mechanism with the weakest evidence
@@ -279,11 +299,21 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   non-inferior, and otherwise the mechanism stays. This is backward elimination with a
   non-inferiority test, per mechanism, in the current harness (RS9.6). A mechanism a later edit rewrote is entangled and is no
   longer removed on its own (RS9.7).
-- **A reusable holdout.** When the split has a holdout, a gain accepted on the evolve set
-  is confirmed through Thresholdout: the evolve set's answer stands while the holdout
-  agrees within a noisy threshold; a disagreement spends budget and answers with the
-  holdout's noisy value. A spent holdout confirms nothing, which ends a run's gains
-  honestly (RS4.1–RS4.4, RS9.8–RS9.9).
+- **A budgeted holdout.** When the split has a holdout, a winner is confirmed on it before it
+  becomes the incumbent: the winner and the incumbent are measured afresh on the holdout
+  in one window and compared by the same paired randomization test, at level
+  alpha_holdout / (2^budget − 1). The proposer learns one bit per query (confirmed or
+  not; the records keep the numbers for the operator), so what an adaptive analyst can
+  ask lies in a binary tree of depth `budget`, and the union bound over its 2^budget − 1
+  nodes is the whole guarantee (the description-length argument of Dwork et al. 2015 in
+  its plainest form; RS19.50–RS19.65). Thresholdout, which this replaces, failed at the
+  sizes a harness run has: its noise was below one task's influence, its evolve-side value
+  was the selected winner's own biased gain (it flagged overfitting in 76 to 82% of runs
+  at a true gain of zero), and a pure-overfit candidate passed 55 to 60% of the time.
+  Measured now: a pure-overfit candidate confirmed in 1 of 100 runs, a real broad gain in
+  95 of the 95 that queried the holdout (RS19.80–RS19.81). A spent holdout confirms
+  nothing, an invalid holdout measurement throws without spending a query, and a holdout
+  too small (in groups) to confirm anything at its level is refused at start.
 - **Leakage screening is deterministic first.** An edit must not name an evolve task,
   repeat six words in a row from any task's text or reference answer, or carry a
   credential (RS6.1–RS6.2). Then the judge critic, which refuses when it cannot judge
@@ -313,8 +343,15 @@ caught it. A two-stage bootstrap (tasks, then trials within tasks) counted trial
 twice, since each task's observed difference already carries it (Davison and Hinkley 1997,
 sec. 3.8), and cost power. The one-stage percentile bootstrap that replaced it accepted a
 change in 7 of 40 null runs, against a promised 10% at most, because its far tail is too
-thin when few tasks carry the signal. The randomization test is exact by construction:
-2 of 40 (RS10.1). RS10.1 is kept as a regression test for that reason.
+thin when few tasks carry the signal (7 of 40 null runs is not significant against a
+promised 10%, P about 0.11, but it is the wrong shape for a guarantee). The randomization
+test is exact by construction, and RS10.1 pins its null behavior (at most 4 of 40 null
+runs; observed 2, far under alpha because the union bound and deterministic tasks make
+the true rate much smaller). Review then found that the guarantee still had holes, which
+are closed above: cost claims tested by point ratios, a drift budget that charged point
+losses and reset on any gain, group and weight taken from the evaluator's output, a
+Thresholdout regime that flagged selection bias, and error-control settings that could
+change between resumes.
 
 ## Consequences
 
@@ -322,7 +359,8 @@ thin when few tasks carry the signal. The randomization test is exact by constru
   broad ones. That is what such a set can support. To accept smaller gains, use more tasks
   (the table), fewer rounds, or a larger alpha, all in data.
 - Each round costs one more evaluation than the paper's (the incumbent again), plus the
-  ablation candidate, plus the winner on the holdout.
+  ablation candidate, plus two on the holdout (the winner and the incumbent, afresh) when
+  a winner is put to it; futility staging recovers about a fifth of that on bad candidates.
 - The evolve set must have enough groups. A suite of a few dozen tasks each in its own
   group is enough for a short run; a suite whose tasks fall into four practice areas is not,
   and the run says so before spending anything.
@@ -349,8 +387,9 @@ port can do, or a decision.
   what the judge does the same way to both harnesses, and nothing guards against
   optimizing toward the judge. The holdout helps only if it is judged differently; the
   evaluator port lets a host do that.
-- **Transfer.** The guarantee is about the evolve set's distribution: a supported gain is
-  a gain on new tasks of that kind. Whether a harness evolved on one suite helps on another
+- **Transfer.** What is certified is a gain on the evolve tasks (given the history, at the
+  run's error rate), and what the holdout adds is a check on tasks the proposer never saw,
+  not a guarantee about new tasks in general. Whether a harness evolved on one suite helps on another
   is an empirical question that needs real suites, real models and several seeds of the
   whole search, with intervals; nothing in this repository can settle it, and the paper's
   numbers do not settle it either (see the critique).
