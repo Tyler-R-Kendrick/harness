@@ -96,7 +96,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
 
   it("PI1.2 a command typed in the terminal asks for approval, runs on y, and its file appears in the Files tab", async () => {
     const { page } = await open();
-    await type(page, "ask '$ echo typed > typed.txt'");
+    await type(page, "/ask $ echo typed > typed.txt");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Allow bash"));
     await page.keyboard.press("y");
     await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
@@ -109,14 +109,14 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.4 a reload keeps the files, the sessions, the current session's log, the turns, the settings and the timeline; harness reset starts over", async () => {
+  it("PI1.4 a reload keeps the files, the sessions, the current session's log, the turns, the settings and the timeline; /reset starts over", async () => {
     const { page } = await open();
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
     await page.locator("#approval").uncheck();
     await type(page, "echo kept > kept.txt && mkdir -p empty/dir");
-    await type(page, "ask '$ echo from the agent >> kept.txt'");
+    await type(page, "/ask $ echo from the agent >> kept.txt");
     await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
-    await type(page, "harness sessions");
+    await type(page, "/sessions");
     await page.waitForFunction(() => /\* ses_/.test(document.getElementById("terminal")?.innerText ?? ""));
     const session = /\* (ses_\S+)/.exec(await terminalText(page))![1]!;
     const before = Number(await page.locator("#count-timeline").textContent());
@@ -134,16 +134,17 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(restored).toMatch(/, \d+ timeline events/);
     expect(Number(await page.locator("#count-timeline").textContent())).toBeGreaterThan(before);
     expect(await pageLoads(page)).toBe(2);
-    await type(page, "cat kept.txt; ls -d empty/dir; harness sessions");
+    await type(page, "cat kept.txt; ls -d empty/dir");
+    await type(page, "/sessions");
     // Terminal rows are padded to the terminal's width.
-    await page.waitForFunction(() => /empty\/dir\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
+    await page.waitForFunction((id) => /empty\/dir\s*\n/.test(document.getElementById("terminal")?.innerText ?? "") && (document.getElementById("terminal")?.innerText ?? "").includes(`* ${id}`), session);
     const after = await terminalText(page);
     expect(after).toMatch(/kept\s*\nfrom the agent/);
     expect(after).toContain(`* ${session}`);
 
     expect(await storedKeys(page)).toContain(`conversation:${session}`);
     const reloaded = page.waitForEvent("load");
-    await type(page, "harness reset");
+    await type(page, "/reset");
     await reloaded;
     await booted(page);
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
@@ -184,7 +185,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("true");
     // The scripted first turn ran on the shell worker: Claude was not asked anything.
     expect(await page.evaluate(() => (globalThis as unknown as { sampled: unknown[] }).sampled.length)).toBe(0);
-    await type(page, "ask write a note");
+    await type(page, "/ask write a note");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Allow writeFile"));
     await page.keyboard.press("y");
     await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");

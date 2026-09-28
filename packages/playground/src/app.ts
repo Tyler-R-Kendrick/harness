@@ -14,7 +14,7 @@ import { Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
 import type { ModelTier, Sample } from "./sample-model.ts";
-import { harnessCommands, Prompter, TurnRenderer } from "./shell.ts";
+import { Prompter, SlashCommands, TurnRenderer, withSlashCommands } from "./shell.ts";
 import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
 import { Tracer } from "./trace.ts";
@@ -59,15 +59,15 @@ const SAMPLE_FILES: Record<string, string> = {
     "filesystem, so whatever a turn changes shows up here and in the Files tab.",
     "",
   ].join("\n"),
-  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] ask Claude to summarize README.md", "- [ ] ask '$ ls -la' with approvals on, and answer n", "- [ ] harness trace 30 | grep model", ""].join("\n"),
+  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] /ask summarize README.md", "- [ ] /ask $ ls -la with approvals on, and answer n", "- [ ] /trace 30 | grep model", ""].join("\n"),
   [`${HOME}/src/greet.sh`]: ['name="${1:-world}"', 'echo "hello, $name"', ""].join("\n"),
 };
 
 const GREETING = [
   "\x1b[1mharness playground\x1b[0m \x1b[2m· the daemon runs in this page; this shell shares its files with the agent\x1b[0m",
-  "  \x1b[36mask\x1b[0m <prompt>          run a turn on the selected worker (claude, when this page can reach it)",
-  "  \x1b[36mask\x1b[0m '$ <command>'     the shell worker runs one command through the same path",
-  "  \x1b[36mharness help\x1b[0m          sessions, workers, tier, approvals, traces",
+  "  \x1b[36m/ask\x1b[0m <prompt>         run a turn on the selected worker (claude, when this page can reach it)",
+  "  \x1b[36m/ask\x1b[0m $ <command>      the shell worker runs one command through the same path",
+  "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
@@ -566,7 +566,7 @@ async function boot() {
   const p = playground;
   vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));
   pageSaver = new Coalesced(() => stores.page.save({ version: 1, sessionId: p.sessionId, settings: { ...settings }, turns }), (e) => storageProblem(`page: ${e}`));
-  for (const command of harnessCommands({
+  withSlashCommands(bash, new SlashCommands({
     playground: p,
     tracer,
     settings,
@@ -590,8 +590,7 @@ async function boot() {
       if (report.diff.added.length + report.diff.modified.length + report.diff.removed.length > 0) vfsSaver?.request();
     },
     onReset: reset,
-  }))
-    bash.registerCommand(command);
+  }));
   await refreshFiles();
   sync();
 
@@ -620,7 +619,7 @@ async function boot() {
   document.documentElement.dataset["demo"] = "running";
   settings.worker = "shell";
   settings.approval = "auto";
-  await shell.handleInput(`ask '$ echo "- [x] ran a turn through the daemon" >> notes/todo.md && tail -n 1 notes/todo.md'`);
+  await shell.handleInput(`/ask $ echo "- [x] ran a turn through the daemon" >> notes/todo.md && tail -n 1 notes/todo.md`);
   await shell.handleInput("\r");
   demoRunning = false;
   delete document.documentElement.dataset["demo"];

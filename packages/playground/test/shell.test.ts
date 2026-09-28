@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
 import { Playground } from "../src/playground.ts";
-import { harnessCommands, Prompter, question, reportLines, traceLine, TurnRenderer } from "../src/shell.ts";
+import { Prompter, question, reportLines, SlashCommands, traceLine, TurnRenderer, withSlashCommands, words } from "../src/shell.ts";
 import type { Settings } from "../src/shell.ts";
 import { shellModel } from "../src/shell-model.ts";
 import { Tracer } from "../src/trace.ts";
@@ -24,7 +24,7 @@ async function terminal(answer?: (key: Prompter) => void) {
   const turns: [string, string][] = [];
   const prompter = new Prompter((s) => void (out += s));
   if (answer) prompter.onAsk = () => answer(prompter);
-  for (const c of harnessCommands({ playground, tracer, settings, prompter, write: (s) => void (out += s), workers: ["echo", "shell", "claude"], onTurn: (p, r) => void turns.push([p, r.stopReason]) })) bash.registerCommand(c);
+  withSlashCommands(bash, new SlashCommands({ playground, tracer, settings, prompter, write: (s) => void (out += s), workers: ["echo", "shell", "claude"], onTurn: (p, r) => void turns.push([p, r.stopReason]) }));
   const run = async (line: string) => {
     out = "";
     const r = await bash.exec(line, { cwd: HOME });
@@ -33,11 +33,11 @@ async function terminal(answer?: (key: Prompter) => void) {
   return { run, settings, playground, bash, tracer, turns, prompter };
 }
 
-describe("the terminal's harness commands", () => {
-  it("TM1.1 ask streams the agent's reply to the terminal and ends with the turn's report", async () => {
+describe("the terminal's slash commands", () => {
+  it("TM1.1 /ask streams the agent's reply to the terminal and ends with the turn's report", async () => {
     const t = await terminal();
     t.settings.worker = "echo";
-    const r = await t.run("ask hello there");
+    const r = await t.run("/ask hello there");
     expect(r.exitCode).toBe(0);
     expect(r.out).toContain("echo: hello there");
     expect(r.out).toMatch(/── end_turn · 0 model calls · 0 tool calls · no file changes · \d+ms/);
@@ -46,7 +46,7 @@ describe("the terminal's harness commands", () => {
 
   it("TM1.2 a tool call asks y/n in the terminal; yes runs it and the report names the files it changed", async () => {
     const t = await terminal((p) => p.handleKey("y"));
-    const r = await t.run("ask '$ echo x > made.txt'");
+    const r = await t.run("/ask $ echo x > made.txt");
     expect(r.out).toContain("Allow bash");
     expect(r.out).toContain("allowed");
     expect(r.out).toContain("⚙ bash");
@@ -57,10 +57,10 @@ describe("the terminal's harness commands", () => {
 
   it("TM1.3 no keeps it from running; Ctrl-C at the question cancels the turn", async () => {
     const denied = await terminal((p) => p.handleKey("n"));
-    expect((await denied.run("ask '$ rm README.md'")).out).toContain("denied");
+    expect((await denied.run("/ask $ rm README.md")).out).toContain("denied");
     expect(await denied.bash.fs.exists(`${HOME}/README.md`)).toBe(true);
     const dismissed = await terminal((p) => p.handleKey("\x03"));
-    expect((await dismissed.run("ask '$ rm README.md'")).out).toContain("── cancelled");
+    expect((await dismissed.run("/ask $ rm README.md")).out).toContain("── cancelled");
   });
 
   it("TM1.3b a turn that fails outright prints why and exits 1", async () => {
@@ -70,8 +70,8 @@ describe("the terminal's harness commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      for (const c of harnessCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] })) bash.registerCommand(c);
-      expect(await bash.exec("ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
 
@@ -79,89 +79,137 @@ describe("the terminal's harness commands", () => {
     const abort = new AbortController();
     const t = await terminal(() => abort.abort());
     const bash = t.bash;
-    const r = await bash.exec("ask '$ touch never'", { cwd: HOME, signal: abort.signal });
+    const r = await bash.exec("/ask $ touch never", { cwd: HOME, signal: abort.signal });
     expect(r.exitCode).not.toBe(2);
     expect(await bash.fs.exists(`${HOME}/never`)).toBe(false);
     expect(t.prompter.waiting).toBe(false);
   });
 
-  it("TM1.4 ask without words says how to use it", async () => {
+  it("TM1.4 /ask without words says how to use it", async () => {
     const t = await terminal();
-    expect(await t.run("ask")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("usage: ask") });
+    expect(await t.run("/ask")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("usage: /ask <prompt>") });
   });
 
-  it("TM2.1 harness worker, tier and approve show and change the settings, refusing unknown values", async () => {
+  it("TM2.1 /worker, /tier and /approve show and change the settings, refusing unknown values", async () => {
     const t = await terminal();
-    expect((await t.run("harness worker")).stdout).toBe("shell (one of echo, shell, claude)\n");
-    expect((await t.run("harness worker echo")).stdout).toBe("worker: echo\n");
+    expect((await t.run("/worker")).stdout).toBe("shell (one of echo, shell, claude)\n");
+    expect((await t.run("/worker echo")).stdout).toBe("worker: echo\n");
     expect(t.settings.worker).toBe("echo");
-    expect(await t.run("harness worker nope")).toMatchObject({ exitCode: 2, stderr: "unknown worker nope (one of echo, shell, claude)\n" });
-    expect((await t.run("harness tier quick")).stdout).toBe("tier: quick\n");
-    expect((await t.run("harness tier")).stdout).toBe("quick (one of quick, default, complex)\n");
-    expect(await t.run("harness tier huge")).toMatchObject({ exitCode: 2 });
-    expect((await t.run("harness approve")).stdout).toBe("ask (one of ask, auto)\n");
-    expect((await t.run("harness approve auto")).stdout).toBe("approve: auto\n");
+    expect(await t.run("/worker nope")).toMatchObject({ exitCode: 2, stderr: "unknown worker nope (one of echo, shell, claude)\n" });
+    expect((await t.run("/tier quick")).stdout).toBe("tier: quick\n");
+    expect((await t.run("/tier")).stdout).toBe("quick (one of quick, default, complex)\n");
+    expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
+    expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
+    expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
     expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto" });
-    expect(await t.run("harness approve maybe")).toMatchObject({ exitCode: 2 });
+    expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
   it("TM2.2 sessions, new and use manage sessions; use takes an id prefix and replays the log", async () => {
     const t = await terminal();
     t.settings.worker = "echo";
-    await t.run("ask one");
+    await t.run("/ask one");
     const first = t.playground.sessionId!;
-    const made = (await t.run("harness new")).stdout.trim();
+    const made = (await t.run("/new")).stdout.trim();
     expect(made).not.toBe(first);
-    const listed = (await t.run("harness sessions")).stdout;
+    const listed = (await t.run("/sessions")).stdout;
     expect(listed).toContain(`  ${first}`);
     expect(listed).toContain(`* ${made}`);
-    const used = await t.run(`harness use ${first.slice(0, 12)}`);
+    const used = await t.run(`/use ${first.slice(0, 12)}`);
     expect(used.out).toContain("echo: one");
     expect(t.playground.sessionId).toBe(first);
-    expect(await t.run("harness use zzz")).toMatchObject({ exitCode: 1, stderr: "no session starts with zzz\n" });
-    expect(await t.run("harness use")).toMatchObject({ exitCode: 1, stderr: "no session starts with \n" });
+    expect(await t.run("/use zzz")).toMatchObject({ exitCode: 1, stderr: "no session starts with zzz\n" });
+    expect(await t.run("/use")).toMatchObject({ exitCode: 1, stderr: "no session starts with \n" });
   });
 
   it("TM2.3 trace prints the newest events, one per line, and can be piped; a count that is not a positive whole number is refused", async () => {
     const t = await terminal();
     t.settings.worker = "echo";
-    await t.run("ask hi");
-    const lines = (await t.run("harness trace 3")).stdout.trim().split("\n");
+    await t.run("/ask hi");
+    const lines = (await t.run("/trace 3")).stdout.trim().split("\n");
     expect(lines).toHaveLength(3);
     expect(lines.at(-1)).toMatch(/vfs\s+changes · 0 added/);
-    expect((await t.run("harness trace 50 | grep -c acp")).stdout.trim()).not.toBe("0");
-    await t.run("ask again");
-    expect((await t.run("harness trace")).stdout.trim().split("\n")).toHaveLength(20);
-    for (const bad of ["0", "abc", "-5", "1.5"]) expect(await t.run(`harness trace ${bad}`)).toMatchObject({ exitCode: 2, stderr: "usage: harness trace [n], n a positive whole number\n" });
+    expect((await t.run("/trace 50 | grep -c acp")).stdout.trim()).not.toBe("0");
+    await t.run("/ask again");
+    expect((await t.run("/trace")).stdout.trim().split("\n")).toHaveLength(20);
+    for (const bad of ["0", "abc", "1.5"]) expect(await t.run(`/trace ${bad}`)).toMatchObject({ exitCode: 2, stderr: "usage: /trace [n], n a positive whole number\n" });
+    expect(await t.run("/trace -5")).toMatchObject({ exitCode: 2, stderr: "Unknown option `-5`; see /trace --help\n" });
   });
 
   it("TM2.4 status summarizes the daemon; help lists the commands; an unknown one is refused", async () => {
     const t = await terminal();
     t.settings.worker = "echo";
-    await t.run("ask hi");
-    const status = (await t.run("harness status")).stdout;
+    await t.run("/ask hi");
+    const status = (await t.run("/status")).stdout;
     expect(status).toMatch(/sessions\s+1/);
     expect(status).toMatch(/worker\s+echo/);
     expect(status).toMatch(/hook events\s+\d+/);
     t.playground.host.daemon.offerPlatformCapability({ name: "memory", version: 1, trust: "trusted" });
-    expect((await t.run("harness status")).stdout).toMatch(/capabilities\s+memory/);
-    expect((await t.run("harness")).stdout).toContain("harness trace [n]");
-    expect(await t.run("harness nope")).toMatchObject({ exitCode: 2, stderr: expect.stringContaining("unknown command nope") });
+    expect((await t.run("/status")).stdout).toMatch(/capabilities\s+memory/);
+    expect((await t.run("/help")).stdout).toMatch(/^\/trace \[n\]\s+The newest trace events/m);
+    expect(await t.run("/nope")).toMatchObject({ exitCode: 2, stderr: "unknown command /nope; /help lists them\n" });
   });
 
-  it("TM2.6 harness reset clears what this browser keeps (when the page keeps anything) and says so", async () => {
+  it("TM2.6 /reset clears what this browser keeps (when the page keeps anything) and says so", async () => {
     const t = await terminal();
-    expect(await t.run("harness reset")).toMatchObject({ exitCode: 1, stderr: "this page keeps nothing to reset\n" });
+    expect(await t.run("/reset")).toMatchObject({ exitCode: 1, stderr: "this page keeps nothing to reset\n" });
     const bash = new Bash({ cwd: HOME });
     let reset = 0;
-    for (const c of harnessCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"], onReset: async () => void reset++ })) bash.registerCommand(c);
-    expect(await bash.exec("harness reset", { cwd: HOME })).toMatchObject({ exitCode: 0, stdout: "cleared the saved sessions, conversations and files; reloading\n" });
+    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"], onReset: async () => void reset++ }));
+    expect(await bash.exec("/reset", { cwd: HOME })).toMatchObject({ exitCode: 0, stdout: "cleared the saved sessions, conversations and files; reloading\n" });
     expect(reset).toBe(1);
   });
 
-  it("TM2.5 harness snapshot prints the daemon's snapshot as JSON", async () => {
+  it("TM2.5 /snapshot prints the daemon's snapshot as JSON", async () => {
     const t = await terminal();
-    expect(JSON.parse((await t.run("harness snapshot")).stdout)).toMatchObject({ version: 1, sessions: [] });
+    expect(JSON.parse((await t.run("/snapshot")).stdout)).toMatchObject({ version: 1, sessions: [] });
+  });
+});
+
+describe("slash commands: parsed before bash, with a command-line parser", () => {
+  it("TM5.1 words split as a shell would, but leniently: quotes group only when they close, so an apostrophe is a letter", () => {
+    expect(words(`ask what's  "in here"  'a b'c don't`)).toEqual(["ask", "what's", "in here", "a bc", "don't"]);
+    expect(words(`  `)).toEqual([]);
+    expect(words(`say "unclosed and 'this'`)).toEqual(["say", '"unclosed', "and", "this"]);
+  });
+
+  it("TM5.2 a line whose first word is a slash command is the harness's; anything else, a path that exists included, is bash's", async () => {
+    const t = await terminal();
+    t.settings.worker = "echo";
+    expect((await t.run("/ask what's in here?")).out).toContain("echo: what's in here?");
+    expect((await t.run("echo plain")).stdout).toBe("plain\n");
+    expect((await t.run("/bin/echo from a path")).stdout).toBe("from a path\n");
+    expect((await t.run("/help")).exitCode).toBe(0);
+    expect((await t.run("/")).stdout).toBe((await t.run("/help")).stdout);
+  });
+
+  it("TM5.3 a slash command's output pipes into bash; /ask's prompt is the rest of the line as typed (a bar and quotes included; quotes around all of it dropped)", async () => {
+    const t = await terminal();
+    expect((await t.run("/worker | tr a-z A-Z")).stdout).toBe("SHELL (ONE OF ECHO, SHELL, CLAUDE)\n");
+    expect((await t.run("/status | grep -c worker")).stdout).toBe("1\n");
+    t.settings.worker = "echo";
+    expect((await t.run(`/ask a|b "c"`)).out).toContain('echo: a|b "c"');
+    expect((await t.run(`/ask 'all of it quoted'`)).out).toContain("echo: all of it quoted");
+  });
+
+  it("TM5.3b /ask runs a command through the shell worker exactly as typed, pipes and quotes included", async () => {
+    const t = await terminal((p) => p.handleKey("y"));
+    await t.run(`/ask $ printf '%s\\n' "a b" | wc -l > n.txt`);
+    expect((await t.bash.readFile(`${HOME}/n.txt`)).trim()).toBe("1");
+    expect((await t.run("/ask --help")).stdout).toMatch(/Usage:\n\s+\/ask \[\.\.\.prompt\]/);
+  });
+
+  it("TM5.4 every command takes --help from the parser; unknown options and extra words are refused with a pointer to it", async () => {
+    const t = await terminal();
+    expect((await t.run("/trace --help")).stdout).toMatch(/Usage:\n\s+\/trace \[n\]/);
+    expect((await t.run("/help --help")).exitCode).toBe(0);
+    expect(await t.run("/status --bogus")).toMatchObject({ exitCode: 2, stderr: "Unknown option `--bogus`; see /status --help\n" });
+  });
+
+  it("TM5.5 the parser's commands are the ones help lists, each with a description", async () => {
+    const t = await terminal();
+    const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
+    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/trace", "/status", "/snapshot", "/reset", "/help"]);
   });
 });
 
