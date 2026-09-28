@@ -1123,6 +1123,18 @@ evaluator"; the names above keep their meaning.
   gives the same function to `procedural.dream` and to the schedule, whose lines go to
   stderr; `--procedural` alone turns the schedule on, with the preset's `every` and
   `afterTurns` (a deployment's `--procedural-settings` may unset both for on-demand only).
+- **Task suites (`task-suite.ts`).** A user's task file parses with `parseTaskSuite(json)`
+  into a branded `TaskSuite` (`TaskSuiteSchema`; its JSON Schema is
+  `data/task-suite.schema.json`, drift-tested, from `taskSuiteJsonSchema()`):
+  `{$schema?, description?, instructions?, scorer, judge?: {instructions}, tools?: [{name, description?}], tasks: [{id, prompt, expected?, split: "train" | "validation"}]}`.
+  `scorer` is one of `TASK_SCORERS` (`exact`, `normalized-exact`, `f1`, `judge`). Task
+  ids and tool names are unique, every task has `expected` unless the scorer is `judge`,
+  and there is at least one validation task. `description` is the refiner's
+  `{task_description}`, `instructions` the solver's. The metrics: `normalizeAnswer`
+  (SQuAD's: lower case, no punctuation, no articles `a`/`an`/`the`, single spaces),
+  `f1Score(answer, expected)` (token F1 over normalized tokens, repeats counted; two
+  empty answers agree), and `scoreAnswer(metric, answer, expected)` (`exact` compares
+  trimmed text).
 
 ## Open issues
 

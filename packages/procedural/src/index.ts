@@ -31,4 +31,5 @@ export { duration, DurationSchema, GATES, guidancePromptOf, HOPS, parseSettings,
 export { PinSchema, ProceduralStoreDocumentSchema, SnapshotProceduralStore } from "./snapshot-store.ts";
 export { ADVISORY, GUIDANCE_LABEL, proceduralStep, StepRecordSchema, type ProceduralStepDeps, type ProceduralStepHook, type StepInput, type StepNotice, type StepRecord, type StepScope, type TurnInput } from "./step.ts";
 export type { AppendLog, Head, Lease, Pin, ProceduralStore } from "./store.ts";
+export { f1Score, normalizeAnswer, parseTaskSuite, scoreAnswer, SuiteTaskSchema, TASK_SCORERS, TaskSuiteSchema, taskSuiteJsonSchema, type SuiteTask, type TaskMetric, type TaskScorer, type TaskSuite } from "./task-suite.ts";
 export { ScoredTrajectorySchema, type ScoredTrajectory } from "./trajectory.ts";
