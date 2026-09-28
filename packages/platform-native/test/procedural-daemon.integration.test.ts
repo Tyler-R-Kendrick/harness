@@ -40,7 +40,7 @@ describe("procedural graphs on the native daemon", () => {
     expect(await invoke(first.client, "procedural.export", { graph: "team/search", format: "mermaid" })).toMatchObject({ status: "ok", text: expect.stringMatching(/^flowchart TD\n/) });
     // Dream and feedback reach the host's dream runner and live learner.
     expect(await invoke(first.client, "procedural.dream", { graph: "none" })).toEqual({ status: "done", result: { status: "no-head", graph: "none" } });
-    expect(await invoke(first.client, "procedural.feedback", { session: "s", turn: "t", score: 1 })).toEqual({ status: "missing", reason: "session s is not pinned to a graph" });
+    expect(await invoke(first.client, "procedural.feedback", { session: "s", turn: "t", score: 1 })).toEqual({ status: "no-pin", reason: "session s is not pinned to a graph" });
     first.child.stdin.end();
     expect(await first.exited).toBe(0);
 

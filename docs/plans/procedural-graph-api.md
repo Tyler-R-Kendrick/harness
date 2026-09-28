@@ -872,9 +872,16 @@ As built (P12). These refine the shapes above; no name another phase uses change
     by the host (P9's `authorize(policy, action, graph, context)` with its context), which
     allows by default. `ProceduralAction` is `"read" | "write" | "dream" | "revert" | "import"`;
   - `dream?: (graph) => Promise<unknown>` (the host's P6 `runDream`) and
-    `feedback?: (session, turn, score) => Promise<unknown>` (P11's `LiveLearner.feedback`).
+    `feedback?: (session, turn, score) => Promise<LearnerResult | undefined>` (P11's
+    `LiveLearner.feedback`; undefined while no learner runs).
 
-  It takes no resolver: `feedback` finds the graph from the session's pin. Each operation
+  It takes no resolver: `feedback` finds the graph from the session's pin, and answers
+  what the learner did with the score: `recorded` for `observed`, `rescored` and
+  `unchanged` (the score is in the overlay), the skip's code for `skipped`
+  (`unknown-turn`, with the pin's graph; `no-pin`, when the pin went before the learner
+  read it; `invalid`), and `unavailable` when the learner is `ignored` (its preset keeps
+  no overlay) or no learner answered. A session with no pin is `no-pin` before the
+  learner is asked. Each operation
   parses its input (malformed input throws `invalid procedural.<op> input`), then checks
   the policy for its action (a refusal throws `procedural.<op>: <action> on graph <g> is
   not allowed`), then runs. The ops and their actions:
@@ -884,7 +891,7 @@ As built (P12). These refine the shapes above; no name another phase uses change
   | `graph` | `{graph, revision?, overlay?}` | read | `{status:"ok", head, revision, origin, document, effective}` or `missing` |
   | `history` | `{graph}` | read | `GraphHistory` |
   | `export` | `{graph, revision?, format?: "json" \| "mermaid", overlay?}` | read | `ExportResult` |
-  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `{status:"recorded", graph}`, `missing` (no pin) or `unavailable` |
+  | `feedback` | `{session, turn, score}` | write (on the pin's graph) | `FeedbackOutcome`: `{status:"recorded", graph}`, `{status:"unknown-turn", graph, reason}`, `{status:"no-pin" \| "invalid", reason}` or `unavailable` |
   | `dream` | `{graph}` | dream | `{status:"done", result}` or `unavailable` |
   | `revert` | `{graph, to?}` | revert | `RevertResult` |
   | `import` | `{graph, document?}` | import | `ImportResult` |
@@ -1090,5 +1097,3 @@ the evaluator contract and scripted environment, rejection records). Still open:
 - P12: `harness-procedural` opens the store file itself, so it must not run while a
   daemon holds the same `--procedural` directory (one owner per store file). Routing the
   CLI through a running daemon's `_harness/cognitive/invoke` would lift that.
-- P12: `procedural.feedback` answers `recorded` once the learner has the score, even when
-  the learner skips it (for example, a turn it cannot find in the log).

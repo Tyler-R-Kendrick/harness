@@ -4,6 +4,7 @@ import { GraphIdSchema, RevisionIdSchema, ScoreSchema } from "./graph.ts";
 import type { GraphId, Score } from "./graph.ts";
 import { exportGraph, graphHistory, importGraph, readGraph, revertGraph } from "./import-export.ts";
 import type { ClockLike } from "./import-export.ts";
+import type { LearnerResult } from "./learner.ts";
 import { presetOf } from "./settings.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
@@ -24,8 +25,8 @@ export interface ProceduralExtensionOptions {
   readonly authorize?: (action: ProceduralAction, graph: GraphId) => boolean;
   /** Runs a dream for a graph (P6's `runDream`, with the host's ports). */
   readonly dream?: (graph: GraphId) => Promise<unknown>;
-  /** Scores a session's turn (P11's `LiveLearner.feedback`). */
-  readonly feedback?: (session: string, turn: string, score: Score) => Promise<unknown>;
+  /** Scores a session's turn (P11's `LiveLearner.feedback`); undefined when no learner is running yet. */
+  readonly feedback?: (session: string, turn: string, score: Score) => Promise<LearnerResult | undefined>;
 }
 
 /** Each operation's input. Built per extension, not at module load. */
@@ -53,6 +54,24 @@ function parseInput<O extends Op>(schemas: Inputs, op: O, value: unknown): z.out
 const unavailable = (what: string) => ({ status: "unavailable" as const, reason: `no ${what} is configured` });
 
 /**
+ * What `procedural.feedback` answers for the learner's result: `recorded` when the score
+ * is in the overlay (observed, re-observed, or already there), the skip's code when it
+ * was skipped, and `unavailable` when no learner answered or its preset keeps no overlay.
+ */
+function feedbackOutcome(graph: GraphId, result: LearnerResult | undefined) {
+  if (result === undefined) return { status: "unavailable" as const, graph, reason: "no live learner is running" };
+  switch (result.kind) {
+    case "ignored":
+      return { status: "unavailable" as const, graph, reason: result.reason };
+    case "skipped":
+      // A skip for no pin or an invalid input stands on no graph; an unknown turn is on the pin's.
+      return result.code === "unknown-turn" ? { status: result.code, graph, reason: result.reason } : { status: result.code, reason: result.reason };
+    default:
+      return { status: "recorded" as const, graph };
+  }
+}
+
+/**
  * Procedural graphs as a cognitive-core extension (plan §8.3, P12). It brings no models.
  * Operations, through `_harness/cognitive/invoke`, each checked against the access policy
  * for its action on its graph before anything runs:
@@ -60,7 +79,8 @@ const unavailable = (what: string) => ({ status: "unavailable" as const, reason:
  * - `procedural.graph` (read): a revision (the head by default) with its effective graph
  * - `procedural.history` (read): the heads and every recorded revision
  * - `procedural.export` (read): a revision as JSON, or the effective graph as Mermaid
- * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to
+ * - `procedural.feedback` (write): a score for a session's turn, on the graph it is pinned to;
+ *   it answers what the learner did with it (`recorded`, `unknown-turn`, `no-pin`, `invalid`)
  * - `procedural.dream` (dream): run a dream on the graph
  * - `procedural.revert` (revert): move the head back to an earlier head
  * - `procedural.import` (import): a seed or expert graph; head only for a graph with none
@@ -101,11 +121,10 @@ export function proceduralExtension(options: ProceduralExtensionOptions): Cognit
       feedback: async (value) => {
         const { session, turn, score } = input("feedback", value);
         const pin = await store.pins.get(session);
-        if (!pin) return { status: "missing", reason: `session ${session} is not pinned to a graph` };
+        if (!pin) return { status: "no-pin", reason: `session ${session} is not pinned to a graph` };
         check("feedback", "write", pin.graph);
         if (!options.feedback) return unavailable("live learner");
-        await options.feedback(session, turn, score);
-        return { status: "recorded", graph: pin.graph };
+        return feedbackOutcome(pin.graph, await options.feedback(session, turn, score));
       },
       dream: async (value) => {
         const { graph: g } = input("dream", value);
