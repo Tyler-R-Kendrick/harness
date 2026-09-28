@@ -1079,6 +1079,11 @@ evaluator"; the names above keep their meaning.
   settings parse again to themselves. `afterTurns` counts observed turns, so a preset
   without an overlay refuses it. The harness preset dreams every `7d` or after `50`
   observed turns, whichever comes first; the paper preset has no schedule.
+- **The runner.** A dream's `started` entry records the Clock's time as `at` (entries
+  written before have none and still replay); `DreamLogEntrySchema` (and `DreamLogEntry`)
+  parses the dream log's entries for readers such as the schedule. A run that throws
+  releases its lease (its epoch, so a lease another run took is left alone): the log
+  keeps every finished command, so any holder resumes the dream.
 
 ## Open issues
 
