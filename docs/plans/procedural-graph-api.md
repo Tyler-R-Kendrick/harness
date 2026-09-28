@@ -1144,6 +1144,17 @@ the names above keep their meaning.
   proposals and decisions. `browserProcedural` takes `notify` too; a page publishes the
   notices where it likes.
 
+## Composition in the daemon
+
+As built. Hosts give dream a composer and sessions their revision's workflows; the names
+above keep their meaning.
+
+- **The step hook's core (P10).** `ProceduralStepHook.core(scope)` returns the core
+  revision (`ProceduralGraph`) the session reads this turn, or undefined without a graph.
+  It resolves and pins at a turn boundary exactly as a step does, so the tools built from
+  it and the turn's guidance read one core (I3). Without a turn id every call is a
+  boundary.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in

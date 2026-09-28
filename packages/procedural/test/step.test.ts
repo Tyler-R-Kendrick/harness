@@ -341,6 +341,30 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(pins).toHaveBeenCalledTimes(2);
   });
 
+  it("PW1.64 core gives the core the session reads this turn, pinned as a step pins it: the turn's steps then read the same core, even when the head moves; no graph is undefined", async () => {
+    const s = await setup("harness");
+    const hook = proceduralStep(s.deps);
+    const pins = pinCount(s);
+    const before = (await s.store.heads.get(GRAPH))!.revision;
+    expect(await hook.core(input(s, [user("q")]))).toEqual(hotpotGraph());
+    const after = await seed(s.store, variant("?"), GRAPH, "dream");
+    await hook.prepare(input(s, [user("q")]));
+    expect(s.records.map((r) => r.core)).toEqual([before]);
+    expect(pins).toHaveBeenCalledTimes(1);
+    // The next turn re-pins, and its steps read what core read.
+    expect(await hook.core(input(s, [user("q")], { turnId: "t2" }))).toEqual(variant("?"));
+    await hook.prepare(input(s, [user("q")], { turnId: "t2" }));
+    expect(s.records.map((r) => r.core)).toEqual([before, after]);
+    expect(pins).toHaveBeenCalledTimes(2);
+    // Without a turn id every call is a boundary.
+    const { turnId: _, ...rest } = input(s, [user("q")]);
+    await hook.core(rest);
+    await hook.core(rest);
+    expect(pins).toHaveBeenCalledTimes(4);
+    const none = await setup("harness", { resolver: parseResolver({ rules: [{ when: {}, graph: null }] }) });
+    expect(await proceduralStep(none.deps).core(input(none, [user("q")]))).toBeUndefined();
+  });
+
   it("PW1.47 without a turn id, the first step of a stream is the turn boundary", async () => {
     const s = await setup("paper");
     const pins = pinCount(s);

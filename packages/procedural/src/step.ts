@@ -13,7 +13,7 @@ import { HARNESS, Sha256Schema } from "@harness/cognitive";
 import type { ScoredTrajectory } from "./trajectory.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, RevisionIdSchema } from "./graph.ts";
-import type { GraphId } from "./graph.ts";
+import type { GraphId, ProceduralGraph } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
 import { match, neighborhood } from "./locate.ts";
 import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
@@ -91,6 +91,13 @@ export interface TurnInput extends StepScope {
 export interface ProceduralStepHook {
   prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[] } | undefined>;
   turn(input: TurnInput): Promise<string | undefined>;
+  /**
+   * The core revision the session reads this turn, or undefined when it has no graph. It
+   * resolves and pins at a turn boundary as a step does, so the turn's steps read the same
+   * core: a host builds the turn's tools from it (`sessionTools`, plan §7.6). Without a
+   * turn id every call is a boundary.
+   */
+  core(scope: StepScope): Promise<ProceduralGraph | undefined>;
 }
 
 export interface ProceduralStepDeps {
@@ -186,6 +193,8 @@ function exposureOf(nodes: readonly EffectiveNode[], edges: readonly EffectiveEd
 /** What a session reads until its next turn boundary: one version pair (I3). */
 interface View {
   readonly graph: GraphId;
+  /** The pinned core revision. */
+  readonly core: ProceduralGraph;
   readonly effective: EffectiveGraph;
 }
 
@@ -215,10 +224,10 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     const parsed = parseGraph(record.document);
     if (!parsed.ok) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} does not parse: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
     const live = preset.live;
-    if (!preset.overlay || live === undefined) return { graph, effective: coreView(parsed.graph) };
+    if (!preset.overlay || live === undefined) return { graph, core: parsed.graph, effective: coreView(parsed.graph) };
     const state = await readOverlay(deps.store, pin);
     // A session never pairs a core with an overlay built on another core.
-    return { graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
+    return { graph, core: parsed.graph, effective:effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
   };
 
   /** The session's state for this step, re-resolved and re-pinned unless the step is in the turn it knows. */
@@ -309,6 +318,11 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");
       return advise(input, { ...session, view: session.view }, preset.turnBoundary === "start" ? undefined : input.lastAction, [], deps.model);
+    },
+
+    async core(scope) {
+      const session = await enter(scope, (known) => scope.turnId !== undefined && known.turnId === scope.turnId);
+      return session.view?.core;
     },
   };
 }
