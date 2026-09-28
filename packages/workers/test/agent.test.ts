@@ -61,7 +61,7 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(prompts[2]).toEqual(["system:Be brief.", "user:three"]);
   });
 
-  it("AW1.14 with a conversation store, a new worker (after a restart) continues a session's conversation from it, and each turn's conversation is saved", async () => {
+  it("AW1.17 with a conversation store, a new worker (after a restart) continues a session's conversation from it, and each turn's conversation is saved", async () => {
     const saved = new Map<string, readonly ModelMessage[]>();
     const conversations = { load: async (id: string) => saved.get(id), save: async (id: string, messages: readonly ModelMessage[]) => void saved.set(id, messages) };
     await run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("first"), finish()]) }), conversations }), [{ type: "text", text: "one" }]).done;
@@ -74,11 +74,48 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     expect(saved.get("s1")).toHaveLength(4);
   });
 
-  it("AW1.15 a conversation store that fails to load or save does not fail the turn", async () => {
-    const conversations = { load: () => Promise.reject(new Error("no disk")), save: () => Promise.reject(new Error("no disk")) };
+  it("AW1.18 a conversation store that fails to load or save does not fail the turn; after a failed load the turn is not saved, so what could not be read is not overwritten", async () => {
+    const failing = { load: () => Promise.reject(new Error("no disk")), save: () => Promise.reject(new Error("no disk")) };
+    const first = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations: failing }), [{ type: "text", text: "hi" }]);
+    await first.done;
+    expect(end(first.events)).toMatchObject({ type: "end", stopReason: "end_turn" });
+    const saves: string[] = [];
+    const unreadable = { load: () => Promise.reject(new Error("busy")), save: async (id: string) => void saves.push(id) };
+    const second = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations: unreadable }), [{ type: "text", text: "hi" }]);
+    await second.done;
+    expect(end(second.events)).toMatchObject({ type: "end", stopReason: "end_turn" });
+    expect(saves).toEqual([]);
+  });
+
+  it("AW1.19 workers sharing a conversation store continue each other's turns: with a store, the store is the conversation", async () => {
+    const saved = new Map<string, readonly ModelMessage[]>();
+    const conversations = { load: async (id: string) => saved.get(id), save: async (id: string, messages: readonly ModelMessage[]) => void saved.set(id, messages) };
+    const a = scripted([...text("a1"), finish()], [...text("a3"), finish()]);
+    const b = scripted([...text("b2"), finish()]);
+    const workerA = new AgentWorker({ agent: sessionAgent({ model: a }), conversations });
+    const workerB = new AgentWorker({ agent: sessionAgent({ model: b }), conversations });
+    await run(workerA, [{ type: "text", text: "one" }], "s1", "t1").done;
+    await run(workerB, [{ type: "text", text: "two" }], "s1", "t2").done;
+    await run(workerA, [{ type: "text", text: "three" }], "s1", "t3").done;
+    const said = (m: { role: string; content: unknown }) => `${m.role}:${typeof m.content === "string" ? m.content : (m.content as { text?: string }[]).map((p) => p.text ?? "").join("")}`;
+    expect(a.doStreamCalls[1]!.prompt.map(said)).toEqual(["user:one", "assistant:a1", "user:two", "assistant:b2", "user:three"]);
+    expect(saved.get("s1")).toHaveLength(6);
+  });
+
+  it("AW2.6 the turn ends before its conversation is saved: a slow store does not hold the turn's end back", async () => {
+    let release: () => void = () => {};
+    const saving = new Promise<void>((r) => (release = r));
+    const conversations = { load: async () => undefined, save: () => saving };
     const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model: scripted([...text("fine"), finish()]) }), conversations }), [{ type: "text", text: "hi" }]);
+    await new Promise<void>((resolve) => {
+      const wait = setInterval(() => end(events)?.type === "end" && (clearInterval(wait), resolve()), 1);
+    });
+    let finished = false;
+    void done.then(() => (finished = true));
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    release();
     await done;
-    expect(end(events)).toMatchObject({ type: "end", stopReason: "end_turn" });
   });
 
   it("AW1.3 a prompt with an image goes to the vision model, with the image attached", async () => {

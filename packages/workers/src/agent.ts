@@ -88,10 +88,15 @@ export class AgentWorker implements Worker {
     const base = { sessionId: command.sessionId, turnId: command.turnId };
     const update = (u: SessionUpdate) => emit({ type: "update", ...base, update: u });
     const { content, said } = userContent(command.prompt);
-    const past = this.#history.get(command.sessionId) ?? (await this.#conversations?.load(command.sessionId).catch(() => undefined)) ?? [];
+    // With a store, the store is the conversation (other workers may share it). A load that
+    // fails falls back to what this worker remembers, and the turn is then not saved, so
+    // what could not be read is not overwritten.
+    const loaded = this.#conversations ? await this.#conversations.load(command.sessionId).then((m) => ({ ok: true as const, m }), () => ({ ok: false as const })) : undefined;
+    const past = (loaded?.ok ? loaded.m : this.#history.get(command.sessionId)) ?? [];
     const messages: ModelMessage[] = [...past, { role: "user", content }];
     let stopReason: StopReason = "end_turn";
     let reply = "";
+    let finished: readonly ModelMessage[] | undefined;
     try {
       for (;;) {
         const result = await this.#agent.stream({ messages, options: { sessionId: command.sessionId }, abortSignal: running.abort.signal });
@@ -166,7 +171,7 @@ export class AgentWorker implements Worker {
         messages.push({ role: "tool", content: responses });
       }
       this.#history.set(command.sessionId, messages);
-      await this.#conversations?.save(command.sessionId, messages).catch(() => undefined);
+      finished = messages;
       // Remembering is best effort: a turn never fails because of it.
       await this.#onTurn?.({ sessionId: command.sessionId, said, reply }).catch(() => undefined);
     } catch (e) {
@@ -180,6 +185,8 @@ export class AgentWorker implements Worker {
       this.#running.delete(key);
     }
     emit({ type: "end", ...base, stopReason });
+    // The turn has ended for everyone; its conversation is saved after (best effort).
+    if (finished && loaded?.ok) await this.#conversations?.save(command.sessionId, finished).catch(() => undefined);
   }
 
   cancel(sessionId: string, turnId: string): void {

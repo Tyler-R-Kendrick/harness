@@ -50,6 +50,25 @@ async function booted(page: Page, errors: string[] = []) {
 /** How many page loads the timeline shows (host events named so). */
 const pageLoads = (page: Page) => page.evaluate(() => [...document.querySelectorAll("#events summary")].filter((s) => s.textContent?.includes("page loaded")).length);
 
+/** The keys of the playground's IndexedDB records that hold something. */
+const storedKeys = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const open = indexedDB.open("harness-playground", 1);
+        open.onsuccess = () => {
+          const store = open.result.transaction("snapshots").objectStore("snapshots");
+          const keys: string[] = [];
+          store.openCursor().onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (!cursor) return resolve(keys);
+            if (cursor.value !== undefined) keys.push(String(cursor.key));
+            cursor.continue();
+          };
+        };
+      }),
+  );
+
 const terminalText = (page: Page) => page.locator("#terminal").innerText();
 
 async function type(page: Page, line: string) {
@@ -122,6 +141,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(after).toMatch(/kept\s*\nfrom the agent/);
     expect(after).toContain(`* ${session}`);
 
+    expect(await storedKeys(page)).toContain(`conversation:${session}`);
     const reloaded = page.waitForEvent("load");
     await type(page, "harness reset");
     await reloaded;
@@ -129,6 +149,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
     expect(await page.locator("#count-turns").textContent()).toBe("1");
     expect(await pageLoads(page)).toBe(1);
+    expect((await storedKeys(page)).filter((k) => k.startsWith("conversation:"))).toEqual([expect.not.stringContaining(session)]);
     await type(page, "ls kept.txt");
     await page.waitForFunction(() => /No such file/i.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.close();
@@ -147,10 +168,22 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
         options.onText?.({ text, delta: text });
         return { text, truncated: false, modelTierApplied: "default" };
       };
-      Object.assign(globalThis, { claude: { use: async (name: string) => (name === "sample" ? sample : null) }, sampled: asked });
+      // Claude becomes reachable while the scripted first turn runs (the race that turn must not lose).
+      const duringDemo = () =>
+        new Promise((resolve) => {
+          const wait = setInterval(() => {
+            if (document.documentElement.dataset["demo"] === "running") {
+              clearInterval(wait);
+              resolve(sample);
+            }
+          }, 1);
+        });
+      Object.assign(globalThis, { claude: { use: async (name: string) => (name === "sample" ? duringDemo() : null) }, sampled: asked });
     });
     await page.waitForFunction(() => document.getElementById("claude-pill")?.textContent === "Claude: ready");
     expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("true");
+    // The scripted first turn ran on the shell worker: Claude was not asked anything.
+    expect(await page.evaluate(() => (globalThis as unknown as { sampled: unknown[] }).sampled.length)).toBe(0);
     await type(page, "ask write a note");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Allow writeFile"));
     await page.keyboard.press("y");

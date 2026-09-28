@@ -146,8 +146,9 @@ node packages/platform-native/src/main.ts --socket ~/.harness.sock --state ~/.ha
 ```
 
 With `--state`, sessions survive a restart, and agent workers (`--worker model` or
-`ensemble`) keep each session's conversation beside it (`state.conversations.json`, or
-`--conversations <file>`), so a restored session continues where it stopped.
+`ensemble`) keep each session's conversation beside it (a file per session in
+`state.conversations/`, or in `--conversations <dir>`), so a restored session continues
+where it stopped.
 
 Or on a WebSocket on this machine's loopback, for clients that cannot use a Unix socket
 (browser pages need their origin allowed; every client presents the token kept in

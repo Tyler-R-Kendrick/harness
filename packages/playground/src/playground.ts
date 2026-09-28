@@ -9,7 +9,7 @@ import { ClientSideConnection, PROTOCOL_VERSION } from "@agentclientprotocol/sdk
 import type { Client, RequestPermissionRequest, SessionUpdate, StopReason } from "@agentclientprotocol/sdk";
 import { isStepCount, wrapLanguageModel } from "ai";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import type { Bash } from "just-bash";
+import { Bash } from "just-bash";
 import type { DaemonSnapshot, Identity, SnapshotStorage } from "@harness/core";
 import { BrowserHost, portStream } from "@harness/platform-browser";
 import { AgentWorker, EchoWorker, sessionAgent } from "@harness/workers";
@@ -17,7 +17,7 @@ import type { ConversationStore, Worker } from "@harness/workers";
 import { hookEvents, hookTrace, tracedPort, tracedTools, tracedWorker, tracingMiddleware } from "./trace.ts";
 import type { Tracer } from "./trace.ts";
 import { diffVfs, HOME, vfsApproval, vfsTools, walk } from "./vfs.ts";
-import type { ApprovalPolicy, VfsDiff } from "./vfs.ts";
+import type { ApprovalPolicy, FileEntry, VfsDiff } from "./vfs.ts";
 
 export const INSTRUCTIONS = [
   "You are an agent running inside the harness daemon, in a browser playground.",
@@ -26,7 +26,7 @@ export const INSTRUCTIONS = [
 ].join(" ");
 
 export interface PlaygroundOptions {
-  /** The terminal's shell: the agent's tools work in its filesystem. */
+  /** The terminal's shell: the agent's tools work in its filesystem (from a shell of their own). */
   readonly bash: Bash;
   readonly tracer: Tracer;
   /** Models the agent worker can run, by name; `echo` is always there too (no model). */
@@ -53,6 +53,8 @@ export interface TurnHandlers {
 export interface TurnReport {
   readonly stopReason: StopReason;
   readonly diff: VfsDiff;
+  /** The files after the turn (the walk the diff was made from, for a view to reuse). */
+  readonly files: ReadonlyMap<string, FileEntry>;
   readonly toolCalls: number;
   readonly modelCalls: number;
   readonly ms: number;
@@ -106,12 +108,15 @@ export class Playground {
 
   static async start(options: PlaygroundOptions): Promise<Playground> {
     const { tracer, bash } = options;
+    // The agent's own shell over the terminal's filesystem: the files are shared, the
+    // terminal's harness commands (ask, harness) are not, so a tool call cannot drive the harness.
+    const agentShell = new Bash({ fs: bash.fs, cwd: HOME });
     const agentWorker = (model: LanguageModelV4) =>
       new AgentWorker({
         agent: sessionAgent({
           model: wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) }),
           instructions: options.instructions ?? INSTRUCTIONS,
-          tools: () => tracedTools(vfsTools(bash), tracer),
+          tools: () => tracedTools(vfsTools(agentShell), tracer),
           toolApproval: vfsApproval(options.approval),
           stopWhen: isStepCount(12),
         }),
@@ -202,12 +207,14 @@ export class Playground {
       this.#routes.update = undefined;
       this.#routes.permission = undefined;
     }
-    const diff = diffVfs(before, await walk(bash.fs, HOME));
+    const files = await walk(bash.fs, HOME);
+    const diff = diffVfs(before, files);
     tracer.record({ kind: "vfs", name: `changes · ${diff.added.length} added, ${diff.modified.length} modified, ${diff.removed.length} removed`, detail: diff, sessionId });
     const events = tracer.events().filter((e) => e.seq > from);
     return {
       stopReason,
       diff,
+      files,
       toolCalls: events.filter((e) => e.kind === "worker" && e.name === "update · tool_call").length,
       modelCalls: events.filter((e) => e.kind === "model" && e.phase === "start").length,
       ms: Date.now() - started,

@@ -1,7 +1,9 @@
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import type { SnapshotStorage } from "@harness/core";
+import { storedConversations } from "@harness/workers";
+import type { ConversationStore } from "@harness/workers";
 
 /** Bytes in the JSON: `{ "$bytes": <base64> }`. */
 const BYTES = "$bytes";
@@ -52,7 +54,12 @@ export class FileStorage implements SnapshotStorage {
   }
 }
 
-/** Where agent workers keep conversations: the file named, else beside the daemon's state, else nowhere. */
-export function conversationsFile(options: { readonly state?: string | undefined; readonly conversations?: string | undefined }): string | undefined {
-  return options.conversations ?? (options.state === undefined ? undefined : `${options.state.replace(/\.json$/, "")}.conversations.json`);
+/** Where agent workers keep conversations: the directory named, else beside the daemon's state, else nowhere. */
+export function conversationsDir(options: { readonly state?: string | undefined; readonly conversations?: string | undefined }): string | undefined {
+  return options.conversations ?? (options.state === undefined ? undefined : `${options.state.replace(/\.json$/, "")}.conversations`);
+}
+
+/** Each session's conversation in a file of its own in `dir` (its id made a safe file name). */
+export function fileConversations(dir: string): ConversationStore {
+  return storedConversations((sessionId) => new FileStorage(join(dir, `${encodeURIComponent(sessionId)}.json`)));
 }

@@ -15,9 +15,10 @@ const vfsSnapshot = z.object({
   version: z.literal(1),
   files: z.record(z.string(), z.custom<Uint8Array>((v) => v instanceof Uint8Array)),
   dirs: z.array(z.string()),
+  links: z.record(z.string(), z.string()).default({}),
 });
 
-/** The filesystem under a root: every file's bytes, and every directory (empty ones too). */
+/** The filesystem under a root: every file's bytes, every directory (empty ones too) and every link's target. */
 export type VfsSnapshot = z.infer<typeof vfsSnapshot>;
 
 export function parseVfsSnapshot(value: unknown): VfsSnapshot | undefined {
@@ -28,17 +29,20 @@ export function parseVfsSnapshot(value: unknown): VfsSnapshot | undefined {
 export async function snapshotVfs(fs: IFileSystem, root: string): Promise<VfsSnapshot> {
   const files: Record<string, Uint8Array> = {};
   const dirs: string[] = [];
+  const links: Record<string, string> = {};
   const visit = async (dir: string): Promise<void> => {
     for (const name of [...(await fs.readdir(dir))].sort()) {
       const path = `${dir}/${name}`;
-      if ((await fs.stat(path)).isDirectory) {
+      const stat = await fs.lstat(path);
+      if (stat.isSymbolicLink) links[path] = await fs.readlink(path);
+      else if (stat.isDirectory) {
         dirs.push(path);
         await visit(path);
       } else files[path] = await fs.readFileBuffer(path);
     }
   };
   await visit(root);
-  return { version: 1, files, dirs };
+  return { version: 1, files, dirs, links };
 }
 
 /** Make the filesystem under `root` exactly the snapshot's. */
@@ -49,6 +53,10 @@ export async function restoreVfs(fs: IFileSystem, root: string, snapshot: VfsSna
   for (const [path, bytes] of Object.entries(snapshot.files)) {
     await fs.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     await fs.writeFile(path, bytes);
+  }
+  for (const [path, target] of Object.entries(snapshot.links)) {
+    await fs.mkdir(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+    await fs.symlink(target, path);
   }
 }
 
@@ -77,17 +85,41 @@ export function parsePageState(value: unknown): PageState | undefined {
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Storage whose failures (none at all, a failed load or save) are reported rather than thrown: a failed load is no state. */
-export function resilient(storage: SnapshotStorage | (() => SnapshotStorage), report: (error: string) => void): SnapshotStorage {
+/**
+ * Storage whose failures (none at all, a failed load or save) are reported rather than
+ * thrown: a failed load is no state. After a failed load, saves are skipped until a load
+ * succeeds, so a value that could not be read is never overwritten; `clear` always writes.
+ */
+export function resilient(storage: SnapshotStorage | (() => SnapshotStorage), report: (error: string) => void): SnapshotStorage & { clear(): Promise<void> } {
   let inner: SnapshotStorage | undefined;
   try {
     inner = typeof storage === "function" ? storage() : storage;
   } catch (e) {
     report(`storage unavailable: ${message(e)}`);
   }
+  let unreadable = false;
+  let told = false;
+  const write = (value: unknown) => inner?.save(value).catch((e: unknown) => report(`save failed: ${message(e)}`));
   return {
-    load: async () => inner?.load().catch((e: unknown) => void report(`load failed: ${message(e)}`)),
-    save: async (value) => inner?.save(value).catch((e: unknown) => report(`save failed: ${message(e)}`)),
+    load: async () =>
+      inner?.load().then(
+        (value) => {
+          unreadable = false;
+          return value;
+        },
+        (e: unknown) => {
+          unreadable = true;
+          told = false;
+          report(`load failed: ${message(e)}`);
+          return undefined;
+        },
+      ),
+    save: async (value) => {
+      if (!unreadable) return write(value);
+      if (!told) report("not saving: the stored value could not be read");
+      told = true;
+    },
+    clear: async () => write(undefined),
   };
 }
 
