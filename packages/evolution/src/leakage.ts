@@ -26,10 +26,12 @@ const escape = (s: string) => s.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
  * text or reference answer, or carry a credential. Screening happens before evaluation,
  * so a leaking candidate never earns the inflated score that would make later rounds
  * build on it. What it cannot see is fitting that copies no words (a rule tuned to the
- * suite's habits); only data the search never saw can catch that (the holdout).
+ * suite's habits); only data the search never saw can catch that (the holdout). The text
+ * an edit adds is screened like an added JSON string: a text edit's `new`, a replaced whole
+ * text; what it removes adds nothing.
  */
 export function leaks(changes: readonly Change[], tasks: readonly Task[], settings: { readonly ngram: number }): string[] {
-  const added = changes.flatMap((c) => c.wrote.flatMap((op) => (op.op === "remove" ? [] : [...strings(op.value)])));
+  const added = changes.flatMap((c) => c.wrote.flatMap((op) => (op.op === "remove" ? [] : op.op === "edit" ? [op.new] : [...strings(op.value)])));
   const reasons: string[] = [];
   if (added.some((s) => CREDENTIAL.test(s))) reasons.push("it carries a credential");
   const grams = new Map<string, string>();

@@ -12,7 +12,9 @@
     "margin": 0.01,
     "saving": 0.05,
     "beta0": 0.1,
-    "beta1": 35
+    "beta1": 35,
+    "spending": { "kind": "uniform" },
+    "futility": { "fraction": 0.5, "alpha": 0.05 }
   },
   "prune": { "after": 2, "every": 6 },
   "holdout": { "threshold": 0.03, "sigma": 0.01, "budget": 4, "confirm": 0 },

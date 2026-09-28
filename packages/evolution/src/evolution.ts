@@ -1,5 +1,7 @@
 import type { Entropy } from "@harness/core";
 import { compare, noiseBand } from "./compare.ts";
+import type { Comparison } from "./compare.ts";
+import { isFutile, permute, prefixSize } from "./futility.ts";
 import { startHoldout, thresholdout } from "./holdout.ts";
 import { leaks } from "./leakage.ts";
 import type { Task } from "./leakage.ts";
@@ -8,7 +10,7 @@ import type { LedgerRecord, Row } from "./ledger.ts";
 import { measure, pool } from "./measure.ts";
 import type { Measurement, TaskRun } from "./measure.ts";
 import { Uniform } from "./random.ts";
-import { editBudget, testLevel } from "./schedule.ts";
+import { editBudget, roundLevel } from "./schedule.ts";
 import { DocumentsSchema, parse, parseSettings, StateSchema } from "./schemas.ts";
 import type { Mechanism, Settings, State } from "./schemas.ts";
 import { calibratedDecision, choose, paperDecision } from "./select.ts";
@@ -237,22 +239,72 @@ export class Evolution {
     if (ablation && "documents" in ablation) drafted.push(ablation);
 
     // ---- measurement, in one window --------------------------------------------------
-    const evaluated = await Promise.all([...(paper ? [] : [state.documents]), ...drafted.map((d) => d.documents)].map(async (docs) => measure(await ports.evaluate(docs, this.#split.evolve, k), evolveIds, k)));
-    const fresh = paper ? undefined : evaluated.shift()!;
+    // Under futility staging (calibrated rule) a drafted change is first evaluated on a
+    // prefix of a random permutation of the evolve tasks, and only finished when it is not
+    // clearly worse there; the incumbent is measured in full in the same window either way,
+    // and ablations are never staged (see futility.ts for why this cannot add acceptances).
+    const evolve = this.#split.evolve;
+    const futility = rule.rule === "calibrated" ? rule.futility : undefined;
+    const margin = rule.rule === "calibrated" ? rule.margin : 0;
+    const stage = futility === undefined ? evolve.length : prefixSize(futility.fraction, evolve.length);
+    const staging = futility !== undefined && stage < evolve.length;
+    const order = staging ? permute(evolve, ports.entropy) : evolve;
+    const first = order.slice(0, stage);
+    const later = order.slice(stage);
+    const firstIds = ids(first);
+    const jobs = [...(paper ? [] : [{ documents: state.documents, staged: false }]), ...drafted.map((d) => ({ documents: d.documents, staged: staging && d.kind === "change" }))];
+    const firstRuns = await Promise.all(jobs.map((j) => ports.evaluate(j.documents, j.staged ? first : evolve, k)));
+    const freshRuns = paper ? undefined : firstRuns.shift();
+    const fresh = freshRuns && measure(freshRuns, evolveIds, k);
     if (fresh && fresh.missing > settings.invalid * fresh.expected) throw new Error(`the incumbent's evaluation is invalid: ${fresh.missing} of ${fresh.expected} trials missing; run the round again`);
     // A candidate is compared with the incumbent measured in the same window with as many
     // trials (which the randomization test needs to be exact); earlier measurements of the
     // incumbent are pooled only into its reported estimate.
     const reference = fresh ?? pool(state.incumbent);
     const estimate = pool(fresh ? [...state.incumbent, fresh] : state.incumbent);
-    const level = paper ? 0.025 : testLevel(rule.alpha, settings.rounds, settings.candidates + 1);
+    const level = rule.rule === "paper" ? 0.025 : roundLevel(rule.alpha, t, settings.rounds, settings.candidates + 1, rule.spending);
     const resamples = paper ? 400 : rule.resamples;
+    const invalid = (m: Measurement) => m.missing > settings.invalid * m.expected;
+
+    // First stage of the staged candidates: stop those clearly worse (upper bound below -margin) on the prefix.
+    const stopped = new Map<number, { measurement: Measurement; against: Measurement; comparison: Comparison }>();
+    const prefixed = new Map<number, Measurement>();
+    const finishing: number[] = [];
+    if (staging && futility) {
+      const inPrefix = new Set(firstIds);
+      const prefixReference = measure(
+        freshRuns!.filter((r) => inPrefix.has(r.task)),
+        firstIds,
+        k,
+      );
+      drafted.forEach((d, i) => {
+        if (d.kind !== "change") return;
+        const m = measure(firstRuns[i]!, firstIds, k);
+        prefixed.set(i, m);
+        if (invalid(m)) return;
+        const comparison = compare(m, prefixReference, { alpha: futility.alpha, resamples, entropy: ports.entropy });
+        if (isFutile(comparison.upper, margin)) stopped.set(i, { measurement: m, against: prefixReference, comparison });
+        else finishing.push(i);
+      });
+    }
+    const secondRuns = new Map(await Promise.all(finishing.map(async (i) => [i, await ports.evaluate(drafted[i]!.documents, later, k)] as const)));
+    // Each candidate's measurement on all the evolve tasks (its one evaluation, or its two stages merged: measure() counts a
+    // task with no run as all its trials missing), or, for one that stopped or was invalid at the prefix, the prefix's.
+    const evaluated = drafted.map((_, i) => (secondRuns.has(i) ? measure([...firstRuns[i]!, ...secondRuns.get(i)!], evolveIds, k) : (prefixed.get(i) ?? measure(firstRuns[i]!, evolveIds, k))));
 
     // ---- selection ---------------------------------------------------------------------
-    const judged: { draft: Drafted; measurement: Measurement; candidate: Measured; decision: Decision }[] = [];
+    const judged: { draft: Drafted; measurement: Measurement; against: Measurement; alpha: number; abandoned: boolean; candidate: Measured; decision: Decision }[] = [];
     drafted.forEach((d, i) => {
       const m = evaluated[i]!;
-      if (m.missing > settings.invalid * m.expected) {
+      const early = stopped.get(i);
+      if (early) {
+        const c = early.comparison;
+        const candidate: Measured = { label: d.label, kind: d.kind, score: m.score, ...(m.cost === undefined ? {} : { cost: m.cost }), gain: c.gain, lower: c.lower, upper: c.upper, ...(c.costChange === undefined ? {} : { costChange: c.costChange }), components: [...new Set(d.edits.flatMap((e) => e.components))], guards: [] };
+        const reason = `abandoned for futility after ${stage} of ${evolve.length} evolve tasks: the gain's upper bound ${c.upper.toFixed(4)} (level ${c.alpha}) is below -${margin.toFixed(4)}, so it can be neither a supported gain nor non-inferior; the other ${later.length} tasks were not evaluated`;
+        judged.push({ draft: d, measurement: m, against: early.against, alpha: c.alpha, abandoned: true, candidate, decision: { admissible: false, reason, verdict: verdictOf(candidate) } });
+        return;
+      }
+      if (invalid(m)) {
         records.push({ round: t, candidate: d.label, kind: d.kind, edits: describeEdits(d.edits), outcome: "screened", reason: `evaluation invalid: ${m.missing} of ${m.expected} trials missing` });
         return;
       }
@@ -273,7 +325,7 @@ export class Evolution {
         rule.rule === "paper"
           ? paperDecision(candidate, { ...rule, delta: state.delta! }, { best: state.best, accepted: this.#acceptedComponents(), structural: this.#surface.structural })
           : calibratedDecision(candidate, rule, { drift: state.drift, anchor: { score: state.base.score, ...(state.base.cost === undefined ? {} : { cost: state.base.cost }) } });
-      judged.push({ draft: d, measurement: m, candidate, decision });
+      judged.push({ draft: d, measurement: m, against: reference, alpha: level, abandoned: false, candidate, decision });
     });
     const chosen = choose(
       judged.map((j) => ({ candidate: j.candidate, decision: j.decision })),
@@ -301,10 +353,12 @@ export class Evolution {
     for (const j of judged) {
       const isWinner = winner !== undefined && j.draft.label === winner.draft.label;
       const decision = isWinner ? winner!.decision : j.decision;
-      const predicted = [...new Set(j.draft.edits.flatMap((e) => e.predicted))];
+      // An abandoned candidate was measured on a prefix only: a task it never ran is neither a hit nor a miss.
+      const measuredTasks = new Set(j.measurement.tasks.map((x) => x.task));
+      const predicted = [...new Set(j.draft.edits.flatMap((e) => e.predicted))].filter((p) => !j.abandoned || measuredTasks.has(p));
       const improved = (task: string) => {
         const a = j.measurement.tasks.find((x) => x.task === task);
-        const b = reference.tasks.find((x) => x.task === task);
+        const b = j.against.tasks.find((x) => x.task === task);
         return a !== undefined && b !== undefined && a.mean > b.mean;
       };
       records.push({
@@ -320,7 +374,7 @@ export class Evolution {
           gain: j.candidate.gain,
           lower: j.candidate.lower,
           upper: j.candidate.upper,
-          alpha: level,
+          alpha: j.alpha,
           ...(j.candidate.costChange === undefined ? {} : { costChange: j.candidate.costChange }),
           verdict: verdictOf(j.candidate),
           hits: predicted.filter(improved),

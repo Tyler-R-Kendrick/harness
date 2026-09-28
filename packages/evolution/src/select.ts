@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { ProbabilitySchema } from "@harness/cognitive";
+import { FutilitySchema } from "./futility.ts";
 import { verdictOf } from "./ledger.ts";
 import type { Verdict } from "./ledger.ts";
+import { SpendingSchema } from "./schedule.ts";
 
 /**
  * The selection side: which measured candidate, if any, becomes the next incumbent. Two
@@ -41,6 +43,17 @@ export const CalibratedRuleSchema = z.strictObject({
   /** Relative cost increase tolerated for any gain, and per unit of the gain's lower bound. */
   beta0: z.number().min(0),
   beta1: z.number().min(0),
+  /**
+   * How alpha is spent across the rounds (default: the same share for every round). The
+   * schedule is fixed by (round, rounds, tests a round) alone, so the run-wide bound holds.
+   */
+  spending: SpendingSchema.default({ kind: "uniform" }),
+  /**
+   * Futility early stopping: a candidate clearly worse on a random prefix of the evolve
+   * tasks is not evaluated on the rest. It can only remove acceptances, never add them
+   * (see futility.ts). Absent: every candidate is evaluated on every task.
+   */
+  futility: FutilitySchema.exactOptional(),
 });
 export type CalibratedRule = z.input<typeof CalibratedRuleSchema>;
 

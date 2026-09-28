@@ -9,6 +9,8 @@ describe("evolution settings (data/settings.json)", () => {
     const s = parseSettings(file);
     expect(s.select.rule).toBe("calibrated");
     expect(s.budget.min).toBeLessThanOrEqual(s.budget.max);
+    // RS14: how the run's alpha is spent, and futility staging (measured to lose no power worth naming, RS14.60-RS14.62).
+    expect(s.select).toMatchObject({ spending: { kind: "uniform" }, futility: { fraction: 0.5, alpha: 0.05 } });
     expect(file["$schema"]).toBe("./settings.schema.json");
     await expect(`${JSON.stringify(settingsJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/settings.schema.json");
   });
@@ -27,5 +29,9 @@ describe("evolution settings (data/settings.json)", () => {
     expect(edit(["select", "rule"], "greedy")).toThrow(/select\.rule/);
     expect(edit(["candidates"], 26)).toThrow(/candidates/);
     expect(edit(["proposer", "system"], "")).toThrow(/proposer\.system/);
+    expect(edit(["select", "spending"], { kind: "geometric", ratio: 1 })).toThrow(/select\.spending/);
+    expect(edit(["select", "futility", "fraction"], 1)).toThrow(/select\.futility\.fraction/);
+    expect(edit(["select", "futility", "alpha"], 0.5)).toThrow(/select\.futility\.alpha/);
+    expect(edit(["select", "resamples"], 10)).toThrow(/select\.resamples must be at least/);
   });
 });

@@ -3,6 +3,7 @@ import { ProbabilitySchema } from "@harness/cognitive";
 import { HoldoutSettingsSchema, HoldoutStateSchema } from "./holdout.ts";
 import { RecordSchema } from "./ledger.ts";
 import { MeasurementSchema } from "./measure.ts";
+import { roundLevel } from "./schedule.ts";
 import { RuleSchema } from "./select.ts";
 import { ChangeSchema } from "./surface.ts";
 
@@ -43,7 +44,22 @@ export const SettingsSchema = z
     critic: z.strictObject({ question: text, threshold: ProbabilitySchema, examples: z.int().min(0) }),
   })
   .refine((s) => s.budget.min <= s.budget.max, { message: "budget.min must not exceed budget.max", path: ["budget"] })
-  .refine((s) => s.explore.reserved <= s.candidates, { message: "explore.reserved must not exceed candidates", path: ["explore", "reserved"] });
+  .refine((s) => s.explore.reserved <= s.candidates, { message: "explore.reserved must not exceed candidates", path: ["explore", "reserved"] })
+  .superRefine((s, ctx) => {
+    if (s.select.rule !== "calibrated") return;
+    // A bound at level a is a quantile of the resamples and needs at least ceil(1 / a) of
+    // them (compare.ts): refuse settings that would fail in the middle of a run, in the
+    // round whose level is the smallest, or on the futility prefix.
+    let needed = 0;
+    let why = "";
+    const need = (level: number, what: string) => {
+      const n = Math.ceil(1 / level);
+      if (n > needed) [needed, why] = [n, what];
+    };
+    for (let t = 0; t < s.rounds; t++) need(roundLevel(s.select.alpha, t, s.rounds, s.candidates + 1, s.select.spending), `round ${t}'s test level`);
+    if (s.select.futility) need(s.select.futility.alpha, "the futility level");
+    if (s.select.resamples < needed) ctx.addIssue({ code: "custom", message: `select.resamples must be at least ${needed}: ${why} needs that many resamples to be certified, not ${s.select.resamples}`, path: ["select", "resamples"] });
+  });
 export type Settings = z.output<typeof SettingsSchema>;
 
 export function parse<T>(schema: z.ZodType<T>, what: string, input: unknown): T {

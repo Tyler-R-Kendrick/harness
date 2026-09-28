@@ -94,6 +94,65 @@
             "beta1": {
               "type": "number",
               "minimum": 0
+            },
+            "spending": {
+              "default": {
+                "kind": "uniform"
+              },
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "uniform"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "geometric"
+                    },
+                    "ratio": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "exclusiveMaximum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "ratio"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "futility": {
+              "type": "object",
+              "properties": {
+                "fraction": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 1
+                },
+                "alpha": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 0.5
+                }
+              },
+              "required": [
+                "fraction",
+                "alpha"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
