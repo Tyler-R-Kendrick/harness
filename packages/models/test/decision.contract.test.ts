@@ -16,6 +16,7 @@ const FORMAT: DecisionFormat = {
   limits: { tokens: 256, head: 128, option: 16, options: { min: 2, max: 8 }, cut: { head: 8, budget: 16, option: 4 } },
   strict: true,
   padTo: 8,
+  batchTokens: 4096,
 };
 
 judgeContract("a decision model on onnxruntime (a tiny one whose scores are marker positions)", () => {

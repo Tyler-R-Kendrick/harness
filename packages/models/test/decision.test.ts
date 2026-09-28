@@ -37,6 +37,7 @@ const FORMAT: DecisionFormat = {
   limits: { tokens: 64, head: 24, option: 4, options: { min: 2, max: 4 }, cut: { head: 3, budget: 6, option: 2 } },
   strict: true,
   padTo: 8,
+  batchTokens: 64,
 };
 const loose: DecisionFormat = { ...FORMAT, strict: false };
 
@@ -53,7 +54,7 @@ describe("decision model encoding (encodeDecision)", () => {
     expect(e.truncated).toBe(false);
   });
 
-  it("DM1.2 a JSON state (and JSON question or option) is written with the format's separators", () => {
+  it("DM1.2 a JSON state is written with the format's separators", () => {
     expect(writeJson({ a: 1, b: [true, null, "x\"y"], c: {} }, FORMAT.json)).toBe('{"a": 1, "b": [true, null, "x\\"y"], "c": {}}');
     expect(writeJson([], { item: ",", key: ":" })).toBe("[]");
     expect(writeJson("é", FORMAT.json)).toBe('"é"');
@@ -93,7 +94,7 @@ describe("decision model encoding (encodeDecision)", () => {
     const t = wordTokenizer();
     const long = "o1 o2 o3 o4 o5 o6";
     // Options cut to 4 words each: 4 options x 5 tokens = 20 leave 4 < budget 6, so each is cut to max(2, (24 - 6) / 4) = 4 tokens with its marker,
-    // leaving the question 24 - 16 = 8 tokens of its 11.
+    // leaving the question 24 - 16 = 8 tokens of its 10.
     const e = encodeDecision(t, loose, { type: "choice", question: "a b c d e f g h", options: [long, long, long, long], state: "" });
     expect(words(t, e.ids)).toBe("<bos> choice question: a b c d e f <eos> <mask> o1 o2 o3 <mask> o1 o2 o3 <mask> o1 o2 o3 <mask> o1 o2 o3 <eos> <eos>");
     // Options that leave the question less than cut.head still leave it cut.head tokens.
@@ -217,6 +218,29 @@ describe("decision model (decisionModel, an AI SDK evaluation model)", () => {
     expect(result.response?.modelId).toBe("decider");
   });
 
+  it("DM2.8 a call larger than the model's batch budget runs in batches of at most batchTokens (a longer row alone), one after another, its answers in order", async () => {
+    const session = scriptedSession((b, r) => [Number(b.qtype[r]), 0]);
+    const questions = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`q${i}`, { type: "boolean" as const, instructions: "q" }]));
+    // Each row is 11 tokens (<bos> noul question: q <eos> <mask> false <mask> true <eos> <eos>), padded to 16: four fit in 64.
+    const result = await model(session).doEvaluate({ state: "", questions });
+    expect(session.batches.map((b) => [b.size, b.length])).toEqual([
+      [4, 16],
+      [1, 16],
+    ]);
+    expect(Object.keys(result.answers)).toEqual(["q0", "q1", "q2", "q3", "q4"]);
+    const big = scriptedSession(() => [0, 0]);
+    await decisionModel({ modelId: "decider", session: big, tokenizer: wordTokenizer(), format: { ...FORMAT, batchTokens: 8 } }).doEvaluate({ state: "", questions: { a: { type: "boolean", instructions: "q" }, b: { type: "boolean", instructions: "q" } } });
+    expect(big.batches.map((b) => b.size)).toEqual([1, 1]);
+  });
+
+  it("DM2.9 a JSON question or option is written with the format's separators too", async () => {
+    const t = wordTokenizer();
+    const session = scriptedSession((b) => Array(b.options).fill(0));
+    await decisionModel({ modelId: "decider", session, tokenizer: t, format: FORMAT }).doEvaluate({ state: "s", questions: { pick: { type: "choice", instructions: { ask: 1 }, criteria: { a: { n: [1, 2] }, b: null } } } });
+    const b = session.batches[0]!;
+    expect(words(t, Array.from(b.inputIds, Number).filter((n) => n !== 0))).toBe('<bos> choice question: {"ask": 1} <eos> <mask> {"n": [1, 2]} <mask> b <eos> s <eos>');
+  });
+
   it("DM2.4 an aborted call does not run the model", async () => {
     const session = scriptedSession(() => [0, 0]);
     const controller = new AbortController();
@@ -298,6 +322,14 @@ describe("onnxruntime decision session", () => {
       qtype: ["int64", [1]],
     });
     expect(Array.from(feeds["qtype"]!.data, Number)).toEqual([2]);
+  });
+
+  it("DM4.3 logits that are not float32 scores, one per row and option, are refused", async () => {
+    const { runtime } = fakeRuntime();
+    const reply = (type: string, dims: number[]) => ({ ...runtime, InferenceSession: { create: async () => ({ inputNames: ["input_ids", "attention_mask", "marker_pos", "marker_mask", "qtype"], run: async () => ({ logits: new runtime.Tensor(type, new Float32Array(4), dims) }) }) } });
+    const batch = collateDecisions([{ ids: [2, 4, 5, 4, 6, 1, 1], markers: [1, 3], qtype: 2, truncated: false }], { pad: 0, padTo: 8, tokens: 64 });
+    await expect((await OnnxDecisionSession.create({ runtime: reply("float16", [1, 2]), model: "m" })).run(batch)).rejects.toThrow(/logits are float16 \[1,2\]; expected float32 \[1,2\]/);
+    await expect((await OnnxDecisionSession.create({ runtime: reply("float32", [1, 4]), model: "m" })).run(batch)).rejects.toThrow(/logits are float32 \[1,4\]; expected float32 \[1,2\]/);
   });
 
   it("DM4.2 a model without the decision inputs is refused when it loads", async () => {

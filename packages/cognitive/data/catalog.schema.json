@@ -2091,6 +2091,11 @@
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "batchTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
                   }
                 },
                 "required": [
@@ -2103,7 +2108,8 @@
                   "json",
                   "limits",
                   "strict",
-                  "padTo"
+                  "padTo",
+                  "batchTokens"
                 ],
                 "additionalProperties": false
               }

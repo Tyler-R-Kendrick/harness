@@ -122,6 +122,8 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => ((run(c) as Record<string, unknown>)["head"] = "question: {question}")).toThrow(/head names \{type\} and \{question\}/);
     refused((c) => ((run(c) as Record<string, unknown>)["head"] = "{type}: the question")).toThrow(/head names \{type\} and \{question\}/);
     refused((c) => ((run(c) as Record<string, unknown>)["option"] = "an option")).toThrow(/option names \{option\}/);
+    refused((c) => ((run(c) as Record<string, unknown>)["data"] = "onnx/weights.data")).toThrow(/a decision model's model and weights sit at the artifact's root/);
+    refused((c) => ((run(c) as Record<string, unknown>)["batchTokens"] = 0)).toThrow(/batchTokens/);
     refused((c) => (decision(c)["ports"] = ["router"])).toThrow(/a decision model serves the judge port, and only it/);
     refused((c) => (decision(c)["ports"] = ["judge", "router"])).toThrow(/a decision model serves the judge port, and only it/);
     refused((c) => ((run(c)["limits"] as Record<string, unknown>)["cut"] = { head: 0, budget: 16, option: 4 })).toThrow(/cut/);

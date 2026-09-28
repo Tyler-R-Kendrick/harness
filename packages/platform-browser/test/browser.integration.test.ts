@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, extname, join } from "node:path";
 import { parseCatalog } from "@harness/cognitive";
 import { chromium } from "playwright-core";
 import type { Browser, BrowserContext } from "playwright-core";
@@ -13,6 +14,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 const fixtures = new URL("./fixtures/", import.meta.url).pathname;
 const packages = new URL("../../", import.meta.url).pathname;
+/** The dist folder of the onnxruntime-web the browser host resolves (the bundle's JavaScript and its WebAssembly must be one version). */
+const ortDist = dirname(createRequire(join(packages, "platform-browser", "package.json")).resolve("onnxruntime-web"));
 const TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".wasm": "application/wasm" };
 
 let out: string;
@@ -43,7 +46,7 @@ beforeAll(async () => {
     if (hubFile) return void res.writeHead(200).end(hubFile[1]);
     // onnxruntime-web's WebAssembly, as a CDN serves it to a page bundled into one file.
     if ((req.url ?? "").startsWith("/ort/")) {
-      const file = join(packages, "..", "node_modules", "onnxruntime-web", "dist", (req.url ?? "").slice(5).split("?")[0]!);
+      const file = join(ortDist, (req.url ?? "").slice(5).split("?")[0]!);
       try {
         return void res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "text/javascript" }).end(readFileSync(file));
       } catch {
