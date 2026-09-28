@@ -151,7 +151,13 @@ export const FormSchema = z.strictObject({ script: ScriptIdSchema, slots: z.reco
 /** A flow running in a session: which, its run (the workflow journal holds its state), the input it started with, and the script that started it. */
 export const RunningFlowSchema = z.strictObject({ name: FlowNameSchema, run: text, input: z.json(), script: ScriptIdSchema.exactOptional() });
 
-/** A session's dialogue state: the script its last step matched (the next step's context), a form being filled, a flow running. */
+/** A flow that ended a turn asking to go on (`{ continue: state }`): its next run starts on the session's next utterance, with that state. */
+export const ContinuingFlowSchema = z.strictObject({ name: FlowNameSchema, script: ScriptIdSchema.exactOptional(), state: z.json() });
+
+/**
+ * A session's dialogue state: the script its last step matched (the next step's context),
+ * a form being filled, a flow running, a flow to go on with.
+ */
 export const SessionSchema = z.strictObject({
   id: text,
   last: ScriptIdSchema.exactOptional(),
@@ -159,6 +165,7 @@ export const SessionSchema = z.strictObject({
   flow: RunningFlowSchema.exactOptional(),
   /** The session was handed to the model (a flow transferred it): the entry flow does not take it back. */
   transferred: z.literal(true).exactOptional(),
+  next: ContinuingFlowSchema.exactOptional(),
 });
 export type SessionSave = z.output<typeof SessionSchema>;
 
@@ -194,6 +201,20 @@ export const ClusterSchema = z.strictObject({
 export type Cluster = z.output<typeof ClusterSchema>;
 
 /** A script book: authored scripts, and what a dialogue saved (the scripts it built, and clusters it is building from). */
+/**
+ * A document in a dialogue standard (VoiceXML, AIML), as it was imported: its files by
+ * name, so they stay editable with the standard's own tools, and the options it was
+ * imported with. The flow of the same name runs it (see `interpret`).
+ */
+export const DocumentSchema = z.strictObject({
+  name: FlowNameSchema,
+  type: z.string().regex(/^[a-z][a-z0-9-]*$/, "a document type is a lower-case name"),
+  files: z.record(z.string().min(1), z.string()),
+  options: z.record(z.string(), z.json()).default({}),
+});
+export type DocumentInput = z.input<typeof DocumentSchema>;
+export type DocumentRecord = z.output<typeof DocumentSchema>;
+
 export const BookSchema = z
   .strictObject({
     $schema: z.string().exactOptional(),
@@ -207,8 +228,15 @@ export const BookSchema = z
     sessions: z.array(SessionSchema).default([]),
     /** Flow runs started, so a run id is never reused. */
     runs: z.int().min(0).default(0),
+    /** Documents in a dialogue standard (see DocumentSchema), each run by its flow. */
+    documents: z.array(DocumentSchema).default([]),
   })
   .superRefine((book, ctx) => {
+    const names = new Set<string>();
+    book.documents.forEach((d, i) => {
+      if (names.has(d.name)) issue(ctx, `document ${d.name} is in the book twice`, ["documents", i]);
+      names.add(d.name);
+    });
     const ids = new Set<string>();
     book.scripts.forEach((s, i) => {
       if (ids.has(s.id)) issue(ctx, `script ${s.id} is in the book twice`, ["scripts", i]);

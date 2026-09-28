@@ -105,6 +105,11 @@ When it asks to hear again, the run stops (a failing effect leaves a run resumab
 the next turn resumes it. A daemon restart is one more such resume. Flows are not tools:
 agents, other workflows and `workflows.run` cannot call them, since they need a person.
 
+A flow may instead end each turn with `{ continue: state }`: the session keeps that state
+and the next utterance starts a new run of the flow with it (*continue-as-new*), so a
+conversation with no end keeps journals one turn long. Documents imported in a dialogue
+standard run this way (ADR 0012).
+
 A book may name an **entry** flow that every session starts in (a call flow answering the
 call, or a whole chatbot): it hears each utterance first, and a turn it passes on goes to
 the scripts, then the model.

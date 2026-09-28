@@ -27,7 +27,7 @@ describe("settings and books are data", () => {
   it("SB1.3 an authored script is active, with no evidence, and a book starts numbering at 1", () => {
     const parsed = parseScript(script({}));
     expect(parsed).toMatchObject({ status: "active", origin: "authored", patterns: [], exemplars: [], slots: {}, evidence: { fits: 0, misses: 0, served: 0 } });
-    expect(parseBook({})).toEqual({ next: 1, scripts: [], clusters: [], sessions: [], runs: 0 });
+    expect(parseBook({})).toEqual({ next: 1, scripts: [], clusters: [], sessions: [], runs: 0, documents: [] });
   });
 
   it("SB1.4 a pattern's named groups must be declared slots", () => {

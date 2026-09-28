@@ -227,6 +227,39 @@ describe("how flows end", () => {
   });
 });
 
+describe("flows that go on as new runs", () => {
+  const counter = flow("counter", `const n = (input.state ?? 0) + 1;
+if (input.utterance === "skip") await tools.pass({});
+else await tools.say({ text: "Turn " + n + ": " + input.utterance });
+return input.utterance === "stop" ? "done" : { continue: n };`);
+
+  it("FL2.1 a flow that ends a turn with { continue: state } goes on from that state with the next utterance, as a new run; a turn it passes on still counts", async () => {
+    const { host, journals } = workflows(counter);
+    const d = new Dialogue({ settings: settings(), book: bookWith({ id: "count", intent: "c", patterns: ["count"], reply: [{ flow: "counter" }] }), flows: host });
+    expect(await d.respond(step("count"))).toMatchObject({ kind: "flow", flow: "counter", script: "count", text: "Turn 1: count", match: { by: "pattern" } });
+    expect(d.save()).toMatchObject({ sessions: [{ id: "s-1", next: { name: "counter", script: "count", state: 1 } }] });
+    expect(await d.respond(step("skip"))).toMatchObject({ kind: "pass" });
+    expect(await d.respond(step("again"))).toMatchObject({ kind: "flow", script: "count", text: "Turn 3: again", match: { by: "flow" } });
+    expect(await d.respond(step("stop"))).toMatchObject({ text: "Turn 4: stop" });
+    expect(await d.respond(step("where is order 3"))).toMatchObject({ kind: "reply", script: "order-status" });
+    expect([...journals.keys()]).toEqual(["dialogue/s-1/1", "dialogue/s-1/2", "dialogue/s-1/3", "dialogue/s-1/4"]);
+  });
+
+  it("FL2.2 a flow a script starts replaces one the session was going on with; a flow that transfers does not go on", async () => {
+    const relay = flow("relay", `await tools.pass({}); return { continue: 1 };`);
+    const bye = flow("bye", `await tools.say({ text: "Bye." }); await tools.transfer({}); return { continue: 1 };`);
+    const { host, journals } = workflows(relay, bye);
+    const d = new Dialogue({ settings: settings(), book: bookWith({ id: "relay", intent: "r", patterns: ["relay"], reply: [{ flow: "relay" }] }, { id: "bye", intent: "b", patterns: ["bye"], reply: [{ flow: "bye" }] }), flows: host });
+    await d.respond(step("relay"));
+    expect(d.save()).toMatchObject({ sessions: [{ next: { name: "relay" } }] });
+    // The relay hears "bye" first and hands it on; the script it matches starts its own flow in the relay's place.
+    expect(await d.respond(step("bye"))).toMatchObject({ kind: "pass" });
+    expect((d.save() as { sessions: { next?: unknown }[] }).sessions.every((s) => s.next === undefined)).toBe(true);
+    await d.respond(step("hello"));
+    expect([...journals.keys()]).toEqual(["dialogue/s-1/1", "dialogue/s-1/2", "dialogue/s-1/3"]);
+  });
+});
+
 describe("sessions are durable", () => {
   it("DG3.5 a form in progress and the session's context survive a restart", async () => {
     const d = new Dialogue({ settings: settings(), book: supportBook() });

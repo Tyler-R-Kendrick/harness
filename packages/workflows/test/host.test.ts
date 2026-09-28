@@ -240,6 +240,13 @@ return "done";`,
     expect(said).toEqual(["Hello.", "Hi, Ada."]);
   });
 
+  it("WH2.7 a host has its tools and its library's workflows, not its flows or anything else", async () => {
+    const { h, library } = host();
+    await library.put(talk);
+    expect(await Promise.all(["open_ticket", "greet", "talk", "nope", "toString"].map((n) => h.has(n)))).toEqual([true, true, false, false, false]);
+    expect(await host({ tools: false }).h.has("open_ticket")).toBe(false);
+  });
+
   it("WH2.3 a kind is flow or nothing", () => {
     expect(() => parseWorkflow({ ...talk, kind: "script" })).toThrow(/invalid workflow/);
     expect(parseWorkflow({ ...talk }).kind).toBe("flow");

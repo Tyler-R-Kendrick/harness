@@ -1,5 +1,5 @@
 import { embed, embedMany, experimental_evaluate, tool } from "ai";
-import type { EmbeddingModel, LanguageModel, ToolSet } from "ai";
+import type { EmbeddingModel, JSONValue, LanguageModel, ToolSet } from "ai";
 import { z } from "zod";
 import { embedding, ProbabilitySchema, route, similarity } from "@harness/cognitive";
 import type { EvaluationModelV4, Probability, Similarity, TemplateConstraint, ToolSpec } from "@harness/cognitive";
@@ -7,8 +7,8 @@ import { shapeSimilarity } from "./align.ts";
 import { draft, draftedScript } from "./draft.ts";
 import { induce, normalizeUtterance } from "./induce.ts";
 import { fill, findValue, fits, matchPattern, readHoles, replySlots } from "./render.ts";
-import { ClusterSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
-import type { Cluster, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
+import { ClusterSchema, DocumentSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
+import type { Cluster, DocumentInput, DocumentRecord, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
 
 /** A step a model is asked to answer: the user's last utterance, or the result of a tool call made for it. */
 export interface Step {
@@ -64,6 +64,50 @@ export interface DialogueOptions {
   readonly onError?: (error: unknown) => void;
   /** Runs flows durably: a workflow host (see @harness/workflows), whose library holds them. */
   readonly flows?: FlowRunner;
+  /** Interpreters for the book's documents, by type (see @harness/dialogue-standards). */
+  readonly interpreters?: readonly Interpreter[];
+  /** The time, for documents that say it (milliseconds since 1970, UTC). */
+  readonly now?: () => number;
+}
+
+/**
+ * A document's next step, from the last step's state (null to start) and this turn's
+ * utterance, slots, or the result of the tool it called (or, as `error`, why that tool
+ * could not be called: VoiceXML's `error.badfetch`).
+ */
+export interface StepInput {
+  readonly state: JSONValue | null;
+  readonly utterance?: string;
+  readonly slots?: Readonly<Record<string, string>>;
+  readonly result?: JSONValue;
+  readonly error?: string;
+  readonly now?: number;
+}
+
+/**
+ * What a document's step does: says `say`, and then hands the turn on (`pass`), ends
+ * (`end`: exit, or transfer the person to the model), calls a tool first (`call`, the
+ * next step taking its result), or waits for the next utterance with `state`.
+ */
+export interface StepResult {
+  readonly say: readonly string[];
+  readonly state: JSONValue;
+  readonly pass?: true;
+  readonly end?: "exit" | "transfer";
+  readonly output?: JSONValue;
+  readonly call?: { readonly tool: string; readonly input: JSONValue };
+}
+
+/** A document compiled by its interpreter: what it left out, and its steps. */
+export interface CompiledDocument {
+  readonly warnings: readonly string[];
+  step(input: StepInput): StepResult;
+}
+
+/** Runs documents of one type (a dialogue standard) a step at a time; compiling refuses a document it cannot run. */
+export interface Interpreter {
+  readonly type: string;
+  compile(files: Readonly<Record<string, string>>, options: Readonly<Record<string, JSONValue>>): CompiledDocument;
 }
 
 /**
@@ -72,9 +116,11 @@ export interface DialogueOptions {
  * that stopped (waiting for the next utterance, or a restart) resumes by replay.
  */
 export interface FlowRunner {
-  run(name: string, input: unknown, run: string, tools: ToolSet): Promise<{ readonly status: "completed" } | { readonly status: "failed"; readonly error: string }>;
+  run(name: string, input: unknown, run: string, tools: ToolSet): Promise<{ readonly status: "completed"; readonly output?: unknown } | { readonly status: "failed"; readonly error: string }>;
   /** Forget a run nothing will resume (it ended, or another flow took its place): its journal can go. */
   forget?(run: string): Promise<void>;
+  /** Whether a flow can call a tool of this name (one of the host's, or a workflow). */
+  has?(tool: string): Promise<boolean>;
 }
 
 /**
@@ -104,6 +150,9 @@ const shown = (template: TemplateConstraint) => template.parts.map((p) => (typeo
 /** A script's shape: what it says and when; a retired shape is not built again. */
 const shape = (s: Script) => JSON.stringify([s.reply, s.patterns, s.result, s.context]);
 
+/** The most calls to missing tools one document step may make (each answered with error.badfetch). */
+const MISSED_TOOLS = 16;
+
 /** Thrown by `tools.hear` when this turn's utterance is heard already: the flow waits for the next turn. */
 class AwaitingUtterance extends Error {}
 
@@ -132,6 +181,8 @@ interface SessionState {
   flow: RunningFlow | undefined;
   /** A flow handed the person to the model: the entry flow does not take them back. */
   transferred: boolean;
+  /** A flow to go on with on the next utterance (it ended its turn with `{ continue: state }`). */
+  next: NonNullable<SessionSave["next"]> | undefined;
 }
 
 /** A session's state as saved (without what it does not have). */
@@ -141,6 +192,7 @@ const saved = (s: SessionState): SessionSave => ({
   ...(s.form === undefined ? {} : { form: s.form }),
   ...(s.flow === undefined ? {} : { flow: s.flow }),
   ...(s.transferred ? { transferred: true as const } : {}),
+  ...(s.next === undefined ? {} : { next: s.next }),
 });
 
 /**
@@ -224,6 +276,10 @@ export class Dialogue {
   readonly #entry: string | undefined;
   /** Flow runs started (run ids are never reused). */
   #runs: number;
+  readonly #interpreters: readonly Interpreter[];
+  readonly #now: (() => number) | undefined;
+  /** The book's documents, by name, as imported and as compiled. */
+  readonly #imported = new Map<string, { readonly record: DocumentRecord; readonly compiled: CompiledDocument }>();
   /** Scripts by id (a cluster's script, when it has none, is simply not found). */
   readonly #scripts = new Map<string | undefined, Script>();
   #clusters: Cluster[];
@@ -249,7 +305,25 @@ export class Dialogue {
     this.#next = book.next;
     this.#entry = book.entry;
     this.#runs = book.runs;
-    for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true });
+    this.#interpreters = options.interpreters ?? [];
+    this.#now = options.now;
+    for (const document of book.documents) this.#imported.set(document.name, { record: document, compiled: this.#compile(document) });
+    for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true, next: s.next });
+  }
+
+  /** A document compiled by the interpreter for its type; one it cannot run throws. */
+  #compile(document: DocumentRecord): CompiledDocument {
+    const interpreter = this.#interpreters.find((i) => i.type === document.type);
+    if (!interpreter) throw new Error(`no interpreter for ${document.type} documents (document ${document.name})`);
+    return interpreter.compile(document.files, document.options);
+  }
+
+  /** Add a document to the book, or replace the one of its name (see DocumentSchema); one its interpreter refuses throws. */
+  putDocument(input: DocumentInput): void {
+    const record = DocumentSchema.parse(input);
+    const compiled = this.#compile(record);
+    this.#imported.set(record.name, { record, compiled });
+    this.#changed();
   }
 
   /** The settings the dialogue runs with. */
@@ -298,6 +372,7 @@ export class Dialogue {
       clusters: this.#clusters.map((c) => ({ ...c, observations: [...c.observations] })),
       sessions: [...this.#sessions.values()].map(saved).filter((s) => Object.keys(s).length > 1),
       runs: this.#runs,
+      documents: [...this.#imported.values()].map((d) => d.record),
     };
   }
 
@@ -343,7 +418,7 @@ export class Dialogue {
   // ---- responding ---------------------------------------------------------------
 
   #session(id: string): SessionState {
-    const state = this.#sessions.get(id) ?? { id, last: undefined, form: undefined, flow: undefined, transferred: false };
+    const state = this.#sessions.get(id) ?? { id, last: undefined, form: undefined, flow: undefined, transferred: false, next: undefined };
     this.#sessions.delete(id);
     this.#sessions.set(id, state);
     for (const oldest of this.#sessions.keys()) {
@@ -365,11 +440,16 @@ export class Dialogue {
 
   async #onUtterance(step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const { utterance } = step;
-    // A flow hears first: the session's running flow, else the entry flow, started with this utterance.
+    // A flow hears first: the session's running flow, else the one it goes on with, else the entry flow, started with this utterance.
     let said: readonly string[] = [];
     if (session && this.#flows) {
       let heard: string | undefined = utterance;
-      if (!session.flow && this.#entry !== undefined && !session.transferred) {
+      const next = session.next;
+      if (!session.flow && next !== undefined) {
+        session.next = undefined;
+        session.flow = { ...this.#newFlow(session, next.name, { utterance, slots: {}, state: next.state }), ...(next.script === undefined ? {} : { script: next.script }) };
+        heard = undefined;
+      } else if (!session.flow && this.#entry !== undefined && !session.transferred) {
         session.flow = this.#newFlow(session, this.#entry, { utterance, slots: {} });
         heard = undefined;
       }
@@ -414,6 +494,7 @@ export class Dialogue {
       this.#count(script.id, "served");
       // A flow that passed a turn on and is still running gives way to this one.
       if (session.flow) await this.#forget(session.flow.run);
+      session.next = undefined;
       // A flow's input is saved with the session: a result's long values are left out, as in observations.
       const result = step.result && this.#shortResult(step.result);
       session.flow = { ...this.#newFlow(session, filled.flow, { utterance: step.utterance, slots, ...(result ? { result } : {}) }), script: script.id };
@@ -451,7 +532,7 @@ export class Dialogue {
   }
 
   /** A new flow run for a session: its run id is never reused. */
-  #newFlow(session: SessionState, name: string, input: { readonly utterance: string; readonly slots: Readonly<Record<string, string>>; readonly result?: ToolResult }): RunningFlow {
+  #newFlow(session: SessionState, name: string, input: { readonly utterance: string; readonly slots: Readonly<Record<string, string>>; readonly result?: ToolResult; readonly state?: JSONValue }): RunningFlow {
     // The input is JSON (a tool result's input and output are).
     return { name, run: `dialogue/${session.id}/${++this.#runs}`, input: input as RunningFlow["input"] };
   }
@@ -470,6 +551,7 @@ export class Dialogue {
     let handed: number | undefined;
     let transferred = false;
     let ended = true;
+    let output: unknown;
     // Stryker disable StringLiteral: a tool's description is for code that reads it, not behavior
     const tools: ToolSet = {
       say: tool({ description: "Say text to the person.", inputSchema: z.object({ text: z.string() }), execute: async ({ text }) => (said.push(text), null) }),
@@ -484,11 +566,31 @@ export class Dialogue {
       }),
       pass: tool({ description: "Let the rest of the dialogue (scripts, then the model) answer this turn; keep going after it.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), null) }),
       transfer: tool({ description: "Hand the person over to the model: this turn is the model's, and the flow ends.", inputSchema: z.object({}), execute: async () => ((handed ??= said.length), (transferred = true), null) }),
+      interpret: tool({
+        description: "The next step of one of the book's documents (VoiceXML, AIML): what to say, and whether to hand the turn on, end, or call a tool first.",
+        inputSchema: z.object({ document: z.string(), state: z.json().nullable(), utterance: z.string().optional(), slots: z.record(z.string(), z.string()).optional(), result: z.json().optional() }),
+        execute: async ({ document, state, utterance, slots, result }) => {
+          const found = this.#imported.get(document);
+          if (!found) throw new Error(`no document ${document} in the book`);
+          const now = this.#now?.();
+          const at = now === undefined ? {} : { now };
+          let step = found.compiled.step({ state: state ?? null, ...(utterance === undefined ? {} : { utterance }), ...(slots === undefined ? {} : { slots }), ...(result === undefined ? {} : { result }), ...at });
+          // A tool the host does not have cannot be called: the document hears why, and goes on (this step is journaled, so a replay takes it alike).
+          for (let missed = 0; step.call !== undefined && this.#flows?.has && !(await this.#flows.has(step.call.tool)); missed++) {
+            // A document whose error handlers call missing tools again would never end.
+            if (missed === MISSED_TOOLS) throw new Error(`document ${document} kept calling tools the host does not have`);
+            const next = found.compiled.step({ state: step.state, error: `error.badfetch: no tool ${step.call.tool}`, ...at });
+            step = { ...next, say: [...step.say, ...next.say] };
+          }
+          return step;
+        },
+      }),
     };
     // Stryker restore StringLiteral
     try {
       const result = await this.#flows!.run(flow.name, flow.input, flow.run, tools);
       if (result.status === "failed") this.#failed(new Error(`flow ${flow.name} failed: ${result.error}`));
+      else output = result.output;
     } catch (e) {
       if (e instanceof AwaitingUtterance) ended = false;
       else this.#failed(e);
@@ -498,6 +600,9 @@ export class Dialogue {
       await this.#forget(flow.run);
     }
     if (transferred) session.transferred = true;
+    // A flow that ends its turn with `{ continue: state }` goes on from that state on the next utterance, as a new run (continue-as-new).
+    const going = ended && !transferred && typeof output === "object" && output !== null && "continue" in output ? (output as { continue: unknown }).continue : undefined;
+    if (going !== undefined) session.next = { name: flow.name, ...(flow.script === undefined ? {} : { script: flow.script }), state: going as NonNullable<SessionSave["next"]>["state"] };
     if (handed !== undefined || transferred) return { said: said.slice(0, handed), transferred };
     if (said.length === 0) return { said: [], transferred: false };
     return { answered: { kind: "flow", flow: flow.name, ...(flow.script === undefined ? {} : { script: flow.script }), text: said.join("\n"), match } };

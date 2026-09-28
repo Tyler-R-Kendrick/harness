@@ -91,6 +91,13 @@ export class WorkflowHost {
     await this.#options.forget?.(run);
   }
 
+  /** Whether runs can call a tool of this name: one of the host's tools, or a library workflow that is not a flow. */
+  async has(name: string): Promise<boolean> {
+    if (this.#options.tools !== undefined && Object.hasOwn(this.#options.tools, name)) return true;
+    const workflow = await this.#options.library.get(name);
+    return workflow !== undefined && workflow.kind !== "flow";
+  }
+
   async run(name: string, input: unknown, run: string, given: ToolSet = {}): Promise<RunResult> {
     const { library } = this.#options;
     const tools: ToolSet = { ...this.#options.tools, ...given };

@@ -1,0 +1,24 @@
+{
+  "name": "@harness/dialogue-standards",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dialogue authoring standards for the scripted dialogue: VoiceXML 2.1 with SRGS 1.0 grammars (XML and ABNF) and SISR, and AIML 2.0, interpreted a turn at a time inside durable flows. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/dialogue": "0.0.0",
+    "@harness/workflows": "0.0.0",
+    "@jsep-plugin/assignment": "1.3.0",
+    "@jsep-plugin/object": "1.2.2",
+    "@xmldom/xmldom": "0.9.12",
+    "jsep": "1.4.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0"
+  }
+}

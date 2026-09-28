@@ -20,6 +20,7 @@
     "@harness/constrained": "0.0.0",
     "@harness/core": "0.0.0",
     "@harness/dialogue": "0.0.0",
+    "@harness/dialogue-standards": "0.0.0",
     "@harness/learning": "0.0.0",
     "@harness/learning-plugins": "0.0.0",
     "@harness/memory": "0.0.0",
@@ -42,6 +43,7 @@
   },
   "bin": {
     "harness": "./src/main.ts",
-    "harness-workflow": "./src/workflow-cli.ts"
+    "harness-workflow": "./src/workflow-cli.ts",
+    "harness-dialogue": "./src/dialogue-cli.ts"
   }
 }

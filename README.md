@@ -129,6 +129,18 @@ progress survives a restart. A script can start one, and a book can name an entr
 every session starts in. Flows live in the workflow library (`--workflows`) or in
 `--dialogue-flows` (by default next to the book).
 
+Dialogues can be authored in the standards call centers and chatbots already use, with
+their own tools, or brought from a bot that exists: **VoiceXML 2.1** with SRGS grammars
+(XML or ABNF), and **AIML 2.0** with its sets, maps and properties (ADR 0012). The
+harness runs an imported document a turn at a time as a flow, so its state is durable; a
+turn it cannot answer (a nomatch, the bot's catch-all, a `<transfer>`) goes to the model,
+and `<data src="tool:...">` calls the harness's tools and workflows.
+
+```sh
+node packages/platform-native/src/dialogue-cli.ts import ./my-ivr --book ~/.harness/dialogue.json --name front-desk --pattern "talk to the front desk"
+node packages/platform-native/src/dialogue-cli.ts import ./alice --book ~/.harness/dialogue.json --name alice --entry
+```
+
 ```sh
 node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
 ```

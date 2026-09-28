@@ -28,6 +28,7 @@ import type { Vocabulary } from "@harness/constrained";
 import type { LanguageModel, ToolSet } from "ai";
 import { Dialogue } from "@harness/dialogue";
 import type { FlowRunner, Settings as DialogueSettings } from "@harness/dialogue";
+import { STANDARD_INTERPRETERS } from "@harness/dialogue-standards";
 import { LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings } from "./catalog-files.ts";
@@ -289,6 +290,9 @@ export function buildDialogue(options: {
     ...(persist ? { onChange: (d: Dialogue) => persist(() => d.save()) } : {}),
     ...(onError ? { onError } : {}),
     ...(flows ? { flows } : {}),
+    // Books may hold documents in a dialogue standard (VoiceXML, AIML); a document can say the time.
+    interpreters: STANDARD_INTERPRETERS,
+    now: () => Date.now(),
   });
 }
 
