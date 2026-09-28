@@ -91,6 +91,8 @@ export const DreamEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ ...stamp, kind: z.literal("committed"), ok: z.boolean() }),
   /** A rejection record was stored. */
   z.strictObject({ ...stamp, kind: z.literal("recorded") }),
+  /** A candidate went to the approvals inbox (stored as `pending-approval`). */
+  z.strictObject({ ...stamp, kind: z.literal("proposed") }),
   /** The `rebased` overlay event the runner appended. */
   z.strictObject({ ...stamp, kind: z.literal("rebased"), event: OverlayEventSchema }),
   /** A path compiled, staged and composed into the retained graph (plan §7.6), or why there is none. */
@@ -104,6 +106,8 @@ export type DreamRefineRequest = Pick<RefineRequest, "task" | "mode" | "tools" |
 export type RoundOutcome =
   | { round: number; outcome: "committed"; revision: RevisionId; score: number | null }
   | { round: number; outcome: "rejected"; revision: RevisionId | null; gate: string; reason: string }
+  /** The candidate waits in the approvals inbox; the dream went on without it. */
+  | { round: number; outcome: "pending-approval"; revision: RevisionId; gate: string }
   | { round: number; outcome: "unchanged"; score: number | null }
   | { round: number; outcome: "known-rejection"; revision: RevisionId }
   | { round: number; outcome: "conflict"; revision: RevisionId }
@@ -128,6 +132,8 @@ export type DreamCommand =
   | { id: number; kind: "select"; revision: RevisionId; limit: number }
   | { id: number; kind: "refine"; request: DreamRefineRequest }
   | { id: number; kind: "approve"; candidate: RevisionRecord; tools: string[] }
+  /** Store a candidate that needs approval as `pending-approval`, for the approvals inbox, and announce it. */
+  | { id: number; kind: "propose"; record: RevisionRecord; tools: string[] }
   | { id: number; kind: "commit"; record: RevisionRecord; expected: RevisionId }
   | { id: number; kind: "reject"; record: RevisionRecord }
   | { id: number; kind: "rebase"; core: ProceduralGraph; absorbed: EntryId[] }
@@ -142,6 +148,7 @@ const EVENT_OF: Record<DreamCommand["kind"], DreamEvent["kind"] | undefined> = {
   select: "selected",
   refine: "refined",
   approve: "approved",
+  propose: "proposed",
   commit: "committed",
   reject: "recorded",
   rebase: "rebased",
@@ -174,6 +181,11 @@ export interface DreamInput {
   /** Whether the graph has an evaluator: rounds roll out training tasks, and evaluator gates apply. */
   evaluator: boolean;
   approver: boolean;
+  /**
+   * Whether candidates that need approval, with no approver to ask, wait in the approvals
+   * inbox (`propose`) rather than being rejected. An approver is asked when there is one.
+   */
+  inbox?: boolean;
   /** Training task ids, in order, for strides. */
   train: readonly string[];
   /** Tasks per round (the paper's S), or trajectories selected per round without an evaluator. */
@@ -638,9 +650,11 @@ function approvalStage(state: DreamState, at: number): DreamStep {
   const tools = routesIntoSideEffects(retained.graph, candidate, input.sideEffectFree);
   const gate = gatesOf(input).approval.find((g) => g === "approval" || tools.length > 0);
   if (gate === undefined) return accept(state, at);
-  if (!input.approver) return rejectGate(state, gate, approvalGate({ required: true }), at);
   const s: DreamState = { ...state, work: { ...work, approval: gate } };
-  return issue(s, { kind: "approve", candidate: record(s, { kind: "pending-approval" }, at), tools });
+  if (input.approver) return issue(s, { kind: "approve", candidate: record(s, { kind: "pending-approval" }, at), tools });
+  if (input.inbox !== true) return rejectGate(state, gate, approvalGate({ required: true }), at);
+  const waiting = record(s, { kind: "pending-approval" }, at);
+  return issue(s, { kind: "propose", record: { ...waiting, evidence: { ...waiting.evidence, approval: { gate, tools } } }, tools });
 }
 
 function accept(state: DreamState, at: number): DreamStep {
@@ -702,6 +716,8 @@ export function dreamStep(state: DreamState, event: DreamEvent): DreamStep {
       return committed(s, event.ok);
     case "recorded":
       return nextRound(s);
+    case "proposed":
+      return nextRound(addRound(s, { round: s.round, outcome: "pending-approval", revision: s.work.prepared!.id, gate: s.work.approval! }));
     case "rebased":
       return nextRound({ ...s, overlay: { ...s.overlay!, state: foldOverlay(s.overlay!.state, event.event) } });
     case "composed":

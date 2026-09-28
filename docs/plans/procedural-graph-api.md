@@ -1069,6 +1069,25 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Approvals inbox
+
+As built. Candidates that need approval no longer need someone to ask during the dream;
+the names above keep their meaning.
+
+- **Dream proposes (P6).** `DreamInput.inbox?: boolean` (the runner sets it when
+  `DreamPorts.inbox` is given). When an approval gate applies and there is no approver,
+  the reducer issues `propose {record, tools}` instead of rejecting: the record is the
+  candidate with decision `pending-approval` and `evidence.approval = {gate, tools}`. The
+  runner answers `proposed`, and the round's outcome is
+  `{outcome: "pending-approval", revision, gate}`. The retained graph stays, the candidate
+  is not a rejection (nothing is remembered against it), and the next round starts. An
+  approver, when there is one, is still asked instead; with neither, the candidate is
+  rejected as before.
+- **The runner stores and announces.** `ApprovalInbox = {pending({graph, candidate, tools})}`.
+  `propose` puts the record unless its id already holds a record that is not a rejection
+  (one already waiting, from an earlier round, a replay or an import, is not announced
+  again; a head's record stays), then calls `inbox.pending`.
+
 ## Open issues
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
