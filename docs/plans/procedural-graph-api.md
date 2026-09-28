@@ -1138,7 +1138,8 @@ the names above keep their meaning.
   `nativeDream` takes `inbox?: ApprovalInbox`, and `buildNativeEnsemble`'s `procedural`
   takes `notify`. `main.ts` gives both the host's notifier once the daemon is up, so its
   dream proposes to the inbox and plugins subscribed to `procedural.approval.*` hear of
-  proposals and decisions.
+  proposals and decisions. `browserProcedural` takes `notify` too; a page publishes the
+  notices where it likes.
 
 ## Open issues
 

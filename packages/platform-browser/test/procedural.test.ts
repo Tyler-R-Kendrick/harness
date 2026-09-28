@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import { Ensemble, invokeCognitive } from "@harness/cognitive";
-import { GraphIdSchema, parseSettings, revisionId, seedGraph } from "@harness/procedural";
+import { FORMAT, GraphIdSchema, parseSettings, revisionId, seedGraph } from "@harness/procedural";
+import type { ApprovalNotice } from "@harness/procedural";
 import { browserProcedural, IndexedDbStorage } from "@harness/platform-browser";
 
 const require = createRequire(import.meta.url);
@@ -22,5 +23,27 @@ describe("procedural graphs in the browser host", () => {
     expect(await invokeCognitive(second, "procedural.export", { graph: "g", format: "mermaid" })).toMatchObject({ status: "ok", text: expect.stringMatching(/^flowchart TD\n/) });
     await expect(invokeCognitive(second, "procedural.import", { graph: "g" })).rejects.toThrow("import on graph g is not allowed");
     expect(await store.heads.get(GraphIdSchema.parse("g"))).toEqual({ revision: revisionId(seedGraph()), history: [] });
+  });
+
+  it("PX2.83 the page's approvals inbox: an import proposal is announced through notify, and procedural.approve commits it", async () => {
+    const notices: ApprovalNotice[] = [];
+    const ensemble = new Ensemble({ platform: "browser" });
+    const store = browserProcedural(ensemble, { storage: new IndexedDbStorage({ factory: new IDBFactory(), key: "procedural" }), settings, notify: (n) => void notices.push(n) });
+    await invokeCognitive(ensemble, "procedural.import", { graph: "g" });
+    const expert = {
+      format: FORMAT,
+      nodeTypes: ["ACTION", "REASONING", "STATUS"],
+      relations: ["LEADS_TO"],
+      nodes: [
+        { id: "Start", type: "STATUS", description: "The task begins." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [{ from: "Start", relation: "LEADS_TO", to: "End", condition: null, guidance: "Finish.", pitfalls: "" }],
+    };
+    const { revision } = (await invokeCognitive(ensemble, "procedural.import", { graph: "g", document: expert })) as { revision: string };
+    expect(notices.map((n) => n.type)).toEqual(["procedural.approval.requested"]);
+    expect(await invokeCognitive(ensemble, "procedural.approve", { candidate: revision })).toMatchObject({ status: "committed", revision });
+    expect(notices.map((n) => n.type)).toEqual(["procedural.approval.requested", "procedural.approval.decided"]);
+    expect((await store.heads.get(GraphIdSchema.parse("g")))?.revision).toBe(revision);
   });
 });
