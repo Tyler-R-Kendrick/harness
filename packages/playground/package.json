@@ -1,0 +1,32 @@
+{
+  "name": "@harness/playground",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser playground: the browser host in a page, driven over ACP from a wterm terminal whose just-bash virtual filesystem the agent works in, with traces, the daemon's state and the filesystem's changes beside it. Builds to one HTML file (an artifact) whose model is Claude through the artifact's sample capability.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "node build.ts"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.5.0",
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@harness/core": "0.0.0",
+    "@harness/platform-browser": "0.0.0",
+    "@harness/workers": "0.0.0",
+    "@wterm/dom": "0.5.1",
+    "@wterm/just-bash": "0.5.1",
+    "ai": "7.0.114",
+    "just-bash": "3.4.2",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0",
+    "playwright-core": "1.56.1",
+    "vite": "8.3.0"
+  }
+}
