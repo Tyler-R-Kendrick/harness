@@ -1,7 +1,7 @@
 // @harness/procedural: see docs/decisions/0011-procedural-graph.md and docs/plans/procedural-graph.md.
 export { approvalInbox, approveCandidate, declineCandidate, decidedNotice, listApprovals, requestedNotice, type ApprovalList, type ApprovalNotice, type ApprovalResult, type ApprovalSummary } from "./approvals.ts";
 export { canonicalJson, sha256Hex } from "./canonical.ts";
-export { composer, composition, sessionTools, staging, toolSpecs, type HostComposition, type Staging, type StagingFiles } from "./compose-host.ts";
+export { composer, composition, sessionTools, staging, toolSpecs, type HostComposition, type Staging, type StagingFiles, type ToolsNotice, type ToolsScope } from "./compose-host.ts";
 export { compilePath, composeCandidate, compositionJsonSchema, CompositionSettingsSchema, parseCompositionSettings, pathCandidates, recordedRuns, revisionTools, StagingLibrary, workflowBinding, type CompileResult, type Composition, type CompositionSettings, type PathCandidate, type RecordedCall, type WorkflowBinding } from "./compose.ts";
 export { DEFAULT_SELECT, DreamLogEntrySchema, modelRefiner, runDream, type ApprovalInbox, type Approver, type Composer, type DreamLogEntry, type DreamPorts, type DreamResult, type Evaluator, type Refiner, type RunDreamOptions, type TrajectorySource } from "./dream-runner.ts";
 export { DreamSchedule, exclusiveDream, type DreamDue, type DreamRun, type DreamScheduleOptions, type ScheduledDream, type ScheduleReason } from "./dream-schedule.ts";
