@@ -921,6 +921,21 @@ describe("proceduralStep with a routing resolver (plan §8.1)", () => {
     return { s, r, hook: proceduralStep({ ...s.deps, router: r.route }) };
   }
 
+  it("PW1.97 the access policy applies to a routed graph as to a resolved one: a session routed to a graph it may not write is left unguided and unpinned", async () => {
+    const { s, r } = await routed({ graph: OTHER, confidence: 0.9 });
+    const policy = parsePolicy({ rules: [{ when: { graph: "team/other", actions: ["write"] }, allow: false }] });
+    const hook = proceduralStep({ ...s.deps, router: r.route, policy });
+    expect(await hook.prepare(input(s, [user("first question")]))).toBeUndefined();
+    expect(await hook.core(input(s, [user("first question")]))).toBeUndefined();
+    expect(r.asked).toEqual(["first question"]);
+    expect(s.records).toEqual([]);
+    expect(await s.store.pins.get("s1")).toBeUndefined();
+    // Routed to a graph the policy allows, the same session is guided.
+    const allowed = await routed({ graph: GRAPH, confidence: 0.9 });
+    await proceduralStep({ ...allowed.s.deps, router: allowed.r.route, policy }).prepare(input(allowed.s, [user("first question")]));
+    expect(allowed.s.records[0]).toMatchObject({ graph: GRAPH });
+  });
+
   it("PW1.87 a session whose rule routes is guided on the graph the router chooses by its first prompt, and keeps it on later turns without asking again", async () => {
     const { s, r, hook } = await routed({ graph: OTHER, confidence: 0.9 });
     await hook.prepare(input(s, [user("first question")]));
