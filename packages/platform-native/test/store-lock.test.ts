@@ -64,6 +64,26 @@ describe("the procedural store's lock", () => {
     expect((await readdir(dir)).sort()).toEqual([STORE_LOCK]);
   });
 
+  it("PX2.80 contenders that find the same stale lock take it over one at a time: exactly one acquires", async () => {
+    const dead = deadPid();
+    for (let round = 0; round < 40; round += 1) {
+      const dir = await scratch();
+      await writeFile(join(dir, STORE_LOCK), JSON.stringify({ pid: dead, holder: "harness" }));
+      // Each contender is its own "process": a distinct holder, alive while the round runs.
+      const holders = ["a", "b", "c", "d"];
+      const alive = (pid: number) => pid !== dead;
+      const results = await Promise.all(holders.map((holder) => lockStore(dir, holder, { alive })));
+      expect(results.filter((r) => r.status === "acquired")).toHaveLength(1);
+      expect((await readdir(dir)).sort()).toEqual([STORE_LOCK]);
+    }
+    // A takeover guard left by a process that stopped while clearing does not block the next one.
+    const dir = await scratch();
+    await writeFile(join(dir, STORE_LOCK), JSON.stringify({ pid: dead, holder: "harness" }));
+    await writeFile(join(dir, `${STORE_LOCK}.takeover`), JSON.stringify({ pid: dead, holder: "harness-procedural" }));
+    expect((await lockStore(dir, "harness")).status).toBe("acquired");
+    expect((await readdir(dir)).sort()).toEqual([STORE_LOCK]);
+  });
+
   it("PX2.75 a lock that cannot be read or written is an error, not a lock, and leaves no scratch file", async () => {
     const dir = await scratch();
     await mkdir(join(dir, STORE_LOCK));

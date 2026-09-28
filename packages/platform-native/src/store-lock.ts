@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 
@@ -14,7 +15,10 @@ import { z } from "zod";
  *
  * The lock is a file created atomically (a hard link of a complete file, which fails when
  * one exists), naming the holder's pid, a label and, once it listens, its socket. A lock
- * whose process has exited, or that does not parse, is stale and is taken over.
+ * whose process has exited, or that does not parse, is stale and is taken over. Clearing a
+ * stale lock is a read and a remove, so it happens only under a takeover guard (a second
+ * lock file, taken the same way) and after reading the lock again: otherwise a contender
+ * could remove the lock another had just taken, and both would hold the store.
  */
 
 /** The lock file's name in the store directory. */
@@ -66,6 +70,9 @@ async function readOwner(path: string): Promise<LockOwner | undefined | null> {
   }
 }
 
+/** Whether a lock file names a holder whose process runs; one that is absent or does not parse does not. */
+const live = (owner: LockOwner | undefined | null, alive: (pid: number) => boolean): owner is LockOwner => owner !== null && owner !== undefined && alive(owner.pid);
+
 const same = (a: LockOwner | undefined | null, b: LockOwner): boolean => a?.pid === b.pid && a.holder === b.holder;
 
 function heldLock(path: string, mine: LockOwner): StoreLock {
@@ -101,11 +108,35 @@ export async function lockStore(dir: string, holder: string, options: { readonly
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       }
       const owner = await readOwner(path);
-      if (owner !== null && owner !== undefined && alive(owner.pid)) return { status: "held", owner };
-      // Stale (or released since the link failed): clear it and try again.
-      await rm(path, { force: true });
+      if (live(owner, alive)) return { status: "held", owner };
+      // Stale (or released since the link failed): clear it under the guard, and try again.
+      await clearStale(path, scratch, alive);
     }
   } finally {
     await rm(scratch, { force: true });
+  }
+}
+
+/**
+ * Remove the lock at `path` if it is still stale, holding the takeover guard beside it
+ * (linked from `scratch`, which names this process). A guard another contender holds means
+ * it is clearing the lock: this one waits a moment and lets the caller try again. A guard
+ * whose process has exited (it stopped while clearing) is removed.
+ */
+async function clearStale(path: string, scratch: string, alive: (pid: number) => boolean): Promise<void> {
+  const guard = `${path}.takeover`;
+  try {
+    await link(scratch, guard);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    if (!live(await readOwner(guard), alive)) await rm(guard, { force: true });
+    await delay(5);
+    return;
+  }
+  try {
+    const owner = await readOwner(path);
+    if (owner !== null && !live(owner, alive)) await rm(path, { force: true });
+  } finally {
+    await rm(guard, { force: true });
   }
 }
