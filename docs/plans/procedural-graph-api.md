@@ -651,6 +651,17 @@ As built (P6). These refine the shapes above; the names other phases use keep th
   `PinSchema`. The snapshot store runs operations one at a time in issue order, saves
   after each change, and rejects a malformed saved document rather than resetting it.
 
+As built (A1). These change P7's keys; every other name keeps its meaning.
+
+- Revision records are keyed by graph and id: `revisions.get(graph, id)`. The same
+  document in two graphs is two records, each with its own origin, parents and decision,
+  and a put replaces only its own graph's record (PS1.49). Callers read a graph's records
+  only: import, read, pinning's ancestry, the step hook, the learner and dream all pass
+  the graph they work on, so an import into one graph never overwrites another's record
+  (PX2.68).
+- `redact(id)` is by content: it tombstones every graph's record of the id, and a record
+  put under that id later, in any graph, is stored redacted (PS1.50).
+
 ## P8: core, generic (`packages/core`, `packages/protocol`)
 
 - `session/new` accepts `_meta.harness.session`, an arbitrary JSON object. It is stored on
@@ -1091,10 +1102,9 @@ the evaluator contract and scripted environment, rejection records). Still open:
   tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
   for their absence. The CLI approves on a terminal.
-- P12: content-id keying means two graphs holding the same document share one record (its
-  `graph` is whichever wrote last), and a revert replaces its target's record;
-  `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by
-  `(graph, id)` in the store would remove both.
+- P12: a revert replaces its target's record (a revision's id is its content, so the
+  `revert` record takes the target's key); `revertGraph` keeps what it replaced in
+  `evidence.replaces`.
 - P12: `harness-procedural` opens the store file itself, so it must not run while a
   daemon holds the same `--procedural` directory (one owner per store file). Routing the
   CLI through a running daemon's `_harness/cognitive/invoke` would lift that.

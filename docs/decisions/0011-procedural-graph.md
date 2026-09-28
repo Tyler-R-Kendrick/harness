@@ -164,9 +164,11 @@ The decision held; these details moved.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host
   builds on the ensemble's generator, so the harness preset can keep reflection off
   while a deployment turns it on with data.
-- **Records are keyed by content.** A rejection never replaces an older head's or an
-  import's record with the same id, and a commit that loses the head race puts back the
-  record it replaced.
+- **Records are keyed by graph and content.** A revision's id is its document's hash, and
+  the store keys its record by the graph too, so two graphs that hold the same document
+  each keep their own record. Within a graph a rejection never replaces an older head's
+  or an import's record with the same id, and a commit that loses the head race puts
+  back the record it replaced. Redaction follows the content into every graph.
 - **Harness workers are guided per turn.** An opaque harness exposes no steps, so its
   guidance is prepended to each turn's prompt; AI SDK agents are guided per step.
 

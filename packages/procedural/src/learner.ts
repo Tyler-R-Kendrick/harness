@@ -161,7 +161,7 @@ export class LiveLearner {
       if (turn.score === parsed.data) return { kind: "unchanged", turnKey };
       const { path, unmatched, exposure } = turn.original;
       const event: OverlayEvent = { kind: "observed", turnKey, path, unmatched, score: parsed.data, exposure, rescore: { seq: turn.rescores + 1, previous: turn.score, observedAt: turn.observedAt } };
-      const appended = await this.#append(live, log, pin.graph, state, event, await this.#graph(pin.core));
+      const appended = await this.#append(live, log, pin.graph, state, event, await this.#graph(pin.graph, pin.core));
       return { kind: "rescored", turnKey, graph: pin.graph, appended };
     });
   }
@@ -190,7 +190,7 @@ export class LiveLearner {
     const history = replay(core, await events(log), overlay, turnKey);
     if (history.turn !== undefined) return { kind: "duplicate", turnKey };
 
-    const coreGraph = await this.#graph(core);
+    const coreGraph = await this.#graph(graph, core);
     // The session's exposure draw; without a pin no probationary entry was drawn for it.
     // Stryker disable next-line StringLiteral: equivalent; with share 0 no salt exposes anything
     const draw = { salt: pin?.salt ?? "", probationShare: pin === undefined ? 0 : live.probationShare };
@@ -250,9 +250,9 @@ export class LiveLearner {
     return scorer(trajectory).catch(() => null);
   }
 
-  /** A revision's graph, when the store has it and it parses. */
-  async #graph(id: RevisionId): Promise<ProceduralGraph | undefined> {
-    const record = await this.#deps.store.revisions.get(id);
+  /** A graph's revision, when the store has it and it parses. */
+  async #graph(graph: GraphId, id: RevisionId): Promise<ProceduralGraph | undefined> {
+    const record = await this.#deps.store.revisions.get(graph, id);
     if (record === undefined) return undefined;
     const parsed = parseGraph(record.document);
     // Stryker disable next-line ConditionalExpression: equivalent; a failed parse has no graph, so it gives undefined either way
@@ -267,7 +267,7 @@ export class LiveLearner {
    */
   async #append(live: LiveSettings, log: AppendLog<OverlayEvent>, graph: GraphId, state: OverlayState, event: OverlayEvent, turnCore: ProceduralGraph | undefined, reflected: readonly Reflected[] = []): Promise<OverlayEvent[]> {
     const head = await this.#deps.store.heads.get(graph);
-    const policyCore = (head === undefined ? undefined : await this.#graph(head.revision)) ?? turnCore;
+    const policyCore = (head === undefined ? undefined : await this.#graph(graph, head.revision)) ?? turnCore;
     const out: OverlayEvent[] = [event];
     if (policyCore !== undefined) {
       let folded = foldOverlay(state, event);

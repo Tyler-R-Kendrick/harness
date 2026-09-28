@@ -64,7 +64,8 @@ export class FakeStore implements ProceduralStore {
 
   readonly revisions = {
     put: async (r: RevisionRecord): Promise<void> => void this.records.set(r.id, r),
-    get: async (id: RevisionId): Promise<RevisionRecord | undefined> => this.records.get(id),
+    // Records by id: the learner's tests keep each document in one graph, so a record of another graph is absent.
+    get: async (graph: GraphId, id: RevisionId): Promise<RevisionRecord | undefined> => (this.records.get(id)?.graph === graph ? this.records.get(id) : undefined),
     list: async (): Promise<readonly RevisionRecord[]> => [...this.records.values()],
   };
   readonly heads = {

@@ -69,7 +69,7 @@ describe("dream on the native host", () => {
     expect(asked).toHaveLength(1);
     const head = await store.heads.get(graph);
     expect(head?.history).toEqual([revisionId(seed)]);
-    expect((await store.revisions.get(head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Search first." });
+    expect((await store.revisions.get(graph, head!.revision))?.document.edges[1]).toMatchObject({ from: "Start", to: "search", guidance: "Search first." });
     connection.disconnect();
     await host.close();
   });

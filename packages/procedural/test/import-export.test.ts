@@ -6,6 +6,7 @@ import {
   GraphIdSchema,
   graphHistory,
   importGraph,
+  MemoryProceduralStore,
   parseGraph,
   readGraph,
   revertGraph,
@@ -98,6 +99,19 @@ describe("importGraph", () => {
     const elsewhere = GraphIdSchema.parse("elsewhere");
     await importGraph({ store, graph: elsewhere, document: other(), clock });
     expect(await importGraph({ store, graph, document: other(), clock })).toMatchObject({ status: "proposed" });
+  });
+
+  it("PX2.68 importing a document another graph holds gives this graph its own record and leaves the other graph's, which still reads", async () => {
+    const store = new MemoryProceduralStore();
+    const elsewhere = GraphIdSchema.parse("elsewhere");
+    const id = revisionId(other());
+    expect(await importGraph({ store, graph: elsewhere, document: other(), clock })).toEqual({ status: "head", revision: id });
+    await importGraph({ store, graph, document: hotpot(), clock });
+    expect(await importGraph({ store, graph, document: other(), clock })).toEqual({ status: "proposed", revision: id, head: revisionId(doc()) });
+    expect(await store.revisions.get(elsewhere, id)).toMatchObject({ graph: elsewhere, parents: [], decision: { kind: "head" } });
+    expect(await store.revisions.get(graph, id)).toMatchObject({ graph, parents: [revisionId(doc())], decision: { kind: "pending-approval" } });
+    expect(await readGraph({ store, graph: elsewhere })).toMatchObject({ status: "ok", revision: id, record: { graph: elsewhere } });
+    expect(await importGraph({ store, graph: elsewhere, document: other(), clock })).toEqual({ status: "known", revision: id, decision: { kind: "head" } });
   });
 
   it("PX2.15 when another writer sets the head first, the import becomes a proposal on that head, or is known if it is the same revision", async () => {

@@ -210,7 +210,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     const graph = resolveGraph(deps.resolver, { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) });
     if (graph === undefined) return undefined;
     const pin = await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
-    const record = await deps.store.revisions.get(pin.core);
+    const record = await deps.store.revisions.get(graph, pin.core);
     if (record === undefined) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} is missing`);
     const parsed = parseGraph(record.document);
     if (!parsed.ok) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} does not parse: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);

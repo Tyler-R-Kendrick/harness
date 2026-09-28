@@ -47,8 +47,8 @@ export async function importGraph(input: { store: ProceduralStore; graph: GraphI
   };
   const head = await store.heads.get(graph);
   if (head) {
-    const existing = await store.revisions.get(id);
-    return existing?.graph === graph ? { status: "known", revision: id, decision: existing.decision } : propose(head.revision);
+    const existing = await store.revisions.get(graph, id);
+    return existing ? { status: "known", revision: id, decision: existing.decision } : propose(head.revision);
   }
   // The record goes in before the head points at it; if another writer set a head first, this is a proposal on theirs.
   await store.revisions.put(record({ graph, parents: [], document, origin: "import", evidence: {}, decision: { kind: "head" }, at }));
@@ -78,8 +78,8 @@ export async function readGraph(input: { store: ProceduralStore; graph: GraphId;
   const head = await store.heads.get(graph);
   if (!head) return { status: "missing", reason: `graph ${graph} has no head` };
   const revision = input.revision ?? head.revision;
-  const found = await store.revisions.get(revision);
-  if (found?.graph !== graph) return { status: "missing", reason: `graph ${graph} has no revision ${revision}` };
+  const found = await store.revisions.get(graph, revision);
+  if (!found) return { status: "missing", reason: `graph ${graph} has no revision ${revision}` };
   const parsed = parseGraph(found.document);
   if (!parsed.ok) return { status: "missing", reason: `revision ${revision} does not parse (it may be redacted)` };
   const core = parsed.graph;
@@ -157,7 +157,7 @@ export async function revertGraph(input: { store: ProceduralStore; graph: GraphI
   if (to === undefined) return { status: "refused", reason: `graph ${graph} has no earlier head` };
   if (to === head.revision) return { status: "refused", reason: `${to} is already the head of graph ${graph}` };
   if (!head.history.includes(to)) return { status: "refused", reason: `${to} is not an earlier head of graph ${graph}` };
-  const target = await store.revisions.get(to);
+  const target = await store.revisions.get(graph, to);
   if (!target) return { status: "refused", reason: `revision ${to} is not recorded` };
   const parsed = parseGraph(target.document);
   if (target.redacted || !parsed.ok) return { status: "refused", reason: `revision ${to} is redacted` };

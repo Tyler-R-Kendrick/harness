@@ -62,7 +62,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
   describe(`ProceduralStore contract: ${label}`, () => {
     it("PS1.1 an empty store has no revisions, heads, log entries, pins, guidance or lease holders", async () => {
       const { store } = await make();
-      expect(await store.revisions.get(revisionId(seedGraph()))).toBeUndefined();
+      expect(await store.revisions.get(graphA, revisionId(seedGraph()))).toBeUndefined();
       expect(await store.revisions.list(graphA)).toEqual([]);
       expect(await store.heads.get(graphA)).toBeUndefined();
       expect(await store.overlay(graphA).head()).toBe(0);
@@ -73,19 +73,20 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.acquire(graphA, "me")).toEqual({ epoch: 1 });
     });
 
-    it("PS1.2 a put revision reads back by id and is listed under its graph only", async () => {
+    it("PS1.2 a put revision reads back by its graph and id and is listed under its graph only", async () => {
       const { store } = await make();
       const a = record(graphA, []);
       const b = record(graphB, ["Plan"]);
       await store.revisions.put(a);
       await store.revisions.put(b);
-      expect(await store.revisions.get(a.id)).toEqual(a);
-      expect(await store.revisions.get(b.id)).toEqual(b);
+      expect(await store.revisions.get(graphA, a.id)).toEqual(a);
+      expect(await store.revisions.get(graphB, b.id)).toEqual(b);
+      expect(await store.revisions.get(graphB, a.id)).toBeUndefined();
       expect(await store.revisions.list(graphA)).toEqual([a]);
       expect(await store.revisions.list(graphB)).toEqual([b]);
     });
 
-    it("PS1.3 revisions list in put order, and a put with a known id replaces the record in place", async () => {
+    it("PS1.3 revisions list in put order, and a put with a known graph and id replaces the record in place", async () => {
       const { store } = await make();
       const first = record(graphA, ["Plan"]);
       const second = record(graphA, ["Act"]);
@@ -94,7 +95,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       const rejected = record(graphA, ["Act"], { decision: { kind: "rejected-gate", gate: "evidence", reason: "no support" } });
       await store.revisions.put(rejected);
       expect(await store.revisions.list(graphA)).toEqual([first, rejected, third]);
-      expect(await store.revisions.get(second.id)).toEqual(rejected);
+      expect(await store.revisions.get(graphA, second.id)).toEqual(rejected);
     });
 
     it("PS1.4 the first head is set only against an absent head, and starts with no history", async () => {
@@ -308,7 +309,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       );
       await store.revisions.put(r);
       await store.redact(r.id);
-      const redacted = await store.revisions.get(r.id);
+      const redacted = await store.revisions.get(graphA, r.id);
       expect(JSON.stringify(redacted)).not.toContain("secret-");
       expect(redacted).toMatchObject({ id: r.id, graph: graphA, parents: r.parents, origin: "dream", dream: "dream-1", at: 1, redacted: true });
       expect(redacted?.decision).toMatchObject({ kind: "rejected-gate", gate: "evidence" });
@@ -330,7 +331,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       });
       await store.revisions.put(r);
       await store.redact(r.id);
-      const redacted = await store.revisions.get(r.id);
+      const redacted = await store.revisions.get(graphA, r.id);
       expect(JSON.stringify(redacted)).not.toContain("secret-");
       expect(redacted?.decision).toEqual({
         kind: "rejected-structure",
@@ -353,7 +354,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       await store.revisions.put(r);
       await store.redact(r.id);
       await store.revisions.put(r);
-      const again = await store.revisions.get(r.id);
+      const again = await store.revisions.get(graphA, r.id);
       expect(again?.redacted).toBe(true);
       expect(JSON.stringify(again)).not.toContain("secret-");
     });
@@ -375,11 +376,11 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       await store.lease.acquire(graphA, "dreamer-1");
       await store.lease.acquire(graphB, "dreamer-2");
       await store.lease.release(graphB, "dreamer-2", 1);
-      const redacted = await store.revisions.get(r1.id);
+      const redacted = await store.revisions.get(graphA, r1.id);
 
       const reopened = fixture.reopen();
       expect(await reopened.revisions.list(graphA)).toEqual([r0, redacted]);
-      expect((await reopened.revisions.get(r1.id))?.redacted).toBe(true);
+      expect((await reopened.revisions.get(graphA, r1.id))?.redacted).toBe(true);
       expect(await reopened.heads.get(graphA)).toEqual({ revision: r1.id, history: [r0.id] });
       expect(await reopened.overlay(graphA).read(0)).toEqual([{ offset: 0, event: observed(1) }, { offset: 1, event: observed(2) }]);
       expect(await reopened.dreams(graphB).read(0)).toEqual([{ offset: 0, event: { step: "start" } }]);
@@ -390,6 +391,46 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await reopened.lease.renew(graphA, "dreamer-1", 2)).toBe(true);
       expect(await reopened.lease.acquire(graphB, "dreamer-3")).toEqual({ epoch: 2 });
       expect(await reopened.overlay(graphA).append([observed(3)])).toBe(3);
+    });
+
+    it("PS1.49 records are keyed by graph and id: the same document in two graphs keeps a record per graph, and a reopen keeps both", async () => {
+      const fixture = await make();
+      const { store } = fixture;
+      const inA = record(graphA, ["Plan"], { origin: "import" });
+      const inB = record(graphB, ["Plan"], { origin: "dream", dream: "dream-1", decision: { kind: "rejected-gate", gate: "evidence", reason: "no support" } });
+      expect(inB.id).toBe(inA.id);
+      await store.revisions.put(inA);
+      await store.revisions.put(inB);
+      expect(await store.revisions.get(graphA, inA.id)).toEqual(inA);
+      expect(await store.revisions.get(graphB, inA.id)).toEqual(inB);
+      expect(await store.revisions.list(graphA)).toEqual([inA]);
+      expect(await store.revisions.list(graphB)).toEqual([inB]);
+      const replaced = record(graphA, ["Plan"], { origin: "dream", at: 9 });
+      await store.revisions.put(replaced);
+      expect(await store.revisions.get(graphA, inA.id)).toEqual(replaced);
+      expect(await store.revisions.get(graphB, inA.id)).toEqual(inB);
+      const reopened = fixture.reopen();
+      expect(await reopened.revisions.list(graphA)).toEqual([replaced]);
+      expect(await reopened.revisions.list(graphB)).toEqual([inB]);
+    });
+
+    it("PS1.50 redaction is by content: it tombstones every graph's record of the id, and the id stays redacted in any graph it is put under", async () => {
+      const { store } = await make();
+      const inA = record(graphA, ["Plan"], {}, "secret-");
+      const inB = record(graphB, ["Plan"], { origin: "import" }, "secret-");
+      const other = record(graphB, ["Act"], {}, "secret-");
+      await store.revisions.put(inA);
+      await store.revisions.put(inB);
+      await store.revisions.put(other);
+      await store.redact(inA.id);
+      expect(await store.revisions.get(graphA, inA.id)).toMatchObject({ graph: graphA, redacted: true });
+      expect(await store.revisions.get(graphB, inA.id)).toMatchObject({ graph: graphB, origin: "import", redacted: true });
+      expect(JSON.stringify(await store.revisions.list(graphA))).not.toContain("secret-");
+      expect(await store.revisions.get(graphB, other.id)).toEqual(other);
+      const graphC = GraphIdSchema.parse("team/gamma");
+      await store.revisions.put(record(graphC, ["Plan"], {}, "secret-"));
+      expect(await store.revisions.get(graphC, inA.id)).toMatchObject({ graph: graphC, redacted: true });
+      expect(JSON.stringify(await store.revisions.get(graphC, inA.id))).not.toContain("secret-");
     });
   });
 }

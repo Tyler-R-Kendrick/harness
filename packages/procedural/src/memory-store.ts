@@ -16,6 +16,7 @@ export const STORE_FORMAT = "harness.procedural-store/v1";
 /** The whole store as plain JSON, in insertion order: what a snapshot saves and a store is rebuilt from. */
 export interface ProceduralStoreDocument {
   readonly format: typeof STORE_FORMAT;
+  /** At most one record per graph and id. */
   readonly revisions: readonly RevisionRecord[];
   readonly heads: readonly { readonly graph: GraphId; readonly revision: RevisionId; readonly history: readonly RevisionId[] }[];
   readonly overlay: readonly { readonly graph: GraphId; readonly events: readonly OverlayEvent[] }[];
@@ -96,13 +97,19 @@ function logOf<E>(logs: Map<GraphId, E[]>, graph: GraphId): AppendLog<E> {
   };
 }
 
+/** A record's key: its id (always 64 hex digits, so the split is unambiguous) and its graph. */
+const revisionKey = (graph: GraphId, id: RevisionId): string => `${id}${graph}`;
+
 interface LeaseState {
   readonly holder: string | null;
   readonly epoch: number;
 }
 
 export class MemoryProceduralStore implements ProceduralStore {
-  readonly #revisions = new Map<RevisionId, RevisionRecord>();
+  /** Keyed by `revisionKey(graph, id)`, in put order. */
+  readonly #revisions = new Map<string, RevisionRecord>();
+  /** Ids redacted in any graph: redaction is by content, so it follows the id everywhere. */
+  readonly #redacted = new Set<RevisionId>();
   readonly #heads = new Map<GraphId, Head>();
   readonly #overlay = new Map<GraphId, OverlayEvent[]>();
   readonly #dreams = new Map<GraphId, unknown[]>();
@@ -113,7 +120,10 @@ export class MemoryProceduralStore implements ProceduralStore {
   /** Empty, or the state a `document()` recorded. */
   constructor(document?: ProceduralStoreDocument) {
     if (document === undefined) return;
-    for (const r of document.revisions) this.#revisions.set(r.id, r);
+    for (const r of document.revisions) {
+      this.#revisions.set(revisionKey(r.graph, r.id), r);
+      if (r.redacted === true) this.#redacted.add(r.id);
+    }
     for (const h of document.heads) this.#heads.set(h.graph, { revision: h.revision, history: h.history });
     for (const l of document.overlay) this.#overlay.set(l.graph, [...l.events]);
     for (const l of document.dreams) this.#dreams.set(l.graph, [...l.events]);
@@ -138,10 +148,10 @@ export class MemoryProceduralStore implements ProceduralStore {
 
   readonly revisions: ProceduralStore["revisions"] = {
     put: async (record) => {
-      // Redaction is sticky: putting the same document again must not bring its text back.
-      this.#revisions.set(record.id, this.#revisions.get(record.id)?.redacted === true ? redactRecord(record) : record);
+      // Redaction is sticky: putting the same document again, in any graph, must not bring its text back.
+      this.#revisions.set(revisionKey(record.graph, record.id), this.#redacted.has(record.id) ? redactRecord(record) : record);
     },
-    get: async (id) => this.#revisions.get(id),
+    get: async (graph, id) => this.#revisions.get(revisionKey(graph, id)),
     list: async (graph) => [...this.#revisions.values()].filter((r) => r.graph === graph),
   };
 
@@ -201,7 +211,9 @@ export class MemoryProceduralStore implements ProceduralStore {
   }
 
   async redact(id: RevisionId): Promise<void> {
-    const record = this.#revisions.get(id);
-    if (record !== undefined) this.#revisions.set(id, redactRecord(record));
+    const records = [...this.#revisions].filter(([, r]) => r.id === id);
+    if (records.length === 0) return;
+    this.#redacted.add(id);
+    for (const [key, record] of records) this.#revisions.set(key, redactRecord(record));
   }
 }

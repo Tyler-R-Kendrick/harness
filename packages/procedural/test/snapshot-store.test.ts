@@ -22,7 +22,7 @@ describe("SnapshotProceduralStore", () => {
       return storage.saves - before;
     };
     expect(await saves(() => store.revisions.put(r))).toBe(1);
-    expect(await saves(() => store.revisions.get(r.id))).toBe(0);
+    expect(await saves(() => store.revisions.get(graphA, r.id))).toBe(0);
     expect(await saves(() => store.revisions.list(graphA))).toBe(0);
     expect(await saves(() => store.heads.set(graphA, r.id, r.id))).toBe(0);
     expect(await saves(() => store.heads.set(graphA, undefined, r.id))).toBe(1);
@@ -84,14 +84,14 @@ describe("SnapshotProceduralStore", () => {
     const r = record([]);
     const other = record(["Plan"]);
     await storage.inner.save({ ...new MemoryProceduralStore().document(), revisions: [{ ...r, id: other.id }] });
-    await expect(new SnapshotProceduralStore(storage).revisions.get(other.id)).rejects.toThrow(/id/);
+    await expect(new SnapshotProceduralStore(storage).revisions.get(graphA, other.id)).rejects.toThrow(/id/);
   });
 
   it("PS1.34 operations take effect in the order they are issued", async () => {
     const store = new SnapshotProceduralStore(new ProbeStorage());
     const r = record([]);
     const put = store.revisions.put(r);
-    const read = store.revisions.get(r.id);
+    const read = store.revisions.get(graphA, r.id);
     const log = store.overlay(graphA);
     const heads = [log.head(), log.append([]), log.head()];
     await put;

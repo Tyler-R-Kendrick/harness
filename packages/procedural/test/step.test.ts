@@ -368,7 +368,7 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     await expect(proceduralStep(missing.deps).prepare(input(missing, [user("q")]))).rejects.toThrow(/pinned core revision a{64} of graph team\/retrieval is missing/);
     const broken = await setup("paper");
     const id = (await broken.store.heads.get(GRAPH))!.revision;
-    const record = (await broken.store.revisions.get(id))!;
+    const record = (await broken.store.revisions.get(GRAPH, id))!;
     const document = { ...record.document, nodes: record.document.nodes.filter((n) => n.id !== "Start" && n.id !== "End") };
     await broken.store.revisions.put({ ...record, document });
     const bad = parseGraph(document);

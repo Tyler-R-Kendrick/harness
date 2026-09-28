@@ -36,7 +36,8 @@ export class FakeStore implements ProceduralStore {
     put: async (r) => {
       this.records.set(r.id, r);
     },
-    get: async (id) => this.records.get(id),
+    // Records by id: a dream's tests keep each document in one graph, so a record of another graph is absent.
+    get: async (graph, id) => (this.records.get(id)?.graph === graph ? this.records.get(id) : undefined),
     list: async (graph) => [...this.records.values()].filter((r) => r.graph === graph),
   };
 

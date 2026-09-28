@@ -86,7 +86,7 @@ export class SnapshotProceduralStore implements ProceduralStore {
 
   readonly revisions: ProceduralStore["revisions"] = {
     put: (record) => this.#run((s) => s.revisions.put(record), always),
-    get: (id) => this.#run((s) => s.revisions.get(id), never),
+    get: (graph, id) => this.#run((s) => s.revisions.get(graph, id), never),
     list: (graph) => this.#run((s) => s.revisions.list(graph), never),
   };
 

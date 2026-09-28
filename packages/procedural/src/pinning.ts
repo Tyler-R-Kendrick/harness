@@ -72,12 +72,12 @@ export async function readOverlay(store: ProceduralStore, pin: Pin): Promise<Ove
   return overlayAt(pin.core, events, pin.overlay);
 }
 
-/** Whether `ancestor` is reachable from `id` through revision parents. */
-async function descends(store: ProceduralStore, id: RevisionId, ancestor: RevisionId): Promise<boolean> {
+/** Whether `ancestor` is reachable from `id` through the graph's revision parents. */
+async function descends(store: ProceduralStore, graph: GraphId, id: RevisionId, ancestor: RevisionId): Promise<boolean> {
   const seen = new Set<string>();
   const queue = [id];
   for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-    const record = await store.revisions.get(next);
+    const record = await store.revisions.get(graph, next);
     if (record === undefined) continue;
     for (const parent of record.parents) {
       if (parent === ancestor) return true;
@@ -91,9 +91,9 @@ async function descends(store: ProceduralStore, id: RevisionId, ancestor: Revisi
 }
 
 /** Whether the head moved on from `pinned` by dream or merge, rather than reverting it (or replacing it by an import). */
-async function movedOn(store: ProceduralStore, pinned: RevisionId, head: RevisionId): Promise<boolean> {
-  const record = await store.revisions.get(head);
-  return record !== undefined && record.origin !== "revert" && (await descends(store, head, pinned));
+async function movedOn(store: ProceduralStore, graph: GraphId, pinned: RevisionId, head: RevisionId): Promise<boolean> {
+  const record = await store.revisions.get(graph, head);
+  return record !== undefined && record.origin !== "revert" && (await descends(store, graph, head, pinned));
 }
 
 /** Pin the session for this turn (see the module comment), storing the pin when it changes. */
@@ -106,7 +106,7 @@ export async function pinSession(request: PinRequest): Promise<Pin> {
   const bases = overlayBases(head.history.at(-1) ?? head.revision, events);
   const old = await store.pins.get(session);
   const same = old !== undefined && old.graph === graph;
-  const keep = same && (old.core === head.revision || (request.repinOnDream === "never" && (await movedOn(store, old.core, head.revision))));
+  const keep = same && (old.core === head.revision || (request.repinOnDream === "never" && (await movedOn(store, graph, old.core, head.revision))));
   const core = keep ? old.core : head.revision;
   const overlay = keep && request.overlayRefresh === "session" ? old.overlay : latestOn(bases, core);
   if (same && old.core === core && old.overlay === overlay) return old;

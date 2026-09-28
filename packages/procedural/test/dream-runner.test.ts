@@ -375,7 +375,7 @@ describe("runDream on the real stores", () => {
       expect(result).toMatchObject({ status: "done", rounds: [{ outcome: "committed" }] });
       const head = await store.heads.get(GRAPH);
       expect(head).toEqual({ revision: (result as { head: string }).head, history: [G0_ID] });
-      expect((await store.revisions.get(head!.revision))?.decision).toEqual({ kind: "head" });
+      expect((await store.revisions.get(GRAPH, head!.revision))?.decision).toEqual({ kind: "head" });
       const overlay = (await store.overlay(GRAPH).read(0)).map((e) => e.event);
       expect(overlay.at(-1)).toEqual({ kind: "rebased", core: head!.revision, absorbed: [idOf(shortcut)], dropped: [], frozenAt: 2 });
       expect(await store.lease.acquire(GRAPH, "someone-else")).toBeDefined();
