@@ -167,10 +167,12 @@ const PromptsSchema = z
     dream: text,
     /** Live reflection: proposes overlay entries (plan §6.2). */
     reflection: text,
+    /** The question a task suite's `judge` scorer asks about an answer (the state holds the task, the expected answer and the answer). */
+    taskJudge: text.exactOptional(),
   })
   .superRefine((prompts, ctx) => {
     for (const [name, slots] of Object.entries(PLACEHOLDERS)) {
-      const missing = slots.filter((slot) => !prompts[name as keyof typeof prompts].includes(`{${slot}}`));
+      const missing = slots.filter((slot) => !prompts[name as keyof typeof PLACEHOLDERS].includes(`{${slot}}`));
       if (missing.length > 0) ctx.addIssue({ code: "custom", message: `missing placeholders ${missing.map((s) => `{${s}}`).join(", ")}`, path: [name] });
     }
   });

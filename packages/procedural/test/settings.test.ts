@@ -163,6 +163,12 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "paper", "dream", "afterTurns"] });
   });
 
+  it("PG1.50 the task judge's question is a prompt in the data; a deployment may leave it out", () => {
+    expect(settings().prompts.taskJudge).toMatch(/^You judge an AI agent's answer to a task\./);
+    expect(edit(["prompts", "taskJudge"], undefined)().prompts.taskJudge).toBeUndefined();
+    expect(edit(["prompts", "taskJudge"], "")).toThrow(/prompts\.taskJudge/);
+  });
+
   it("PG1.49 a duration is days, hours, minutes and seconds in that order, parsed into milliseconds", () => {
     expect(duration("45s")).toBe(45_000);
     expect(duration("15m")).toBe(900_000);

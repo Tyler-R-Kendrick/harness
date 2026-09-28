@@ -149,8 +149,8 @@ const outputText = (output: ToolResultPart["output"]): string => (output.type ==
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Messages as learning's steps, for the trajectory window. */
-function stepsOf(messages: readonly ModelMessage[]): Step[] {
+/** Messages as learning's steps (a trajectory's), for the trajectory window and for rollouts. */
+export function trajectorySteps(messages: readonly ModelMessage[]): Step[] {
   return messages.flatMap((m): Step[] => {
     if (m.role === "user") return [{ role: "user", content: textOf(m) }];
     if (m.role === "tool") return m.content.flatMap((p): Step[] => (p.type === "tool-result" ? [{ role: "tool", content: outputText(p.output) }] : []));
@@ -245,7 +245,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
     const users = own.filter((m) => m.role === "user");
     const task = users.length > 0 ? textOf(users[0]!) : "";
     const query = users.length > 0 ? textOf(users.at(-1)!) : "";
-    const window = serializeWindow(stepsOf(scoped(messages, preset.turnBoundary)), WINDOW);
+    const window = serializeWindow(trajectorySteps(scoped(messages, preset.turnBoundary)), WINDOW);
     const key = session.cache.key({ core: view.core, overlay: view.overlay, node, query, window, model });
     const hit = preset.guidanceCache ? session.cache.get(key) : undefined;
     let text = hit;

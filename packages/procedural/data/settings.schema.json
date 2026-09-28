@@ -954,6 +954,10 @@
         "reflection": {
           "type": "string",
           "minLength": 1
+        },
+        "taskJudge": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [

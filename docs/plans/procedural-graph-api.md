@@ -1135,6 +1135,24 @@ evaluator"; the names above keep their meaning.
   `f1Score(answer, expected)` (token F1 over normalized tokens, repeats counted; two
   empty answers agree), and `scoreAnswer(metric, answer, expected)` (`exact` compares
   trimmed text).
+- **The task-suite evaluator (`task-evaluator.ts`).** `taskSuiteEvaluator({suite, settings, preset?, model, guidance?, judge?, tools?, clock, entropy})`
+  is an `Evaluator`. `tasks(split)` lists the split's ids in file order. `evaluate(graph, split, batch?)`
+  holds the candidate as the only head (graph `candidate`) of a `MemoryProceduralStore`
+  of its own, so it never touches the host's graphs, and runs each task, one after
+  another, on a `sessionAgent` (`@harness/workers`, now a dependency) with the
+  `proceduralStep` hook over that store (the preset named, `harness` by default; the
+  guidance model, or the solver's), the suite's `instructions`, and the suite's tools:
+  those `tools` (a `ToolSet`, or a function called once per evaluation) names, with the
+  suite's descriptions where it gives them; nothing else is offered, and a name the host
+  lacks rejects the evaluation. The final text is the answer: a metric scores it, or the
+  judge (resolved once per evaluation) is asked with `experimental_evaluate` the boolean
+  question `correct` (the suite's `judge.instructions`, else the settings' new optional
+  `prompts.taskJudge`) about `{task, expected?, answer}`, and its probability is the
+  score. Validation returns `{task, score}`; training also `query` (the prompt) and
+  `steps` (`trajectorySteps`, now exported from `step.ts`, over the prompt and every
+  step's response messages). Building one refuses a `judge` scorer without a judge or a
+  question; an unknown batch id is a `RangeError`, and a failing solver names its task.
+  `evaluatorContract` (PD3.1–PD3.4) runs against it on scripted models.
 
 ## Open issues
 

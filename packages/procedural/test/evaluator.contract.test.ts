@@ -1,6 +1,7 @@
-import { evaluatorContract, ScriptedEnvironment } from "@harness/testkit";
-import { applyEdits, ProceduralGraphSchema } from "@harness/procedural";
-import { addVerify, core } from "./dream-fixtures.ts";
+import { evaluatorContract, ManualClock, ScriptedEnvironment, SeededEntropy } from "@harness/testkit";
+import { applyEdits, ProceduralGraphSchema, taskSuiteEvaluator } from "@harness/procedural";
+import { addVerify, core, settings } from "./dream-fixtures.ts";
+import { graphs, guidanceModel, solverModel, suiteOf } from "./task-fixtures.ts";
 
 /** Hotpot tasks: one the core already routes, one that needs Verify before End. */
 const TASKS = {
@@ -16,3 +17,9 @@ const TASKS = {
 };
 
 evaluatorContract("ScriptedEnvironment", () => ({ evaluator: new ScriptedEnvironment(TASKS), graphs: [core(), ProceduralGraphSchema.parse(applyEdits(core(), addVerify))] }));
+
+// The task-suite evaluator on scripted models: the solver answers right only when the candidate's guidance says to verify.
+evaluatorContract("task suite on scripted models", () => ({
+  evaluator: taskSuiteEvaluator({ suite: suiteOf(), settings, model: solverModel(), guidance: guidanceModel(), clock: new ManualClock(1_000), entropy: new SeededEntropy(5) }),
+  graphs: graphs(),
+}));
