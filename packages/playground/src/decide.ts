@@ -14,10 +14,6 @@ type LexicalSettings = EngineSettings["lexical"];
 /** The option a decision model is given for "none of these". */
 export const NONE = "none";
 
-/** Whether a decision model picks templates (the lexical one standing in until it is ready), or the lexical one alone. */
-export const DECIDE = ["model", "lexical"] as const;
-export type Decide = (typeof DECIDE)[number];
-
 const asText = (input: EvaluationInput | null | undefined): string => (input == null ? "" : typeof input === "string" ? input : JSON.stringify(input));
 
 /** Words for matching: lower case, stopwords and single letters dropped, a plural's s taken off. */

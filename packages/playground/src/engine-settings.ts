@@ -3,7 +3,7 @@
  * is generated from this parser): when a decision is taken, how the lexical decision
  * model scores, when a template retires, and what generators are asked.
  */
-import { ProbabilitySchema } from "@harness/cognitive";
+import { BytesSchema, ProbabilitySchema } from "@harness/cognitive";
 import { z } from "zod";
 
 const Prompt = z.string().min(1);
@@ -29,6 +29,13 @@ const EngineSettingsSchema = z.strictObject({
     /** Softmax temperature over similarities. */
     temperature: z.number().gt(0),
     stopwords: z.array(z.string().min(1)),
+  }),
+  /** Which local model the page picks when the person has not: large ones need WebGPU, and every download room to spare. */
+  choice: z.strictObject({
+    /** Local models larger than this run only with a WebGPU adapter. */
+    gpuBytes: BytesSchema,
+    /** The storage a download needs, as a multiple of its size. */
+    headroom: z.number().min(1),
   }),
   curation: z.strictObject({
     /** Harmful minus helpful votes that retire a template. */

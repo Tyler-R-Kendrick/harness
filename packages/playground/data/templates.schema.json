@@ -72,6 +72,25 @@
       ],
       "additionalProperties": false
     },
+    "choice": {
+      "type": "object",
+      "properties": {
+        "gpuBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "headroom": {
+          "type": "number",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "gpuBytes",
+        "headroom"
+      ],
+      "additionalProperties": false
+    },
     "curation": {
       "type": "object",
       "properties": {
@@ -113,6 +132,7 @@
   "required": [
     "decision",
     "lexical",
+    "choice",
     "curation",
     "generation"
   ],

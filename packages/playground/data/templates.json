@@ -79,6 +79,10 @@
       "all"
     ]
   },
+  "choice": {
+    "gpuBytes": 100000000,
+    "headroom": 1.5
+  },
   "curation": {
     "retireMargin": 3
   },

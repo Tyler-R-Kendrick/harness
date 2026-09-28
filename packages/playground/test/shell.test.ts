@@ -17,7 +17,7 @@ afterEach(async () => {
 async function terminal(answer?: (key: Prompter) => void) {
   const tracer = new Tracer(() => Date.now());
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
-  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "model" };
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "auto" };
   const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
   open.push(playground);
   let out = "";
@@ -70,7 +70,7 @@ describe("the terminal's slash commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "model" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
       expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
@@ -101,7 +101,7 @@ describe("the terminal's slash commands", () => {
     expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
     expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
     expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
-    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "model" });
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "auto" });
     expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
@@ -232,7 +232,8 @@ describe("the template engine's commands", () => {
     const engine = new TemplateEngine({ store, settings, facts: {}, deciders: () => [lexicalDecider(settings.lexical)], generators: () => [], generation: () => t.settings.generate });
     const bash = new Bash({ fs: t.bash.fs, cwd: HOME });
     const decider = { state: "Julia 1: loading (614 MB)" };
-    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store, decider: { status: () => decider.state } }));
+    const slugs = ["auto", "lexical", "org/decider"];
+    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store, decider: { slugs: () => slugs, status: (slug) => (slug === "lexical" ? "the lexical judge alone" : decider.state) } }));
     const run = async (line: string) => {
       const r = await bash.exec(line, { cwd: HOME });
       return { ...r, stdout: plain(r.stdout) };
@@ -248,15 +249,17 @@ describe("the template engine's commands", () => {
     expect(await t.run("/generate always")).toMatchObject({ exitCode: 2 });
   });
 
-  it("TM6.5 /decide shows and sets whether a decision model decides (the lexical one standing in until it is ready) or the lexical one alone, and how the model is doing", async () => {
+  it("TM6.5 /decide shows and sets which decision model decides by slug: auto (picked for this browser), lexical, or a catalog id; how it is doing shows in /decide and /status", async () => {
     const t = await withEngine();
-    expect((await t.run("/decide")).stdout).toBe("model (one of model, lexical)\ndecision model: Julia 1: loading (614 MB)\n");
-    t.decider.state = "Julia 1: ready (WebGPU)";
-    expect((await t.run("/status")).stdout).toMatch(/^decide\s+model: Julia 1: ready \(WebGPU\)$/m);
+    t.settings.decide = "auto";
+    expect((await t.run("/decide")).stdout).toBe("auto (one of auto, lexical, org/decider)\ndecision model: Julia 1: loading (614 MB)\n");
+    t.decider.state = "Julia 1: ready";
+    expect((await t.run("/status")).stdout).toMatch(/^decide\s+auto: Julia 1: ready$/m);
+    expect((await t.run("/decide org/decider")).stdout).toBe("decide: org/decider\n");
+    expect(t.settings.decide).toBe("org/decider");
     expect((await t.run("/decide lexical")).stdout).toBe("decide: lexical\n");
-    expect(t.settings.decide).toBe("lexical");
-    expect((await t.run("/status")).stdout).toMatch(/^decide\s+lexical$/m);
-    expect(await t.run("/decide julia")).toMatchObject({ exitCode: 2 });
+    expect((await t.run("/status")).stdout).toMatch(/^decide\s+lexical: the lexical judge alone$/m);
+    expect(await t.run("/decide julia")).toMatchObject({ exitCode: 2, stderr: "unknown decide julia (one of auto, lexical, org/decider)\n" });
   });
 
   it("TM6.2 /templates lists the templates with their feedback, and the files that are not templates", async () => {

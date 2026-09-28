@@ -38,16 +38,25 @@ model at all. Only the parts nobody can decide need a generator.
   and of CLM through its judge adapter, so either drops in. Until one is loaded, the
   page uses a lexical decision model: TF-IDF cosine similarity between the request and
   each option, a fixed floor for `none`, and a softmax (`lexicalJudge`, no inference).
-- **The page's decision model is the catalog's local classification judge for a browser**
-  (Julia 1, ADR 0016), loaded through the browser host when asked (`/decide model`: 614
-  MB once, kept in the Cache API; onnxruntime-web's WebAssembly from its CDN), and again
-  from the cache at each visit after that; a visit whose files the browser would not keep
-  (its storage quota) does not start the next download on its own. It decides only with
-  WebGPU: on WebAssembly alone a decision takes seconds (a row per option, in every
-  rotation). Deciders are asked in order: the model once it is ready, the lexical judge
-  always last, so a call the model fails is decided lexically, the turn's metadata says
-  so, and so does the header's pill. `/decide lexical` leaves the lexical judge alone;
-  `/decide` and `~/AGENTS.md` say which one decides and how the model is doing.
+- **The page picks its decision model for the browser it runs in; the person may name
+  one.** Which model decides is a slug (`/decide [slug]`, kept with the page's settings).
+  `auto`, the default, takes the catalog's local classification judges for a browser
+  (Julia 1, ADR 0016) best first by rank and loads the first that fits this browser,
+  without being asked: a model larger than `choice.gpuBytes` needs a WebGPU adapter (on
+  WebAssembly alone a decision takes seconds: a row per option, in every rotation), a
+  download needs `choice.headroom` times its size free in the browser's storage
+  (`navigator.storage.estimate`), a browser that asks to save data downloads nothing, and
+  a model whose files the browser would not keep last time (its storage quota) is
+  skipped; files it kept need no room and no data. A model that fails to load is skipped
+  for the next. The status says why each better-ranked model was skipped, or that none
+  fits. A catalog id names a model, which loads even when `auto` would skip it (on
+  WebAssembly without WebGPU) and says what `auto` would have said; `lexical` leaves the
+  lexical judge alone. Julia 1 is 614 MB once, kept in the Cache API (onnxruntime-web's
+  WebAssembly from its CDN), and loads from the cache at each visit after that. Deciders
+  are asked in order: the model once it is ready, the lexical judge always last, so a
+  call the model fails is decided lexically, the turn's metadata says so, and so does the
+  header's pill. `/decide`, `/status` and `~/AGENTS.md` say which one decides and how
+  the model is doing.
 - **A model is asked as it was trained, and in every order.** Julia 1 was measured on the
   seed templates with 26 requests, 16 that a seed answers and 10 that none does:
   - Asked "which reply template answers this request?" with each template's description

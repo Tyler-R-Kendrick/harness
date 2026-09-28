@@ -102,22 +102,25 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.5 the decision model (the catalog's one for a browser) downloads only when asked: /decide model tries it, and without WebGPU the page says why and the lexical judge keeps deciding", async () => {
+  it("PI1.5 the decision model is picked for this browser (auto): headless Chromium has no WebGPU, so none fits, nothing is downloaded, and the page says why; a model named by its slug (/decide <id>) is tried anyway", async () => {
     const { page, errors } = await open();
     const requested: string[] = [];
     page.on("request", (r) => requested.push(r.url()));
+    await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("none fits"));
     expect(await page.locator("#decide-pill").textContent()).toBe("Decides: lexical");
-    expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/lexical judge picks templates \(\/decide model/);
-    // Nothing is downloaded until asked.
+    expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/^\/decide auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model\); the lexical judge decides/);
     await type(page, "/decide");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("decision model: "));
-    // The terminal wraps long lines: compare with the wrapping taken out.
-    expect((await terminalText(page)).replace(/\s+/g, "")).toMatch(/lexical\(oneofmodel,lexical\)decisionmodel:.+:notdownloaded\(614MB,once;keptinthisbrowser\):\/decidemodelloadsit/);
-    await type(page, "/decide model");
-    await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("could not load"), undefined, { timeout: 30_000 });
-    // Headless Chromium has no WebGPU adapter: the model is not fetched at all.
-    expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/could not load \(it needs WebGPU, and this browser has no WebGPU adapter\); the lexical judge decides/);
+    // The terminal wraps long lines: compare with the wrapping taken out. The slugs are auto, lexical, then the catalog's ids.
+    const shown = (await terminalText(page)).replace(/\s+/g, "");
+    expect(shown).toMatch(/auto\(oneofauto,lexical,[^)]+\)decisionmodel:nonefitsthisbrowser/);
+    const slug = /auto\(oneofauto,lexical,([^,)]+)/.exec(shown)![1]!;
     expect(requested.filter((u) => u.includes("huggingface.co"))).toEqual([]);
+    // Named, the model loads even though auto skipped it; here its files cannot be fetched, and the page says so.
+    await type(page, `/decide ${slug}`);
+    await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("could not load"), undefined, { timeout: 30_000 });
+    expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/could not load \(.+\); the lexical judge decides; named by \/decide, though auto would skip it \(no WebGPU adapter/);
+    expect(requested.some((u) => u.includes("huggingface.co"))).toBe(true);
     // The template still answers, decided lexically, and the timeline says the model did not load.
     await type(page, "/ask what files are here?");
     await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
