@@ -65,6 +65,34 @@ export function inSession(sessionId: string): { providerOptions: { harness: JSON
   return { providerOptions: { [HARNESS]: { session: sessionId } } };
 }
 
+/**
+ * A scope: the project a session works in, as an absolute path without a trailing
+ * separator, so that `/repo` and `/repo/` are one scope and a relative `.` is none.
+ */
+const ScopeSchema = z
+  .string()
+  .regex(/^(?:\/|[A-Za-z]:[\\/])/, "a scope is an absolute path")
+  .transform((p) => p.replace(/(?<=.)[\\/]+$/, ""))
+  .brand<"Scope">();
+export type Scope = z.output<typeof ScopeSchema>;
+
+/** The scope of a session's working directory; none for a relative one. */
+export function projectScope(cwd: string): Scope | undefined {
+  const parsed = ScopeSchema.safeParse(cwd);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Call settings naming the scope a call belongs to (the session's project): what a dialogue learns there stays there. */
+export function inScope(scope: Scope): { providerOptions: { harness: JSONObject } } {
+  return { providerOptions: { [HARNESS]: { scope } } };
+}
+
+/** The scope a call names, if any. */
+export function scopeOf(providerOptions: ProviderOptions): string | undefined {
+  const scope = harness(providerOptions)["scope"];
+  return typeof scope === "string" && scope !== "" ? scope : undefined;
+}
+
 /** The daemon session a call names, if any. */
 export function sessionOf(providerOptions: ProviderOptions): string | undefined {
   const session = harness(providerOptions)["session"];

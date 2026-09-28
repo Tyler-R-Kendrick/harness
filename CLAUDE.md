@@ -19,11 +19,13 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/behavior` | behavior state graphs over SAE features: parsing, packs, the engine | pure |
 | `packages/memory` | memory as a cognitive-core extension: its embedding model, vector recall (Orama), session memory | pure |
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
+| `packages/dialogue` | scripted dialogue: scripts (fixed text, slots, tool values, generated holes) answer turns without inference; IVR-style forms; flows (durable workflows that talk) and imported documents; scripts induced and drafted from the model's answers, verified in shadow before they answer | pure |
+| `packages/dialogue-standards` | dialogue authoring standards: VoiceXML 2.1 with SRGS 1.0 (XML and ABNF) and SISR, and AIML 2.0, run a turn at a time by interpreters inside durable flows; `importDialogue` | pure |
 | `packages/workflows` | durable workflows as code: a code mode port (AI SDK code mode natively from `/node`, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension, workflows as AI SDK tools | portable (`/node`: Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |
 | `packages/testkit` | deterministic ports, AI SDK model fakes (on `ai/test`), a scripted AI SDK harness, and reusable contract suites | pure |
-| `packages/workers` | session workers: echo (deterministic), and any AI SDK agent (`AgentWorker`, `sessionAgent`), including AI SDK harnesses (`harnessSessions`) | portable |
+| `packages/workers` | session workers: echo (deterministic), and any AI SDK agent (`AgentWorker`, `sessionAgent`), including AI SDK harnesses (`harnessSessions`); the dialogue as model middleware (`dialogueMiddleware`) | portable |
 | `packages/client` | the daemon as an AI SDK harness (`daemonHarness`, a `HarnessV1` adapter over ACP) | portable |
 | `packages/models` | adapters per model category and runtime: evaluation judges (and any generator as a judge), Cactus WASM, transformers.js, llama-server, steerable ONNX; the runtime loaders every host shares | portable |
 | `packages/platform-native` | Node host: stdio/socket/WebSocket ACP bindings, atomic file storage, model files and llama-server, host and Docker sandboxes for harness sessions, CLI | host |
@@ -99,7 +101,8 @@ Anything we tune by hand is data, never code: a JSON file with a `$schema` point
 JSON Schema generated from the zod schema that parses it (a test fails if they drift),
 loaded by the host at runtime. The model catalog, task preferences and benchmark results
 are `packages/cognitive/data/{catalog,benchmarks}.json` (and each extension's own
-`data/`); behavior graphs name `packages/behavior/data/graph.schema.json`. Benchmark rows
+`data/`); behavior graphs name `packages/behavior/data/graph.schema.json`, and script books
+`packages/dialogue/data/book.schema.json`. Benchmark rows
 are `[model, task, benchmark, metric, score, "higher"|"lower", setting?]` and are compared
 only when benchmark, metric and setting match.
 

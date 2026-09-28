@@ -4,7 +4,7 @@ import { tool } from "ai";
 import type { ModelMessage, ToolSet } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
-import { sessionOf, stateContent, usage } from "@harness/cognitive";
+import { sessionOf, stateContent, usage, scopeOf } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
 import { MemoryStorage, promptText } from "@harness/testkit";
 import { AgentWorker, rememberTurns, sessionAgent, storedConversations, userContent } from "@harness/workers";
@@ -248,6 +248,13 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
     await run(worker, [{ type: "text", text: "a" }], "s1").done;
     await run(worker, [{ type: "text", text: "b" }], "s2").done;
     expect(model.doStreamCalls.map((c) => sessionOf(c.providerOptions))).toEqual(["s1", "s2"]);
+  });
+
+  it("AW1.17 every model call names the session's working directory as its scope, so what a dialogue learns in a project stays there", async () => {
+    const model = scripted([...text("one"), finish()]);
+    const worker = new AgentWorker({ agent: sessionAgent({ model }) });
+    await worker.run({ type: "prompt", sessionId: "s1", turnId: "t1", prompt: [{ type: "text", text: "a" }], cwd: "/repo/a" }, () => {});
+    expect(model.doStreamCalls.map((c) => scopeOf(c.providerOptions))).toEqual(["/repo/a"]);
   });
 
   it("AW1.15 with a model to consult, a turn is given its notes on what was asked as reference; a failing or empty consult adds nothing", async () => {

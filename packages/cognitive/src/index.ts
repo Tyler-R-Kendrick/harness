@@ -8,9 +8,9 @@ export type { Artifact, ArtifactFile, BenchmarkResult, Locality, ModelDescriptor
 export { eligible, rankForTask } from "./selection.ts";
 export type { Evidence, Ranked, SelectionOptions } from "./selection.ts";
 export { CognitiveError, Ensemble } from "./ensemble.ts";
-export type { CognitiveExtension, EnsembleOptions, MemberEvent, MemberState } from "./ensemble.ts";
+export type { Caller, CognitiveExtension, EnsembleOptions, MemberEvent, MemberState } from "./ensemble.ts";
 export type { Compression, CompressRequest, Compressor, EmbeddingModelV4, EvaluationModelV4, ImageInput, JudgeAnswer, JudgeQuestion, LanguageModelV4, PortMap, Ports, ToolSpec } from "./ports.ts";
-export { HARNESS, MODEL_HEADER, STATE_KIND, constrain, constraintOf, embedding, embedInputs, inSession, jsonResponseFormat, logprobsIn, logprobsOf, sessionOf, stateContent, stateOf, withLogprobs, withResponseFormat } from "./options.ts";
+export { HARNESS, MODEL_HEADER, STATE_KIND, constrain, constraintOf, embedding, embedInputs, inScope, inSession, jsonResponseFormat, logprobsIn, logprobsOf, projectScope, scopeOf, sessionOf, stateContent, stateOf, withLogprobs, withResponseFormat } from "./options.ts";
 export type { StateChange, TokenLogprob } from "./options.ts";
 export { ImageInputSchema, JudgeAnswerSchema, JudgeQuestionSchema, ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";
@@ -26,3 +26,4 @@ export type { Bytes, CommitSha, Dimensions, Probability, Sha256, Similarity } fr
 export { CONSTRAINT_TYPES, ConstraintSchema, fillTemplate, readTemplate } from "./constraint.ts";
 export type { Constraint, ConstraintType, TemplateConstraint, TokenConstraint } from "./constraint.ts";
 export { collectParts, finishReason, StreamParts, usage } from "./stream-parts.ts";
+export type { Scope } from "./options.ts";

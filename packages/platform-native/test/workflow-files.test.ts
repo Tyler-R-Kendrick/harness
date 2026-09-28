@@ -29,6 +29,17 @@ describe("workflow files", () => {
     await expect(new WorkflowFiles(join(dir, "count.json")).list()).rejects.toThrow();
   });
 
+  it("WX1.3 a run forgotten has its journal file deleted; forgetting one with none is fine", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "harness-wf-"));
+    dirs.push(dir);
+    const files = new WorkflowFiles(dir);
+    await files.journal("dialogue/s/1").save({ step: 1 });
+    await files.forget("dialogue/s/1");
+    await files.forget("never");
+    expect(await files.journal("dialogue/s/1").load()).toBeUndefined();
+    expect(await readdir(join(dir, ".runs"))).toEqual([]);
+  });
+
   it("WX1.2 a run's journal is a file, so a run resumes after a restart; run ids cannot escape the directory", async () => {
     const dir = await mkdtemp(join(tmpdir(), "workflows-"));
     dirs.push(dir);

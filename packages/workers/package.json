@@ -11,13 +11,16 @@
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.0",
     "@ai-sdk/harness": "1.0.124",
+    "@ai-sdk/provider": "4.0.18",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
+    "@harness/dialogue": "0.0.0",
     "@scure/base": "2.4.0",
     "ai": "7.0.114",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@harness/testkit": "0.0.0"
+    "@harness/testkit": "0.0.0",
+    "@harness/workflows": "0.0.0"
   }
 }

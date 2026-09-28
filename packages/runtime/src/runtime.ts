@@ -100,6 +100,12 @@ export class DaemonRuntime {
     return this.#turns.size;
   }
 
+  /** Publish an event of the host's own to plugins on the hook bus (see Daemon.publish); the state, hooks included, is saved. */
+  publish(event: { readonly type: string; readonly payload: Record<string, unknown>; readonly sessionId?: string }): void {
+    this.daemon.publish(event);
+    this.#persist();
+  }
+
   /** Let running turns and cognitive work finish, and their saves land. */
   async close(): Promise<void> {
     this.#stopMirror();
@@ -139,7 +145,7 @@ export class DaemonRuntime {
   /** Run cognitive work on the ensemble and report the result to the daemon. */
   #think(work: CognitiveWork): void {
     const ensemble = this.#ensemble;
-    const job = (ensemble ? invokeCognitive(ensemble, work.op, work.input) : Promise.reject(new Error(this.#off)))
+    const job = (ensemble ? invokeCognitive(ensemble, work.op, work.input, work.caller) : Promise.reject(new Error(this.#off)))
       .then(
         (value) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: true, value })),
         (e: unknown) => this.#apply(this.daemon.cognitiveResult(work.requestId, { ok: false, message: e instanceof Error ? e.message : String(e) })),

@@ -165,3 +165,91 @@ describe("workflow library and host", () => {
     expect(called).toEqual([]);
   });
 });
+
+describe("flows: workflows that talk", () => {
+  const talk = parseWorkflow({
+    name: "talk",
+    kind: "flow",
+    description: "Says hello, hears a name, says it back.",
+    inputs: { type: "object" },
+    code: `await tools.say({ text: "Hello." });
+const { utterance } = await tools.hear({});
+await tools.say({ text: "Hi, " + utterance + "." });
+return "done";`,
+  });
+  const io = () => {
+    const said: string[] = [];
+    return {
+      said,
+      tools: {
+        say: tool({ inputSchema: z.object({ text: z.string() }), execute: async ({ text }) => (said.push(text), null) }),
+        hear: tool({ inputSchema: z.object({}), execute: async () => ({ utterance: "Ada" }) }),
+      },
+    };
+  };
+
+  it("WH2.1 a flow runs with tools given for its run, besides the host's", async () => {
+    const { h, library } = host();
+    await library.put(talk);
+    const { said, tools } = io();
+    expect(await h.run("talk", {}, "f1", tools)).toMatchObject({ status: "completed", output: "done", performed: 3 });
+    expect(said).toEqual(["Hello.", "Hi, Ada."]);
+  });
+
+  it("WH2.2 a flow is not a tool: not for other workflows, not for agents, not run through the extension", async () => {
+    const { h, library } = host();
+    await library.put(talk);
+    await library.put(parseWorkflow({ name: "caller", description: "Calls the flow.", inputs: { type: "object" }, code: `return await tools.talk({});` }));
+    expect(await h.run("caller", {}, "c1")).toMatchObject({ status: "failed", error: expect.stringMatching(/Unknown tool: talk/) });
+    expect(Object.keys(await workflowTools(h))).not.toContain("talk");
+    const ensemble = new Ensemble({ platform: "native" });
+    ensemble.install(workflowsExtension({ host: h }));
+    await expect(invokeCognitive(ensemble, "workflows.run", { name: "talk", run: "x" })).rejects.toThrow("talk is a flow: it runs in a dialogue");
+    const { workflows } = (await invokeCognitive(ensemble, "workflows.list", {})) as { workflows: Record<string, unknown>[] };
+    expect(workflows.filter((w) => w["name"] === "caller" || w["name"] === "talk").map((w) => [w["name"], Object.keys(w)])).toEqual([
+      ["caller", ["name", "description", "inputs"]],
+      ["talk", ["name", "kind", "description", "inputs"]],
+    ]);
+    expect(workflows.find((w) => w["name"] === "talk")).toEqual({ name: "talk", kind: "flow", description: talk.description, inputs: talk.inputs });
+    await expect(invokeCognitive(ensemble, "workflows.run", { name: "nope", run: "y" })).rejects.toThrow("no workflow nope");
+  });
+
+  it("WH2.6 a host forgets a run through its forget option, and without one does nothing", async () => {
+    const forgotten: string[] = [];
+    const { h } = host();
+    await h.forget("r1");
+    const withForget = new WorkflowHost({ codeMode: aiCodeMode, library: new MemoryLibrary(), journal: () => new MemoryStorage(), ask: async () => "", forget: async (run) => void forgotten.push(run) });
+    await withForget.forget("r2");
+    expect(forgotten).toEqual(["r2"]);
+  });
+
+  it("WH2.5 a run's own tools are called with input checked against their own schemas", async () => {
+    const { h, library } = host();
+    await library.put(parseWorkflow({ name: "mumble", kind: "flow", description: "Says a number.", inputs: { type: "object" }, code: `await tools.say({ text: 5 });` }));
+    const { said, tools } = io();
+    expect(await h.run("mumble", {}, "m1", tools)).toMatchObject({ status: "failed" });
+    expect(said).toEqual([]);
+  });
+
+  it("WH2.4 a run's own tool comes before a library workflow of the same name", async () => {
+    const { h, library } = host();
+    await library.put(talk);
+    await library.put(parseWorkflow({ name: "say", description: "Not the dialogue's say.", inputs: { type: "object" }, code: `return "wrong";` }));
+    const { said, tools } = io();
+    await h.run("talk", {}, "f2", tools);
+    expect(said).toEqual(["Hello.", "Hi, Ada."]);
+  });
+
+  it("WH2.7 a host has its tools and its library's workflows, not its flows or anything else", async () => {
+    const { h, library } = host();
+    await library.put(talk);
+    expect(await Promise.all(["open_ticket", "greet", "talk", "nope", "toString"].map((n) => h.has(n)))).toEqual([true, true, false, false, false]);
+    expect(await host({ tools: false }).h.has("open_ticket")).toBe(false);
+  });
+
+  it("WH2.3 a kind is flow or nothing", () => {
+    expect(() => parseWorkflow({ ...talk, kind: "script" })).toThrow(/invalid workflow/);
+    expect(parseWorkflow({ ...talk }).kind).toBe("flow");
+    expect(parseWorkflow({ ...greet })).not.toHaveProperty("kind");
+  });
+});

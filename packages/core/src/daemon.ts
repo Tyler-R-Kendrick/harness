@@ -116,6 +116,8 @@ export interface CognitiveWork {
   /** The task whose `cognitive.<task>` capability gated this work; undefined for status. */
   readonly task: string | undefined;
   readonly input: unknown;
+  /** Who asked: extensions may treat callers differently (a plugin, a person's client). */
+  readonly caller: Identity;
 }
 
 export type CognitiveResult = { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly message: string };
@@ -547,7 +549,7 @@ export class Daemon {
   #cognitiveWork(conn: Connection, id: JsonRpcId, op: CognitiveOp, task: string | undefined, input: unknown): typeof DEFER {
     const requestId = `cog-${++this.#cognitiveSeq}`;
     this.#cognitive.set(requestId, { connectionId: conn.id, id });
-    this.#out.push({ kind: "cognitive", work: { requestId, op, task, input } });
+    this.#out.push({ kind: "cognitive", work: { requestId, op, task, input, caller: conn.identity } });
     return DEFER;
   }
 
@@ -737,6 +739,15 @@ export class Daemon {
   #plugin(conn: Connection): string {
     if (conn.identity.kind !== "plugin") throw new RpcError(ERROR_CODES.forbidden, "only plugins use the hook bus");
     return conn.identity.principal;
+  }
+
+  /**
+   * Publish an event of the host's own (a dialogue's script promoted, say) to plugins on
+   * the hook bus, as source `host`. Its type is dotted lower-case names (`area.thing.happened`).
+   */
+  publish(event: { readonly type: string; readonly payload: Record<string, unknown>; readonly sessionId?: string }): void {
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(event.type)) throw new Error(`an event type is dotted lower-case names, not ${JSON.stringify(event.type)}`);
+    this.#hooks.publish({ type: event.type, source: "host", payload: event.payload, ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }) }, this.#now());
   }
 
   #publish(type: string, sessionId: string, payload: Record<string, unknown>): void {

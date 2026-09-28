@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrain, constraintOf, dimensions, inSession, jsonResponseFormat, logprobsIn, logprobsOf, sessionOf, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf, withLogprobs } from "@harness/cognitive";
+import { constrain, constraintOf, dimensions, inScope, inSession, projectScope, scopeOf, jsonResponseFormat, logprobsIn, logprobsOf, sessionOf, embedding, embedInputs, HARNESS, STATE_KIND, stateContent, stateOf, withLogprobs } from "@harness/cognitive";
 
 describe("our settings on AI SDK calls", () => {
   it("OP1.1 a constraint travels as harness provider options and reads back parsed; a JSON response format is a JSON Schema constraint", () => {
@@ -37,6 +37,19 @@ describe("our settings on AI SDK calls", () => {
     expect(sessionOf({ [HARNESS]: { session: 3 } })).toBeUndefined();
     expect(sessionOf({ [HARNESS]: { session: "" } })).toBeUndefined();
     expect(sessionOf(undefined)).toBeUndefined();
+  });
+
+  it("OP1.7 a call names its scope (the session's project) in harness provider options", () => {
+    expect(inScope(projectScope("/repo")!)).toEqual({ providerOptions: { [HARNESS]: { scope: "/repo" } } });
+    expect(scopeOf(inScope(projectScope("/repo")!).providerOptions)).toBe("/repo");
+    expect(scopeOf({ [HARNESS]: { scope: 3 } })).toBeUndefined();
+    expect(scopeOf({ [HARNESS]: { scope: "" } })).toBeUndefined();
+    expect(scopeOf(undefined)).toBeUndefined();
+  });
+
+  it("OP1.8 a scope is an absolute path without trailing separators; a relative one is none", () => {
+    expect(["/repo", "/repo/", "/repo//", "/", "C:\\work\\", "d:/x"].map(projectScope)).toEqual(["/repo", "/repo", "/repo", "/", "C:\\work", "d:/x"]);
+    expect([".", "repo", "", "./a"].map(projectScope)).toEqual([undefined, undefined, undefined, undefined]);
   });
 
   it("OP1.3 embedding settings say what the texts are and the size wanted; documents are the default", () => {
