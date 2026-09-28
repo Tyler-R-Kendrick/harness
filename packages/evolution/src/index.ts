@@ -4,7 +4,7 @@ export { measure, MeasurementSchema, pool } from "./measure.ts";
 export type { Measurement, TaskMeasure, TaskRun, Trial } from "./measure.ts";
 export { compare, noiseBand } from "./compare.ts";
 export type { ComparisonOptions, Comparison, NoiseBand } from "./compare.ts";
-export { editBudget, roundLevel, SpendingSchema, testLevel } from "./schedule.ts";
+export { editBudget, minimumGroups, roundLevel, SpendingSchema, testLevel } from "./schedule.ts";
 export type { Spending } from "./schedule.ts";
 export { FutilitySchema, isFutile, permute, prefixSize } from "./futility.ts";
 export type { Futility } from "./futility.ts";
@@ -18,7 +18,7 @@ export { componentYield, paperStall, parseRecord, RecordSchema, render, stalled,
 export type { LedgerRecord, Row, Verdict } from "./ledger.ts";
 export { calibratedDecision, CalibratedRuleSchema, choose, paperDecision, PaperRuleSchema, RuleSchema } from "./select.ts";
 export type { CalibratedContext, CalibratedRule, Decision, Measured, PaperContext, PaperRule } from "./select.ts";
-export { Evolution } from "./evolution.ts";
+export { Evolution, evolveGroups } from "./evolution.ts";
 export type { CriticRequest, CriticVerdict, EvolutionPorts, ProposalRequest, RoundReport, Split, TaskView } from "./evolution.ts";
 export { MechanismSchema, parseSettings, settingsJsonSchema, SettingsSchema, StateSchema } from "./schemas.ts";
 export type { Mechanism, Settings, State } from "./schemas.ts";

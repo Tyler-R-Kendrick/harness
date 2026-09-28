@@ -10,7 +10,7 @@ import type { LedgerRecord, Row } from "./ledger.ts";
 import { measure, pool } from "./measure.ts";
 import type { Measurement, TaskRun } from "./measure.ts";
 import { Uniform } from "./random.ts";
-import { editBudget, roundLevel } from "./schedule.ts";
+import { editBudget, minimumGroups, roundLevel } from "./schedule.ts";
 import { DocumentsSchema, parse, parseSettings, StateSchema } from "./schemas.ts";
 import type { Mechanism, Settings, State } from "./schemas.ts";
 import { calibratedDecision, choose, paperDecision } from "./select.ts";
@@ -102,7 +102,28 @@ function checkDocuments(surface: Surface, documents: Documents): void {
   for (const [name, spec] of Object.entries(surface.documents)) {
     const result = spec.schema.safeParse(documents[name]);
     if (!result.success) throw new Error(`the base harness's ${name} does not parse: ${result.error.message}`);
+    const problem = "kind" in spec && spec.kind === "text" ? spec.check?.(String(documents[name])) : undefined;
+    if (problem !== undefined) throw new Error(`the base harness's ${name} fails its check: ${problem}`);
   }
+}
+
+/** The number of groups of tasks in an evolve set, a task with no group being its own. */
+export function evolveGroups(tasks: readonly Task[]): number {
+  return new Set(tasks.map((t) => t.group ?? t.id)).size;
+}
+
+/**
+ * Under the calibrated rule a run whose evolve set has fewer groups than its smallest test
+ * level can resolve would run to its end and accept nothing: refused up front instead.
+ */
+function checkPower(settings: Settings, split: Split): void {
+  const rule = settings.select;
+  if (rule.rule !== "calibrated") return;
+  let level = 1;
+  for (let t = 0; t < settings.rounds; t++) level = Math.min(level, roundLevel(rule.alpha, t, settings.rounds, settings.candidates + 1, rule.spending));
+  const needed = minimumGroups(level);
+  const groups = evolveGroups(split.evolve);
+  if (groups < needed) throw new Error(`the evolve set has ${groups} groups, and a run whose smallest test is at level ${Number(level.toPrecision(2))} needs at least ${needed} for any change to be certifiable: use more tasks, more groups, fewer rounds or candidates, or a larger alpha`);
 }
 
 /**
@@ -128,6 +149,7 @@ export class Evolution {
     this.#surface = options.surface;
     this.#settings = parseSettings(options.settings);
     this.#split = options.split;
+    checkPower(this.#settings, options.split);
     this.#state = parse(StateSchema, "saved evolution", options.saved);
   }
 
@@ -136,6 +158,7 @@ export class Evolution {
     const { surface, split, documents, ports } = options;
     const settings = parseSettings(options.settings);
     checkDocuments(surface, documents);
+    checkPower(settings, split);
     const k = settings.trials;
     const measureOn = async (tasks: readonly Task[]) => {
       const m = measure(await ports.evaluate(documents, tasks, k), ids(tasks), k);

@@ -9,6 +9,10 @@ type World = ReturnType<typeof world>;
 const CALIBRATED = { rule: "calibrated", alpha: 0.1, resamples: 400, margin: 0.02, saving: 0.05, beta0: 0.1, beta1: 35 };
 const FUTILITY = { fraction: 0.5, alpha: 0.05 };
 const LEVEL = 0.1 / 18; // alpha over 6 rounds of 3 tests
+// One round at a large alpha: level 0.33, which two groups of tasks can certify, so a handful of tasks can exercise staging.
+const TINY = { ...CALIBRATED, alpha: 0.99 };
+const TINY_LEVEL = 0.99 / 3;
+const tiny = (futility: object = FUTILITY) => settings({ rounds: 1, select: { ...TINY, futility } });
 const withFutility = (futility: object | null = FUTILITY, extra: Record<string, unknown> = {}) => settings({ select: { ...CALIBRATED, ...(futility ? { futility } : {}) }, ...extra });
 const start = (w: World, s = withFutility(), seed = 1) => Evolution.start({ surface: w.surface, settings: s, split: w.split, documents: w.documents, ports: { evaluate: w.evaluate, entropy: new SeededEntropy(seed) } });
 const ports = (evaluate: EvolutionPorts["evaluate"], propose: EvolutionPorts["propose"], seed = 2): EvolutionPorts => ({ evaluate, propose, entropy: new SeededEntropy(seed) });
@@ -154,27 +158,27 @@ describe("futility staging in a round", () => {
 
   it("RS14.43 an interval as wide as it can be (too few groups in the prefix to say anything) never stops a candidate", async () => {
     const w = world({ n: 4, base: () => 1, effects: { bad: () => -1 } });
-    const e = await start(w);
+    const e = await start(w, tiny());
     const { propose } = badAndNoop("bad");
     const report = await e.round(ports(w.evaluate, propose));
     expect(sizes(w)).toEqual([4, 4, 2, 2, 2, 2]); // A finished too
     expect(byCandidate(report.records)["A"]!.reason).not.toMatch(/futility/);
-    expect(byCandidate(report.records)["A"]!.measured).toMatchObject({ alpha: LEVEL, gain: -1 });
+    expect(byCandidate(report.records)["A"]!.measured).toMatchObject({ alpha: TINY_LEVEL, gain: -1 });
   });
 
   it("RS14.44 a prefix that would be every task is no stage at all", async () => {
     const two = world({ n: 2, base: () => 1, effects: { bad: () => -1 } });
-    await (await start(two, withFutility({ fraction: 0.6, alpha: 0.05 }))).round(ports(two.evaluate, badAndNoop("bad").propose));
+    await (await start(two, tiny({ fraction: 0.6, alpha: 0.05 }))).round(ports(two.evaluate, badAndNoop("bad").propose));
     expect(sizes(two)).toEqual([2, 2, 2, 2]); // ceil(0.6 * 2) = 2: one evaluation of everything
     const half = world({ n: 2, base: () => 1, effects: { bad: () => -1 } });
-    await (await start(half)).round(ports(half.evaluate, badAndNoop("bad").propose));
+    await (await start(half, tiny())).round(ports(half.evaluate, badAndNoop("bad").propose));
     expect(sizes(half)).toEqual([2, 2, 1, 1, 1, 1]); // ceil(0.5 * 2) = 1 of 2
     const three = world({ n: 3, base: () => 1, effects: { bad: () => -1 } });
-    await (await start(three)).round(ports(three.evaluate, badAndNoop("bad").propose));
+    await (await start(three, tiny())).round(ports(three.evaluate, badAndNoop("bad").propose));
     expect(sizes(three)).toEqual([3, 3, 2, 2, 1, 1]); // ceil(0.5 * 3) = 2
+    // One task is one group: no test can be certified at any level a round can have (RS16.3), so no round is run.
     const one = world({ n: 1, base: () => 1, effects: { bad: () => -1 } });
-    await (await start(one)).round(ports(one.evaluate, badAndNoop("bad").propose));
-    expect(sizes(one)).toEqual([1, 1, 1, 1]);
+    await expect(start(one, tiny())).rejects.toThrow(/the evolve set has 1 groups/);
   });
 
   it("RS14.45 the removal of an accepted mechanism (ablation) is never staged, and is judged at the run's level on all tasks", async () => {

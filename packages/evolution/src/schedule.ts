@@ -67,3 +67,15 @@ export function roundLevel(alpha: number, round: number, rounds: number, perRoun
   for (let s = 0; s < rounds; s++) total += spending.ratio ** s;
   return (alpha * (spending.ratio ** round / total)) / perRound;
 }
+
+/**
+ * The fewest groups of tasks an evolve set can have for a test at `level` to be able to
+ * certify anything. The acceptance test flips the signs of whole groups' differences, so
+ * with G groups its smallest possible p-value is 2^-G (every group flipped the way the
+ * data lean): a level at or below that can never be met, however large the gain. This is
+ * the least G with 2^-G < level.
+ */
+export function minimumGroups(level: number): number {
+  if (!(level > 0 && level < 1)) throw new RangeError(`a level is in (0, 1), not ${level}`);
+  return Math.floor(Math.log2(1 / level)) + 1;
+}
