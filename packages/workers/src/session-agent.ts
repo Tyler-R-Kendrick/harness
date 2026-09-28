@@ -166,6 +166,10 @@ export interface TurnLearning {
   recall(task: string): Promise<{ readonly playbook: string }>;
 }
 
+/** A call's conversation: its messages, or its prompt (text is one user message). */
+const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
+  call.messages ?? (typeof call.prompt === "string" ? [{ role: "user", content: call.prompt }] : (call.prompt ?? []));
+
 const lastUser = (messages: readonly ModelMessage[]) => [...messages].reverse().find((m) => m.role === "user");
 const textOf = (m: ModelMessage | undefined) => (m === undefined ? "" : typeof m.content === "string" ? m.content : m.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"));
 const hasImage = (m: ModelMessage | undefined) => m !== undefined && typeof m.content !== "string" && m.content.some((p) => p.type === "file" || p.type === "image");
@@ -221,7 +225,7 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: call.messages ?? [] }) : undefined;
+      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: conversationOf(call) }) : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId } };
       return {
