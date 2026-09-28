@@ -16,7 +16,7 @@ const HEX = [..."0123456789abcdef"];
 
 describe("the edit filter", () => {
   test.prop([fc.array(fc.string(), { maxLength: 5 }), fc.array(word, { minLength: 8, maxLength: 20 }), fc.nat(), prose, prose])(
-    "PG2.P6 any text sharing an 8-token run with an observation is flagged",
+    "PGR2.P6 any text sharing an 8-token run with an observation is flagged",
     (others, observed, start, before, after) => {
       const from = start % (observed.length - 7);
       const run = observed.slice(from, from + 8).join(" ");
@@ -25,11 +25,11 @@ describe("the edit filter", () => {
     },
   );
 
-  test.prop([fc.array(prose, { maxLength: 4 })])("PG2.P7 plain prose with no observations is never flagged", (texts) => {
+  test.prop([fc.array(prose, { maxLength: 4 })])("PGR2.P7 plain prose with no observations is never flagged", (texts) => {
     expect(editFilter(texts, [])).toEqual([]);
   });
 
-  test.prop([around(fc.tuple(fc.constantFrom("http", "https", "ftp", "ssh", "git+ssh"), alnum, alnum).map(([s, h, p]) => `${s}://${h}.example/${p}`))])("PG2.P8 URLs are flagged", (text) => {
+  test.prop([around(fc.tuple(fc.constantFrom("http", "https", "ftp", "ssh", "git+ssh"), alnum, alnum).map(([s, h, p]) => `${s}://${h}.example/${p}`))])("PGR2.P8 URLs are flagged", (text) => {
     expect(codes(text)).toContain("url");
   });
 
@@ -42,7 +42,7 @@ describe("the edit filter", () => {
         fc.tuple(alnum, alnum).map(([h, s]) => `\\\\${h}\\${s}`),
       ),
     ),
-  ])("PG2.P9 absolute paths are flagged", (text) => {
+  ])("PGR2.P9 absolute paths are flagged", (text) => {
     expect(codes(text)).toContain("absolute-path");
   });
 
@@ -55,7 +55,7 @@ describe("the edit filter", () => {
         fc.tuple(fc.shuffledSubarray(HEX, { minLength: 16 }), fc.array(fc.constantFrom(...HEX), { minLength: 4, maxLength: 48 })).map(([all, more]) => [...all, ...more].join("")),
       ),
     ),
-  ])("PG2.P10 high-entropy strings of at least 20 base64 or hex characters are flagged", (text) => {
+  ])("PGR2.P10 high-entropy strings of at least 20 base64 or hex characters are flagged", (text) => {
     expect(codes(text)).toContain("high-entropy");
   });
 
@@ -73,7 +73,7 @@ describe("the edit filter", () => {
         fc.tuple(fc.constantFrom("password", "API_KEY", "secret", "auth_token"), token(8)).map(([k, v]) => `${k}=${v}`),
       ),
     ),
-  ])("PG2.P11 common secret shapes are flagged", (text) => {
+  ])("PGR2.P11 common secret shapes are flagged", (text) => {
     expect(codes(text)).toContain("secret");
   });
 });

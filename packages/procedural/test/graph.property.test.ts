@@ -59,20 +59,20 @@ describe("revision ids", () => {
     validGraph(true).chain((g) =>
       fc.record({ g: fc.constant(g), nodes: permutation(g.nodes), edges: permutation(g.edges), nodeTypes: permutation(g.nodeTypes), relations: permutation(g.relations) }),
     ),
-  ])("PG1.P1 a revision id does not depend on the order of nodes, edges or vocabularies", ({ g, ...shuffled }) => {
+  ])("PGR1.P1 a revision id does not depend on the order of nodes, edges or vocabularies", ({ g, ...shuffled }) => {
     expect(revisionId(doc({ ...g, ...shuffled }))).toBe(revisionId(doc(g)));
   });
 
-  test.prop([validGraph(false), fc.string()])("PG1.P2 $schema is never part of the id", (g, schema) => {
+  test.prop([validGraph(false), fc.string()])("PGR1.P2 $schema is never part of the id", (g, schema) => {
     expect(revisionId(doc({ ...g, $schema: schema }))).toBe(revisionId(doc(g)));
   });
 
-  test.prop([validGraph(false), fc.string().filter((f) => f !== FORMAT)])("PG1.P3 the format is part of the id, so a format migration changes every id", (g, format) => {
+  test.prop([validGraph(false), fc.string().filter((f) => f !== FORMAT)])("PGR1.P3 the format is part of the id, so a format migration changes every id", (g, format) => {
     const migrated = { ...doc(g), format } as unknown as CandidateDocument;
     expect(revisionId(migrated)).not.toBe(revisionId(doc(g)));
   });
 
-  test.prop([validGraph(false), fc.nat(), fc.nat(), fc.string({ minLength: 1, maxLength: 4 })])("PG1.P4 any change to a node's or an edge's text changes the id", (g, n, e, extra) => {
+  test.prop([validGraph(false), fc.nat(), fc.nat(), fc.string({ minLength: 1, maxLength: 4 })])("PGR1.P4 any change to a node's or an edge's text changes the id", (g, n, e, extra) => {
     const node = n % g.nodes.length;
     const edge = e % g.edges.length;
     const nodes = g.nodes.map((x, i) => (i === node ? { ...x, description: x.description + extra } : x));
@@ -83,7 +83,7 @@ describe("revision ids", () => {
 });
 
 describe("parsing generated graphs", () => {
-  test.prop([fc.boolean().chain((cyclic) => fc.tuple(fc.constant(cyclic), validGraph(cyclic)))])("PG1.P5 every valid graph parses, unchanged, and an acyclic one parses when cycles are forbidden", ([cyclic, g]) => {
+  test.prop([fc.boolean().chain((cyclic) => fc.tuple(fc.constant(cyclic), validGraph(cyclic)))])("PGR1.P5 every valid graph parses, unchanged, and an acyclic one parses when cycles are forbidden", ([cyclic, g]) => {
     const r = parseGraph(g, cyclic ? "allowed" : "forbidden");
     expect(r.ok && r.graph).toEqual(g);
   });
@@ -104,12 +104,12 @@ describe("parsing generated graphs", () => {
     }],
   ];
 
-  test.prop([validGraph(true), fc.nat(), fc.constantFrom(...corruptions.keys())])("PG1.P6 each single structural corruption of a valid graph is refused with its own diagnostic code", (g, pick, which) => {
+  test.prop([validGraph(true), fc.nat(), fc.constantFrom(...corruptions.keys())])("PGR1.P6 each single structural corruption of a valid graph is refused with its own diagnostic code", (g, pick, which) => {
     const [code, corrupt] = corruptions[which]!;
     expect(codes(corrupt(g, pick))).toEqual([code]);
   });
 
-  test.prop([validGraph(false), fc.nat()])("PG1.P7 under the forbidden cycle policy, a cycle is refused as a cycle and nothing else", (g, pick) => {
+  test.prop([validGraph(false), fc.nat()])("PGR1.P7 under the forbidden cycle policy, a cycle is refused as a cycle and nothing else", (g, pick) => {
     const e = g.edges[pick % g.edges.length]!;
     const looped = { ...g, edges: [...g.edges, { ...e, to: e.from }] };
     expect(codes(looped, "forbidden")).toEqual(["cycle"]);

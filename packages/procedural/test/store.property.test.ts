@@ -26,7 +26,7 @@ const leaseOp = fc.record({
 const headOp = fc.record({ expected: fc.option(fc.constantFrom(...REVISIONS), { nil: undefined }), next: fc.constantFrom(...REVISIONS) });
 
 describe.each(IMPLEMENTATIONS)("stores: %s", (_name, make) => {
-  test.prop([fc.array(logOp, { maxLength: 20 })])("PS1.42 an append log behaves as a dense array under any appends and reads", async (ops) => {
+  test.prop([fc.array(logOp, { maxLength: 20 })])("PST1.42 an append log behaves as a dense array under any appends and reads", async (ops) => {
     const log = make().dreams(graphA);
     const model: number[] = [];
     for (const op of ops) {
@@ -42,7 +42,7 @@ describe.each(IMPLEMENTATIONS)("stores: %s", (_name, make) => {
     }
   });
 
-  test.prop([fc.array(leaseOp, { maxLength: 25 })])("PS1.43 a lease has at most one holder, grants strictly growing epochs, and honors only the current epoch", async (ops) => {
+  test.prop([fc.array(leaseOp, { maxLength: 25 })])("PST1.43 a lease has at most one holder, grants strictly growing epochs, and honors only the current epoch", async (ops) => {
     const store = make();
     let holder: string | undefined;
     let epoch = 0;
@@ -65,7 +65,7 @@ describe.each(IMPLEMENTATIONS)("stores: %s", (_name, make) => {
     }
   });
 
-  test.prop([fc.array(headOp, { maxLength: 20 })])("PS1.44 a head moves only from its expected revision, and its history lists earlier heads most recent first", async (ops) => {
+  test.prop([fc.array(headOp, { maxLength: 20 })])("PST1.44 a head moves only from its expected revision, and its history lists earlier heads most recent first", async (ops) => {
     const store = make();
     const model: RevisionId[] = [];
     for (const op of ops) {
@@ -84,7 +84,7 @@ describe("store durability", () => {
     headOp.map((o) => ({ ...o, log: "head" as const })),
   );
 
-  test.prop([fc.array(op, { maxLength: 20 })])("PS1.45 after any operations, a reopened snapshot store holds exactly the memory store's document", async (ops) => {
+  test.prop([fc.array(op, { maxLength: 20 })])("PST1.45 after any operations, a reopened snapshot store holds exactly the memory store's document", async (ops) => {
     const storage = new MemoryStorage();
     const durable = new SnapshotProceduralStore(storage);
     const reference = new MemoryProceduralStore();
@@ -106,7 +106,7 @@ describe("store durability", () => {
 describe("redaction", () => {
   const secret = fc.string({ minLength: 1, maxLength: 8 }).map((s) => `§${s}`);
 
-  test.prop([secret, fc.array(secret, { maxLength: 3 }), secret])("PS1.46 a redacted record keeps none of its texts and still parses", (text, evidence, reason) => {
+  test.prop([secret, fc.array(secret, { maxLength: 3 }), secret])("PST1.46 a redacted record keeps none of its texts and still parses", (text, evidence, reason) => {
     const r = record(["Plan"], { evidence: { list: evidence, one: reason }, decision: { kind: "rejected-gate", gate: "g", reason } }, text);
     const redacted = redactRecord(r);
     expect(JSON.stringify(redacted)).not.toContain("§");

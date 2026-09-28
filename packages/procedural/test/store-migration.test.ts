@@ -17,7 +17,7 @@ async function loaded(document: unknown) {
 }
 
 describe("migrating a v1 procedural store", () => {
-  it("PS1.51 a v1 saved store loads with every record under its graph, and its first change saves it as v2", async () => {
+  it("PST1.51 a v1 saved store loads with every record under its graph, and its first change saves it as v2", async () => {
     const [r0, r1] = [record([]), record(["Plan"], { origin: "dream", parents: [record([]).id] })];
     const pin = { graph: graphA, core: r1.id, overlay: 0, salt: "s", at: 1 };
     const saved = v1({
@@ -41,7 +41,7 @@ describe("migrating a v1 procedural store", () => {
     expect(migrateStoreDocument(saved)).toEqual({ ...saved, format: STORE_FORMAT });
   });
 
-  it("PS1.52 a head or earlier head whose v1 record another graph wrote last gets a copy of it under its own graph", async () => {
+  it("PST1.52 a head or earlier head whose v1 record another graph wrote last gets a copy of it under its own graph", async () => {
     const shared = record(["Plan"], { graph: graphB, origin: "dream", decision: { kind: "rejected-gate", gate: "evidence", reason: "no support" } });
     const seed = record([]);
     const saved = v1({
@@ -60,7 +60,7 @@ describe("migrating a v1 procedural store", () => {
     expect(migrateStoreDocument(v1({ heads: [{ graph: graphA, revision: missing, history: [] }] })).revisions).toEqual([]);
   });
 
-  it("PS1.53 a v1 revert record is replaced by the record it replaced, through reverts of reverts; one whose replaced record no longer parses stays", () => {
+  it("PST1.53 a v1 revert record is replaced by the record it replaced, through reverts of reverts; one whose replaced record no longer parses stays", () => {
     const original = record([], { origin: "import", evidence: { round: 0 }, at: 2 });
     const { id: _, graph: __, document: ___, ...replaced } = original;
     const firstRevert = RevisionRecordSchema.parse({ ...original, parents: [record(["Plan"]).id], origin: "revert", evidence: { reverted: record(["Plan"]).id, replaces: replaced }, at: 5 });
@@ -78,7 +78,7 @@ describe("migrating a v1 procedural store", () => {
     expect(migrateStoreDocument(v1({ revisions: [dream] })).revisions).toEqual([dream]);
   });
 
-  it("PS1.56 a v2 store loads as it was saved: a head whose record another graph holds gets no copy", async () => {
+  it("PST1.56 a v2 store loads as it was saved: a head whose record another graph holds gets no copy", async () => {
     const shared = record(["Plan"], { graph: graphB });
     const saved = { ...v1({ revisions: [shared], heads: [{ graph: graphA, revision: shared.id, history: [] }] }), format: STORE_FORMAT };
     const { store } = await loaded(saved);
@@ -86,7 +86,7 @@ describe("migrating a v1 procedural store", () => {
     expect(await store.revisions.get(graphB, shared.id)).toEqual(shared);
   });
 
-  it("PS1.54 a v1 store is checked like a v2 one: a malformed v1 store is rejected, never migrated or overwritten", async () => {
+  it("PST1.54 a v1 store is checked like a v2 one: a malformed v1 store is rejected, never migrated or overwritten", async () => {
     const r = record([]);
     const bad = { ...v1(), revisions: [{ ...r, id: record(["Plan"]).id }] };
     const { storage, store } = await loaded(bad);

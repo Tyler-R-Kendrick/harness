@@ -19,13 +19,13 @@ const edit = (path: readonly string[], value: unknown) => {
 const INCLUDE_SPECIFICS = " You must include any specific command patterns, file paths, tools, or arguments defined in the graph context if they are relevant to the next steps.";
 
 describe("procedural settings (data/settings.json)", () => {
-  it("PG1.35 the shipped settings parse, and name their JSON Schema, which is generated from the parser", async () => {
+  it("PGR1.35 the shipped settings parse, and name their JSON Schema, which is generated from the parser", async () => {
     expect(Object.keys(settings().presets)).toEqual(["paper", "harness"]);
     expect(file["$schema"]).toBe("./settings.schema.json");
     await expect(`${JSON.stringify(settingsJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/settings.schema.json");
   });
 
-  it("PG1.36 the paper preset is the paper's mechanism: no overlay, exact match, reset at each turn, guidance in the system slot, the paper's gate", () => {
+  it("PGR1.36 the paper preset is the paper's mechanism: no overlay, exact match, reset at each turn, guidance in the system slot, the paper's gate", () => {
     const paper = presetOf(settings(), "paper");
     expect(paper).toMatchObject({ overlay: false, match: "exact", turnBoundary: "start", delivery: { to: "system", activeTools: "all" }, guidancePrompt: "paper", guidanceCache: false });
     expect(paper.live).toBeUndefined();
@@ -42,7 +42,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect([HOPS, WINDOW]).toEqual([2, 3]);
   });
 
-  it("PG1.37 the harness preset learns live under probation and gates dream on structure, evidence and approval", () => {
+  it("PGR1.37 the harness preset learns live under probation and gates dream on structure, evidence and approval", () => {
     const harness = presetOf(settings(), "harness");
     expect(harness).toMatchObject({ overlay: true, turnBoundary: "carry", delivery: { to: "trailing-message", activeTools: "all" }, guidancePrompt: "harness", guidanceCache: true, overlayRefresh: "turn", repinOnDream: "turn" });
     expect(harness.live).toEqual({ reflection: "off", probationShare: 0.2, minSupport: 3, promote: { confidence: 0.9 }, halfLifeDays: 30, maxEntries: 64 });
@@ -55,7 +55,7 @@ describe("procedural settings (data/settings.json)", () => {
     });
   });
 
-  it("PG1.38 the paper's App. B.5 prompts are stored verbatim", () => {
+  it("PGR1.38 the paper's App. B.5 prompts are stored verbatim", () => {
     const { prompts } = settings();
     expect(prompts.solver.startsWith("{system_prompt}\n\nProcedural Graph Guidance: {procedural_graph_guidance}\nYou must interleave Thought and Action.")).toBe(true);
     expect(prompts.solver.endsWith("Do NOT simulate the environment’s responses.\nCurrent Trajectory: {trajectory}\nThought:")).toBe(true);
@@ -75,7 +75,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(settings().graphContext.full).toEqual({ desc: "the complete Procedural Graph governing the task structure and strategic guidance", source: "complete Procedural Graph" });
   });
 
-  it("PG1.39 the harness guidance prompt is the paper's without the sentence asking for command patterns and file paths", () => {
+  it("PGR1.39 the harness guidance prompt is the paper's without the sentence asking for command patterns and file paths", () => {
     const { prompts } = settings();
     expect(prompts.guidanceHarness).toBe(prompts.guidance.replace(INCLUDE_SPECIFICS, ""));
     expect(prompts.guidanceHarness).not.toContain("file paths");
@@ -83,7 +83,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(guidancePromptOf(settings(), presetOf(settings(), "harness"))).toBe(prompts.guidanceHarness);
   });
 
-  it("PG1.40 the dream prompt is the refiner prompt plus a consolidation section; reflection proposes entries without specifics", () => {
+  it("PGR1.40 the dream prompt is the refiner prompt plus a consolidation section; reflection proposes entries without specifics", () => {
     const { prompts } = settings();
     expect(prompts.dream.startsWith(`${prompts.refiner}\n\n`)).toBe(true);
     const consolidation = prompts.dream.slice(prompts.refiner.length);
@@ -93,7 +93,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(prompts.reflection).toMatch(/file paths/);
   });
 
-  it("PG1.41 every prompt keeps the placeholders its caller fills", () => {
+  it("PGR1.41 every prompt keeps the placeholders its caller fills", () => {
     const { prompts } = settings();
     for (const [name, slots] of Object.entries(PLACEHOLDERS)) for (const slot of slots) expect(prompts[name as keyof typeof prompts]).toContain(`{${slot}}`);
     expect(PLACEHOLDERS.dream).toEqual([...PLACEHOLDERS.refiner, "overlay_entries_block", "cautioned_edges_block", "rejection_reasons_block"]);
@@ -101,7 +101,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["prompts", "refiner"], "")).toThrow(/prompts\.refiner/);
   });
 
-  it("PG1.42 settings that cannot be right are refused, naming where", () => {
+  it("PGR1.42 settings that cannot be right are refused, naming where", () => {
     expect(edit(["presets", "harness", "live", "probationShare"], 1.5)).toThrow(/presets\.harness\.live\.probationShare/);
     expect(edit(["presets", "harness", "live", "minSupport"], 0)).toThrow(/presets\.harness\.live\.minSupport/);
     expect(edit(["presets", "harness", "live"], undefined)).toThrow(/an overlay needs live settings[\s\S]*presets\.harness\.live/);
@@ -117,7 +117,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["extra"], 1)).toThrow(/extra/);
   });
 
-  it("PG1.46 the cross-field checks are custom issues at the field that is missing", () => {
+  it("PGR1.46 the cross-field checks are custom issues at the field that is missing", () => {
     const issue = (path: readonly string[], value: unknown) => {
       const s = structuredClone(file);
       let o: Record<string, unknown> = s;
@@ -133,7 +133,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(issue(["prompts", "solver"], "no slots")).toEqual({ code: "custom", at: ["prompts", "solver"] });
   });
 
-  it("PG1.47 dream's composition, stride and live reflection's batch are data: the harness composes, the paper does not, batch reflection needs a batch size", () => {
+  it("PGR1.47 dream's composition, stride and live reflection's batch are data: the harness composes, the paper does not, batch reflection needs a batch size", () => {
     expect(presetOf(settings(), "harness").dream.compose).toBe(true);
     expect(presetOf(settings(), "paper").dream.compose).toBeUndefined();
     expect(presetOf(settings(), "paper").dream.stride).toBeUndefined();
@@ -149,7 +149,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "harness", "live", "reflectionBatch"] });
   });
 
-  it("PG1.52 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
+  it("PGR1.52 both presets count the horizon in edges, as the paper does; a preset may count it in actions, and in nothing else", () => {
     expect(presetOf(settings(), "paper").hopUnit).toBe("edge");
     expect(presetOf(settings(), "harness").hopUnit).toBe("edge");
     expect(presetOf(edit(["presets", "harness", "hopUnit"], "action")(), "harness").hopUnit).toBe("action");
@@ -157,13 +157,13 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["presets", "paper", "hopUnit"], "node")).toThrow(/presets\.paper\.hopUnit/);
   });
 
-  it("PG1.55 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
+  it("PGR1.55 both presets match exactly, as the paper writes Match; a preset may match as a state tracker", () => {
     expect(presetOf(settings(), "paper").match).toBe("exact");
     expect(presetOf(settings(), "harness").match).toBe("exact");
     expect(presetOf(edit(["presets", "harness", "match"], "state-tracker")(), "harness").match).toBe("state-tracker");
   });
 
-  it("PG1.56 delivery names where guidance goes and which tools a step offers: every one in both presets, or only the active node's successors' as an ablation", () => {
+  it("PGR1.56 delivery names where guidance goes and which tools a step offers: every one in both presets, or only the active node's successors' as an ablation", () => {
     expect(file["presets"]).toMatchObject({ paper: { delivery: { to: "system", activeTools: "all" } }, harness: { delivery: { to: "trailing-message", activeTools: "all" } } });
     expect(presetOf(edit(["presets", "harness", "delivery"], { to: "trailing-message", activeTools: "successors" })(), "harness").delivery).toEqual({ to: "trailing-message", activeTools: "successors" });
     // Unset, every tool; a placement alone is read as that placement with every tool.
@@ -175,7 +175,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["presets", "paper", "delivery"], "inline")).toThrow(/presets\.paper\.delivery/);
   });
 
-  it("PG1.51 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
+  it("PGR1.51 dream's schedule is data: every is a duration, afterTurns a count of observed turns, which needs an overlay", () => {
     expect(presetOf(settings(), "harness").dream).toMatchObject({ every: 7 * 24 * 3_600_000, afterTurns: 50 });
     expect(presetOf(settings(), "paper").dream.every).toBeUndefined();
     expect(presetOf(settings(), "paper").dream.afterTurns).toBeUndefined();
@@ -189,13 +189,13 @@ describe("procedural settings (data/settings.json)", () => {
     expect({ code, path }).toEqual({ code: "custom", path: ["presets", "paper", "dream", "afterTurns"] });
   });
 
-  it("PG1.50 the task judge's question is a prompt in the data; a deployment may leave it out", () => {
+  it("PGR1.50 the task judge's question is a prompt in the data; a deployment may leave it out", () => {
     expect(settings().prompts.taskJudge).toMatch(/^You judge an AI agent's answer to a task\./);
     expect(edit(["prompts", "taskJudge"], undefined)().prompts.taskJudge).toBeUndefined();
     expect(edit(["prompts", "taskJudge"], "")).toThrow(/prompts\.taskJudge/);
   });
 
-  it("PG1.49 a duration is days, hours, minutes and seconds in that order, parsed into milliseconds", () => {
+  it("PGR1.49 a duration is days, hours, minutes and seconds in that order, parsed into milliseconds", () => {
     expect(duration("45s")).toBe(45_000);
     expect(duration("15m")).toBe(900_000);
     expect(duration("6h")).toBe(21_600_000);
@@ -212,7 +212,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(DurationSchema.safeParse(1.5).success).toBe(false);
   });
 
-  it("PG1.48 the step hook's per-session state is bounded by data: an idle time in milliseconds and a session cap, both positive whole numbers", () => {
+  it("PGR1.48 the step hook's per-session state is bounded by data: an idle time in milliseconds and a session cap, both positive whole numbers", () => {
     expect(settings().sessions).toEqual({ idleMs: 1_800_000, max: 1024 });
     expect(edit(["sessions", "idleMs"], 0)).toThrow(/sessions\.idleMs/);
     expect(edit(["sessions", "idleMs"], 1.5)).toThrow(/sessions\.idleMs/);
@@ -221,7 +221,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(edit(["sessions"], undefined)).toThrow(/sessions/);
   });
 
-  it("PG1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
+  it("PGR1.43 a deployment may add its own presets, and presetOf names a missing one", () => {
     const s = structuredClone(file) as { presets: Record<string, unknown> };
     s.presets["careful"] = { ...(s.presets["harness"] as object), match: "case-insensitive", guidanceCache: false };
     const parsed = parseSettings(s);
@@ -235,7 +235,7 @@ describe("procedural settings (data/settings.json)", () => {
     expect(presetOf(parseSettings(bare), "harness")).toMatchObject({ overlayRefresh: "turn", repinOnDream: "turn" });
   });
 
-  it("PG1.57 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
+  it("PGR1.57 the route prompt, which the graph router's tool carries, is data and lists the candidate graphs in {graphs}", () => {
     const { prompts } = settings();
     expect(PLACEHOLDERS.route).toEqual(["graphs"]);
     expect(prompts.route).toContain("{graphs}");

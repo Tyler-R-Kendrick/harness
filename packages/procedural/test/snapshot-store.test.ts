@@ -3,7 +3,7 @@ import { MemoryProceduralStore, ProceduralStoreDocumentSchema, SnapshotProcedura
 import { graphA, ProbeStorage, record } from "./store-fixtures.ts";
 
 describe("SnapshotProceduralStore", () => {
-  it("PS1.28 nothing is loaded until the first operation, and the storage is loaded once", async () => {
+  it("PST1.28 nothing is loaded until the first operation, and the storage is loaded once", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     expect(storage.loads).toBe(0);
@@ -12,7 +12,7 @@ describe("SnapshotProceduralStore", () => {
     expect(storage.loads).toBe(1);
   });
 
-  it("PS1.58 graphs are read from the saved store in issue order, and reading them saves nothing", async () => {
+  it("PST1.58 graphs are read from the saved store in issue order, and reading them saves nothing", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     const r = record([]);
@@ -26,7 +26,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await new SnapshotProceduralStore(storage).graphs()).toEqual([graphA]);
   });
 
-  it("PS1.59 a guidance text already kept under its id (every cached step puts it again) saves nothing; another text under it saves", async () => {
+  it("PST1.59 a guidance text already kept under its id (every cached step puts it again) saves nothing; another text under it saves", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     await expect(store.guidance.put("g", "text")).resolves.toBeUndefined();
@@ -38,7 +38,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await store.guidance.get("g")).toBe("other");
   });
 
-  it("PS1.29 every change saves the whole document; reads and operations that change nothing save nothing", async () => {
+  it("PST1.29 every change saves the whole document; reads and operations that change nothing save nothing", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     const r = record([]);
@@ -74,7 +74,7 @@ describe("SnapshotProceduralStore", () => {
     expect(saved.leases).toEqual([{ graph: graphA, holder: null, epoch: 1 }]);
   });
 
-  it("PS1.30 a failed save rejects its operation, and the next operation sees what was last saved", async () => {
+  it("PST1.30 a failed save rejects its operation, and the next operation sees what was last saved", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     const [r0, r1] = [record([]), record(["Plan"])];
@@ -86,7 +86,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await new SnapshotProceduralStore(storage.inner.reopen()).heads.get(graphA)).toEqual({ revision: r1.id, history: [r0.id] });
   });
 
-  it("PS1.31 a failed load rejects its operation, and the next operation loads again", async () => {
+  it("PST1.31 a failed load rejects its operation, and the next operation loads again", async () => {
     const storage = new ProbeStorage();
     await new SnapshotProceduralStore(storage).guidance.put("g", "kept");
     storage.failLoads = 1;
@@ -95,7 +95,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await store.guidance.get("g")).toBe("kept");
   });
 
-  it("PS1.32 a malformed saved store rejects every operation and is never overwritten", async () => {
+  it("PST1.32 a malformed saved store rejects every operation and is never overwritten", async () => {
     const storage = new ProbeStorage();
     await storage.inner.save({ format: "something/else" });
     const store = new SnapshotProceduralStore(storage);
@@ -105,7 +105,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await storage.inner.load()).toEqual({ format: "something/else" });
   });
 
-  it("PS1.33 a saved revision whose id is not its document's is malformed", async () => {
+  it("PST1.33 a saved revision whose id is not its document's is malformed", async () => {
     const storage = new ProbeStorage();
     const r = record([]);
     const other = record(["Plan"]);
@@ -113,7 +113,7 @@ describe("SnapshotProceduralStore", () => {
     await expect(new SnapshotProceduralStore(storage).revisions.get(graphA, other.id)).rejects.toThrow(/id/);
   });
 
-  it("PS1.34 operations take effect in the order they are issued", async () => {
+  it("PST1.34 operations take effect in the order they are issued", async () => {
     const store = new SnapshotProceduralStore(new ProbeStorage());
     const r = record([]);
     const put = store.revisions.put(r);
@@ -125,7 +125,7 @@ describe("SnapshotProceduralStore", () => {
     expect(await Promise.all(heads)).toEqual([0, 0, 0]);
   });
 
-  it("PS1.35 a failure does not stop the operations queued behind it", async () => {
+  it("PST1.35 a failure does not stop the operations queued behind it", async () => {
     const storage = new ProbeStorage();
     const store = new SnapshotProceduralStore(storage);
     storage.failSaves = 1;

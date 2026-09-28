@@ -21,7 +21,7 @@ const request = (model: MockLanguageModelV4) => ({
 });
 
 describe("guide", () => {
-  it("PG4.7 renders the guidance template with all six slots and sends it as the prompt", async () => {
+  it("PGR4.7 renders the guidance template with all six slots and sends it as the prompt", async () => {
     const model = answering("Retrieve first.");
     await guide(request(model));
     const [call] = model.doGenerateCalls;
@@ -37,19 +37,19 @@ describe("guide", () => {
     );
   });
 
-  it("PG4.8 returns the model's text and the call's token usage", async () => {
+  it("PGR4.8 returns the model's text and the call's token usage", async () => {
     const result = await guide(request(answering("Retrieve first.", { input: 40, output: 7 })));
     expect(result.text).toBe("Retrieve first.");
     expect(result.usage).toMatchObject({ inputTokens: 40, outputTokens: 7 });
   });
 
-  it("PG4.9 passes temperature, topK and maxOutputTokens through to the model", async () => {
+  it("PGR4.9 passes temperature, topK and maxOutputTokens through to the model", async () => {
     const model = answering("ok");
     await guide({ ...request(model), temperature: 0, topK: 1, maxOutputTokens: 2048 });
     expect(model.doGenerateCalls[0]).toMatchObject({ temperature: 0, topK: 1, maxOutputTokens: 2048 });
   });
 
-  it("PG4.10 leaves decoding to the model when no option is given, and asks for no constraint (guidance is free text)", async () => {
+  it("PGR4.10 leaves decoding to the model when no option is given, and asks for no constraint (guidance is free text)", async () => {
     const model = answering("ok");
     await guide(request(model));
     const [call] = model.doGenerateCalls;
@@ -60,7 +60,7 @@ describe("guide", () => {
     expect(call!.responseFormat?.type ?? "text").toBe("text");
   });
 
-  it("PG4.11 passes the abort signal through, so an aborted step cancels its guidance call", async () => {
+  it("PGR4.11 passes the abort signal through, so an aborted step cancels its guidance call", async () => {
     const controller = new AbortController();
     const model = answering("ok");
     await guide({ ...request(model), abortSignal: controller.signal });
@@ -76,7 +76,7 @@ const base: KeyParts = { core, overlay: 3, node: node("Start"), query: "q1", win
 const keyOf = (patch: Partial<KeyParts> = {}) => new GuidanceCache().key({ ...base, ...patch });
 
 describe("GuidanceCache", () => {
-  it("PG4.12 two different queries at Start never share an entry", () => {
+  it("PGR4.12 two different queries at Start never share an entry", () => {
     const cache = new GuidanceCache();
     const first = cache.key({ ...base, query: "Who directed the film?" });
     const second = cache.key({ ...base, query: "Where was the director born?" });
@@ -86,12 +86,12 @@ describe("GuidanceCache", () => {
     expect(cache.get(first)).toBe("guidance for the first query");
   });
 
-  it("PG4.13 the key is the same for the same step inputs", () => {
+  it("PGR4.13 the key is the same for the same step inputs", () => {
     expect(keyOf()).toBe(keyOf());
     expect(new GuidanceCache().key({ window: "w1", query: "q1", model: "provider:model", node: node("Start"), overlay: 3, core })).toBe(keyOf());
   });
 
-  it("PG4.14 the key changes with the core, the overlay version, the node, the query, the window and the model", () => {
+  it("PGR4.14 the key changes with the core, the overlay version, the node, the query, the window and the model", () => {
     const variants = [
       keyOf(),
       keyOf({ core: other }),
@@ -107,7 +107,7 @@ describe("GuidanceCache", () => {
     expect(new Set(variants).size).toBe(variants.length);
   });
 
-  it("PG4.15 the key holds digests of the query and the window, never their text", () => {
+  it("PGR4.15 the key holds digests of the query and the window, never their text", () => {
     const key = keyOf({ query: "a secret query", window: "a private window" });
     expect(key).not.toContain("a secret query");
     expect(key).not.toContain("a private window");
@@ -117,18 +117,18 @@ describe("GuidanceCache", () => {
     expect(key).toContain("provider:model");
   });
 
-  it("PG4.16 a node named like the fallback's absence and no node at all differ", () => {
+  it("PGR4.16 a node named like the fallback's absence and no node at all differ", () => {
     expect(keyOf({ node: undefined })).not.toBe(keyOf({ node: node("null") }));
   });
 
-  it("PG4.17 names a model by its provider and id, and a model id string as itself", () => {
+  it("PGR4.17 names a model by its provider and id, and a model id string as itself", () => {
     const cache = new GuidanceCache();
     const model = new MockLanguageModelV4({ provider: "prov", modelId: "m1" });
     expect(cache.key({ ...base, model })).toBe(cache.key({ ...base, model: "prov:m1" }));
     expect(cache.key({ ...base, model })).not.toBe(cache.key({ ...base, model: new MockLanguageModelV4({ provider: "prov", modelId: "m2" }) }));
   });
 
-  it("PG4.18 counts a get of a stored key as a hit and any other get as a miss", () => {
+  it("PGR4.18 counts a get of a stored key as a hit and any other get as a miss", () => {
     const cache = new GuidanceCache();
     expect([cache.hits(), cache.misses()]).toEqual([0, 0]);
     expect(cache.get("k")).toBeUndefined();
@@ -140,7 +140,7 @@ describe("GuidanceCache", () => {
     expect([cache.hits(), cache.misses()]).toEqual([2, 2]);
   });
 
-  it("PG4.19 a set replaces the text a key held, and an empty guidance text is still a hit", () => {
+  it("PGR4.19 a set replaces the text a key held, and an empty guidance text is still a hit", () => {
     const cache = new GuidanceCache();
     cache.set("k", "old");
     cache.set("k", "");
@@ -148,7 +148,7 @@ describe("GuidanceCache", () => {
     expect(cache.hits()).toBe(1);
   });
 
-  it("PG4.20 each cache is scoped by its instance", () => {
+  it("PGR4.20 each cache is scoped by its instance", () => {
     const one = new GuidanceCache();
     const two = new GuidanceCache();
     one.set("k", "text");

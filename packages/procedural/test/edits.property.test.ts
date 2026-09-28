@@ -53,7 +53,7 @@ const thaw = (d: CandidateDocument): CandidateDocument => JSON.parse(JSON.string
 const key = (from: string, to: string) => `${from}\u0000${to}`;
 
 describe("edits", () => {
-  test.prop([scenario])("PG2.P1 applying edits never mutates the base", ({ g, edits }) => {
+  test.prop([scenario])("PGR2.P1 applying edits never mutates the base", ({ g, edits }) => {
     const copy = thaw(g);
     const before = canonicalJson(copy);
     applyEdits(copy, edits);
@@ -63,7 +63,7 @@ describe("edits", () => {
     expect(canonicalJson(g)).toBe(again);
   });
 
-  test.prop([scenario])("PG2.P2 an accepted candidate parses with parseGraph under its cycle policy, to its own document", ({ g, edits, cycles }) => {
+  test.prop([scenario])("PGR2.P2 an accepted candidate parses with parseGraph under its cycle policy, to its own document", ({ g, edits, cycles }) => {
     const p = prepareCandidate(g, edits, { cycles });
     if (p.graph === undefined) return;
     const r = parseGraph(p.document, cycles);
@@ -71,13 +71,13 @@ describe("edits", () => {
     expect(p.graph).toEqual(p.document);
   });
 
-  test.prop([scenario])("PG2.P3 a rejected candidate has diagnostics, an accepted one has none, and a document that does not parse is rejected", ({ g, edits, cycles }) => {
+  test.prop([scenario])("PGR2.P3 a rejected candidate has diagnostics, an accepted one has none, and a document that does not parse is rejected", ({ g, edits, cycles }) => {
     const p = prepareCandidate(g, edits, { cycles });
     expect(p.graph === undefined).toBe(p.diagnostics.length > 0);
     if (!parseGraph(p.document, cycles).ok) expect(p.graph).toBeUndefined();
   });
 
-  test.prop([scenario])("PG2.P4 delete_edges removes every relation between its endpoints, and deleting a node every edge it touches, unless re-added", ({ g, edits }) => {
+  test.prop([scenario])("PGR2.P4 delete_edges removes every relation between its endpoints, and deleting a node every edge it touches, unless re-added", ({ g, edits }) => {
     const out = applyEdits(g, edits);
     const readded = new Set(edits.add_edges.map((e) => key(e.source, e.target)));
     const gone = new Set<string>(edits.delete_nodes);
@@ -90,7 +90,7 @@ describe("edits", () => {
     expect(survivors).toEqual(g.edges.filter((e) => !gone.has(e.from) && !gone.has(e.to) && !cut.has(key(e.from, e.to))));
   });
 
-  test.prop([scenario])("PG2.P5 under forbidden cycles, repair leaves no cycle, and removes exactly the repaired edges", ({ g, edits }) => {
+  test.prop([scenario])("PGR2.P5 under forbidden cycles, repair leaves no cycle, and removes exactly the repaired edges", ({ g, edits }) => {
     const p = prepareCandidate(g, edits, { cycles: "forbidden" });
     expect(p.diagnostics.map((d) => d.code)).not.toContain("cycle");
     const applied = applyEdits(g, edits);

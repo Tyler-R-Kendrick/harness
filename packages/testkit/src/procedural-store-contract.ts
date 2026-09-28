@@ -54,13 +54,13 @@ const observed = (turn: number): OverlayEvent =>
 const pin = (graph: GraphId, overlay: number, salt = "salt"): Pin => ({ graph, core: revisionId(seedGraph()), overlay, salt, at: 7 });
 
 /**
- * The ProceduralStore contract (plan §4, ADR 0011). Every implementation runs this same
+ * The ProceduralStore contract (plan §4, ADR 0016). Every implementation runs this same
  * suite: revisions and compare-and-set heads, dense append logs per graph, pins, guidance
  * texts, leases with epochs, redaction, and durability across a reopen.
  */
 export function proceduralStoreContract(label: string, make: () => Promise<ProceduralStoreFixture> | ProceduralStoreFixture): void {
   describe(`ProceduralStore contract: ${label}`, () => {
-    it("PS1.1 an empty store has no revisions, heads, log entries, pins, guidance or lease holders", async () => {
+    it("PST1.1 an empty store has no revisions, heads, log entries, pins, guidance or lease holders", async () => {
       const { store } = await make();
       expect(await store.revisions.get(graphA, revisionId(seedGraph()))).toBeUndefined();
       expect(await store.revisions.list(graphA)).toEqual([]);
@@ -73,7 +73,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.acquire(graphA, "me")).toEqual({ epoch: 1 });
     });
 
-    it("PS1.2 a put revision reads back by its graph and id and is listed under its graph only", async () => {
+    it("PST1.2 a put revision reads back by its graph and id and is listed under its graph only", async () => {
       const { store } = await make();
       const a = record(graphA, []);
       const b = record(graphB, ["Plan"]);
@@ -86,7 +86,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.revisions.list(graphB)).toEqual([b]);
     });
 
-    it("PS1.3 revisions list in put order, and a put with a known graph and id replaces the record in place", async () => {
+    it("PST1.3 revisions list in put order, and a put with a known graph and id replaces the record in place", async () => {
       const { store } = await make();
       const first = record(graphA, ["Plan"]);
       const second = record(graphA, ["Act"]);
@@ -98,7 +98,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.revisions.get(graphA, second.id)).toEqual(rejected);
     });
 
-    it("PS1.4 the first head is set only against an absent head, and starts with no history", async () => {
+    it("PST1.4 the first head is set only against an absent head, and starts with no history", async () => {
       const { store } = await make();
       const seed = record(graphA, []);
       expect(await store.heads.set(graphA, seed.id, seed.id)).toBe(false);
@@ -107,7 +107,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.heads.get(graphA)).toEqual({ revision: seed.id, history: [] });
     });
 
-    it("PS1.5 a head moves only from the expected revision, and its history is most recent first", async () => {
+    it("PST1.5 a head moves only from the expected revision, and its history is most recent first", async () => {
       const { store } = await make();
       const [r0, r1, r2] = [record(graphA, []), record(graphA, ["Plan"]), record(graphA, ["Plan", "Act"])];
       expect(await store.heads.set(graphA, undefined, r0.id)).toBe(true);
@@ -122,7 +122,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.heads.get(graphA)).toEqual({ revision: r0.id, history: [r2.id, r1.id, r0.id] });
     });
 
-    it("PS1.6 setting a head to the revision it already names succeeds and adds no history", async () => {
+    it("PST1.6 setting a head to the revision it already names succeeds and adds no history", async () => {
       const { store } = await make();
       const [r0, r1] = [record(graphA, []), record(graphA, ["Plan"])];
       await store.heads.set(graphA, undefined, r0.id);
@@ -131,7 +131,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.heads.get(graphA)).toEqual({ revision: r1.id, history: [r0.id] });
     });
 
-    it("PS1.7 heads are per graph", async () => {
+    it("PST1.7 heads are per graph", async () => {
       const { store } = await make();
       const [a, b] = [record(graphA, []), record(graphB, ["Plan"])];
       await store.heads.set(graphA, undefined, a.id);
@@ -141,7 +141,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.heads.get(graphB)).toEqual({ revision: b.id, history: [] });
     });
 
-    it("PS1.8 of concurrent compare-and-sets from the same head, exactly one wins", async () => {
+    it("PST1.8 of concurrent compare-and-sets from the same head, exactly one wins", async () => {
       const { store } = await make();
       const base = record(graphA, []);
       await store.heads.set(graphA, undefined, base.id);
@@ -152,7 +152,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.heads.get(graphA)).toEqual({ revision: winner?.id, history: [base.id] });
     });
 
-    it("PS1.9 appends return the new head, and offsets are dense from 0", async () => {
+    it("PST1.9 appends return the new head, and offsets are dense from 0", async () => {
       const { store } = await make();
       const log = store.overlay(graphA);
       expect(await log.append([observed(1), observed(2)])).toBe(2);
@@ -165,7 +165,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       ]);
     });
 
-    it("PS1.10 an empty append changes nothing and returns the head", async () => {
+    it("PST1.10 an empty append changes nothing and returns the head", async () => {
       const { store } = await make();
       const log = store.dreams(graphA);
       await log.append([{ n: 1 }]);
@@ -173,7 +173,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await log.head()).toBe(1);
     });
 
-    it("PS1.11 read starts at its offset and returns at most its limit", async () => {
+    it("PST1.11 read starts at its offset and returns at most its limit", async () => {
       const { store } = await make();
       const log = store.dreams(graphA);
       await log.append([0, 1, 2, 3, 4].map((n) => ({ n })));
@@ -185,7 +185,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await log.read(9, 1)).toEqual([]);
     });
 
-    it("PS1.12 a read from a negative or fractional offset, or with such a limit, is a RangeError", async () => {
+    it("PST1.12 a read from a negative or fractional offset, or with such a limit, is a RangeError", async () => {
       const { store } = await make();
       const log = store.overlay(graphA);
       await expect(log.read(-1)).rejects.toThrow(RangeError);
@@ -194,7 +194,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       await expect(log.read(0, 1.5)).rejects.toThrow(RangeError);
     });
 
-    it("PS1.13 each graph has its own overlay log and dream log, and every handle on one log shares it", async () => {
+    it("PST1.13 each graph has its own overlay log and dream log, and every handle on one log shares it", async () => {
       const { store } = await make();
       await store.overlay(graphA).append([observed(1)]);
       await store.dreams(graphA).append([{ step: "start" }, { step: "select" }]);
@@ -207,7 +207,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.dreams(graphA).read(1)).toEqual([{ offset: 1, event: { step: "select" } }]);
     });
 
-    it("PS1.14 concurrent appends neither lose nor duplicate events, and keep each batch contiguous", async () => {
+    it("PST1.14 concurrent appends neither lose nor duplicate events, and keep each batch contiguous", async () => {
       const { store } = await make();
       const log = store.dreams(graphA);
       const heads = await Promise.all([0, 1, 2, 3].map((b) => log.append([`${b}a`, `${b}b`])));
@@ -217,7 +217,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       for (const b of [0, 1, 2, 3]) expect(events.indexOf(`${b}b`)).toBe(events.indexOf(`${b}a`) + 1);
     });
 
-    it("PS1.15 a session's pin reads back, a later pin replaces it, and pins are per session", async () => {
+    it("PST1.15 a session's pin reads back, a later pin replaces it, and pins are per session", async () => {
       const { store } = await make();
       await store.pins.set("s1", pin(graphA, 3));
       await store.pins.set("s2", pin(graphB, 5, "other"));
@@ -227,7 +227,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.pins.get("s2")).toEqual(pin(graphB, 5, "other"));
     });
 
-    it("PS1.16 guidance texts read back by id, and a later put replaces one", async () => {
+    it("PST1.16 guidance texts read back by id, and a later put replaces one", async () => {
       const { store } = await make();
       await store.guidance.put("g1", "Retrieve first.");
       await store.guidance.put("g2", "");
@@ -237,7 +237,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.guidance.get("g1")).toBe("Retrieve twice.");
     });
 
-    it("PS1.17 a held lease cannot be acquired by another holder; its holder re-acquires under a new epoch", async () => {
+    it("PST1.17 a held lease cannot be acquired by another holder; its holder re-acquires under a new epoch", async () => {
       const { store } = await make();
       const first = await store.lease.acquire(graphA, "dreamer-1");
       expect(first).toEqual({ epoch: 1 });
@@ -248,7 +248,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.renew(graphA, "dreamer-1", 2)).toBe(true);
     });
 
-    it("PS1.18 only the holder with the current epoch renews", async () => {
+    it("PST1.18 only the holder with the current epoch renews", async () => {
       const { store } = await make();
       const lease = await store.lease.acquire(graphA, "dreamer-1");
       expect(await store.lease.renew(graphA, "dreamer-1", lease?.epoch ?? -1)).toBe(true);
@@ -259,7 +259,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.renew(graphB, "dreamer-1", 1)).toBe(false);
     });
 
-    it("PS1.19 a release frees the lease only for its holder and current epoch, and a released epoch stays stale", async () => {
+    it("PST1.19 a release frees the lease only for its holder and current epoch, and a released epoch stays stale", async () => {
       const { store } = await make();
       await store.lease.acquire(graphA, "dreamer-1");
       expect(await store.lease.release(graphA, "dreamer-2", 1)).toBe(false);
@@ -273,7 +273,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.release(graphB, "dreamer-2", 2)).toBe(false);
     });
 
-    it("PS1.20 leases are per graph", async () => {
+    it("PST1.20 leases are per graph", async () => {
       const { store } = await make();
       expect(await store.lease.acquire(graphA, "dreamer-1")).toEqual({ epoch: 1 });
       expect(await store.lease.acquire(graphB, "dreamer-2")).toEqual({ epoch: 1 });
@@ -281,13 +281,13 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.lease.renew(graphB, "dreamer-2", 1)).toBe(true);
     });
 
-    it("PS1.21 of concurrent acquires by different holders, exactly one gets the lease", async () => {
+    it("PST1.21 of concurrent acquires by different holders, exactly one gets the lease", async () => {
       const { store } = await make();
       const results = await Promise.all(["h1", "h2", "h3"].map((h) => store.lease.acquire(graphA, h)));
       expect(results.filter((r) => r !== undefined)).toEqual([{ epoch: 1 }]);
     });
 
-    it("PS1.22 redaction tombstones every text of a revision but keeps its ids, structure and numbers, and marks it redacted", async () => {
+    it("PST1.22 redaction tombstones every text of a revision but keeps its ids, structure and numbers, and marks it redacted", async () => {
       const { store } = await make();
       const r = record(
         graphA,
@@ -323,7 +323,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.revisions.list(graphA)).toEqual([redacted]);
     });
 
-    it("PS1.23 redaction tombstones a structural rejection's diagnostic messages but keeps their codes and places", async () => {
+    it("PST1.23 redaction tombstones a structural rejection's diagnostic messages but keeps their codes and places", async () => {
       const { store } = await make();
       const r = record(graphA, [], {
         edits: { add_nodes: [], delete_nodes: ["End"], add_edges: [], delete_edges: [] },
@@ -340,7 +340,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(redacted?.edits).toEqual({ add_nodes: [], delete_nodes: ["End"], add_edges: [], delete_edges: [] });
     });
 
-    it("PS1.24 redacting an unknown revision changes nothing", async () => {
+    it("PST1.24 redacting an unknown revision changes nothing", async () => {
       const { store } = await make();
       const r = record(graphA, []);
       await store.revisions.put(r);
@@ -352,7 +352,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await store.revisions.get(graphB, later.id)).toEqual(later);
     });
 
-    it("PS1.25 a redacted revision stays redacted when the same id is put again", async () => {
+    it("PST1.25 a redacted revision stays redacted when the same id is put again", async () => {
       const { store } = await make();
       const r = record(graphA, ["Plan"], {}, "secret-");
       await store.revisions.put(r);
@@ -363,7 +363,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(JSON.stringify(again)).not.toContain("secret-");
     });
 
-    it("PS1.26 revisions, heads, logs, pins, guidance, leases and redactions survive a reopen", async () => {
+    it("PST1.26 revisions, heads, logs, pins, guidance, leases and redactions survive a reopen", async () => {
       const fixture = await make();
       const { store } = fixture;
       const [r0, r1] = [record(graphA, []), record(graphA, ["Plan"], {}, "secret-")];
@@ -397,7 +397,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await reopened.overlay(graphA).append([observed(3)])).toBe(3);
     });
 
-    it("PS1.49 records are keyed by graph and id: the same document in two graphs keeps a record per graph, and a reopen keeps both", async () => {
+    it("PST1.49 records are keyed by graph and id: the same document in two graphs keeps a record per graph, and a reopen keeps both", async () => {
       const fixture = await make();
       const { store } = fixture;
       const inA = record(graphA, ["Plan"], { origin: "import" });
@@ -418,7 +418,7 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       expect(await reopened.revisions.list(graphB)).toEqual([inB]);
     });
 
-    it("PS1.50 redaction is by content: it tombstones every graph's record of the id, and the id stays redacted in any graph it is put under", async () => {
+    it("PST1.50 redaction is by content: it tombstones every graph's record of the id, and the id stays redacted in any graph it is put under", async () => {
       const { store } = await make();
       const inA = record(graphA, ["Plan"], {}, "secret-");
       const inB = record(graphB, ["Plan"], { origin: "import" }, "secret-");

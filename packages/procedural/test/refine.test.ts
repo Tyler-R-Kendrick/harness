@@ -27,7 +27,7 @@ const edits = {
 };
 
 describe("refine", () => {
-  it("PG4.21 renders the refiner template with the task, mode, tools, attempts, graph and rejections", async () => {
+  it("PGR4.21 renders the refiner template with the task, mode, tools, attempts, graph and rejections", async () => {
     const model = answering(JSON.stringify(edits));
     await refine(request(model));
     const text = promptText(model.doGenerateCalls[0]!.prompt);
@@ -39,37 +39,37 @@ describe("refine", () => {
     expect(text).toContain("Previously rejected candidates: Candidate 1: score 0.2\n");
   });
 
-  it("PG4.22 sends the edit-set JSON Schema as its constraint, under provider options harness", async () => {
+  it("PGR4.22 sends the edit-set JSON Schema as its constraint, under provider options harness", async () => {
     const model = answering(JSON.stringify(edits));
     await refine(request(model));
     expect(model.doGenerateCalls[0]!.providerOptions?.[HARNESS]?.["constraint"]).toEqual({ type: "json-schema", schema: editSetJsonSchema() });
   });
 
-  it("PG4.23 parses a well-formed answer into an edit set, keeping the raw text", async () => {
+  it("PGR4.23 parses a well-formed answer into an edit set, keeping the raw text", async () => {
     const raw = JSON.stringify(edits);
     expect(await refine(request(answering(raw)))).toEqual({ edits, raw });
   });
 
-  it("PG4.24 fills an edit set's missing lists with empty ones", async () => {
+  it("PGR4.24 fills an edit set's missing lists with empty ones", async () => {
     const raw = '{"delete_nodes":["Scan_Index"]}';
     expect(await refine(request(answering(raw)))).toEqual({ edits: { add_nodes: [], delete_nodes: ["Scan_Index"], add_edges: [], delete_edges: [] }, raw });
   });
 
-  it("PG4.25 reads the JSON block out of a fenced answer or one with prose around it", async () => {
+  it("PGR4.25 reads the JSON block out of a fenced answer or one with prose around it", async () => {
     const fenced = `\`\`\`json\n${JSON.stringify(edits)}\n\`\`\``;
     expect(await refine(request(answering(fenced)))).toEqual({ edits, raw: fenced });
     const prose = `Here are the edits: ${JSON.stringify(edits)} Done.`;
     expect(await refine(request(answering(prose)))).toEqual({ edits, raw: prose });
   });
 
-  it("PG4.26 returns an error with the raw text, not an exception, when the answer is not JSON", async () => {
+  it("PGR4.26 returns an error with the raw text, not an exception, when the answer is not JSON", async () => {
     for (const raw of ["", "no edits today", "{not json}", "} {"]) {
       const result = await refine(request(answering(raw)));
       expect(result).toEqual({ error: expect.stringMatching(/^the refiner's answer is not JSON/), raw });
     }
   });
 
-  it("PG4.27 returns an error naming where, with the raw text, when the JSON is not an edit set", async () => {
+  it("PGR4.27 returns an error naming where, with the raw text, when the JSON is not an edit set", async () => {
     const bad = JSON.stringify({ ...edits, add_nodes: [{ id: "9bad", type: "ACTION", description: "x" }] });
     expect(await refine(request(answering(bad)))).toEqual({ error: expect.stringMatching(/^the refiner's answer is not an edit set[\s\S]*add_nodes/), raw: bad });
     const bound = JSON.stringify({ add_nodes: [{ id: "Run", type: "ACTION", description: "x", binding: { kind: "tool", name: "rm" } }] });
@@ -77,7 +77,7 @@ describe("refine", () => {
     expect(await refine(request(answering("[1, 2]")))).toMatchObject({ error: expect.stringMatching(/^the refiner's answer is not an edit set/) });
   });
 
-  it("PG4.28 fills dream's consolidation blocks when they are given", async () => {
+  it("PGR4.28 fills dream's consolidation blocks when they are given", async () => {
     const model = answering(JSON.stringify(edits));
     await refine({ ...request(model), template: settings.prompts.dream, consolidation: { overlayEntries: "E1 active", cautionedEdges: "Start→End poor", rejectionReasons: "cycle" } });
     const text = promptText(model.doGenerateCalls[0]!.prompt);
@@ -87,13 +87,13 @@ describe("refine", () => {
     expect(text).not.toMatch(/\{[a-z_]+\}/);
   });
 
-  it("PG4.29 passes temperature, topK and maxOutputTokens through to the model", async () => {
+  it("PGR4.29 passes temperature, topK and maxOutputTokens through to the model", async () => {
     const model = answering(JSON.stringify(edits));
     await refine({ ...request(model), temperature: 0, topK: 1, maxOutputTokens: 8192 });
     expect(model.doGenerateCalls[0]).toMatchObject({ temperature: 0, topK: 1, maxOutputTokens: 8192 });
   });
 
-  it("PG4.30 leaves decoding to the model when no option is given, and passes the abort signal through", async () => {
+  it("PGR4.30 leaves decoding to the model when no option is given, and passes the abort signal through", async () => {
     const controller = new AbortController();
     const model = answering(JSON.stringify(edits));
     await refine({ ...request(model), abortSignal: controller.signal });

@@ -49,7 +49,7 @@ function distances(g: EffectiveGraph, from: string): Map<string, number> {
 const pick = (g: EffectiveGraph, i: number) => g.nodes[i % g.nodes.length]!;
 
 describe("neighborhood", () => {
-  test.prop([graph, fc.nat(), fc.nat({ max: 5 })])("PG3.P1 hop k holds exactly the edges whose source is k − 1 steps away, each once", (g, i, hops) => {
+  test.prop([graph, fc.nat(), fc.nat({ max: 5 })])("PGR3.P1 hop k holds exactly the edges whose source is k − 1 steps away, each once", (g, i, hops) => {
     const active = pick(g, i).id;
     const n = neighborhood(g, active, hops);
     const d = distances(g, active);
@@ -84,7 +84,7 @@ describe("neighborhood", () => {
     return d;
   }
 
-  test.prop([mixed, fc.nat(), fc.nat({ max: 5 })])("PG3.P5 in action hops, hop k holds exactly the edges whose source is k − 1 action nodes away, each once; with every node an action it is the edge count", (g, i, hops) => {
+  test.prop([mixed, fc.nat(), fc.nat({ max: 5 })])("PGR3.P5 in action hops, hop k holds exactly the edges whose source is k − 1 action nodes away, each once; with every node an action it is the edge count", (g, i, hops) => {
     const active = pick(g, i).id;
     const n = neighborhood(g, active, hops, "action");
     const d = actionDistances(g, active);
@@ -103,7 +103,7 @@ describe("neighborhood", () => {
 describe("match", () => {
   const names = (n: EffectiveNode) => [n.id, n.binding?.name];
 
-  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String))])("PG3.P2 exact finds a node exactly when one is named so, and case-insensitive agrees with every exact match", (g, action) => {
+  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String))])("PGR3.P2 exact finds a node exactly when one is named so, and case-insensitive agrees with every exact match", (g, action) => {
     const exact = match(action, g, "exact");
     const loose = match(action, g, "case-insensitive");
     expect(exact !== undefined).toBe(g.nodes.some((n) => names(n).includes(action)));
@@ -114,7 +114,7 @@ describe("match", () => {
     expect(loose !== undefined).toBe(g.nodes.some((n) => names(n).some((x) => x?.toLowerCase() === action.toLowerCase())));
   });
 
-  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PG3.P6 the state tracker takes a declared node the graph has only from a tool the core trusts to declare; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
+  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PGR3.P6 the state tracker takes a declared node the graph has only from a tool the core trusts to declare; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
     const tracked = match({ name: action, ...(declared === undefined ? {} : { declared }) }, g, "state-tracker");
     const trusted = g.nodes.some((n) => n.binding?.kind === "tool" && n.binding.name === action && n.binding.declares === true);
     if (trusted && declared !== undefined && g.nodes.some((n) => n.id === declared)) {
@@ -130,7 +130,7 @@ describe("match", () => {
 });
 
 describe("serialization", () => {
-  test.prop([graph, fc.nat(), fc.nat({ max: 4 })])("PG3.P3 a core view prints one transition per neighborhood edge, and never an overlay label", (g, i, hops) => {
+  test.prop([graph, fc.nat(), fc.nat({ max: 4 })])("PGR3.P3 a core view prints one transition per neighborhood edge, and never an overlay label", (g, i, hops) => {
     const n = neighborhood(g, pick(g, i).id, hops);
     const text = serializeNeighborhood(g, n);
     expect(text).not.toMatch(/Learned|Caution/);
@@ -144,7 +144,7 @@ describe("serialization", () => {
     fc.record({ role: fc.constant("assistant"), content: line, call: fc.record({ name: nodeName, arguments: fc.dictionary(nodeName, fc.jsonValue(), { maxKeys: 2 }) }) }),
   );
 
-  test.prop([fc.array(step, { maxLength: 12 }), fc.nat({ max: 6 })])("PG3.P4 a wider window only adds earlier text: each window's text ends the next one's", (steps, w) => {
+  test.prop([fc.array(step, { maxLength: 12 }), fc.nat({ max: 6 })])("PGR3.P4 a wider window only adds earlier text: each window's text ends the next one's", (steps, w) => {
     const narrow = serializeWindow(steps, w);
     const wide = serializeWindow(steps, w + 1);
     expect(wide.endsWith(narrow)).toBe(true);

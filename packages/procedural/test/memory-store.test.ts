@@ -3,7 +3,7 @@ import { GraphIdSchema, MemoryProceduralStore, redactRecord, RevisionRecordSchem
 import { graphA, record } from "./store-fixtures.ts";
 
 describe("MemoryProceduralStore", () => {
-  it("PS1.36 an empty store's document is empty, with the store format", () => {
+  it("PST1.36 an empty store's document is empty, with the store format", () => {
     expect(new MemoryProceduralStore().document()).toEqual({
       format: STORE_FORMAT,
       revisions: [],
@@ -16,7 +16,7 @@ describe("MemoryProceduralStore", () => {
     });
   });
 
-  it("PS1.37 a document is a copy: later appends change neither it nor a store rebuilt from it", async () => {
+  it("PST1.37 a document is a copy: later appends change neither it nor a store rebuilt from it", async () => {
     const store = new MemoryProceduralStore();
     await store.dreams(graphA).append([1]);
     const document = store.document();
@@ -28,7 +28,7 @@ describe("MemoryProceduralStore", () => {
     expect((await rebuilt.dreams(graphA).read(0)).map((e) => e.event)).toEqual([1, 3]);
   });
 
-  it("PS1.57 graphs names every graph with a head, in the order each got its first, and a rebuilt store keeps it", async () => {
+  it("PST1.57 graphs names every graph with a head, in the order each got its first, and a rebuilt store keeps it", async () => {
     const store = new MemoryProceduralStore();
     expect(await store.graphs()).toEqual([]);
     const r = record([]);
@@ -42,13 +42,13 @@ describe("MemoryProceduralStore", () => {
     expect(await new MemoryProceduralStore(store.document()).graphs()).toEqual([other, graphA]);
   });
 
-  it("PS1.47 a bad read names the argument and its value", async () => {
+  it("PST1.47 a bad read names the argument and its value", async () => {
     const log = new MemoryProceduralStore().overlay(graphA);
     await expect(log.read(-1)).rejects.toThrow("from must be a whole number of at least 0, not -1");
     await expect(log.read(0, 0.5)).rejects.toThrow("limit must be a whole number of at least 0, not 0.5");
   });
 
-  it("PS1.38 reading a graph's log, or appending nothing to it, does not create it", async () => {
+  it("PST1.38 reading a graph's log, or appending nothing to it, does not create it", async () => {
     const store = new MemoryProceduralStore();
     await store.overlay(graphA).read(0);
     await store.overlay(graphA).append([]);
@@ -59,7 +59,7 @@ describe("MemoryProceduralStore", () => {
 });
 
 describe("redactRecord", () => {
-  it("PS1.55 a store rebuilt from a document keeps redaction sticky for the ids it redacted, and only those", async () => {
+  it("PST1.55 a store rebuilt from a document keeps redaction sticky for the ids it redacted, and only those", async () => {
     const [kept, secret] = [record([]), record(["Plan"], {}, "secret")];
     const first = new MemoryProceduralStore();
     await first.revisions.put(kept);
@@ -74,13 +74,13 @@ describe("redactRecord", () => {
     expect(await rebuilt.revisions.get(graphB, kept.id)).toEqual({ ...kept, graph: graphB });
   });
 
-  it("PS1.48 the tombstone and the store format are fixed strings", () => {
+  it("PST1.48 the tombstone and the store format are fixed strings", () => {
     expect(TOMBSTONE).toBe("[redacted]");
     expect(STORE_FORMAT).toBe("harness.procedural-store/v2");
     expect(STORE_FORMAT_V1).toBe("harness.procedural-store/v1");
   });
 
-  it("PS1.39 texts become the tombstone, an unconditional edge stays unconditional, and absent edits stay absent", () => {
+  it("PST1.39 texts become the tombstone, an unconditional edge stays unconditional, and absent edits stay absent", () => {
     const r = record(["Plan"], {}, "secret");
     const redacted = redactRecord(r);
     expect(redacted.document.nodes.map((n) => n.description)).toEqual([TOMBSTONE, TOMBSTONE, TOMBSTONE]);
@@ -95,7 +95,7 @@ describe("redactRecord", () => {
     expect(r.redacted).toBeUndefined();
   });
 
-  it("PS1.40 edit texts are tombstoned, and an unconditional added edge stays unconditional", () => {
+  it("PST1.40 edit texts are tombstoned, and an unconditional added edge stays unconditional", () => {
     const r = record([], {
       edits: {
         add_nodes: [{ id: "Plan", type: "ACTION", description: "secret" }],
@@ -122,7 +122,7 @@ describe("redactRecord", () => {
     expect(RevisionRecordSchema.parse(redacted)).toEqual(redacted);
   });
 
-  it("PS1.41 evidence keeps its keys, numbers, booleans, nulls and shape; its strings become the tombstone", () => {
+  it("PST1.41 evidence keeps its keys, numbers, booleans, nulls and shape; its strings become the tombstone", () => {
     const r = record([], { evidence: { reason: "secret", scores: [0.5, "secret"], deep: { ok: true, none: null, text: "secret" } } });
     expect(redactRecord(r).evidence).toEqual({ reason: TOMBSTONE, scores: [0.5, TOMBSTONE], deep: { ok: true, none: null, text: TOMBSTONE } });
   });

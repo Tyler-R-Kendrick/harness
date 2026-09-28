@@ -53,12 +53,12 @@ const accepts = (schema: { safeParse(v: unknown): { success: boolean } }, values
 const hex = (c: string) => c.repeat(64);
 
 describe("refined ids", () => {
-  it("PG1.4 a GraphId is opaque: lowercase letters, digits and . _ / -, starting with a letter or digit, at most 200", () => {
+  it("PGR1.4 a GraphId is opaque: lowercase letters, digits and . _ / -, starting with a letter or digit, at most 200", () => {
     expect(accepts(GraphIdSchema, ["default", "team/web", "repo/harness", "a.b_c-d/9", "0", "a".repeat(200)])).toEqual([true, true, true, true, true, true]);
     expect(accepts(GraphIdSchema, ["", "Team", "/root", ".hidden", "-x", "a b", "a".repeat(201), 5])).toEqual([false, false, false, false, false, false, false, false]);
   });
 
-  it("PG1.45 a refused id says what it should have been", () => {
+  it("PGR1.45 a refused id says what it should have been", () => {
     const why = (schema: { safeParse(v: unknown): { error?: { issues: { message: string }[] } } }, value: unknown) => schema.safeParse(value).error?.issues[0]?.message;
     expect(why(GraphIdSchema, "Team")).toBe("a graph id");
     expect(why(NodeNameSchema, "1st")).toBe("a node name");
@@ -70,7 +70,7 @@ describe("refined ids", () => {
     expect(!r.ok && r.diagnostics).toEqual([{ code: "malformed", message: "a node name", at: "nodes[0].id" }]);
   });
 
-  it("PG1.5 node names start with a letter (at most 120); node types and relations are upper snake case", () => {
+  it("PGR1.5 node names start with a letter (at most 120); node types and relations are upper snake case", () => {
     expect(accepts(NodeNameSchema, ["Start", "First_Hop_Retrieve", "first_hop_retrieve", "a.b-c9", "x".repeat(120)])).toEqual([true, true, true, true, true]);
     expect(accepts(NodeNameSchema, ["", "1st", "_x", "a b", "a/b", "x".repeat(121)])).toEqual([false, false, false, false, false, false]);
     for (const schema of [NodeTypeNameSchema, RelationNameSchema]) {
@@ -79,7 +79,7 @@ describe("refined ids", () => {
     }
   });
 
-  it("PG1.6 revision and entry ids are lowercase hex sha256; trajectory and dream ids are non-empty, at most 200", () => {
+  it("PGR1.6 revision and entry ids are lowercase hex sha256; trajectory and dream ids are non-empty, at most 200", () => {
     for (const schema of [RevisionIdSchema, EntryIdSchema]) {
       expect(accepts(schema, [hex("a"), hex("0"), sha256Hex("x")])).toEqual([true, true, true]);
       expect(accepts(schema, [hex("A"), hex("g"), "a".repeat(63), "a".repeat(65), ` ${"a".repeat(63)}`])).toEqual([false, false, false, false, false]);
@@ -90,7 +90,7 @@ describe("refined ids", () => {
     }
   });
 
-  it("PG1.7 a Score is cognitive's Probability, and the vocabularies and terminals are the paper's", () => {
+  it("PGR1.7 a Score is cognitive's Probability, and the vocabularies and terminals are the paper's", () => {
     expect(ScoreSchema).toBe(ProbabilitySchema);
     expect(DEFAULT_NODE_TYPES).toEqual(["ACTION", "REASONING", "STATUS"]);
     expect(DEFAULT_RELATIONS).toEqual(["LEADS_TO", "TRIGGERS", "PROVIDES_INPUT_FOR", "CONVERGES_TO"]);
@@ -99,7 +99,7 @@ describe("refined ids", () => {
 });
 
 describe("bindings", () => {
-  it("PG1.8 a binding names a tool, or a workflow or skill by the sha256 of its code or content", () => {
+  it("PGR1.8 a binding names a tool, or a workflow or skill by the sha256 of its code or content", () => {
     expect(accepts(BindingSchema, [{ kind: "tool", name: "search" }, { kind: "workflow", name: "w", code: hex("b") }, { kind: "skill", name: "s", content: hex("c") }])).toEqual([true, true, true]);
     expect(
       accepts(BindingSchema, [
@@ -113,7 +113,7 @@ describe("bindings", () => {
     ).toEqual([false, false, false, false, false, false]);
   });
 
-  it("PG1.53 a tool binding may carry an argument predicate: an object JSON Schema over the call's arguments that compiles, kept in the document and its id", () => {
+  it("PGR1.53 a tool binding may carry an argument predicate: an object JSON Schema over the call's arguments that compiles, kept in the document and its id", () => {
     const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
     expect(accepts(BindingSchema, [{ kind: "tool", name: "Bash", arguments: tests }, { kind: "tool", name: "Bash", arguments: { type: "object" } }])).toEqual([true, true]);
     expect(
@@ -137,7 +137,7 @@ describe("bindings", () => {
     expect(broken.error?.issues.map((i) => [i.code, i.message])).toEqual([["custom", "an argument predicate must compile: Reference not found: #/nowhere"]]);
   });
 
-  it("PG1.54 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {
+  it("PGR1.54 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {
     const tests = ArgumentPredicateSchema.parse({ type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] });
     expect([{ command: "npm test -w x" }, { command: "npm test", cwd: "/" }, { command: "ls" }, {}, "npm test", null].map((a) => acceptsArguments(tests, a))).toEqual([true, true, false, false, false, false]);
     expect(acceptsArguments(tests, { command: "npm test" })).toBe(true);
@@ -146,7 +146,7 @@ describe("bindings", () => {
 });
 
 describe("parsing graphs", () => {
-  it("PG1.9 a valid document parses to a ProceduralGraph with the same content, and cycles are allowed by default", () => {
+  it("PGR1.9 a valid document parses to a ProceduralGraph with the same content, and cycles are allowed by default", () => {
     const g = ok(hotpot());
     expect(g).toEqual(hotpot());
     // A graph is shared by every session pinned to it, so parsing freezes it.
@@ -157,7 +157,7 @@ describe("parsing graphs", () => {
     expect(ok({ ...hotpot(), $schema: "../data/graph.schema.json" }).$schema).toBe("../data/graph.schema.json");
   });
 
-  it("PG1.10 a document that is not well formed is malformed, with where", () => {
+  it("PGR1.10 a document that is not well formed is malformed, with where", () => {
     const malformed = (input: unknown) => {
       const r = parseGraph(input);
       return r.ok ? [] : r.diagnostics.map((d) => [d.code, d.at]);
@@ -175,13 +175,13 @@ describe("parsing graphs", () => {
     expect(!r.ok && r.diagnostics[0]!.message.length).toBeGreaterThan(0);
   });
 
-  it("PG1.11 node ids are unique", () => {
+  it("PGR1.11 node ids are unique", () => {
     expect(diagnostics((d) => d.nodes.push({ id: "Scan_Index", type: "REASONING", description: "again" }))).toEqual([
       { code: "duplicate-node", message: "node Scan_Index is defined more than once", at: "nodes[5].id" },
     ]);
   });
 
-  it("PG1.12 node types and relations are in the document's vocabularies", () => {
+  it("PGR1.12 node types and relations are in the document's vocabularies", () => {
     expect(diagnostics((d) => (d.nodes[3]!.type = "PLAN"))).toEqual([{ code: "unknown-type", message: "node Bridge_Extract has type PLAN, which is not in nodeTypes", at: "nodes[3].type" }]);
     expect(diagnostics((d) => (d.edges[2]!.relation = "CALLS"))).toEqual([{ code: "unknown-relation", message: "edge Scan_Index → Bridge_Extract has relation CALLS, which is not in relations", at: "edges[2].relation" }]);
     // The vocabulary is the document's own.
@@ -189,7 +189,7 @@ describe("parsing graphs", () => {
     expect(diagnostics((d) => (d.nodeTypes = ["ACTION", "STATUS"])).map((x) => x.code)).toEqual(["unknown-type"]);
   });
 
-  it("PG1.13 every edge names nodes that exist", () => {
+  it("PGR1.13 every edge names nodes that exist", () => {
     expect(diagnostics((d) => d.edges.push(edge("Ghost", "End")))).toEqual([{ code: "missing-endpoint", message: "edge 4 starts at Ghost, which is not a node", at: "edges[4].from" }]);
     expect(diagnostics((d) => d.edges.push(edge("Start", "Nowhere")))).toEqual([{ code: "missing-endpoint", message: "edge 4 ends at Nowhere, which is not a node", at: "edges[4].to" }]);
     // A dangling edge is only that: it does not count as a way out of its source.
@@ -201,7 +201,7 @@ describe("parsing graphs", () => {
     ).toEqual(["missing-endpoint"]);
   });
 
-  it("PG1.14 there is a Start node", () => {
+  it("PGR1.14 there is a Start node", () => {
     const d = diagnostics((doc) => {
       doc.nodes[0]!.id = "Begin";
       doc.edges[0]!.from = "Begin";
@@ -209,7 +209,7 @@ describe("parsing graphs", () => {
     expect(d).toEqual([{ code: "missing-start", message: "there is no Start node", at: "nodes" }]);
   });
 
-  it("PG1.15 every node reaches some node with no outgoing edges, not necessarily End", () => {
+  it("PGR1.15 every node reaches some node with no outgoing edges, not necessarily End", () => {
     // Start → First_Hop_Retrieve ⇄ Scan_Index loops forever: neither reaches a terminal (and so neither does Start).
     const stuck = diagnostics((d) => (d.edges[2] = edge("Scan_Index", "First_Hop_Retrieve")));
     expect(stuck).toEqual([
@@ -229,7 +229,7 @@ describe("parsing graphs", () => {
     expect(diagnostics((d) => d.edges.push(edge("Scan_Index", "First_Hop_Retrieve")))).toEqual([]);
   });
 
-  it("PG1.16 under the forbidden cycle policy, every cycle is reported once, self-loops included", () => {
+  it("PGR1.16 under the forbidden cycle policy, every cycle is reported once, self-loops included", () => {
     expect(diagnostics((d) => d.edges.push(edge("Scan_Index", "First_Hop_Retrieve")), "forbidden")).toEqual([
       { code: "cycle", message: "cycle through First_Hop_Retrieve, Scan_Index", at: "nodes[1]" },
     ]);
@@ -247,7 +247,7 @@ describe("parsing graphs", () => {
     expect(ok(hotpot(), "forbidden")).toEqual(hotpot());
   });
 
-  it("PG1.17 checkGraph reports every problem at once, grouped in a fixed order of checks", () => {
+  it("PGR1.17 checkGraph reports every problem at once, grouped in a fixed order of checks", () => {
     const d = hotpot();
     d.nodes.push({ id: "End", type: "STATUS", description: "again" });
     d.nodes[1]!.type = "TOOL";
@@ -261,7 +261,7 @@ describe("parsing graphs", () => {
     expect(checkGraph(shape, "allowed").map((x) => x.code)).toEqual(all.slice(0, -1));
   });
 
-  it("PG1.18 ProceduralGraphSchema refuses what checkGraph refuses (under allowed cycles), naming the code and where", () => {
+  it("PGR1.18 ProceduralGraphSchema refuses what checkGraph refuses (under allowed cycles), naming the code and where", () => {
     const d = hotpot();
     d.edges.push(edge("Start", "Nowhere"));
     const r = ProceduralGraphSchema.safeParse(d);
@@ -276,7 +276,7 @@ describe("parsing graphs", () => {
     expect(ProceduralGraphSchema.safeParse(noStart).error?.issues[0]?.path).toEqual(["nodes"]);
   });
 
-  it("PG1.19 the JSON Schema for graph files is generated from the parser (data/graph.schema.json)", async () => {
+  it("PGR1.19 the JSON Schema for graph files is generated from the parser (data/graph.schema.json)", async () => {
     await expect(`${JSON.stringify(graphJsonSchema(), null, 2)}\n`).toMatchFileSnapshot("../data/graph.schema.json");
     const schema = JSON.parse(readFileSync(new URL("../data/graph.schema.json", import.meta.url), "utf8")) as { required: string[]; additionalProperties: boolean };
     expect(schema.required).toEqual(["format", "nodeTypes", "relations", "nodes", "edges"]);
@@ -285,7 +285,7 @@ describe("parsing graphs", () => {
 });
 
 describe("the seed, revision ids and lookups", () => {
-  it("PG1.20 the seed is the paper's scratch skeleton Start → End", () => {
+  it("PGR1.20 the seed is the paper's scratch skeleton Start → End", () => {
     const g = seedGraph();
     expect(g).toEqual({
       format: "harness.procedural-graph/v1",
@@ -301,7 +301,7 @@ describe("the seed, revision ids and lookups", () => {
     expect(g.nodes.every((n) => n.description.length > 0)).toBe(true);
   });
 
-  it("PG1.21 a revision id is the sha256 of the canonical JSON of the sorted document, without $schema", () => {
+  it("PGR1.21 a revision id is the sha256 of the canonical JSON of the sorted document, without $schema", () => {
     const d = CandidateDocumentSchema.parse({ ...hotpot(), $schema: "x" });
     const sorted = {
       format: d.format,
@@ -316,7 +316,7 @@ describe("the seed, revision ids and lookups", () => {
     expect(revisionId(seedGraph())).not.toBe(revisionId(d));
   });
 
-  it("PG1.22 edges sort by from, then relation, then to, then content; nodes by id, then content", () => {
+  it("PGR1.22 edges sort by from, then relation, then to, then content; nodes by id, then content", () => {
     const base = CandidateDocumentSchema.parse(hotpot());
     const withEdges = (edges: DocInput["edges"]) => revisionId(CandidateDocumentSchema.parse({ ...hotpot(), edges }));
     const a = edge("Start", "End", "LEADS_TO");
@@ -339,7 +339,7 @@ describe("the seed, revision ids and lookups", () => {
     expect(revisionId(prefixed)).toBe(sha256Hex(canonicalJson(expected)));
   });
 
-  it("PG1.23 outgoing and incoming return edges in document order, and nodeById finds a node", () => {
+  it("PGR1.23 outgoing and incoming return edges in document order, and nodeById finds a node", () => {
     const d = hotpot();
     d.edges.push(edge("Start", "Scan_Index", "TRIGGERS"), edge("First_Hop_Retrieve", "Scan_Index", "PROVIDES_INPUT_FOR"));
     const g = ok(d);
@@ -355,7 +355,7 @@ describe("the seed, revision ids and lookups", () => {
     expect(nodeById(g, "Nope")).toBeUndefined();
   });
 
-  it("PG1.24 a CandidateDocument has no cross-field checks, so a failing candidate can be stored with its diagnostics", () => {
+  it("PGR1.24 a CandidateDocument has no cross-field checks, so a failing candidate can be stored with its diagnostics", () => {
     const d = hotpot();
     d.edges.push(edge("Start", "Nowhere"));
     d.nodes[0]!.type = "WHATEVER";
@@ -372,7 +372,7 @@ describe("edit sets and revision records", () => {
     delete_edges: [{ source: "Start", target: "End" }],
   };
 
-  it("PG1.25 an edit set is the paper's refiner output exactly; missing lists are empty and nothing else is allowed", () => {
+  it("PGR1.25 an edit set is the paper's refiner output exactly; missing lists are empty and nothing else is allowed", () => {
     expect(EditSetSchema.parse(paperEdits)).toEqual(paperEdits);
     expect(EditSetSchema.parse({})).toEqual({ add_nodes: [], delete_nodes: [], add_edges: [], delete_edges: [] });
     const refused = [
@@ -386,7 +386,7 @@ describe("edit sets and revision records", () => {
     expect(refused.map((e) => EditSetSchema.safeParse(e).success)).toEqual(refused.map(() => false));
   });
 
-  it("PG1.26 the refiner's constraint requires all four lists, allows nothing else and lets a condition be null", () => {
+  it("PGR1.26 the refiner's constraint requires all four lists, allows nothing else and lets a condition be null", () => {
     const schema = editSetJsonSchema() as {
       required: string[];
       additionalProperties: boolean;
@@ -404,7 +404,7 @@ describe("edit sets and revision records", () => {
     return { id: revisionId(document), graph: "repo/harness", parents: [revisionId(seedGraph())], document, edits: paperEdits, origin: "dream", dream: "d1", evidence: { score: 0.5 }, decision: { kind: "head" }, at: 1_700_000_000_000 };
   };
 
-  it("PG1.27 a revision record names its graph, parents, document, edits, origin, evidence, decision and time", () => {
+  it("PGR1.27 a revision record names its graph, parents, document, edits, origin, evidence, decision and time", () => {
     const r = RevisionRecordSchema.parse(record());
     expect(r.id).toBe(revisionId(r.document));
     expect(r.edits?.add_nodes).toHaveLength(1);
@@ -420,7 +420,7 @@ describe("edit sets and revision records", () => {
     expect(RevisionRecordSchema.safeParse({ ...seed, origin: "seed", edits: null, parents: [] }).success).toBe(true);
   });
 
-  it("PG1.28 a revision record's id is its document's revision id, unless the record was redacted", () => {
+  it("PGR1.28 a revision record's id is its document's revision id, unless the record was redacted", () => {
     const refused = [
       { ...record(), id: revisionId(seedGraph()) },
       { ...record(), origin: "live" },

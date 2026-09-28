@@ -8,7 +8,7 @@ import { cautionOnCore, core, entry, idOf, noteOnCore, observed, proposed, saltW
 const observedOf = (events: readonly OverlayEvent[]) => events.filter((e): e is Extract<OverlayEvent, { kind: "observed" }> => e.kind === "observed");
 
 describe("the live learner on turn.ended", () => {
-  it("PL1.30 a daemon turn.ended appends one observed event: the matched path, unmatched actions, and no score without a scorer", async () => {
+  it("PLV1.30 a daemon turn.ended appends one observed event: the matched path, unmatched actions, and no score without a scorer", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve", "grep", "Scan_Index"]));
@@ -18,7 +18,7 @@ describe("the live learner on turn.ended", () => {
     expect(OverlayEventSchema.parse(t.store.events()[0])).toEqual(t.store.events()[0]);
   });
 
-  it("PL1.31 the scorer scores the projected trajectory; null or a failing scorer leaves the turn unscored", async () => {
+  it("PLV1.31 the scorer scores the projected trajectory; null or a failing scorer leaves the turn unscored", async () => {
     const seen: unknown[] = [];
     const t = setup({ score: async (tr) => (seen.push(tr), { score: 0.8, source: "judge-probability" }) });
     t.pin("s1");
@@ -38,7 +38,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(failing.store.events())[0]!.score).toBeNull();
   });
 
-  it("PL1.32 other events, other sources, events without a session or turn, and presets without an overlay are ignored", async () => {
+  it("PLV1.32 other events, other sources, events without a session or turn, and presets without an overlay are ignored", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -61,7 +61,7 @@ describe("the live learner on turn.ended", () => {
     expect([t.store.appends, off.store.appends]).toEqual([0, 0]);
   });
 
-  it("PL1.33 a redelivered turn.ended is one observation, also for a new learner on the same store", async () => {
+  it("PLV1.33 a redelivered turn.ended is one observation, also for a new learner on the same store", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -72,7 +72,7 @@ describe("the live learner on turn.ended", () => {
     expect(t.store.events()).toHaveLength(1);
   });
 
-  it("PL1.34 concurrent first deliveries are serialized into one observation", async () => {
+  it("PLV1.34 concurrent first deliveries are serialized into one observation", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -81,7 +81,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(t.store.events())).toHaveLength(2);
   });
 
-  it("PL1.35 exposure is drawn from the pin's salt over the entries on probation at the version the turn read", async () => {
+  it("PLV1.35 exposure is drawn from the pin's salt over the entries on probation at the version the turn read", async () => {
     const note = idOf(noteOnCore);
     const later = idOf(cautionOnCore);
     const salt = [...Array(10_000).keys()].map((i) => `salt-${i}`).find((s) => exposed(s, note, 0.2) && exposed(s, later, 0.2))!;
@@ -100,7 +100,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(hidden.store.events())[0]!.exposure).toEqual([]);
   });
 
-  it("PL1.36 active entries are shown to everyone, so they are no exposure; no pin or no overlay version means no exposure", async () => {
+  it("PLV1.36 active entries are shown to everyone, so they are no exposure; no pin or no overlay version means no exposure", async () => {
     const note = idOf(noteOnCore);
     const salt = saltWhere(note, 0.2, true);
     const active = setup();
@@ -122,7 +122,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(coreOnly.store.events())[0]).toMatchObject({ exposure: [], path: ["Start", "First_Hop_Retrieve"] });
   });
 
-  it("PL1.37 actions are located in the graph the session saw: an overlay node it was shown matches, one it was not shown does not", async () => {
+  it("PLV1.37 actions are located in the graph the session saw: an overlay node it was shown matches, one it was not shown does not", async () => {
     const [node, edge] = [idOf(verifyNode), idOf(toVerify)];
     const events = [proposed(verifyNode, ["s9"]), proposed(toVerify, ["s9"]), status(node, "active"), status(edge, "active")];
     const t = setup();
@@ -140,7 +140,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(before.store.events())[0]).toMatchObject({ path: ["Start", "Bridge_Extract"], unmatched: ["Verify"] });
   });
 
-  it("PL1.55 an overlay node on probation locates actions only for sessions whose salt exposes it", async () => {
+  it("PLV1.55 an overlay node on probation locates actions only for sessions whose salt exposes it", async () => {
     const node = idOf(verifyNode);
     const run = async (salt: string | undefined) => {
       const t = setup();
@@ -161,7 +161,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(everyone.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["Verify"], exposure: [] });
   });
 
-  it("PL1.38 the preset's match mode locates actions", async () => {
+  it("PLV1.38 the preset's match mode locates actions", async () => {
     const exact = setup();
     exact.pin("s1");
     exact.add("s1", turnOf("t1", ["scan_index"]));
@@ -174,7 +174,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(loose.store.events())[0]!.path).toEqual(["Start", "Scan_Index"]);
   });
 
-  it("PL1.77 under a state-tracker preset a result's declared node counts only for a tool the core trusts to declare: an unbound grep's is ignored", async () => {
+  it("PLV1.77 under a state-tracker preset a result's declared node counts only for a tool the core trusts to declare: an unbound grep's is ignored", async () => {
     const declared = { stdout: "Nolan", _meta: { harness: { procedural: { node: "Bridge_Extract" } } } };
     const turn = [started("t1"), user("q"), record({ node: "Start" }), call("t1-c0", "grep", { q: "film" }), result("t1-c0", declared), ended("t1")];
     const tracker = setup({ preset: preset({}, { match: "state-tracker" }) });
@@ -189,7 +189,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(exact.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
   });
 
-  it("PL1.39 a missing transition seen in minSupport distinct sessions is proposed after the observation; one session's many turns are not support", async () => {
+  it("PLV1.39 a missing transition seen in minSupport distinct sessions is proposed after the observation; one session's many turns are not support", async () => {
     const t = setup();
     for (const turn of ["t1", "t2", "t3"]) {
       t.add("s1", turnOf(turn, ["first_hop_retrieve", "Bridge_Extract"]));
@@ -204,7 +204,7 @@ describe("the live learner on turn.ended", () => {
     expect(t.state().transitions[edgeKey("First_Hop_Retrieve", "Bridge_Extract")]!.sessions).toEqual(["s1", "s2"]);
   });
 
-  it("PL1.56 without a head the turn's core makes the proposals, and status changes see them: a new entry can displace an old one", async () => {
+  it("PLV1.56 without a head the turn's core makes the proposals, and status changes see them: a new entry can displace an old one", async () => {
     const t = setup({ preset: preset({ maxEntries: 1 }) });
     t.store.headOf.clear();
     t.store.logs.set(GRAPH, [proposed(noteOnCore, ["s9"])]);
@@ -216,7 +216,7 @@ describe("the live learner on turn.ended", () => {
     expect(tail).toMatchObject([{ kind: "observed" }, { kind: "proposed", entry: { kind: "edge" } }, { kind: "status", entry: idOf(noteOnCore), to: "retired" }]);
   });
 
-  it("PL1.40 status changes follow the proposals: a stale entry retires", async () => {
+  it("PLV1.40 status changes follow the proposals: a stale entry retires", async () => {
     const t = setup({ preset: preset({ halfLifeDays: 1 }) });
     t.store.logs.set(GRAPH, [proposed(cautionOnCore, ["s9"]), observed("s9/x", ["Start"])]);
     t.pin("s1", "salt-0", 2);
@@ -226,7 +226,7 @@ describe("the live learner on turn.ended", () => {
     expect(t.store.appends).toBe(1);
   });
 
-  it("PL1.41 proposals are made against the head core, which may have moved past the turn's", async () => {
+  it("PLV1.41 proposals are made against the head core, which may have moved past the turn's", async () => {
     const t = setup();
     // The head has the shortcut First_Hop_Retrieve → Bridge_Extract, so it is not missing there.
     const g = core();
@@ -242,7 +242,7 @@ describe("the live learner on turn.ended", () => {
     expect(t.store.events().filter((e) => e.kind === "proposed")).toEqual([]);
   });
 
-  it("PL1.42 a turn the log does not hold, or one naming no graph, is skipped; so is a session id a turn key cannot hold", async () => {
+  it("PLV1.42 a turn the log does not hold, or one naming no graph, is skipped; so is a session id a turn key cannot hold", async () => {
     const t = setup();
     const missing = { kind: "skipped", code: "unknown-turn", reason: "the log does not hold the turn, or it names no graph" };
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toEqual(missing);
@@ -255,7 +255,7 @@ describe("the live learner on turn.ended", () => {
     expect(t.store.appends).toBe(0);
   });
 
-  it("PL1.43 with no step record the pin names the graph and version the turn read", async () => {
+  it("PLV1.43 with no step record the pin names the graph and version the turn read", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", [started("t1"), user("q"), call("c1", "first_hop_retrieve"), ended("t1")]);
@@ -263,7 +263,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(t.store.events())[0]).toMatchObject({ path: ["First_Hop_Retrieve"] });
   });
 
-  it("PL1.44 each read starts after the session's last observed turn; an older turn is found again from the start", async () => {
+  it("PLV1.44 each read starts after the session's last observed turn; an older turn is found again from the start", async () => {
     const t = setup();
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -277,7 +277,7 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(t.store.events()).map((e) => e.turnKey)).toEqual(["s1/t2", "s1/t1", "s1/t3"]);
   });
 
-  it("PL1.45 gaps in the turn's entries are reported with the observation", async () => {
+  it("PLV1.45 gaps in the turn's entries are reported with the observation", async () => {
     const t = setup();
     t.pin("s1");
     const turn = turnOf("t1", ["first_hop_retrieve", "Scan_Index"]);
@@ -286,7 +286,7 @@ describe("the live learner on turn.ended", () => {
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed", gaps: [{ from: 4, to: 5 }] });
   });
 
-  it("PL1.46 without the turn's core revision every action is unmatched and no policy runs", async () => {
+  it("PLV1.46 without the turn's core revision every action is unmatched and no policy runs", async () => {
     const t = setup({ withCore: false });
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -296,7 +296,7 @@ describe("the live learner on turn.ended", () => {
 });
 
 describe("transitions into a terminal", () => {
-  it("PL1.73 a turn that answers after a node with an edge to End is observed walking into End, so that edge gets statistics and cautions", async () => {
+  it("PLV1.73 a turn that answers after a node with an edge to End is observed walking into End, so that edge gets statistics and cautions", async () => {
     // Answers straight from Bridge_Extract score 0; turns that retrieve first score 1.
     const t = setup({ score: async (tr) => ({ score: tr.steps.some((s) => s.call !== undefined) ? 1 : 0, source: "judge-probability" }) });
     for (let i = 0; i < 8; i += 1) {
@@ -313,7 +313,7 @@ describe("transitions into a terminal", () => {
 });
 
 describe("transitions into a terminal, without the core", () => {
-  it("PL1.75 a turn whose core revision the store lacks walks into no terminal: the path is where its record began", async () => {
+  it("PLV1.75 a turn whose core revision the store lacks walks into no terminal: the path is where its record began", async () => {
     const t = setup({ withCore: false });
     t.pin("s1");
     t.add("s1", [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")]);
@@ -323,14 +323,14 @@ describe("transitions into a terminal, without the core", () => {
 });
 
 describe("the live learner on logs it did not write", () => {
-  it("PL1.47 a stray re-observation of a turn never observed does not make that turn a duplicate", async () => {
+  it("PLV1.47 a stray re-observation of a turn never observed does not make that turn a duplicate", async () => {
     const t = setup();
     t.store.logs.set(GRAPH, [OverlayEventSchema.parse({ kind: "observed", turnKey: "s1/t1", path: ["Start"], unmatched: [], score: 1, exposure: [], rescore: { seq: 1, previous: null, observedAt: 1 } })]);
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed" });
   });
 
-  it("PL1.48 a turn whose end is not in the log is observed, and the next read starts where the last one did", async () => {
+  it("PLV1.48 a turn whose end is not in the log is observed, and the next read starts where the last one did", async () => {
     const t = setup();
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]).slice(0, -1));
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed" });
@@ -339,7 +339,7 @@ describe("the live learner on logs it did not write", () => {
     expect(t.reads).toEqual([["s1", 0], ["s1", 0]]);
   });
 
-  it("PL1.49 a store failure rejects that delivery (so the bus redelivers it) and the learner goes on", async () => {
+  it("PLV1.49 a store failure rejects that delivery (so the bus redelivers it) and the learner goes on", async () => {
     const t = setup();
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
     const read = t.store.pins.get;
@@ -359,7 +359,7 @@ describe("feedback", () => {
     return t;
   };
 
-  it("PL1.50 feedback on an observed turn appends a re-observation that moves its score, with no new traversal", async () => {
+  it("PLV1.50 feedback on an observed turn appends a re-observation that moves its score, with no new traversal", async () => {
     const t = await observedTurn();
     const r = await t.learner.feedback("s1", "t1", 0.9);
     const last = t.store.events().at(-1);
@@ -368,7 +368,7 @@ describe("feedback", () => {
     expect(t.state().stats[edgeKey("Start", "First_Hop_Retrieve")]).toMatchObject({ traversals: 1, scored: 1, scoreSum: 0.9 });
   });
 
-  it("PL1.51 later feedback replaces the earlier score (the next sequence); the same score again changes nothing", async () => {
+  it("PLV1.51 later feedback replaces the earlier score (the next sequence); the same score again changes nothing", async () => {
     const t = await observedTurn(0.2);
     await t.learner.feedback("s1", "t1", 0.9);
     await t.learner.feedback("s1", "t1", 0.4);
@@ -379,7 +379,7 @@ describe("feedback", () => {
     expect(stats.scoreSum).toBeCloseTo(0.4);
   });
 
-  it("PL1.52 feedback on a turn not yet observed observes it with the feedback score, and turn.ended then is a duplicate", async () => {
+  it("PLV1.52 feedback on a turn not yet observed observes it with the feedback score, and turn.ended then is a duplicate", async () => {
     const t = setup({ score: async () => ({ score: 0.1, source: "judge-probability" }) });
     t.pin("s1");
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
@@ -388,14 +388,14 @@ describe("feedback", () => {
     expect(observedOf(t.store.events()).map((e) => e.score)).toEqual([1]);
   });
 
-  it("PL1.53 feedback without a pin, or with a score outside [0, 1], is skipped", async () => {
+  it("PLV1.53 feedback without a pin, or with a score outside [0, 1], is skipped", async () => {
     const t = await observedTurn();
     expect(await t.learner.feedback("s2", "t1", 0.5)).toEqual({ kind: "skipped", code: "no-pin", reason: "the session has no pin, so no graph" });
     for (const bad of [1.5, -0.1, Number.NaN]) expect(await t.learner.feedback("s1", "t1", bad)).toEqual({ kind: "skipped", code: "invalid", reason: "a score is a probability in [0, 1]" });
     expect(t.store.events()).toHaveLength(1);
   });
 
-  it("PL1.70 feedback says why it skipped a score: a turn the log does not hold, no pin, or an input no turn key or score can hold", async () => {
+  it("PLV1.70 feedback says why it skipped a score: a turn the log does not hold, no pin, or an input no turn key or score can hold", async () => {
     const t = await observedTurn();
     expect(await t.learner.feedback("s1", "absent", 0.5)).toMatchObject({ kind: "skipped", code: "unknown-turn" });
     expect(await t.learner.feedback("s2", "t1", 0.5)).toMatchObject({ kind: "skipped", code: "no-pin" });
@@ -405,7 +405,7 @@ describe("feedback", () => {
     expect(t.store.events()).toHaveLength(1);
   });
 
-  it("PL1.54 feedback counts in the arm each entry counted the turn in, and the policy runs after it", async () => {
+  it("PLV1.54 feedback counts in the arm each entry counted the turn in, and the policy runs after it", async () => {
     const t = setup();
     t.store.logs.set(GRAPH, [proposed(noteOnCore, ["s9"])]);
     t.pin("s1", saltWhere(idOf(noteOnCore), 0.2, true), 1);

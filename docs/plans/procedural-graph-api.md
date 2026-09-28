@@ -657,21 +657,21 @@ As built (A1). These change P7's keys; every other name keeps its meaning.
 
 - Revision records are keyed by graph and id: `revisions.get(graph, id)`. The same
   document in two graphs is two records, each with its own origin, parents and decision,
-  and a put replaces only its own graph's record (PS1.49). Callers read a graph's records
+  and a put replaces only its own graph's record (PST1.49). Callers read a graph's records
   only: import, read, pinning's ancestry, the step hook, the learner and dream all pass
   the graph they work on, so an import into one graph never overwrites another's record
   (PX2.71).
 - `redact(id)` is by content: it tombstones every graph's record of the id, and a record
-  put under that id later, in any graph, is stored redacted (PS1.50).
+  put under that id later, in any graph, is stored redacted (PST1.50).
 - The saved document's format is `harness.procedural-store/v2` (`STORE_FORMAT`). The
   snapshot store still loads a `v1` document (`STORE_FORMAT_V1`,
   `ProceduralStoreDocumentV1Schema`, checked like v2) through
   `migrateStoreDocument(v1): ProceduralStoreDocument`, and its first change saves v2
-  (PS1.51). The migration turns each v1 `revert` record back into the record it replaced
+  (PST1.51). The migration turns each v1 `revert` record back into the record it replaced
   (`evidence.replaces`, through reverts of reverts; a redacted one, which no longer
-  parses, stays) (PS1.53), and gives a graph whose head or earlier head has no record of
-  its own a copy of the record another graph wrote last (PS1.52). A malformed v1 store is
-  rejected like a malformed v2 one, never migrated or overwritten (PS1.54).
+  parses, stays) (PST1.53), and gives a graph whose head or earlier head has no record of
+  its own a copy of the record another graph wrote last (PST1.52). A malformed v1 store is
+  rejected like a malformed v2 one, never migrated or overwritten (PST1.54).
 
 ## P8: core, generic (`packages/core`, `packages/protocol`)
 
@@ -1213,7 +1213,7 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   `declares: true` (a tool binding field that only dream, a seed or an import can set;
   neither the refiner nor the overlay writes bindings). A tool that passes outside
   content through, such as a fetched page, therefore cannot steer localization,
-  successor-only tools or the learner's projected path (PG3.37).
+  successor-only tools or the learner's projected path (PGR3.37).
 - **The step hook as a state tracker.** `proceduralStep` observes the last action with its
   call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
   string) of the call's own result (the `tool-result` with its `toolCallId` in a later
@@ -1304,7 +1304,7 @@ As built. A resolver rule may route instead of naming a graph (plan §8.1).
 
 ## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
 
-As built. Plan §7.6's task-graph item and ADR 0011's "the task graph gains payloads".
+As built. Plan §7.6's task-graph item and ADR 0016's "the task graph gains payloads".
 
 - Core's `TaskGraph<P = unknown>`:
   - `NodeSpec<P>` gains `payload?: P`, opaque to the graph; `payload(id): P | undefined`.

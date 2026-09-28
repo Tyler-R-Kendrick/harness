@@ -68,7 +68,7 @@ const piece: fc.Arbitrary<Payload> = fc.oneof(
 );
 
 describe("projection never throws on a daemon log", () => {
-  test.prop([entries, fc.option(fc.nat(60), { nil: undefined })], { numRuns: 300 })("PL1.P1 any entries: nothing thrown, and a projection is a valid scored trajectory with ordered gaps", (log, from) => {
+  test.prop([entries, fc.option(fc.nat(60), { nil: undefined })], { numRuns: 300 })("PLV1.P1 any entries: nothing thrown, and a projection is a valid scored trajectory with ordered gaps", (log, from) => {
     const p = turnProjection(log, ctx(from));
     if (p === undefined) return;
     expect(ScoredTrajectorySchema.safeParse(p.trajectory).success).toBe(true);
@@ -77,7 +77,7 @@ describe("projection never throws on a daemon log", () => {
     expect(p.path.length + p.unmatched.length).toBeGreaterThanOrEqual(p.trajectory.steps.filter((s) => s.call !== undefined).length);
   });
 
-  test.prop([fc.array(piece, { minLength: 1, maxLength: 12 }), fc.nat(), fc.nat()], { numRuns: 300 })("PL1.P2 a hole cut from a well-formed turn is reported as exactly that gap, and a lost start as not started", (pieces, i, n) => {
+  test.prop([fc.array(piece, { minLength: 1, maxLength: 12 }), fc.nat(), fc.nat()], { numRuns: 300 })("PLV1.P2 a hole cut from a well-formed turn is reported as exactly that gap, and a lost start as not started", (pieces, i, n) => {
     const whole = [started("t1"), ...pieces, ended("t1")].map((p, k) => ({ offset: k, payload: p }));
     const at = i % (whole.length - 1);
     const len = n % (whole.length - 1 - at);

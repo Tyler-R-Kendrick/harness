@@ -13,7 +13,7 @@ const observedKeys = (events: readonly OverlayEvent[]) => events.flatMap((e) => 
 
 describe("the live learner under at-least-once delivery", () => {
   test.prop([turns, fc.array(fc.nat(), { maxLength: 20 }), fc.boolean()], { numRuns: 60 })(
-    "PL1.P3 redelivering turn.ended events (again, later, concurrently) gives the overlay log of delivering each once",
+    "PLV1.P3 redelivering turn.ended events (again, later, concurrently) gives the overlay log of delivering each once",
     async (keys, redeliveries, concurrent) => {
       const once = setup();
       const many = setup();
@@ -32,7 +32,7 @@ describe("the live learner under at-least-once delivery", () => {
     },
   );
 
-  test.prop([turns, fc.integer({ min: 1, max: 4 })], { numRuns: 60 })("PL1.P4 a missing transition is proposed exactly when its distinct sessions reach minSupport", async (keys, minSupport) => {
+  test.prop([turns, fc.integer({ min: 1, max: 4 })], { numRuns: 60 })("PLV1.P4 a missing transition is proposed exactly when its distinct sessions reach minSupport", async (keys, minSupport) => {
     const t = setup({ preset: preset({ minSupport }) });
     for (const [s, n] of keys) {
       t.add(s, turnOf(`t${n}`, TOOLS));
@@ -45,7 +45,7 @@ describe("the live learner under at-least-once delivery", () => {
   });
 
   test.prop([turns, fc.array(fc.tuple(fc.nat(), fc.double({ min: 0, max: 1, noNaN: true })), { maxLength: 12 })], { numRuns: 60 })(
-    "PL1.P5 feedback moves scores without traversals: the statistics equal observing each turn once with its last score",
+    "PLV1.P5 feedback moves scores without traversals: the statistics equal observing each turn once with its last score",
     async (keys, feedback) => {
       const live = setup();
       const expected = setup();

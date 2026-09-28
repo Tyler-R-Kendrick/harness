@@ -2,7 +2,7 @@ import type { GraphId, RevisionId, RevisionRecord } from "./graph.ts";
 import type { OverlayEvent } from "./overlay-types.ts";
 
 /**
- * The stores behind procedural graphs (plan §4, ADR 0011): core revisions and heads,
+ * The stores behind procedural graphs (plan §4, ADR 0016): core revisions and heads,
  * each graph's overlay event log and dream event log, session pins, guidance texts,
  * and a lease per graph so one dream runs at a time. A port: memory and
  * `SnapshotStorage`-backed implementations share one contract suite (testkit).

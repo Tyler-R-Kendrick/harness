@@ -16,7 +16,7 @@ import type { Decoding } from "./prompt.ts";
 import type { Settings } from "./settings.ts";
 
 // Reflection proposes edges and notes only: nodes come with templated edges, and cautions
-// only from statistics (plan §6.2). PG4.33 checks that these are the edge and note options.
+// only from statistics (plan §6.2). PGR4.33 checks that these are the edge and note options.
 const [edgeEntry, , noteEntry] = OverlayEntrySchema.options;
 
 /** One entry reflection may propose. */

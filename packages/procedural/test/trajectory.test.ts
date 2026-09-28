@@ -21,14 +21,14 @@ const trajectory = () => ({
 });
 
 describe("scored trajectories", () => {
-  it("PG1.33 a scored trajectory wraps learning's steps with its graph, version pair, score and usage", () => {
+  it("PGR1.33 a scored trajectory wraps learning's steps with its graph, version pair, score and usage", () => {
     expect(ScoredTrajectorySchema.parse(trajectory())).toEqual(trajectory());
     for (const scoreSource of ["metric", "judge-probability", "judge-verdict", "outcome", "feedback"]) expect(ScoredTrajectorySchema.safeParse({ ...trajectory(), scoreSource }).success).toBe(true);
     // An unscored turn still counts as traversal evidence, and the paper preset has no overlay.
     expect(ScoredTrajectorySchema.safeParse({ ...trajectory(), score: null, scoreSource: null, overlay: null }).success).toBe(true);
   });
 
-  it("PG1.34 scores are probabilities, counts are whole and non-negative, and steps are learning steps", () => {
+  it("PGR1.34 scores are probabilities, counts are whole and non-negative, and steps are learning steps", () => {
     const refused = [
       { ...trajectory(), score: 1.5 },
       { ...trajectory(), score: -0.1 },

@@ -20,7 +20,7 @@ const ids = (d: CandidateDocument) => d.nodes.map((n) => n.id);
 const codes = (ds: readonly Diagnostic[]) => ds.map((d) => d.code);
 
 describe("applyEdits", () => {
-  it("PG2.1 an empty edit set gives a new document with the same content", () => {
+  it("PGR2.1 an empty edit set gives a new document with the same content", () => {
     const base = graph();
     const out = applyEdits(base, edits({}));
     expect(out).not.toBe(base);
@@ -28,7 +28,7 @@ describe("applyEdits", () => {
     expect(revisionId(out)).toBe(revisionId(base));
   });
 
-  it("PG2.2 add_nodes appends each node, in order, with its id, type and description and no binding", () => {
+  it("PGR2.2 add_nodes appends each node, in order, with its id, type and description and no binding", () => {
     const out = applyEdits(graph(), edits({ add_nodes: [{ id: "Verify", type: "REASONING", description: "Check the answer." }, { id: "Give_Up", type: "STATUS", description: "Stop." }] }));
     expect(out.nodes.slice(-2)).toEqual([
       { id: "Verify", type: "REASONING", description: "Check the answer." },
@@ -37,32 +37,32 @@ describe("applyEdits", () => {
     expect(ids(out)).toHaveLength(7);
   });
 
-  it("PG2.3 delete_edges removes every relation between the endpoints, in that direction only", () => {
+  it("PGR2.3 delete_edges removes every relation between the endpoints, in that direction only", () => {
     const base = graph((d) => d.edges.push(edge("Start", "First_Hop_Retrieve", "TRIGGERS"), edge("First_Hop_Retrieve", "Start", "LEADS_TO")));
     const out = applyEdits(base, edits({ delete_edges: [{ source: "Start", target: "First_Hop_Retrieve" }] }));
     expect(pairs(out)).toEqual(["First_Hop_Retrieve LEADS_TO Scan_Index", "Scan_Index PROVIDES_INPUT_FOR Bridge_Extract", "Bridge_Extract CONVERGES_TO End", "First_Hop_Retrieve LEADS_TO Start"]);
   });
 
-  it("PG2.4 deleting a node removes it and every edge into or out of it, and nothing else", () => {
+  it("PGR2.4 deleting a node removes it and every edge into or out of it, and nothing else", () => {
     const out = applyEdits(graph(), edits({ delete_nodes: ["Scan_Index"] }));
     expect(ids(out)).toEqual(["Start", "First_Hop_Retrieve", "Bridge_Extract", "End"]);
     expect(pairs(out)).toEqual(["Start LEADS_TO First_Hop_Retrieve", "Bridge_Extract CONVERGES_TO End"]);
   });
 
-  it("PG2.5 deletions come before additions, so an edge deleted and added in one set is revised", () => {
+  it("PGR2.5 deletions come before additions, so an edge deleted and added in one set is revised", () => {
     const out = applyEdits(graph(), edits({ delete_edges: [{ source: "First_Hop_Retrieve", target: "Scan_Index" }], add_edges: [add("First_Hop_Retrieve", "Scan_Index", "TRIGGERS", "passages returned")] }));
     const revised = out.edges.filter((e) => e.from === "First_Hop_Retrieve" && e.to === "Scan_Index");
     expect(revised).toEqual([{ from: "First_Hop_Retrieve", relation: "TRIGGERS", to: "Scan_Index", condition: "passages returned", guidance: "From First_Hop_Retrieve go to Scan_Index.", pitfalls: "None." }]);
     expect(out.edges.at(-1)).toEqual(revised[0]);
   });
 
-  it("PG2.6 a node deleted and added in one set is replaced, and its old edges stay deleted", () => {
+  it("PGR2.6 a node deleted and added in one set is replaced, and its old edges stay deleted", () => {
     const out = applyEdits(graph(), edits({ delete_nodes: ["Scan_Index"], add_nodes: [{ id: "Scan_Index", type: "REASONING", description: "Read closely." }] }));
     expect(out.nodes.filter((n) => n.id === "Scan_Index")).toEqual([{ id: "Scan_Index", type: "REASONING", description: "Read closely." }]);
     expect(out.edges.some((e) => e.from === "Scan_Index" || e.to === "Scan_Index")).toBe(false);
   });
 
-  it("PG2.7 add_edges appends edges with source as from, target as to, and the attributes as given", () => {
+  it("PGR2.7 add_edges appends edges with source as from, target as to, and the attributes as given", () => {
     const out = applyEdits(graph(), edits({ add_edges: [add("Scan_Index", "End"), add("Start", "End", "CONVERGES_TO", "trivial")] }));
     expect(out.edges.slice(-2)).toEqual([
       { from: "Scan_Index", relation: "LEADS_TO", to: "End", condition: null, guidance: "From Scan_Index go to End.", pitfalls: "None." },
@@ -70,7 +70,7 @@ describe("applyEdits", () => {
     ]);
   });
 
-  it("PG2.8 the base is never changed, and the document keeps its $schema, format and vocabularies", () => {
+  it("PGR2.8 the base is never changed, and the document keeps its $schema, format and vocabularies", () => {
     const base: CandidateDocument = JSON.parse(JSON.stringify({ ...CandidateDocumentSchema.parse(hotpot()), $schema: "./graph.schema.json" }));
     const before = canonicalJson(base);
     const out = applyEdits(base, edits({ delete_nodes: ["Scan_Index"], delete_edges: [{ source: "Start", target: "First_Hop_Retrieve" }], add_nodes: [{ id: "X", type: "STATUS", description: "" }], add_edges: [add("Start", "X")] }));
@@ -79,7 +79,7 @@ describe("applyEdits", () => {
     expect([out.format, out.nodeTypes, out.relations]).toEqual([base.format, base.nodeTypes, base.relations]);
   });
 
-  it("PG2.9 surviving nodes keep their bindings", () => {
+  it("PGR2.9 surviving nodes keep their bindings", () => {
     const out = applyEdits(graph(), edits({ delete_nodes: ["Scan_Index"] }));
     expect(out.nodes[1]).toEqual({ id: "First_Hop_Retrieve", type: "ACTION", description: "Execute first_hop_retrieve to fetch primary evidence passages.", binding: { kind: "tool", name: "first_hop_retrieve" } });
   });
@@ -92,7 +92,7 @@ describe("prepareCandidate", () => {
     add_edges: [add("Bridge_Extract", "Verify"), add("Verify", "End")],
   });
 
-  it("PG2.10 an accepted candidate has no diagnostics, a graph equal to its document, and the document's revision id", () => {
+  it("PGR2.10 an accepted candidate has no diagnostics, a graph equal to its document, and the document's revision id", () => {
     const p = prepareCandidate(graph(), verify, { cycles: "allowed" });
     expect(p.diagnostics).toEqual([]);
     expect(p.repaired).toEqual([]);
@@ -102,7 +102,7 @@ describe("prepareCandidate", () => {
     expect(parseGraph(p.graph).ok).toBe(true);
   });
 
-  it("PG2.11 malformed edits are diagnostics at their place in the edit set; the document is the base, unedited", () => {
+  it("PGR2.11 malformed edits are diagnostics at their place in the edit set; the document is the base, unedited", () => {
     const base = graph();
     const p = prepareCandidate(base, untrusted({ add_nodes: [{ id: "bad name!", type: "ACTION", description: "x" }], delete_edges: [{ source: "Start" }] }), { cycles: "allowed" });
     expect(codes(p.diagnostics)).toEqual(["malformed", "malformed"]);
@@ -114,35 +114,35 @@ describe("prepareCandidate", () => {
     expect(p.repaired).toEqual([]);
   });
 
-  it("PG2.12 an edit set that is not an object is one malformed diagnostic at edits", () => {
+  it("PGR2.12 an edit set that is not an object is one malformed diagnostic at edits", () => {
     const p = prepareCandidate(graph(), untrusted(null), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([{ code: "malformed", message: expect.any(String), at: "edits" }]);
   });
 
-  it("PG2.13 an edit that sets a binding is binding-not-allowed; other unknown fields are malformed", () => {
+  it("PGR2.13 an edit that sets a binding is binding-not-allowed; other unknown fields are malformed", () => {
     const binding = prepareCandidate(graph(), untrusted({ add_nodes: [{ id: "Run", type: "ACTION", description: "", binding: { kind: "tool", name: "rm" } }] }), { cycles: "allowed" });
     expect(binding.diagnostics).toEqual([{ code: "binding-not-allowed", message: "an edit cannot set a binding; only dream's composition step writes one", at: "edits.add_nodes[0]" }]);
     const extra = prepareCandidate(graph(), untrusted({ add_nodes: [{ id: "Run", type: "ACTION", description: "", colour: "red" }] }), { cycles: "allowed" });
     expect(codes(extra.diagnostics)).toEqual(["malformed"]);
   });
 
-  it("PG2.14 an added node of an unknown type is unknown-type", () => {
+  it("PGR2.14 an added node of an unknown type is unknown-type", () => {
     const p = prepareCandidate(graph(), edits({ add_nodes: [{ id: "Tool_Call", type: "TOOL", description: "" }], add_edges: [add("Tool_Call", "End")] }), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([{ code: "unknown-type", message: expect.stringContaining("TOOL"), at: "nodes[5].type" }]);
     expect(p.graph).toBeUndefined();
   });
 
-  it("PG2.15 an added edge with an unknown relation is unknown-relation", () => {
+  it("PGR2.15 an added edge with an unknown relation is unknown-relation", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("Start", "End", "JUMPS_TO")] }), { cycles: "allowed" });
     expect(codes(p.diagnostics)).toEqual(["unknown-relation"]);
   });
 
-  it("PG2.16 an added edge to a node that does not exist is missing-endpoint", () => {
+  it("PGR2.16 an added edge to a node that does not exist is missing-endpoint", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("Scan_Index", "Nowhere")] }), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([{ code: "missing-endpoint", message: expect.stringContaining("Nowhere"), at: "edges[4].to" }]);
   });
 
-  it("PG2.17 a deletion naming a node the base does not have is missing-endpoint at the edit", () => {
+  it("PGR2.17 a deletion naming a node the base does not have is missing-endpoint at the edit", () => {
     const p = prepareCandidate(graph(), edits({ delete_nodes: ["Ghost"], delete_edges: [{ source: "Phantom", target: "End" }, { source: "Start", target: "Spectre" }] }), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([
       { code: "missing-endpoint", message: "delete_nodes names Ghost, which is not a node", at: "edits.delete_nodes[0]" },
@@ -152,24 +152,24 @@ describe("prepareCandidate", () => {
     expect(p.graph).toBeUndefined();
   });
 
-  it("PG2.18 deleting edges between existing nodes that have none is a harmless no-op", () => {
+  it("PGR2.18 deleting edges between existing nodes that have none is a harmless no-op", () => {
     const p = prepareCandidate(graph(), edits({ delete_edges: [{ source: "End", target: "Start" }] }), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([]);
     expect(p.graph).toEqual(graph());
   });
 
-  it("PG2.19 deleting Start is missing-start", () => {
+  it("PGR2.19 deleting Start is missing-start", () => {
     const p = prepareCandidate(graph(), edits({ delete_nodes: ["Start"] }), { cycles: "allowed" });
     expect(codes(p.diagnostics)).toEqual(["missing-start"]);
   });
 
-  it("PG2.20 reachability is to any terminal, not to End: deleting End or adding a dead end is accepted", () => {
+  it("PGR2.20 reachability is to any terminal, not to End: deleting End or adding a dead end is accepted", () => {
     expect(prepareCandidate(graph(), edits({ delete_nodes: ["End"] }), { cycles: "forbidden" }).diagnostics).toEqual([]);
     const deadEnd = edits({ add_nodes: [{ id: "Give_Up", type: "STATUS", description: "No evidence." }], add_edges: [add("Scan_Index", "Give_Up")] });
     expect(prepareCandidate(graph(), deadEnd, { cycles: "forbidden" }).diagnostics).toEqual([]);
   });
 
-  it("PG2.21 under allowed cycles, a loop with no exit is no-terminal, and a loop with an exit is kept unrepaired", () => {
+  it("PGR2.21 under allowed cycles, a loop with no exit is no-terminal, and a loop with an exit is kept unrepaired", () => {
     const trapped = prepareCandidate(graph(), edits({ delete_edges: [{ source: "Bridge_Extract", target: "End" }], add_edges: [add("Bridge_Extract", "Scan_Index")] }), { cycles: "allowed" });
     expect(new Set(codes(trapped.diagnostics))).toEqual(new Set(["no-terminal"]));
     const loop = prepareCandidate(graph(), edits({ add_edges: [add("Bridge_Extract", "First_Hop_Retrieve")] }), { cycles: "allowed" });
@@ -178,7 +178,7 @@ describe("prepareCandidate", () => {
     expect(pairs(loop.document)).toContain("Bridge_Extract LEADS_TO First_Hop_Retrieve");
   });
 
-  it("PG2.22 under forbidden cycles, cycle-closing edges are removed before the checks and reported in document order", () => {
+  it("PGR2.22 under forbidden cycles, cycle-closing edges are removed before the checks and reported in document order", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("Bridge_Extract", "First_Hop_Retrieve", "TRIGGERS"), add("Scan_Index", "Scan_Index")] }), { cycles: "forbidden" });
     expect(p.repaired).toEqual([
       { from: "Bridge_Extract", relation: "TRIGGERS", to: "First_Hop_Retrieve" },
@@ -190,7 +190,7 @@ describe("prepareCandidate", () => {
     expect(p.id).toBe(revisionId(graph()));
   });
 
-  it("PG2.23 repair walks from Start in document order, so the edge back toward Start is the one removed, with every parallel relation", () => {
+  it("PGR2.23 repair walks from Start in document order, so the edge back toward Start is the one removed, with every parallel relation", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("End", "Start"), add("End", "Start", "TRIGGERS")] }), { cycles: "forbidden" });
     expect(p.repaired).toEqual([
       { from: "End", relation: "LEADS_TO", to: "Start" },
@@ -199,7 +199,7 @@ describe("prepareCandidate", () => {
     expect(p.diagnostics).toEqual([]);
   });
 
-  it("PG2.24 repair also reaches cycles that Start cannot, walking the other nodes in document order", () => {
+  it("PGR2.24 repair also reaches cycles that Start cannot, walking the other nodes in document order", () => {
     const p = prepareCandidate(
       graph(),
       edits({ add_nodes: [{ id: "Island_A", type: "STATUS", description: "" }, { id: "Island_B", type: "STATUS", description: "" }], add_edges: [add("Island_A", "Island_B"), add("Island_B", "Island_A"), add("Island_B", "End")] }),
@@ -209,36 +209,36 @@ describe("prepareCandidate", () => {
     expect(p.diagnostics).toEqual([]);
   });
 
-  it("PG2.25 repair works without a Start node, and leaves edges with missing endpoints to the checks", () => {
+  it("PGR2.25 repair works without a Start node, and leaves edges with missing endpoints to the checks", () => {
     const p = prepareCandidate(graph(), edits({ delete_nodes: ["Start"], add_edges: [add("Bridge_Extract", "First_Hop_Retrieve"), add("Scan_Index", "Nowhere")] }), { cycles: "forbidden" });
     expect(p.repaired).toEqual([{ from: "Bridge_Extract", relation: "LEADS_TO", to: "First_Hop_Retrieve" }]);
     expect(codes(p.diagnostics)).toEqual(["missing-endpoint", "missing-start"]);
   });
 
-  it("PG2.52 repair never walks a finished node again, so it cuts one edge per cycle it meets", () => {
+  it("PGR2.52 repair never walks a finished node again, so it cuts one edge per cycle it meets", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("Scan_Index", "First_Hop_Retrieve"), add("Start", "Scan_Index")] }), { cycles: "forbidden" });
     expect(p.repaired).toEqual([{ from: "Scan_Index", relation: "LEADS_TO", to: "First_Hop_Retrieve" }]);
   });
 
-  it("PG2.53 edges to or from missing nodes are not repaired, even when they would close a cycle", () => {
+  it("PGR2.53 edges to or from missing nodes are not repaired, even when they would close a cycle", () => {
     const p = prepareCandidate(graph(), edits({ add_edges: [add("Scan_Index", "Nowhere"), add("Nowhere", "Scan_Index")] }), { cycles: "forbidden" });
     expect(p.repaired).toEqual([]);
     expect(codes(p.diagnostics)).toEqual(["missing-endpoint", "missing-endpoint"]);
   });
 
-  it("PG2.26 a cycle already in the base is repaired under forbidden too", () => {
+  it("PGR2.26 a cycle already in the base is repaired under forbidden too", () => {
     const base = graph((d) => d.edges.push(edge("Scan_Index", "First_Hop_Retrieve")));
     const p = prepareCandidate(base, edits({}), { cycles: "forbidden" });
     expect(p.repaired).toEqual([{ from: "Scan_Index", relation: "LEADS_TO", to: "First_Hop_Retrieve" }]);
     expect(p.graph).toEqual(graph());
   });
 
-  it("PG2.27 without a tool catalog, action nodes are not checked against one (the paper preset)", () => {
+  it("PGR2.27 without a tool catalog, action nodes are not checked against one (the paper preset)", () => {
     const p = prepareCandidate(graph(), edits({ add_nodes: [{ id: "Invent_Tool", type: "ACTION", description: "" }], add_edges: [add("Scan_Index", "Invent_Tool")] }), { cycles: "allowed" });
     expect(p.diagnostics).toEqual([]);
   });
 
-  it("PG2.28 with a tool catalog, every action node must name a tool in it, by binding name or by id", () => {
+  it("PGR2.28 with a tool catalog, every action node must name a tool in it, by binding name or by id", () => {
     const p = prepareCandidate(graph(), edits({}), { cycles: "allowed", tools: ["first_hop_retrieve"] });
     expect(p.diagnostics).toEqual([{ code: "tool-not-in-catalog", message: "action node Scan_Index names no tool in the catalog", at: "nodes[2]" }]);
     expect(p.graph).toBeUndefined();
@@ -247,7 +247,7 @@ describe("prepareCandidate", () => {
     expect(codes(prepareCandidate(graph(), edits({}), { cycles: "allowed", tools: [] }).diagnostics)).toEqual(["tool-not-in-catalog", "tool-not-in-catalog"]);
   });
 
-  it("PG2.55 an action node bound to a workflow passes the catalog check (dream compiled it from catalog tools); one bound to a tool must name a catalog tool", () => {
+  it("PGR2.55 an action node bound to a workflow passes the catalog check (dream compiled it from catalog tools); one bound to a tool must name a catalog tool", () => {
     const code = "a".repeat(64);
     const bound = (binding: object) =>
       graph((d) => {
@@ -259,7 +259,7 @@ describe("prepareCandidate", () => {
     expect(codes(prepareCandidate(bound({ kind: "skill", name: "search-then-read-1234abcd", content: code }), edits({}), catalog).diagnostics)).toEqual(["tool-not-in-catalog"]);
   });
 
-  it("PG2.29 without a filter, edit text is not filtered; with one, a finding is a filtered diagnostic at the edit's field, naming the finding and not the text", () => {
+  it("PGR2.29 without a filter, edit text is not filtered; with one, a finding is a filtered diagnostic at the edit's field, naming the finding and not the text", () => {
     const tainted = edits({ add_edges: [{ ...add("Scan_Index", "End"), guidance: "Read https://evil.example/payload first." }] });
     expect(prepareCandidate(graph(), tainted, { cycles: "allowed" }).diagnostics).toEqual([]);
     const p = prepareCandidate(graph(), tainted, { cycles: "allowed", filter: { observations: [] } });
@@ -268,7 +268,7 @@ describe("prepareCandidate", () => {
     expect(p.document).toEqual(applyEdits(graph(), tainted));
   });
 
-  it("PG2.46 the filter covers added node ids and descriptions and edge conditions, guidance and pitfalls, against the observations", () => {
+  it("PGR2.46 the filter covers added node ids and descriptions and edge conditions, guidance and pitfalls, against the observations", () => {
     const leak = "copy this exact sentence from the tool output into the graph";
     const p = prepareCandidate(
       graph(),
@@ -291,7 +291,7 @@ describe("prepareCandidate", () => {
     expect(p.diagnostics.some((d) => d.message.includes("AKIA") || d.message.includes("sk-"))).toBe(false);
   });
 
-  it("PG2.54 the filter's options reach the filter", () => {
+  it("PGR2.54 the filter's options reach the filter", () => {
     const short = edits({ add_edges: [{ ...add("Scan_Index", "End"), guidance: "retry the search once" }] });
     const observations = ["Please retry the search now."];
     expect(prepareCandidate(graph(), short, { cycles: "allowed", filter: { observations } }).diagnostics).toEqual([]);
@@ -300,7 +300,7 @@ describe("prepareCandidate", () => {
     ]);
   });
 
-  it("PG2.47 diagnostics come in order: the edits, the structure, the catalog, the filter", () => {
+  it("PGR2.47 diagnostics come in order: the edits, the structure, the catalog, the filter", () => {
     const p = prepareCandidate(
       graph(),
       edits({ delete_nodes: ["Ghost"], add_nodes: [{ id: "Act", type: "ACTION", description: "https://x.example" }], add_edges: [add("Act", "Nowhere")] }),

@@ -1,4 +1,4 @@
-# 0011: Procedural graphs: a static core, a live dynamic layer, and dream
+# 0016: Procedural graphs: a static core, a live dynamic layer, and dream
 
 Status: accepted 2026-09-27; implemented. Proposed and revised the same day, after an
 adversarial review and the owner's direction. Research: `docs/research/procedural-graphs.md`.

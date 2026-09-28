@@ -22,7 +22,7 @@ async function memory() {
 }
 
 describe("the live learner with the landed modules", () => {
-  it("PL1.60 over the memory store: turns observed once, a proposal at two sessions, and feedback as a re-observation", async () => {
+  it("PLV1.60 over the memory store: turns observed once, a proposal at two sessions, and feedback as a re-observation", async () => {
     const { store, logs, learner } = await memory();
     for (const s of ["s1", "s2"]) {
       await store.pins.set(s, { graph, core: revisionOf(core()).id, overlay: 0, salt: `salt-${s}`, at: 0 });
@@ -37,7 +37,7 @@ describe("the live learner with the landed modules", () => {
     expect(state.transitions[edgeKey("First_Hop_Retrieve", "Bridge_Extract")]).toEqual({ sessions: ["s1", "s2"], scored: 1, scoreSum: 0.6 });
   });
 
-  it("PL1.61 a step record as P10 writes it is read for the version pair, localization, exposure and guidance usage", () => {
+  it("PLV1.61 a step record as P10 writes it is read for the version pair, localization, exposure and guidance usage", () => {
     const step = StepRecordSchema.parse({
       graph: GRAPH,
       core: CORE,
@@ -60,7 +60,7 @@ describe("the live learner with the landed modules", () => {
     expect([p.path, p.shown]).toEqual([["First_Hop_Retrieve"], [hexId("c")]]);
   });
 
-  it("PL1.62 P12's feedback operation reaches the learner", async () => {
+  it("PLV1.62 P12's feedback operation reaches the learner", async () => {
     const { store, logs, learner } = await memory();
     await store.pins.set("s1", { graph, core: revisionOf(core()).id, overlay: 0, salt: "salt", at: 0 });
     logs.set("s1", logOf(turnOf("t1", ["first_hop_retrieve"])));

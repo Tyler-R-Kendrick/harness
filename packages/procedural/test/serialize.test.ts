@@ -112,19 +112,19 @@ function withOverlay(): EffectiveGraph {
 }
 
 describe("serializeNeighborhood", () => {
-  it("PG3.14 the core view of App. B.5's HotpotQA graph serializes to the golden file exactly", () => {
+  it("PGR3.14 the core view of App. B.5's HotpotQA graph serializes to the golden file exactly", () => {
     const g = view(excerptGraph());
     expect(local(g, "First_Hop_Retrieve")).toBe(golden);
     // The relation labels are not printed, so swapping them changes nothing.
     expect(local(view(excerptGraph(["PROVIDES_INPUT_FOR", "LEADS_TO"])), "First_Hop_Retrieve")).toBe(golden);
   });
 
-  it("PG3.15 the golden file is the paper's excerpt, up to the extraction's arrow and indentation", () => {
+  it("PGR3.15 the golden file is the paper's excerpt, up to the extraction's arrow and indentation", () => {
     expect(unindent(golden)).toBe(PAPER_EXCERPT.replaceAll(String.raw`$\rightarrow$`, "→"));
     expect(golden.split("\n").filter((l) => l.startsWith("  * "))).toHaveLength(4);
   });
 
-  it("PG3.16 a null condition prints nothing after 'Condition: ', and an empty guidance or pitfalls keeps its line", () => {
+  it("PGR3.16 a null condition prints nothing after 'Condition: ', and an empty guidance or pitfalls keeps its line", () => {
     const g = view(excerptGraph());
     expect(local(g, "Start", 1)).toBe(
       ["Active Cognitive Node: [Start] (Type: STATUS)", "Description: The task begins.", "Immediate Transition Options (Hop 1):", "- Transition: [Start] → [First_Hop_Retrieve] (Condition: )", "  * Guidance: Retrieve first.", "  * Pitfalls to Avoid: Do not answer from memory."].join("\n"),
@@ -133,7 +133,7 @@ describe("serializeNeighborhood", () => {
     expect(local(blank, "Bridge_Extract", 1).split("\n").slice(-2)).toEqual(["  * Guidance: ", "  * Pitfalls to Avoid: "]);
   });
 
-  it("PG3.17 hop 3 and beyond are headed 'Subsequent Horizon (Hop k)', and hops with no edges print nothing", () => {
+  it("PGR3.17 hop 3 and beyond are headed 'Subsequent Horizon (Hop k)', and hops with no edges print nothing", () => {
     const g = view(excerptGraph());
     const text = local(g, "Start", 5);
     expect(text.split("\n").filter((l) => l.endsWith("):") && !l.startsWith("-"))).toEqual([
@@ -147,7 +147,7 @@ describe("serializeNeighborhood", () => {
     expect(local(g, "Bridge_Extract", 0)).toBe("Active Cognitive Node: [Bridge_Extract] (Type: ACTION)\nDescription: Execute bridge_extract to name the bridge entity.");
   });
 
-  it("PG3.18 an overlay edge is labeled 'Learned (provisional)' on probation and 'Learned' once active; core edges are not labeled", () => {
+  it("PGR3.18 an overlay edge is labeled 'Learned (provisional)' on probation and 'Learned' once active; core edges are not labeled", () => {
     const text = local(withOverlay(), "Scan_Index", 1);
     expect(text.split("\n").filter((l) => l.startsWith("- "))).toEqual([
       "- Transition: [Scan_Index] → [Bridge_Extract] (Condition: scan_index)",
@@ -157,7 +157,7 @@ describe("serializeNeighborhood", () => {
     expect(text).toContain("- Learned (provisional): Transition: [Scan_Index] → [Verify_Answer] (Condition: )\n  * Guidance: Seen in 3 sessions: go to Verify_Answer.\n  * Pitfalls to Avoid: \n");
   });
 
-  it("PG3.19 notes follow the edge's pitfalls as 'Learned note', marked provisional on probation, then cautions as 'Caution'", () => {
+  it("PGR3.19 notes follow the edge's pitfalls as 'Learned note', marked provisional on probation, then cautions as 'Caution'", () => {
     const text = local(withOverlay(), "First_Hop_Retrieve", 1);
     expect(text.split("\n").slice(3)).toEqual([
       "- Transition: [First_Hop_Retrieve] → [Scan_Index] (Condition: first_hop_retrieve)",
@@ -169,14 +169,14 @@ describe("serializeNeighborhood", () => {
     ]);
   });
 
-  it("PG3.20 an overlay node is labeled where it is the active node, provisional on probation", () => {
+  it("PGR3.20 an overlay node is labeled where it is the active node, provisional on probation", () => {
     const g = withOverlay();
     expect(local(g, "Verify_Answer", 1)).toBe("Learned (provisional): Active Cognitive Node: [Verify_Answer] (Type: REASONING)\nDescription: Check the bridge entity against the question.");
     const active: EffectiveGraph = { ...g, nodes: g.nodes.map((n) => (n.origin === "overlay" ? { ...n, status: "active" } : n)) };
     expect(local(active, "Verify_Answer", 1).split("\n")[0]).toBe("Learned: Active Cognitive Node: [Verify_Answer] (Type: REASONING)");
   });
 
-  it("PG3.21 a core view never carries an overlay label, and the overlay's labels appear only for overlay content", () => {
+  it("PGR3.21 a core view never carries an overlay label, and the overlay's labels appear only for overlay content", () => {
     const core = view(excerptGraph());
     for (const n of core.nodes) {
       const text = local(core, n.id, 4);
@@ -186,7 +186,7 @@ describe("serializeNeighborhood", () => {
     expect(local(withOverlay(), "First_Hop_Retrieve", 2)).toMatch(/Learned note[^\n]*\n[\s\S]*Caution: [\s\S]*- Learned \(provisional\): Transition/);
   });
 
-  it("PG3.22 a neighborhood whose active node is not in the graph is a RangeError", () => {
+  it("PGR3.22 a neighborhood whose active node is not in the graph is a RangeError", () => {
     const g = view(excerptGraph());
     expect(() => serializeNeighborhood(g, { active: name("Nowhere"), hops: [] })).toThrow(RangeError);
     expect(() => serializeNeighborhood(g, { active: name("Nowhere"), hops: [] })).toThrow("Nowhere");
@@ -194,7 +194,7 @@ describe("serializeNeighborhood", () => {
 });
 
 describe("serializeGraph", () => {
-  it("PG3.23 the full-graph variant lists every node, then every transition in document order, in the local format", () => {
+  it("PGR3.23 the full-graph variant lists every node, then every transition in document order, in the local format", () => {
     const g = view(hotpot());
     expect(serializeGraph(g)).toBe(
       [
@@ -226,7 +226,7 @@ describe("serializeGraph", () => {
     );
   });
 
-  it("PG3.24 the full graph labels overlay nodes, edges, notes and cautions as the local variant does", () => {
+  it("PGR3.24 the full graph labels overlay nodes, edges, notes and cautions as the local variant does", () => {
     const lines = serializeGraph(withOverlay()).split("\n");
     expect(lines).toContain("- Learned (provisional): Node: [Verify_Answer] (Type: REASONING)");
     expect(lines).toContain("- Learned (provisional): Transition: [Scan_Index] → [Verify_Answer] (Condition: )");
@@ -246,7 +246,7 @@ const result = (content: string): Step => ({ role: "tool", content });
 const observe = (content: string): Step => ({ role: "observation", content });
 
 describe("serializeWindow", () => {
-  it("PG3.25 steps render as the solver's ReAct text: Thought, Action(tool(arg=value)), Observation, User", () => {
+  it("PGR3.25 steps render as the solver's ReAct text: Thought, Action(tool(arg=value)), Observation, User", () => {
     const steps = [act("I need the first passage.", "first_hop_retrieve", { query: "film director", k: 3, filters: { lang: "en", year: null } }), result("passages"), observe("the page changed"), user("And the year?")];
     expect(serializeWindow(steps, 3)).toBe(
       [
@@ -263,7 +263,7 @@ describe("serializeWindow", () => {
     expect(serializeWindow([think("Check."), { role: "tool", content: "done", call: { name: "t", arguments: {} } }], 3)).toBe("Thought: Check.\nObservation: done\nAction: t()");
   });
 
-  it("PG3.26 the window is the last w decisions (the paper's T_{t-w:t}): a run of assistant steps with what follows it", () => {
+  it("PGR3.26 the window is the last w decisions (the paper's T_{t-w:t}): a run of assistant steps with what follows it", () => {
     const steps = [
       user("Who directed the film?"),
       act("Retrieve.", "first_hop_retrieve"),
@@ -288,7 +288,7 @@ describe("serializeWindow", () => {
     expect(serializeWindow([user("Who directed the film?")], 3)).toBe("");
   });
 
-  it("PG3.27 an empty trajectory or a zero window is empty text, and a window that is not a whole number is a RangeError", () => {
+  it("PGR3.27 an empty trajectory or a zero window is empty text, and a window that is not a whole number is a RangeError", () => {
     expect(serializeWindow([], 3)).toBe("");
     expect(serializeWindow([act("Retrieve.", "first_hop_retrieve")], 0)).toBe("");
     expect(() => serializeWindow([], -1)).toThrow(RangeError);

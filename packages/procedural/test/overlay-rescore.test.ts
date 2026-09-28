@@ -11,7 +11,7 @@ const rescored = (turnKey: string, score: number | null, previous: number | null
   event({ kind: "observed", turnKey, path: p, unmatched: [], score, exposure, rescore: { seq, previous, observedAt } });
 
 describe("feedback re-observations (rescore)", () => {
-  it("PL1.1 an observed event may carry a rescore: a positive sequence number, the score it replaces and the version the turn folded at", () => {
+  it("PLV1.1 an observed event may carry a rescore: a positive sequence number, the score it replaces and the version the turn folded at", () => {
     expect(OverlayEventSchema.safeParse({ kind: "observed", turnKey: "s1/t1", path, unmatched: [], score: 1, exposure: [], rescore: { seq: 1, previous: null, observedAt: 1 } }).success).toBe(true);
     const bad = [
       { seq: 0, previous: null, observedAt: 1 },
@@ -24,7 +24,7 @@ describe("feedback re-observations (rescore)", () => {
     for (const rescore of bad) expect(OverlayEventSchema.safeParse({ kind: "observed", turnKey: "s1/t1", path, unmatched: [], score: 1, exposure: [], rescore }).success).toBe(false);
   });
 
-  it("PL1.2 a rescore swaps the turn's score on its edges and transitions: no new traversal, no new session", () => {
+  it("PLV1.2 a rescore swaps the turn's score on its edges and transitions: no new traversal, no new session", () => {
     const original = fold(observed("s1/t1", path, 0.25), observed("s2/t1", path, 0.5));
     const after = foldOverlay(original, rescored("s1/t1", 1, 0.25, 1, 1));
     expect(after.version).toBe(3);
@@ -33,7 +33,7 @@ describe("feedback re-observations (rescore)", () => {
     expect(after.transitions["Start→First_Hop_Retrieve"]).toEqual({ sessions: ["s1", "s2"], scored: 2, scoreSum: 1.5 });
   });
 
-  it("PL1.3 a rescore of an unscored turn adds a scored traversal, and one to null withdraws it", () => {
+  it("PLV1.3 a rescore of an unscored turn adds a scored traversal, and one to null withdraws it", () => {
     const unscored = fold(observed("s1/t1", path));
     const scored = foldOverlay(unscored, rescored("s1/t1", 0.75, null, 1, 1));
     expect(scored.stats["Start→First_Hop_Retrieve"]).toEqual({ traversals: 1, scored: 1, scoreSum: 0.75, lastSeen: 1 });
@@ -42,7 +42,7 @@ describe("feedback re-observations (rescore)", () => {
     expect(withdrawn.transitions["Start→First_Hop_Retrieve"]).toEqual({ sessions: ["s1"], scored: 0, scoreSum: 0 });
   });
 
-  it("PL1.4 a redelivered rescore (same turn and sequence) changes nothing; the next sequence applies", () => {
+  it("PLV1.4 a redelivered rescore (same turn and sequence) changes nothing; the next sequence applies", () => {
     const once = foldOverlay(fold(observed("s1/t1", path, 0.25)), rescored("s1/t1", 1, 0.25, 1, 1));
     expect(foldOverlay(once, rescored("s1/t1", 1, 0.25, 1, 1))).toBe(once);
     const twice = foldOverlay(once, rescored("s1/t1", 0.5, 1, 2, 1));
@@ -50,14 +50,14 @@ describe("feedback re-observations (rescore)", () => {
     expect(twice.stats["Start→First_Hop_Retrieve"]).toEqual({ traversals: 1, scored: 1, scoreSum: 0.5, lastSeen: 1 });
   });
 
-  it("PL1.5 a rescore's key never collides with a turn key, and a plain observation of a seen turn is still a duplicate", () => {
+  it("PLV1.5 a rescore's key never collides with a turn key, and a plain observation of a seen turn is still a duplicate", () => {
     const s = foldOverlay(fold(observed("s1/t1", path, 0.25)), rescored("s1/t1", 1, 0.25, 1, 1));
     expect(s.turns).toHaveLength(2);
     expect(s.turns[1]).toMatch(/^\//);
     expect(foldOverlay(s, observed("s1/t1", path, 0.25))).toBe(s);
   });
 
-  it("PL1.6 a rescore moves the score in the arm each entry counted the turn in, for entries that existed then and are not retired", () => {
+  it("PLV1.6 a rescore moves the score in the arm each entry counted the turn in, for entries that existed then and are not retired", () => {
     const early = idOf(noteOnCore);
     // The note exists before the turn (version 1); the shortcut is proposed after it (version 3).
     const s = fold(proposed(noteOnCore, ["s9"]), observed("s1/t1", ["Start", "First_Hop_Retrieve"], 0.25, [early]), proposed(shortcut, ["s9"]));
@@ -69,7 +69,7 @@ describe("feedback re-observations (rescore)", () => {
     expect(after.entries[idOf(shortcut)]).toEqual(s.entries[idOf(shortcut)]);
   });
 
-  it("PL1.7 entries proposed after the turn folded, retired ones, and ones whose anchor the path missed are untouched", () => {
+  it("PLV1.7 entries proposed after the turn folded, retired ones, and ones whose anchor the path missed are untouched", () => {
     const note = idOf(noteOnCore);
     const s = fold(observed("s1/t1", ["Start", "First_Hop_Retrieve"], 0.25), proposed(noteOnCore, ["s9"]));
     const after = foldOverlay(s, rescored("s1/t1", 1, 0.25, 1, 1, [], ["Start", "First_Hop_Retrieve"]));
@@ -86,14 +86,14 @@ describe("feedback re-observations (rescore)", () => {
     expect(foldOverlay(unexposed, rescored("s1/t1", 1, 0.25, 1, 2, [], ["Start", "First_Hop_Retrieve"])).entries[note]!.evidence.unexposed).toEqual({ n: 1, scored: 1, scoreSum: 1 });
   });
 
-  it("PL1.9 the keys kept stay bounded when a rescore is folded", () => {
+  it("PLV1.9 the keys kept stay bounded when a rescore is folded", () => {
     const full: OverlayState = { ...fold(observed("s1/t1", path, 0.25)), turns: Array.from({ length: MAX_TURNS }, (_, i) => `s${i}/t`) };
     const after = foldOverlay(full, rescored("s1/t1", 1, 0.25, 1, 1));
     expect(after.turns).toHaveLength(MAX_TURNS);
     expect([after.turns[0], after.turns.at(-1)]).toEqual(["s1/t", "/1/s1/t1"]);
   });
 
-  it("PL1.8 a rescore never creates statistics for a pair the state has not seen", () => {
+  it("PLV1.8 a rescore never creates statistics for a pair the state has not seen", () => {
     const s = fold(observed("s1/t1", ["Start"], 0.25));
     const after = foldOverlay(s, rescored("s1/t1", 1, 0.25, 1, 1, [], ["Start", "End"]));
     expect(after.stats).toEqual({});

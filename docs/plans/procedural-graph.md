@@ -1,6 +1,6 @@
 # Plan: procedural graphs in the harness
 
-Decision: ADR 0011. Evidence and critique: `docs/research/procedural-graphs.md`.
+Decision: ADR 0016. Evidence and critique: `docs/research/procedural-graphs.md`.
 Status: done 2026-09-27 (P1–P13 and the cross-phase wiring; the API as built is in
 `docs/plans/procedural-graph-api.md`). Every phase lands test-first, with atomic assertion ids, and passes
 the full gates in `CLAUDE.md` (typecheck, lint, coverage, mutation) before it is pushed.
@@ -631,8 +631,8 @@ prefixes are:
 
 | Phase | Deliverable | Key tests | Status |
 |---|---|---|---|
-| P1 | Package (pure ESLint glob, tsconfig without DOM or Node types, Stryker `mutate`); graph, candidate and settings schemas; canonical JSON; `RevisionId` (`@noble/hashes`); drift tests | PG1.x; PG1.P (id invariant under array permutation; `$schema` excluded; `format` included) | done |
-| P2 | Edit set; `prepareCandidate`; cycle repair; edit filter | PG2.x; PG2.P (a copy is never mutated; accepted implies parses; rejected implies diagnostics; `delete_edges` removes every relation) | done; a node bound to a workflow passes the catalog check (finalization) |
+| P1 | Package (pure ESLint glob, tsconfig without DOM or Node types, Stryker `mutate`); graph, candidate and settings schemas; canonical JSON; `RevisionId` (`@noble/hashes`); drift tests | PG1.x; PGR1.P (id invariant under array permutation; `$schema` excluded; `format` included) | done |
+| P2 | Edit set; `prepareCandidate`; cycle repair; edit filter | PG2.x; PGR2.P (a copy is never mutated; accepted implies parses; rejected implies diagnostics; `delete_edges` removes every relation) | done; a node bound to a workflow passes the catalog check (finalization) |
 | P3 | `match`, `neighborhood`, `serialize` (golden file of App. B.5) | PG3.x | done |
 | P4 | Overlay: events, entries, `EntryId`, the fold, the effective graph, labeled serialization | PO1.x; PO1.P (I2: the effective graph contains the core; I4: the fold is idempotent under duplicated and reordered-by-redelivery events; I6: anchors) | done; `observed` later gained `rescore` for feedback (P11) |
 | P5 | `guide`, `refine`, `reflect` on `ai/test` mocks; the constraint is sent; the cache key | PG4.x (two queries at `Start` never share a cache entry) | done |
@@ -641,7 +641,7 @@ prefixes are:
 | P8 | Core, generic: opaque `sessionMeta` from `session/new` to prompt commands; host publish API with host-bound `source` | DM additions | done (DM10.x) |
 | P9 | Resolver and `authorize` policy (data + schema); pinning and revert re-pin | PX1.x | done |
 | P10 | Worker: `prepareStep` (localization from messages, effective graph, delivery, `report`, step records with exposure); turn-level mode for harness workers | PW1.x (scripted AI SDK harness: no reset after an approval round; guidance never stacks; one version pair per step; pins survive a restart) | done; the hook resolves with the host's principal, and harness workers are guided once per turn through `harnessSessions({ step })` |
-| P11 | Live learner: bus actor with a cursor; log projection; statistics; missing transitions; cautions; probation with randomized exposure; promotion, retirement and decay; optional reflection | PL1.x; PL1.P (support counts distinct sessions; exposure draws come only from `Entropy`) | done; feedback is a re-observation (`rescore`), and reflection was wired in the finalization (a `Reflector` port, `reflectionBatch` for `batch`) |
+| P11 | Live learner: bus actor with a cursor; log projection; statistics; missing transitions; cautions; probation with randomized exposure; promotion, retirement and decay; optional reflection | PL1.x; PLV1.P (support counts distinct sessions; exposure draws come only from `Entropy`) | done; feedback is a re-observation (`rescore`), and reflection was wired in the finalization (a `Reflector` port, `reflectionBatch` for `batch`) |
 | P12 | Extension operations and CLI: `graph`, `history`, `feedback`, `dream`, `revert`, `import` (seed), `export` (JSON and Mermaid) | PX2.x | done; `procedural.dream` runs `nativeDream` on the ensemble's generator, the CLI's `dream` refines with `--model` or else the ensemble's reasoning model; candidates that need approval wait in an approvals inbox (`procedural.approvals`, `approve`, `decline`, announced on the hook bus); dream also runs on the preset's schedule from the runtime's tick (PD4.x), and `--procedural-eval` gives it a task-suite evaluator (PD3.7–PD3.17); a lock gives each store directory one owner, and the CLI reaches a daemon that holds it over its socket |
 | P13 | Composition in dream: `compilePath`, staging library, per-revision tools | PC1.x on the scripted environment | done: dream composes in one round after its refine rounds; the native host (agent workers) and the browser host (`browserComposition`) give it a composer over the session tools and a durable staging library of their own, and sessions get their base tools plus exactly the workflows their pinned core binds (`sessionTools`, PX2.92–PX2.98); PC1.x use their own fixtures, not the testkit environment |
 

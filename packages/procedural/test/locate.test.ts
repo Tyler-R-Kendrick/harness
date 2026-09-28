@@ -21,17 +21,17 @@ const pairs = (hop: readonly EffectiveEdge[] | undefined) => (hop ?? []).map((e)
 describe("match", () => {
   const g = view(hotpot());
 
-  it("PG3.1 no previous action locates the agent at Start (a₀ = Start)", () => {
+  it("PGR3.1 no previous action locates the agent at Start (a₀ = Start)", () => {
     expect(match(undefined, g, "exact")).toBe("Start");
     expect(match(undefined, g, "case-insensitive")).toBe("Start");
   });
 
-  it("PG3.2 exact matches an action equal to a node id", () => {
+  it("PGR3.2 exact matches an action equal to a node id", () => {
     expect(match("Scan_Index", g, "exact")).toBe("Scan_Index");
     expect(match("Bridge_Extract", g, "exact")).toBe("Bridge_Extract");
   });
 
-  it("PG3.3 exact matches an action equal to a binding's name, whatever the binding's kind", () => {
+  it("PGR3.3 exact matches an action equal to a binding's name, whatever the binding's kind", () => {
     const bound = view(
       graphOf(
         [node("Start"), node("Retrieve", { kind: "tool", name: "first_hop_retrieve" }), node("Plan", { kind: "workflow", name: "plan_trip", code: hex }), node("Style", { kind: "skill", name: "house_style", content: hex }), node("End")],
@@ -43,7 +43,7 @@ describe("match", () => {
     expect(match("house_style", bound, "exact")).toBe("Style");
   });
 
-  it("PG3.4 exact is the paper's written definition: a different case, a prefix or padding does not match", () => {
+  it("PGR3.4 exact is the paper's written definition: a different case, a prefix or padding does not match", () => {
     expect(match("scan_index", g, "exact")).toBeUndefined();
     expect(match("SCAN_INDEX", g, "exact")).toBeUndefined();
     expect(match("Scan", g, "exact")).toBeUndefined();
@@ -51,7 +51,7 @@ describe("match", () => {
     expect(match("FIRST_HOP_RETRIEVE", g, "exact")).toBeUndefined();
   });
 
-  it("PG3.5 case-insensitive pairs First_Hop_Retrieve with first_hop_retrieve, as the paper's excerpt does, on ids and binding names", () => {
+  it("PGR3.5 case-insensitive pairs First_Hop_Retrieve with first_hop_retrieve, as the paper's excerpt does, on ids and binding names", () => {
     const unbound = view(graphOf([node("Start"), node("First_Hop_Retrieve"), node("End")], [edge("Start", "First_Hop_Retrieve"), edge("First_Hop_Retrieve", "End")]));
     expect(match("first_hop_retrieve", unbound, "case-insensitive")).toBe("First_Hop_Retrieve");
     expect(match("first_hop_retrieve", unbound, "exact")).toBeUndefined();
@@ -60,13 +60,13 @@ describe("match", () => {
     expect(match("FIRST_HOP", bound, "exact")).toBeUndefined();
   });
 
-  it("PG3.6 nothing matched is undefined, in either mode (the caller falls back to the full graph)", () => {
+  it("PGR3.6 nothing matched is undefined, in either mode (the caller falls back to the full graph)", () => {
     expect(match("grep", g, "exact")).toBeUndefined();
     expect(match("grep", g, "case-insensitive")).toBeUndefined();
     expect(match("", g, "case-insensitive")).toBeUndefined();
   });
 
-  it("PG3.7 an exact match wins over a case-insensitive one, and an id over a binding name", () => {
+  it("PGR3.7 an exact match wins over a case-insensitive one, and an id over a binding name", () => {
     const g2 = view(
       graphOf(
         [node("Start"), node("scan"), node("Scan"), node("Other", { kind: "tool", name: "Fetch" }), node("Fetch"), node("Late", { kind: "tool", name: "late" }), node("LATE"), node("End")],
@@ -87,7 +87,7 @@ describe("match", () => {
     expect(match("lAtE", g2, "case-insensitive")).toBe("Late");
   });
 
-  it("PG3.8 match reads the effective graph, so it finds an overlay node", () => {
+  it("PGR3.8 match reads the effective graph, so it finds an overlay node", () => {
     const withOverlay: EffectiveGraph = {
       ...g,
       overlay: 3,
@@ -119,13 +119,13 @@ describe("match: state-tracker (plan §5.2)", () => {
     ),
   );
 
-  it("PG3.32 a node a trusted tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
+  it("PGR3.32 a node a trusted tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, trusting, "state-tracker")).toBe("Check_Docs");
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, trusting, "state-tracker")).toBe("Run_Tests");
     expect(match({ name: "Edit", declared: "Edit_Docs" }, trusting, "state-tracker")).toBe("Edit_Docs");
   });
 
-  it("PG3.37 a declared node counts only when the core binds the calling tool with declares: an unbound or untrusted tool's result cannot steer localization", () => {
+  it("PGR3.37 a declared node counts only when the core binds the calling tool with declares: an unbound or untrusted tool's result cannot steer localization", () => {
     // Bash is bound but not trusted to declare: its predicate decides, not the declared node.
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Run_Tests");
     // grep is bound nowhere: whatever its result (say, a fetched page) declares is ignored.
@@ -134,7 +134,7 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match({ name: "Edit", declared: "End" }, g, "state-tracker")).toBe("Edit_Docs");
   });
 
-  it("PG3.33 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
+  it("PGR3.33 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test -w procedural" } }, g, "state-tracker")).toBe("Run_Tests");
     expect(match({ name: "Bash", arguments: { path: "docs/features.md" } }, g, "state-tracker")).toBe("Check_Docs");
     // Nodes with a predicate that holds come before a bare binding, whatever the document order.
@@ -146,7 +146,7 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match({ name: "Bash", arguments: "npm test" }, narrow, "state-tracker")).toBeUndefined();
   });
 
-  it("PG3.34 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
+  it("PGR3.34 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
     // Edit_Docs is bound to the tool Edit, and a node is named Edit: the tracker takes the binding.
     expect(match({ name: "Edit" }, g, "state-tracker")).toBe("Edit_Docs");
     expect(match("Edit", g, "exact")).toBe("Edit");
@@ -156,13 +156,13 @@ describe("match: state-tracker (plan §5.2)", () => {
     expect(match({ name: "grep", arguments: {} }, g, "state-tracker")).toBeUndefined();
   });
 
-  it("PG3.36 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
+  it("PGR3.36 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
     const at = (node: unknown) => ({ stdout: "ok", _meta: { harness: { procedural: { node } } } });
     expect(declaredNode(at("Review"))).toBe("Review");
     expect([at(7), at(null), at(["Review"]), { _meta: { harness: { procedural: "Review" } } }, { _meta: "Review" }, "Review", null, undefined, [at("Review")]].map(declaredNode)).toEqual(Array(9).fill(undefined));
   });
 
-  it("PG3.35 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
+  it("PGR3.35 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
     expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "exact")).toBe(match("Bash", g, "exact"));
     expect(match({ name: "Bash", arguments: { command: "npm test" } }, g, "exact")).toBe("Shell");
     expect(match({ name: "grep", declared: "End" }, g, "exact")).toBeUndefined();
@@ -171,7 +171,7 @@ describe("match: state-tracker (plan §5.2)", () => {
 });
 
 describe("neighborhood", () => {
-  it("PG3.9 hop 1 is the active node's outgoing edges in document order, hop 2 the edges leaving what hop 1 reaches", () => {
+  it("PGR3.9 hop 1 is the active node's outgoing edges in document order, hop 2 the edges leaving what hop 1 reaches", () => {
     const g = view(hotpot());
     const n = neighborhood(g, name("First_Hop_Retrieve"), 2);
     expect(n.active).toBe("First_Hop_Retrieve");
@@ -190,7 +190,7 @@ describe("neighborhood", () => {
     ]);
   });
 
-  it("PG3.10 an edge appears once, at the hop that first reaches its source: cycles and diamonds do not repeat it", () => {
+  it("PGR3.10 an edge appears once, at the hop that first reaches its source: cycles and diamonds do not repeat it", () => {
     const g = view(
       graphOf(
         [node("Start"), node("A"), node("B"), node("C"), node("D"), node("End")],
@@ -205,13 +205,13 @@ describe("neighborhood", () => {
     expect(neighborhood(loop, name("Start"), 2).hops.map(pairs)).toEqual([["Start→Start", "Start→End"], []]);
   });
 
-  it("PG3.11 parallel edges between the same endpoints (a multigraph) each appear once", () => {
+  it("PGR3.11 parallel edges between the same endpoints (a multigraph) each appear once", () => {
     const g = view(graphOf([node("Start"), node("A"), node("End")], [edge("Start", "A", "LEADS_TO"), edge("Start", "A", "TRIGGERS"), edge("A", "End")]));
     const n = neighborhood(g, name("Start"), 2);
     expect(n.hops.map((h) => h.map((e) => e.relation))).toEqual([["LEADS_TO", "TRIGGERS"], ["LEADS_TO"]]);
   });
 
-  it("PG3.12 there are exactly `hops` hops, empty past the horizon, and zero hops is the node alone", () => {
+  it("PGR3.12 there are exactly `hops` hops, empty past the horizon, and zero hops is the node alone", () => {
     const g = view(hotpot());
     expect(neighborhood(g, name("Bridge_Extract"), 3).hops.map(pairs)).toEqual([["Bridge_Extract→End"], [], []]);
     expect(neighborhood(g, name("End"), 2).hops).toEqual([[], []]);
@@ -219,7 +219,7 @@ describe("neighborhood", () => {
     expect(neighborhood(g, name("Start"), 1).hops.map(pairs)).toEqual([["Start→First_Hop_Retrieve"]]);
   });
 
-  it("PG3.13 a node outside the graph or a hop count that is not a whole number is a RangeError", () => {
+  it("PGR3.13 a node outside the graph or a hop count that is not a whole number is a RangeError", () => {
     const g = view(hotpot());
     expect(() => neighborhood(g, name("Nowhere"), 2)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Nowhere"), 2)).toThrow("Nowhere");
@@ -239,7 +239,7 @@ describe("neighborhood", () => {
       ),
     );
 
-  it("PG3.30 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
+  it("PGR3.30 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
     const g = hidden();
     expect(neighborhood(g, name("Retrieve"), 2).hops.map(pairs)).toEqual([["Retrieve→Scan_Index"], ["Scan_Index→Decide_Capital"]]);
     expect(neighborhood(g, name("Retrieve"), 2, "edge")).toEqual(neighborhood(g, name("Retrieve"), 2));
@@ -249,7 +249,7 @@ describe("neighborhood", () => {
     expect(neighborhood(g, name("Verify"), 2, "action").hops.map(pairs)).toEqual([["Verify→End"], []]);
   });
 
-  it("PG3.31 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
+  it("PGR3.31 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
     const g = view(
       graphOf(
         [node("Start"), reasoning("R1"), reasoning("R2"), node("A"), node("B"), { id: "End", type: "STATUS", description: "Done." }],
@@ -263,7 +263,7 @@ describe("neighborhood", () => {
 });
 
 describe("terminalAfter", () => {
-  it("PG3.28 the one terminal a node has an edge to (a node with no outgoing edges), or none when it has no such edge or several", () => {
+  it("PGR3.28 the one terminal a node has an edge to (a node with no outgoing edges), or none when it has no such edge or several", () => {
     const g = view(hotpot());
     expect(terminalAfter(g, name("Bridge_Extract"))).toBe("End");
     // Scan_Index leads to Bridge_Extract, which is no terminal; End leads nowhere.
@@ -277,7 +277,7 @@ describe("terminalAfter", () => {
     expect(terminalAfter(mixed, name("Scan_Index"))).toBe("End");
   });
 
-  it("PG3.29 overlay edges the session sees count: into a terminal, and out of a node that would otherwise be one", () => {
+  it("PGR3.29 overlay edges the session sees count: into a terminal, and out of a node that would otherwise be one", () => {
     const parsed = parseGraph(hotpot());
     if (!parsed.ok) throw new Error("fixture");
     const core = parsed.graph;

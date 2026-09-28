@@ -13,7 +13,7 @@ const id = EntryIdSchema.parse(sha256Hex("entry"));
 const rev = revisionId(seedGraph());
 
 describe("overlay entries and events", () => {
-  it("PG1.29 an overlay entry is an edge, a node, a note or a caution, and never carries a binding", () => {
+  it("PGR1.29 an overlay entry is an edge, a node, a note or a caution, and never carries a binding", () => {
     for (const entry of Object.values(entries)) expect(OverlayEntrySchema.parse(entry)).toEqual(entry);
     const refused = [
       { ...entries.node, binding: { kind: "tool", name: "rm" } },
@@ -27,7 +27,7 @@ describe("overlay entries and events", () => {
     expect(EntryStatusSchema.options).toEqual(["probation", "active", "retired"]);
   });
 
-  it("PG1.30 overlay events are observed, proposed, status and rebased, with a turn key of session and turn", () => {
+  it("PGR1.30 overlay events are observed, proposed, status and rebased, with a turn key of session and turn", () => {
     const events = [
       { kind: "observed", turnKey: "s1/t1", path: ["Start", "First_Hop_Retrieve"], unmatched: ["grep"], score: 0.75, exposure: [id] },
       { kind: "observed", turnKey: "s1/t2", path: [], unmatched: [], score: null, exposure: [] },
@@ -59,7 +59,7 @@ describe("overlay entries and events", () => {
 });
 
 describe("the core view", () => {
-  it("PG1.31 coreView is the core alone: no overlay version, every item from the core, no notes or cautions", () => {
+  it("PGR1.31 coreView is the core alone: no overlay version, every item from the core, no notes or cautions", () => {
     const parsed = parseGraph(hotpot());
     if (!parsed.ok) throw new Error("fixture");
     const g = parsed.graph;
@@ -71,7 +71,7 @@ describe("the core view", () => {
     expect(view.nodes.some((n) => "status" in n) || view.edges.some((e) => "status" in e)).toBe(false);
   });
 
-  it("PG1.32 overlay state is a plain record keyed by entry id and edge (a type other phases fold into)", () => {
+  it("PGR1.32 overlay state is a plain record keyed by entry id and edge (a type other phases fold into)", () => {
     const state: OverlayState = {
       base: rev,
       version: 1,
