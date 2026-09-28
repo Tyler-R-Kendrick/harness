@@ -161,6 +161,10 @@ The decision held; these details moved.
   there is no schedule or trigger in the daemon.
 - **Feedback re-observes a turn.** A score that arrives after a turn is an `observed`
   event with `rescore`, which moves the turn's score without a new traversal.
+- **Turns walk into terminals by rule.** Reaching `End` is no action, so a path of
+  matched actions never showed it. A turn that ends (`end_turn`) with a final answer
+  after a matched node with an edge to exactly one terminal walks on to that terminal,
+  so edges into `End` get statistics and cautions.
 - **Reflection is a port.** The live learner takes a `Reflector`, which the native host
   builds on the ensemble's generator, so the harness preset can keep reflection off
   while a deployment turns it on with data.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { edgeKey, entryId, exposed, OverlayEventSchema, parseGraph, ScoreSchema } from "@harness/procedural";
 import type { OverlayEvent } from "@harness/procedural";
-import { call, CORE, ended, GRAPH, record, revisionOf, started, user } from "./learner-fixtures.ts";
+import { call, CORE, ended, GRAPH, record, revisionOf, said, started, user } from "./learner-fixtures.ts";
 import { paper, preset, setup, turnEnded, turnOf } from "./learner-setup.ts";
 import { cautionOnCore, core, entry, idOf, noteOnCore, observed, proposed, saltWhere, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 
@@ -277,6 +277,23 @@ describe("the live learner on turn.ended", () => {
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
     await t.learner.onHookEvent(turnEnded("s1", "t1"));
     expect(t.store.events()).toEqual([{ kind: "observed", turnKey: "s1/t1", path: ["Start"], unmatched: ["first_hop_retrieve"], score: null, exposure: [] }]);
+  });
+});
+
+describe("transitions into a terminal", () => {
+  it("PL1.73 a turn that answers after a node with an edge to End is observed walking into End, so that edge gets statistics and cautions", async () => {
+    // Answers straight from Bridge_Extract score 0; turns that retrieve first score 1.
+    const t = setup({ score: async (tr) => ({ score: tr.steps.some((s) => s.call !== undefined) ? 1 : 0, source: "judge-probability" }) });
+    for (let i = 0; i < 8; i += 1) {
+      const session = `s${i}`;
+      t.pin(session);
+      t.add(session, i < 4 ? [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")] : turnOf("t1", ["first_hop_retrieve"]));
+      await t.learner.onHookEvent(turnEnded(session, "t1"));
+    }
+    expect(observedOf(t.store.events()).map((e) => e.path)).toEqual([...Array(4).fill(["Bridge_Extract", "End"]), ...Array(4).fill(["Start", "First_Hop_Retrieve"])]);
+    const state = t.state();
+    expect(state.stats[edgeKey("Bridge_Extract", "End")]).toMatchObject({ traversals: 4, scored: 4, scoreSum: 0 });
+    expect(Object.values(state.entries).map((r) => r.entry)).toContainEqual(expect.objectContaining({ kind: "caution", on: { from: "Bridge_Extract", to: "End" } }));
   });
 });
 

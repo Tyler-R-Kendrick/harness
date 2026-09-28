@@ -7,7 +7,9 @@
  *   log, projects it (`projection.ts`) and scores it with the deployment's scorer, if any.
  * - Localization. Actions are matched in the graph the session saw: the turn's core
  *   revision with the overlay folded to the version its step records name, as that
- *   session's salt exposed it.
+ *   session's salt exposed it. A turn that ends with a final answer at a node with an
+ *   edge to one terminal walks on to it (`turnProjection`), so edges into `End` are
+ *   observed like any other.
  * - Exposure. The arm of the randomized comparison comes from the pin's salt alone: the
  *   entries on probation at that version that the salt exposes. What a log entry claims
  *   was shown is not trusted, and a session is in an entry's arm whether or not its path
@@ -19,7 +21,7 @@
  *   fold moves the turn's score, and nothing is traversed again.
  */
 import { z } from "zod";
-import { match } from "./locate.ts";
+import { match, terminalAfter } from "./locate.ts";
 import { editFilter } from "./filter.ts";
 import { effectiveGraph, emptyOverlay, entryId, exposed, foldOverlay } from "./overlay.ts";
 import { proposals, statusChanges, structure } from "./overlay-policy.ts";
@@ -203,7 +205,8 @@ export class LiveLearner {
     const pinned = history.pinned;
     const view: EffectiveGraph | undefined = coreGraph === undefined ? undefined : pinned === undefined ? coreView(coreGraph) : effectiveGraph(coreGraph, pinned, draw);
     const locate = view === undefined ? undefined : (action: string): NodeName | undefined => match(action, view, this.#deps.settings.match);
-    const context = { sessionId, turnId, from, pin: fallback, locate };
+    const terminal = view === undefined ? undefined : (node: NodeName): NodeName | undefined => terminalAfter(view, node);
+    const context = { sessionId, turnId, from, pin: fallback, locate, terminal };
     // Defined: the first projection found the turn and a pair in these same entries.
     const projection = turnProjection(entries, context)!;
     const scored = forced ?? (await this.#score(projection.trajectory));

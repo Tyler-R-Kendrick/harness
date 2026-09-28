@@ -11,7 +11,7 @@ export { BindingSchema, CandidateDocumentSchema, checkGraph, DecisionSchema, DEF
 export { guide, GuidanceCache, type GuidanceKeyParts, type GuideRequest } from "./guide.ts";
 export { exportGraph, graphHistory, importGraph, readGraph, revertGraph, type ClockLike, type ExportResult, type GraphHistory, type GraphView, type ImportResult, type RevertResult, type RevisionSummary } from "./import-export.ts";
 export { LiveLearner, type LearnerEvent, type LearnerResult, type LiveLearnerDeps, type SkipCode } from "./learner.ts";
-export { match, neighborhood, type MatchMode, type Neighborhood } from "./locate.ts";
+export { match, neighborhood, terminalAfter, type MatchMode, type Neighborhood } from "./locate.ts";
 export { MemoryProceduralStore, redactRecord, STORE_FORMAT, TOMBSTONE, type ProceduralStoreDocument } from "./memory-store.ts";
 export { exportMermaid } from "./mermaid.ts";
 export { decayedSupport, differenceBounds, proposals, statusChanges } from "./overlay-policy.ts";

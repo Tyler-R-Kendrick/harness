@@ -800,7 +800,7 @@ As built (P11). These refine the above; the names keep their meaning.
 - `projectTurn(entries, context)` is `turnProjection(entries, context)?.trajectory`.
   `turnProjection` returns `TurnProjection`:
   `{ trajectory, path: NodeName[], unmatched: string[], shown: EntryId[], gaps: LogGap[], started, ended, next }`.
-  - `ProjectionContext = { sessionId; turnId; from?; pin?: VersionPair; locate?: (action) => NodeName | undefined; score?: {score, source} | null }`,
+  - `ProjectionContext = { sessionId; turnId; from?; pin?: VersionPair; locate?: (action) => NodeName | undefined; terminal?: (node) => NodeName | undefined; score?: {score, source} | null }`,
     with `VersionPair = { graph; core; overlay: number | null }` and
     `ScoreSource` the trajectory's non-null `scoreSource`.
   - The turn is the entries after its `turn.started` and before its `turn.ended` (by
@@ -824,6 +824,15 @@ As built (P11). These refine the above; the names keep their meaning.
     tool call preceded it), then `locate(title)` for each tool call in emission order;
     `unmatched` lists the titles `locate` did not match. `shown` is the union of the
     records' `exposure`.
+  - Transitions into a terminal have no action, so the path records them by rule: when
+    the turn ended (its `turn.ended` in view, with stop reason `end_turn` or none), its
+    latest update of substance is agent message text that is not blank (no tool call or
+    result after it; thoughts do not count), and the node it answered from is known (its
+    last action matched, or with no action it began at a matched node), the path walks on
+    to `context.terminal(node)`. The learner passes `terminalAfter(view, node)`
+    (`locate.ts`): the one terminal (a node with no outgoing edges in the effective graph
+    the session saw) that node has an edge to, or none when it has none or several. So
+    edges into `End` get statistics, cautions and entry evidence like any other.
   - `gaps` are the missing offsets `[from, to)` inside the turn, and before it when its
     start was not seen (from `context.from` when nothing bounds it). `next` is the offset
     after `turn.ended`. It never throws.
