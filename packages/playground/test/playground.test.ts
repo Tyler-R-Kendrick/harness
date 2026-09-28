@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Bash, defineCommand, InMemoryFs } from "just-bash";
 import type { ModelMessage } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
+import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
+import { usage as usageOf } from "@harness/cognitive";
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import type { Worker } from "@harness/workers";
 import { Playground, switchWorker } from "../src/playground.ts";
@@ -147,6 +149,27 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     await playground.prompt("one", turn().handlers);
     await playground.prompt("two", turn().handlers);
     expect(reads.filter((p) => p === `${HOME}/README.md`)).toEqual([`${HOME}/README.md`]);
+  });
+
+  it("PG1.12 extra tools reach the agent workers (traced), and their own approval rule decides before the policy's", async () => {
+    const { tool, jsonSchema } = await import("ai");
+    const ran: string[] = [];
+    const extra = { note: tool({ description: "Keep a note", inputSchema: jsonSchema<{ text: string }>({ type: "object", properties: { text: { type: "string" } } }), execute: async ({ text }) => (ran.push(text), { kept: text }) }) };
+    const calls = new MockLanguageModelV4({
+      doStream: async ({ prompt }) => ({
+        stream: convertArrayToReadableStream<LanguageModelV4StreamPart>(
+          prompt.at(-1)!.role === "tool"
+            ? [{ type: "text-start", id: "0" }, { type: "text-delta", id: "0", delta: "noted" }, { type: "text-end", id: "0" }, { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usageOf() }]
+            : [{ type: "tool-call", toolCallId: "n1", toolName: "note", input: '{"text":"hi"}' }, { type: "finish", finishReason: { unified: "tool-calls", raw: undefined }, usage: usageOf() }],
+        ),
+      }),
+    });
+    const { playground, tracer } = await start({ models: { calls }, worker: () => "calls", approval: () => "ask", tools: extra, toolApproval: (name) => (name === "note" ? "not-applicable" : undefined) });
+    const t = turn();
+    await playground.prompt("take a note", t.handlers);
+    expect(ran).toEqual(["hi"]);
+    expect(t.asked).toEqual([]);
+    expect(tracer.events().some((e) => e.kind === "tool" && e.name === "note")).toBe(true);
   });
 
   it("PG1.9 what the host cannot hand to anyone (a snapshot that fails to save) shows up in the trace", async () => {

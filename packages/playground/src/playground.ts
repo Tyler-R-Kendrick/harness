@@ -8,6 +8,7 @@
 import { ClientSideConnection, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
 import type { Client, RequestPermissionRequest, SessionUpdate, StopReason } from "@agentclientprotocol/sdk";
 import { isStepCount, wrapLanguageModel } from "ai";
+import type { ToolApprovalStatus, ToolSet } from "ai";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { Bash } from "just-bash";
 import type { DaemonSnapshot, Identity, SnapshotStorage } from "@harness/core";
@@ -39,6 +40,10 @@ export interface PlaygroundOptions {
   /** Where the agent workers keep each session's conversation, so it continues after a reload. */
   readonly conversations?: ConversationStore;
   readonly instructions?: string;
+  /** More tools for the agent workers, beside the filesystem's. */
+  readonly tools?: ToolSet;
+  /** The approval a tool needs, when this says (else the approval policy decides). */
+  readonly toolApproval?: (toolName: string) => ToolApprovalStatus;
   /** Every snapshot the daemon saves (after each change). */
   readonly onSnapshot?: (snapshot: DaemonSnapshot) => void;
   readonly identity?: Identity;
@@ -118,8 +123,8 @@ export class Playground {
         agent: sessionAgent({
           model: wrapLanguageModel({ model, middleware: tracingMiddleware(tracer) }),
           instructions: options.instructions ?? INSTRUCTIONS,
-          tools: () => tracedTools(vfsTools(agentShell), tracer),
-          toolApproval: vfsApproval(options.approval),
+          tools: () => tracedTools({ ...vfsTools(agentShell), ...options.tools }, tracer),
+          toolApproval: (call) => options.toolApproval?.(call.toolCall.toolName) ?? vfsApproval(options.approval)(call),
           stopWhen: isStepCount(12),
         }),
         ...(options.conversations ? { conversations: options.conversations } : {}),

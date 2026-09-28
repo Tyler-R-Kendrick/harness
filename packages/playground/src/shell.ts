@@ -8,15 +8,21 @@
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import { cac } from "cac";
 import type { Bash, BashExecResult, ExecOptions } from "just-bash";
+import { GENERATIONS } from "./engine.ts";
+import type { Generation, TemplateEngine } from "./engine.ts";
 import type { Playground, TurnReport } from "./playground.ts";
 import type { ModelTier } from "./sample-model.ts";
 import type { TraceEvent, Tracer } from "./trace.ts";
+import type { TemplateStore } from "./templates.ts";
 import type { ApprovalPolicy } from "./vfs.ts";
+import { HOME } from "./vfs.ts";
 
 export interface Settings {
   worker: string;
   tier: ModelTier;
   approval: ApprovalPolicy;
+  /** Whether generating (spending inference on a template) asks first, runs on auto, or is off. */
+  generate: Generation;
 }
 
 const TIERS: readonly ModelTier[] = ["quick", "default", "complex"];
@@ -137,8 +143,17 @@ export function traceLine(e: TraceEvent): string {
   return `${String(e.seq).padStart(4)} ${e.kind.padEnd(6)} ${arrow} ${e.name}${e.duration === undefined ? "" : ` (${e.duration}ms)`}`;
 }
 
+/** What each generation tool spends inference on, as the approval asks it. */
+const SPENDING: Readonly<Record<string, (input: Record<string, unknown>) => string>> = {
+  write_template: (i) => `write a template for "${String(i["request"])}"`,
+  fill_template: (i) => `fill ${Array.isArray(i["holes"]) ? i["holes"].join(", ") : "the holes"} of template ${String(i["id"])}`,
+  refine_template: (i) => `rewrite template ${String(i["id"])} (${String(i["note"])})`,
+};
+
 /** The question a permission request asks in the terminal. */
 export function question(request: RequestPermissionRequest): string {
+  const spend = SPENDING[request.toolCall.title ?? ""];
+  if (spend) return `Spend inference to ${spend((request.toolCall.rawInput ?? {}) as Record<string, unknown>)}?`;
   const input = request.toolCall.rawInput as { command?: unknown } | undefined;
   return `Allow ${request.toolCall.title ?? "this tool"}${typeof input?.command === "string" ? `: ${input.command}` : ` ${JSON.stringify(request.toolCall.rawInput ?? {})}`}?`;
 }
@@ -157,7 +172,13 @@ export interface ShellContext {
   readonly onTurn?: (prompt: string, report: TurnReport) => void;
   /** Forget what the page keeps across reloads (and reload); absent when it keeps nothing. */
   readonly onReset?: () => Promise<void>;
+  /** The template engine `/ask` answers from, and its templates, for `/templates` and `/rate`. */
+  readonly engine?: TemplateEngine;
+  readonly store?: TemplateStore;
 }
+
+/** A path under home as the terminal shows it. */
+const tilde = (path: string) => (path.startsWith(HOME) ? `~${path.slice(HOME.length)}` : path);
 
 interface Output {
   readonly stdout: string;
@@ -295,6 +316,26 @@ export class SlashCommands {
     cli.command("worker [name]", "Show or pick the worker for the next turn").action((v: string | undefined) => choose("worker", v, this.#ctx.workers, () => settings.worker, (w) => (settings.worker = w)));
     cli.command("tier [tier]", "Show or pick Claude's tier: quick, default or complex").action((v: string | undefined) => choose("tier", v, TIERS, () => settings.tier, (t) => (settings.tier = t)));
     cli.command("approve [policy]", "Ask before commands and writes, or run them on auto").action((v: string | undefined) => choose("policy", v, POLICIES, () => settings.approval, (p) => (settings.approval = p)));
+    cli.command("generate [mode]", "Whether writing a template (inference) asks first, runs on auto, or is off").action((v: string | undefined) => choose("generate", v, GENERATIONS, () => settings.generate, (g) => (settings.generate = g)));
+    cli.command("templates", "The templates /ask answers from, with their feedback (files in ~/agent/templates)").action(async () => {
+      const { store } = this.#ctx;
+      if (!store) return fail("no template engine here\n", 1);
+      const { templates, problems } = await store.list();
+      const width = Math.max(0, ...templates.map((t) => t.id.length)) + 2;
+      const rows = templates.map((t) => `${t.id.padEnd(width)}${t.kind.padEnd(8)}${`+${t.helpful} -${t.harmful}`.padEnd(8)}${t.description}${t.refine ? ` (to rewrite: ${t.refine})` : ""}\n`);
+      return ok([...rows, ...problems.map((p) => `${tilde(p.path)} is not a template: ${p.error}\n`)].join("") || `no templates yet; they are files in ${tilde(store.dir)}\n`);
+    });
+    cli.command("rate <verdict> [...why]", "Rate the last answer: good, or bad and why (a bad one is rewritten when next chosen)").action(async (verdict: string, why: string[]) => {
+      const { engine, store } = this.#ctx;
+      if (!engine || !store) return fail("no template engine here\n", 1);
+      if (verdict !== "good" && verdict !== "bad") return fail("usage: /rate good|bad [why]\n");
+      const last = engine.last;
+      if (!last) return fail("nothing to rate yet: /ask something first\n", 1);
+      const note = why.join(" ").trim();
+      const counted = await store.feedback(last.templateId, verdict === "good" ? "helpful" : "harmful", note || undefined);
+      const after = counted.retired ? `; retired to ${tilde(store.dir)}/retired` : counted.refine !== undefined && verdict === "bad" ? `; rewritten when next chosen (${counted.refine})` : "";
+      return ok(`${last.templateId}: ${counted.helpful} helpful, ${counted.harmful} harmful${after}\n`);
+    });
     cli.command("trace [n]", "The newest trace events (default 20)").action((n: string | undefined) => {
       if (n !== undefined && !/^[1-9]\d*$/.test(String(n))) return fail("usage: /trace [n], n a positive whole number\n");
       return ok(tracer.events().slice(-Number(n ?? 20)).map(traceLine).join("\n") + "\n");
@@ -308,6 +349,7 @@ export class SlashCommands {
         ["worker", settings.worker],
         ["tier", settings.tier],
         ["approve", settings.approval],
+        ["generate", settings.generate],
         ["hook events", hooks],
         ["trace events", tracer.events().length],
         ["capabilities", playground.host.daemon.capabilities().map((c) => c.name).join(", ")],

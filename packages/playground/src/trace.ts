@@ -4,7 +4,7 @@
  * the events the worker sends back, every model call (through AI SDK middleware), tool
  * runs, filesystem changes and hook events.
  */
-import type { LanguageModelV4Content, LanguageModelV4Middleware, LanguageModelV4StreamPart, LanguageModelV4Usage } from "@ai-sdk/provider";
+import type { LanguageModelV4Content, LanguageModelV4Middleware, LanguageModelV4StreamPart, LanguageModelV4Usage, SharedV4ProviderMetadata } from "@ai-sdk/provider";
 import type { ToolSet } from "ai";
 import type { AcpPort } from "@harness/platform-browser";
 import { PORT_CONTROL } from "@harness/platform-browser";
@@ -171,10 +171,10 @@ function parsedInput(input: string): unknown {
 
 const tokens = (u: LanguageModelV4Usage | undefined) => ({ input: u?.inputTokens.total, output: u?.outputTokens.total });
 
-function outcome(content: readonly (LanguageModelV4Content | LanguageModelV4StreamPart)[], finish: string | undefined, usage: LanguageModelV4Usage | undefined) {
+function outcome(content: readonly (LanguageModelV4Content | LanguageModelV4StreamPart)[], finish: string | undefined, usage: LanguageModelV4Usage | undefined, metadata?: SharedV4ProviderMetadata) {
   const text = content.map((c) => (c.type === "text" ? c.text : c.type === "text-delta" ? c.delta : "")).join("");
   const toolCalls = content.flatMap((c) => (c.type === "tool-call" ? [{ toolName: c.toolName, input: parsedInput(c.input) }] : []));
-  return { text, toolCalls, finishReason: finish, usage: tokens(usage) };
+  return { text, toolCalls, finishReason: finish, usage: tokens(usage), ...(metadata ? { metadata } : {}) };
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -189,7 +189,7 @@ export function tracingMiddleware(tracer: Tracer): LanguageModelV4Middleware {
       const span = start("generate", params, model.modelId);
       try {
         const result = await doGenerate();
-        span.end(outcome(result.content, result.finishReason.unified, result.usage));
+        span.end(outcome(result.content, result.finishReason.unified, result.usage, result.providerMetadata));
         return result;
       } catch (e) {
         span.end({ error: message(e) });
@@ -227,7 +227,7 @@ export function tracingMiddleware(tracer: Tracer): LanguageModelV4Middleware {
             if (next.done) {
               const error = parts.find((p) => p.type === "error");
               const finish = parts.find((p) => p.type === "finish");
-              end(error ? { error: message(error.error) } : outcome(parts, finish?.finishReason.unified, finish?.usage));
+              end(error ? { error: message(error.error) } : outcome(parts, finish?.finishReason.unified, finish?.usage, finish?.providerMetadata));
               controller.close();
               return;
             }
