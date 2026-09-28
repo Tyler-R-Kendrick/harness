@@ -1062,8 +1062,9 @@ their meaning.
     model (`--model-cache`, `--llama-server`, `--no-hosted`; it loads only when the refiner
     is asked), over the session logs of the daemon state file `--state` names, with the
     terminal approver when stdin is a terminal; a dream that is `busy`, `no-head` or
-    `lease-lost` exits 1. The daemon has no approver: the
-    permission flow is per session, and dream runs outside any session.
+    `lease-lost` exits 1. The daemon has no approver (the permission flow is per session,
+    and dream runs outside any session): its dream has the approvals inbox instead (see
+    "Approvals inbox").
 - **P6's notes.**
   - `DreamSettings.stride?` is the paper's S; `runDream`'s `stride` option overrides it.
   - `DreamInput.tokenizer?` and `runDream`'s `tokenizer?` (`Tokenizer = {encode, decode}`)
@@ -1128,6 +1129,13 @@ the names above keep their meaning.
     (`requestedNotice(record)`) or `procedural.approval.decided {graph, candidate,
     decision: "approved" | "declined", revision?}` (`decidedNotice(result)`, none for a
     refusal). `approvalInbox(notify)` is dream's `ApprovalInbox` over a notifier.
+- **Hosts.** `DaemonRuntime.publish(input)` is core's host publish API through the
+  runtime, which saves the snapshot (hook events are part of it). On the native host,
+  `hookNotifier(runtime)` publishes each `ApprovalNotice` under source `procedural`;
+  `nativeDream` takes `inbox?: ApprovalInbox`, and `buildNativeEnsemble`'s `procedural`
+  takes `notify`. `main.ts` gives both the host's notifier once the daemon is up, so its
+  dream proposes to the inbox and plugins subscribed to `procedural.approval.*` hear of
+  proposals and decisions.
 
 ## Open issues
 
@@ -1135,11 +1143,10 @@ The finalization resolved the cross-phase wiring the phases recorded here (compo
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
 the evaluator contract and scripted environment, rejection records). Still open:
 
-- P6 × P12: dream on the daemon has no approver (the permission flow, MX3, is per
-  session and dream runs outside any session), no configured `Evaluator`, and no session
-  tool catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
+- P6 × P12: dream on the daemon has no configured `Evaluator` and no session tool
+  catalog (`tools`, `sideEffectFree`), so `enforceToolCatalog` and
   `approval-for-side-effects` see no real tools there; the gates do what the preset says
-  for their absence. The CLI approves on a terminal.
+  for their absence. Candidates that need approval wait in the approvals inbox.
 - P12: content-id keying means two graphs holding the same document share one record (its
   `graph` is whichever wrote last), and a revert replaces its target's record;
   `revertGraph` keeps what it replaced in `evidence.replaces`. Keying records by

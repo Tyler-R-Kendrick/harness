@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from "@agentclientprotocol/sdk";
-import { GraphIdSchema, revisionId, seedGraph } from "@harness/procedural";
+import { CandidateDocumentSchema, FORMAT, GraphIdSchema, revisionId, seedGraph } from "@harness/procedural";
 import { proceduralStore } from "@harness/platform-native";
 
 const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
@@ -62,5 +62,60 @@ describe("procedural graphs on the native daemon", () => {
     await expect(invoke(client, "procedural.history", { graph: "g" })).rejects.toMatchObject({ message: expect.stringMatching(/procedural|cognitive/) });
     const { sessionId } = await client.newSession({ cwd: "/tmp", mcpServers: [] });
     expect(await client.prompt({ sessionId, prompt: [{ type: "text", text: "hi" }] })).toMatchObject({ stopReason: "end_turn" });
+  });
+
+  it("PX2.79 the approvals inbox over ACP: an import proposal waits and is announced on the hook bus, procedural.approve commits it, procedural.decline rejects another, each decision announced; the policy's approve action guards them", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "harness-procedural-"));
+    const state = join(dir, "state.json");
+    const expert = {
+      format: FORMAT,
+      nodeTypes: ["ACTION", "REASONING", "STATUS"],
+      relations: ["LEADS_TO", "TRIGGERS", "PROVIDES_INPUT_FOR", "CONVERGES_TO"],
+      nodes: [
+        { id: "Start", type: "STATUS", description: "The task begins." },
+        { id: "search", type: "ACTION", description: "Search the index." },
+        { id: "End", type: "STATUS", description: "Answered." },
+      ],
+      edges: [
+        { from: "Start", relation: "LEADS_TO", to: "search", condition: null, guidance: "Search first.", pitfalls: "" },
+        { from: "search", relation: "LEADS_TO", to: "End", condition: null, guidance: "Answer.", pitfalls: "" },
+      ],
+    };
+    const proposal = revisionId(CandidateDocumentSchema.parse(expert));
+    const other = { ...expert, edges: [expert.edges[0]!, { ...expert.edges[1]!, guidance: "Answer briefly." }] };
+    const declined = revisionId(CandidateDocumentSchema.parse(other));
+    const seed = revisionId(seedGraph());
+
+    const daemon = launch(dir, "--state", state);
+    await daemon.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await invoke(daemon.client, "procedural.import", { graph: "team/search" });
+    expect(await invoke(daemon.client, "procedural.import", { graph: "team/search", document: expert })).toEqual({ status: "proposed", revision: proposal, head: seed });
+    expect(await invoke(daemon.client, "procedural.approvals", { graph: "team/search" })).toMatchObject({ head: seed, approvals: [{ candidate: proposal, origin: "import", onHead: true }] });
+    expect(await invoke(daemon.client, "procedural.approve", { candidate: proposal })).toEqual({ status: "committed", graph: "team/search", candidate: proposal, revision: proposal, previous: seed });
+    await invoke(daemon.client, "procedural.import", { graph: "team/search", document: other });
+    expect(await invoke(daemon.client, "procedural.decline", { candidate: declined })).toEqual({ status: "declined", graph: "team/search", candidate: declined });
+    expect(await invoke(daemon.client, "procedural.approvals", { graph: "team/search" })).toMatchObject({ head: proposal, approvals: [] });
+    daemon.child.stdin.end();
+    expect(await daemon.exited).toBe(0);
+    // The daemon's saved state holds the notices, published by the host under source `procedural`.
+    const hooks = (JSON.parse(readFileSync(state, "utf8")) as { hooks: { events: { type: string; source: string; payload: Record<string, unknown> }[] } }).hooks.events.filter((e) => e.type.startsWith("procedural.approval."));
+    expect(hooks.map((e) => [e.type, e.source, e.payload["candidate"], e.payload["decision"]])).toEqual([
+      ["procedural.approval.requested", "procedural", proposal, undefined],
+      ["procedural.approval.decided", "procedural", proposal, "approved"],
+      ["procedural.approval.requested", "procedural", declined, undefined],
+      ["procedural.approval.decided", "procedural", declined, "declined"],
+    ]);
+    expect(await proceduralStore(join(dir, "procedural")).heads.get(GraphIdSchema.parse("team/search"))).toEqual({ revision: proposal, history: [seed] });
+
+    // A policy that keeps approve from this host's principal refuses the inbox, and nothing is decided.
+    const policy = join(dir, "policy.json");
+    writeFileSync(policy, JSON.stringify({ rules: [{ when: { actions: ["approve"] }, allow: false }] }));
+    const guarded = launch(dir, "--procedural-policy", policy);
+    await guarded.client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
+    await invoke(guarded.client, "procedural.import", { graph: "team/search", document: other });
+    await expect(invoke(guarded.client, "procedural.approvals", { graph: "team/search" })).rejects.toMatchObject({ message: expect.stringContaining("approve on graph team/search is not allowed") });
+    await expect(invoke(guarded.client, "procedural.approve", { candidate: declined })).rejects.toMatchObject({ message: expect.stringContaining("approve on graph team/search is not allowed") });
+    guarded.child.stdin.end();
+    expect(await guarded.exited).toBe(0);
   });
 });

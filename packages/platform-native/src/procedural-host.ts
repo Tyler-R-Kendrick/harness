@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import type { Daemon, DaemonSnapshot, HookEvent, LogEntry } from "@harness/core";
 import { authorize, LiveLearner, logTrajectories, modelRefiner, presetOf, proceduralStep, runDream, SnapshotProceduralStore } from "@harness/procedural";
-import type { AccessPolicy, Action, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
+import type { AccessPolicy, Action, ApprovalInbox, ApprovalNotice, Approver, Composer, DreamPorts, DreamResult, Evaluator, GraphId, ProceduralStepHook, ProceduralStore, Reflector, Resolver, SessionLog, Settings } from "@harness/procedural";
 import type { DaemonRuntime } from "@harness/runtime";
 import type { LanguageModel } from "ai";
 import { FileStorage } from "./file-storage.ts";
@@ -168,9 +168,10 @@ export function snapshotSessions(snapshot: unknown): { id: string; entries: LogE
  * Dream on this host (plan §7.1, P6): `runDream` over the store with real ports. The
  * refiner is `modelRefiner` on the given generator, trajectories are the turns of the
  * session logs `sessions` returns (`logTrajectories`), and time and ids come from this
- * host. An evaluator, an approver and a composer are optional: without an approver a
- * candidate that needs approval is rejected, and without a composer there is no
- * composition round. The run holds the graph's lease as `holder` (default `native-host`),
+ * host. An evaluator, an approver, an approvals inbox and a composer are optional: a
+ * candidate that needs approval is asked about when there is an approver, waits in the
+ * inbox when there is an inbox (the daemon's: no one can be asked outside a session's
+ * turn), and is rejected otherwise; without a composer there is no composition round. The run holds the graph's lease as `holder` (default `native-host`),
  * so a dream another process holds is `busy`.
  */
 export function nativeDream(options: {
@@ -181,13 +182,14 @@ export function nativeDream(options: {
   readonly sessions: () => Promise<readonly SessionLog[]>;
   readonly evaluator?: Evaluator;
   readonly approver?: Approver;
+  readonly inbox?: ApprovalInbox;
   readonly composer?: Composer;
   readonly task?: string;
   readonly tools?: readonly string[];
   readonly sideEffectFree?: readonly string[];
   readonly holder?: string;
 }): (graph: GraphId) => Promise<DreamResult> {
-  const { store, settings, model, sessions, evaluator, approver, composer, task, tools, sideEffectFree, holder = "native-host" } = options;
+  const { store, settings, model, sessions, evaluator, approver, inbox, composer, task, tools, sideEffectFree, holder = "native-host" } = options;
   const preset = presetOf(settings, options.preset ?? "harness");
   const ports: DreamPorts = {
     refiner: modelRefiner({ model, settings }),
@@ -195,6 +197,7 @@ export function nativeDream(options: {
     ...hostPorts,
     ...(evaluator === undefined ? {} : { evaluator }),
     ...(approver === undefined ? {} : { approver }),
+    ...(inbox === undefined ? {} : { inbox }),
     ...(composer === undefined ? {} : { composer }),
   };
   return (graph) =>
@@ -209,6 +212,16 @@ export function nativeDream(options: {
       ...(sideEffectFree === undefined ? {} : { sideEffectFree }),
     });
 }
+
+/**
+ * The approvals inbox's notices on the daemon's hook bus, published by this host under
+ * source `procedural` (a peer can never pick it), and saved with the daemon's snapshot.
+ * Plugins subscribe to `procedural.approval.*`.
+ */
+export const hookNotifier =
+  (runtime: Pick<DaemonRuntime, "publish">) =>
+  (notice: ApprovalNotice): void =>
+    void runtime.publish({ source: "procedural", type: notice.type, payload: notice.payload });
 
 /**
  * An approver that asks on a terminal (the CLI's permission flow): it names the graph,

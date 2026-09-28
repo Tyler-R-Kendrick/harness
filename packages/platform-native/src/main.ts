@@ -8,15 +8,15 @@ import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
-import { modelReflector } from "@harness/procedural";
-import type { GraphId } from "@harness/procedural";
+import { approvalInbox, modelReflector } from "@harness/procedural";
+import type { ApprovalNotice, GraphId } from "@harness/procedural";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
 import { loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings } from "./catalog-files.ts";
 import { FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
-import { hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
+import { hookNotifier, hostAuthorizer, nativeDream, nativeLiveLearner, nativeProceduralStep, proceduralStore, snapshotSessions } from "./procedural-host.ts";
 
 const { values } = parseArgs({
   options: {
@@ -91,8 +91,10 @@ const principal = userInfo().username;
 const proceduralSettings = values.procedural === undefined ? undefined : loadProceduralSettings(values["procedural-settings"]);
 const proceduralPolicy = values["procedural-policy"] === undefined ? undefined : loadProceduralPolicy(values["procedural-policy"]);
 // The live learner and dream start with the daemon (they read its hook events and session logs); `procedural.feedback` and `procedural.dream` reach them then.
+// The approvals inbox announces proposals and decisions on the daemon's hook bus, once it is up.
 // The host opens the store once: the cognitive core's operations, the step hook, the learner and dream share it.
-const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream> } = {};
+const live: { learner?: ReturnType<typeof nativeLiveLearner>; dream?: ReturnType<typeof nativeDream>; notify?: (notice: ApprovalNotice) => void } = {};
+const notify = (notice: ApprovalNotice) => live.notify?.(notice);
 const proceduralFiles = values.procedural === undefined ? undefined : proceduralStore(values.procedural);
 const cognitive =
   values.cognitive || values.worker === "ensemble"
@@ -111,6 +113,7 @@ const cognitive =
                 authorize: hostAuthorizer(proceduralPolicy, principal),
                 feedback: async (session: string, turn: string, score: number) => live.learner?.learner.feedback(session, turn, score),
                 dream: async (graph: GraphId) => live.dream?.(graph),
+                notify,
               },
             }),
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
@@ -184,10 +187,13 @@ const host = await NodeHost.start({
   ...(values.state === undefined ? {} : { statePath: values.state }),
 });
 
+if (procedural) live.notify = hookNotifier(host.runtime);
 if (procedural && generator) {
   live.learner = nativeLiveLearner({ runtime: host.runtime, ...procedural, reflect: modelReflector({ model: generator, settings: procedural.settings }), log: (message) => void process.stderr.write(`${message}\n`) });
-  // Dream refines with the generator, on trajectories from the daemon's session logs.
-  live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()) });
+  // Dream refines with the generator, on trajectories from the daemon's session logs. No one can be
+  // asked for approval outside a session's turn: candidates that need it wait in the approvals inbox
+  // (`procedural.approvals`, `procedural.approve`, `procedural.decline`).
+  live.dream = nativeDream({ ...procedural, model: generator, sessions: async () => snapshotSessions(host.daemon.snapshot()), inbox: approvalInbox(notify) });
 }
 
 const shutdown = async () => {
