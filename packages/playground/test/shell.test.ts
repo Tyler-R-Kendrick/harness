@@ -17,7 +17,7 @@ afterEach(async () => {
 async function terminal(answer?: (key: Prompter) => void) {
   const tracer = new Tracer(() => Date.now());
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
-  const settings: Settings = { worker: "shell", tier: "default", approval: "ask" };
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask" };
   const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
   open.push(playground);
   let out = "";
@@ -70,7 +70,7 @@ describe("the terminal's slash commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
       expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
@@ -101,7 +101,7 @@ describe("the terminal's slash commands", () => {
     expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
     expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
     expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
-    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto" });
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask" });
     expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
@@ -209,7 +209,66 @@ describe("slash commands: parsed before bash, with a command-line parser", () =>
   it("TM5.5 the parser's commands are the ones help lists, each with a description", async () => {
     const t = await terminal();
     const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
-    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    const commands = new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: [] }).list();
+    expect(commands.map((c) => `/${c.name.split(" ")[0]}`)).toEqual(listed);
+    expect(commands[0]).toEqual({ name: "ask [...prompt]", description: expect.stringContaining("Run a turn") });
+  });
+});
+
+describe("the template engine's commands", () => {
+  async function withEngine() {
+    const t = await terminal();
+    const { TemplateStore, TEMPLATES } = await import("../src/templates.ts");
+    const { TemplateEngine } = await import("../src/engine.ts");
+    const { lexicalJudge } = await import("../src/decide.ts");
+    const { parseEngineSettings } = await import("../src/engine-settings.ts");
+    const { readFileSync } = await import("node:fs");
+    const settings = parseEngineSettings(JSON.parse(readFileSync(new URL("../data/templates.json", import.meta.url), "utf8")));
+    await t.bash.fs.mkdir(TEMPLATES, { recursive: true });
+    await t.bash.fs.writeFile(`${TEMPLATES}/list-files.md`, readFileSync(new URL("../data/templates/list-files.md", import.meta.url), "utf8"));
+    await t.bash.fs.writeFile(`${TEMPLATES}/broken.md`, "not a template");
+    const store = new TemplateStore(t.bash.fs, { retireMargin: 2 });
+    const engine = new TemplateEngine({ store, settings, facts: {}, judge: () => lexicalJudge(settings.lexical), generators: () => [], generation: () => t.settings.generate });
+    const bash = new Bash({ fs: t.bash.fs, cwd: HOME });
+    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store }));
+    const run = async (line: string) => {
+      const r = await bash.exec(line, { cwd: HOME });
+      return { ...r, stdout: plain(r.stdout) };
+    };
+    return { ...t, run, engine, store };
+  }
+
+  it("TM6.1 /generate shows and sets whether generating asks first, runs on auto, or is off", async () => {
+    const t = await withEngine();
+    expect((await t.run("/generate")).stdout).toBe("ask (one of ask, auto, off)\n");
+    expect((await t.run("/generate off")).stdout).toBe("generate: off\n");
+    expect(t.settings.generate).toBe("off");
+    expect(await t.run("/generate always")).toMatchObject({ exitCode: 2 });
+  });
+
+  it("TM6.2 /templates lists the templates with their feedback, and the files that are not templates", async () => {
+    const t = await withEngine();
+    const out = (await t.run("/templates")).stdout;
+    expect(out).toMatch(/^list-files\s+reply\s+\+0 -0\s+Lists the files in the working directory$/m);
+    expect(out).toContain("~/agent/templates/broken.md is not a template:");
+  });
+
+  it("TM6.3 /rate counts the last answer's template helpful or harmful (a reason makes it rewritten when next chosen); retiring says so", async () => {
+    const t = await withEngine();
+    expect(await t.run("/rate good")).toMatchObject({ exitCode: 1, stderr: "nothing to rate yet: /ask something first\n" });
+    t.engine.last = { templateId: "list-files", request: "list the files" };
+    expect((await t.run("/rate good")).stdout).toBe("list-files: 1 helpful, 0 harmful\n");
+    expect((await t.run("/rate bad too terse, isn't it")).stdout).toBe("list-files: 1 helpful, 1 harmful; rewritten when next chosen (too terse, isn't it)\n");
+    expect((await t.run("/rate bad")).stdout).toMatch(/list-files: 1 helpful, 2 harmful; rewritten/);
+    expect((await t.run("/rate bad")).stdout).toBe("list-files: 1 helpful, 3 harmful; retired to ~/agent/templates/retired\n");
+    expect(await t.run("/rate meh")).toMatchObject({ exitCode: 2, stderr: "usage: /rate good|bad [why]\n" });
+  });
+
+  it("TM6.4 without the engine the template commands say so", async () => {
+    const t = await terminal();
+    expect(await t.run("/templates")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });
+    expect(await t.run("/rate good")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });
   });
 });
 
@@ -265,11 +324,15 @@ describe("rendering a turn in the terminal", () => {
     expect(traceLine({ seq: 9, at: 0, kind: "acp", name: "initialize #0", direction: "in" })).toBe("   9 acp    → initialize #0");
   });
 
-  it("TM3.5 a permission question names the tool and its command, or its input", () => {
+  it("TM3.5 a permission question names the tool and its command, or its input; a generation says it spends inference, and on what", () => {
     const ask = (toolCall: object) => question({ sessionId: "s", toolCall: { toolCallId: "c", ...toolCall }, options: [] });
     expect(ask({ title: "bash", rawInput: { command: "ls" } })).toBe("Allow bash: ls?");
     expect(ask({ title: "writeFile", rawInput: { path: "a" } })).toBe('Allow writeFile {"path":"a"}?');
     expect(ask({})).toBe("Allow this tool {}?");
+    expect(ask({ title: "write_template", rawInput: { request: "a haiku" } })).toBe('Spend inference to write a template for "a haiku"?');
+    expect(ask({ title: "fill_template", rawInput: { id: "haiku", holes: ["poem", "title"] } })).toBe("Spend inference to fill poem, title of template haiku?");
+    expect(ask({ title: "fill_template", rawInput: { id: "haiku" } })).toBe("Spend inference to fill the holes of template haiku?");
+    expect(ask({ title: "refine_template", rawInput: { id: "haiku", note: "shorter" } })).toBe("Spend inference to rewrite template haiku (shorter)?");
   });
 });
 

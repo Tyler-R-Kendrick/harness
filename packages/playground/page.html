@@ -233,6 +233,7 @@ details.raw pre { max-height: 420px; border: 1px solid var(--line); border-radiu
   <div class="controls">
     <div class="control"><span class="label">Worker</span>
       <div class="seg" id="worker" role="group" aria-label="Worker for the next turn">
+        <button type="button" data-worker="templates" aria-pressed="false" title="Answers from templates in ~/agent/templates; generates only when none fits, asking first">templates</button>
         <button type="button" data-worker="echo" aria-pressed="false">echo</button>
         <button type="button" data-worker="shell" aria-pressed="false">shell</button>
         <button type="button" data-worker="claude" aria-pressed="false">claude</button>
@@ -250,7 +251,7 @@ details.raw pre { max-height: 420px; border: 1px solid var(--line); border-radiu
   <section class="term-pane" aria-label="Terminal">
     <div class="term-head"><span><b>just-bash</b> · wterm</span><span id="session-line">no session</span></div>
     <div id="terminal" aria-label="Harness terminal" aria-describedby="terminal-help"></div>
-    <p id="terminal-help" hidden>Type /ask followed by a prompt to run a turn, or any bash command. /help lists the harness commands.</p>
+    <p id="terminal-help" hidden>Type /ask followed by a prompt to run a turn (answered from a template before any inference), or any bash command. /help lists the harness commands.</p>
   </section>
 
   <section class="inspector" aria-label="Inspector">

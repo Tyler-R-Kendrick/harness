@@ -78,7 +78,7 @@ async function type(page: Page, line: string) {
 }
 
 describe("the playground page in Chromium", { timeout: 60_000 }, () => {
-  it("PI1.1 boots in one file under the artifact size limit: the daemon runs a first turn that changes a file, and every panel shows it", async () => {
+  it("PI1.1 boots in one file under the artifact size limit: the daemon runs a first turn (a template answers it) that changes a file, every panel shows it, and the harness is in its own files (AGENTS.md, an Eve agent under agent/)", async () => {
     expect(size).toBeLessThan(16 * 1024 * 1024);
     const { page, errors } = await open();
     expect(await terminalText(page)).toContain("ran a turn through the daemon");
@@ -86,6 +86,10 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#worker button[data-worker=claude]").isDisabled()).toBe(true);
     await page.click("#tab-files");
     expect(await page.locator("#tree").innerText()).toMatch(/~\s*todo\.md/);
+    const tree = await page.locator("#tree").innerText();
+    for (const file of ["run-command.md", "AGENTS.md", "agent.ts", "instructions.md", "bash.ts", "write_template.ts", "terminal.md", "show-file.sh"]) expect(tree).toContain(file);
+    await type(page, "cat AGENTS.md | grep -c 'Worker: templates'");
+    await page.waitForFunction(() => /\n1\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.click("#tab-daemon");
     expect(await page.locator("#daemon").innerText()).toContain("turn.ended");
     await page.click("#tab-timeline");
@@ -156,9 +160,11 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.3 with the artifact runtime's sample capability, Claude is the worker: its tool call goes through the daemon's approval into the filesystem", async () => {
+  it("PI1.3 with the artifact runtime's sample capability, Claude is not picked for you: with no template it writes one (asked first), the next like request costs no inference, and it runs as a worker only when chosen", async () => {
     const { page } = await open(() => {
+      const greet = { id: "greet", description: "Greets someone by name", examples: ["say hello to Ada"], kind: "reply", body: "Hello, {{name}}!", holes: { name: { description: "who", source: "pattern", pattern: "hello to (\\w+)" } }, values: {} };
       const replies = [
+        JSON.stringify({ text: JSON.stringify(greet), toolCalls: [] }),
         JSON.stringify({ text: "Writing it.", toolCalls: [{ toolName: "writeFile", input: { path: "notes/claude.md", content: "from claude\n" } }] }),
         JSON.stringify({ text: "Done: notes/claude.md.", toolCalls: [] }),
       ];
@@ -169,7 +175,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
         options.onText?.({ text, delta: text });
         return { text, truncated: false, modelTierApplied: "default" };
       };
-      // Claude becomes reachable while the scripted first turn runs (the race that turn must not lose).
+      // Claude becomes reachable while the scripted first turn runs.
       const duringDemo = () =>
         new Promise((resolve) => {
           const wait = setInterval(() => {
@@ -181,21 +187,37 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
         });
       Object.assign(globalThis, { claude: { use: async (name: string) => (name === "sample" ? duringDemo() : null) }, sampled: asked });
     });
+    const sampled = () => page.evaluate(() => (globalThis as unknown as { sampled: unknown[] }).sampled.length);
     await page.waitForFunction(() => document.getElementById("claude-pill")?.textContent === "Claude: ready");
-    expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("true");
-    // The scripted first turn ran on the shell worker: Claude was not asked anything.
-    expect(await page.evaluate(() => (globalThis as unknown as { sampled: unknown[] }).sampled.length)).toBe(0);
+    expect(await page.locator("#worker button[data-worker=templates]").getAttribute("aria-pressed")).toBe("true");
+    expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("false");
+    expect(await sampled()).toBe(0);
+
+    await type(page, "/ask say hello to Ada");
+    await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Spend inference to write a template"));
+    await page.keyboard.press("y");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    expect(await terminalText(page)).toContain("Hello, Ada!");
+    expect(await terminalText(page)).toContain("+ /home/user/agent/templates/greet.md");
+    expect(await sampled()).toBe(1);
+
+    await type(page, "/ask say hello to Grace");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "3");
+    expect(await terminalText(page)).toContain("Hello, Grace!");
+    expect(await sampled()).toBe(1);
+
+    await type(page, "/worker claude");
     await type(page, "/ask write a note");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Allow writeFile"));
     await page.keyboard.press("y");
-    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "4");
     const text = await terminalText(page);
     expect(text).toContain("Done: notes/claude.md.");
     expect(text).toContain("+ /home/user/notes/claude.md");
     const asked = await page.evaluate(() => (globalThis as unknown as { sampled: { role: string; content: string }[][] }).sampled);
-    expect(asked).toHaveLength(2);
-    expect(asked[0]![0]!.content).toContain("writeFile");
-    expect(asked[1]!.at(-1)!.content).toContain("Tool results");
+    expect(asked).toHaveLength(3);
+    expect(asked[1]![0]!.content).toContain("writeFile");
+    expect(asked[2]!.at(-1)!.content).toContain("Tool results");
     await page.close();
   });
 });

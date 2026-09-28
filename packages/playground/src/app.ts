@@ -9,8 +9,20 @@ import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
 import { IndexedDbStorage } from "@harness/platform-browser";
 import { storedConversations } from "@harness/workers";
+import settingsFile from "../data/templates.json?raw";
+import helpSeed from "../data/templates/help.md?raw";
+import listFilesSeed from "../data/templates/list-files.md?raw";
+import runCommandSeed from "../data/templates/run-command.md?raw";
+import showFileSeed from "../data/templates/show-file.md?raw";
+import todaySeed from "../data/templates/today.md?raw";
+import { AGENT, syncAgentDir } from "./agent-dir.ts";
+import type { HarnessState } from "./agent-dir.ts";
+import { lexicalJudge } from "./decide.ts";
+import { TemplateEngine } from "./engine.ts";
+import { parseEngineSettings } from "./engine-settings.ts";
+import { TEMPLATES, TemplateStore } from "./templates.ts";
 import { Coalesced, parsePageState, parseTrace, parseVfsSnapshot, reported, resilient, restoreVfs, snapshotVfs, storableEvent } from "./persist.ts";
-import { Playground } from "./playground.ts";
+import { INSTRUCTIONS, Playground } from "./playground.ts";
 import type { TurnReport } from "./playground.ts";
 import { sampleLanguageModel } from "./sample-model.ts";
 import type { ModelTier, Sample } from "./sample-model.ts";
@@ -19,7 +31,7 @@ import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
 import { Tracer } from "./trace.ts";
 import type { TraceEvent, TraceKind } from "./trace.ts";
-import { HOME, walk } from "./vfs.ts";
+import { HOME, vfsTools, walk } from "./vfs.ts";
 import type { FileEntry, VfsDiff } from "./vfs.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -59,22 +71,27 @@ const SAMPLE_FILES: Record<string, string> = {
     "filesystem, so whatever a turn changes shows up here and in the Files tab.",
     "",
   ].join("\n"),
-  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] /ask summarize README.md", "- [ ] /ask $ ls -la with approvals on, and answer n", "- [ ] /trace 30 | grep model", ""].join("\n"),
+  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] /ask what files are here? (a template answers: no inference)", "- [ ] /ask $ ls -la with approvals on, and answer n", "- [ ] /ask write a haiku about the sea (no template fits: a generator may write one, asking first)", "- [ ] /templates, then /rate good or /rate bad <why>", "- [ ] /trace 30 | grep model", ""].join("\n"),
   [`${HOME}/src/greet.sh`]: ['name="${1:-world}"', 'echo "hello, $name"', ""].join("\n"),
+  // The templates /ask starts with; the ones generators write join them here.
+  [`${TEMPLATES}/help.md`]: helpSeed,
+  [`${TEMPLATES}/list-files.md`]: listFilesSeed,
+  [`${TEMPLATES}/run-command.md`]: runCommandSeed,
+  [`${TEMPLATES}/show-file.md`]: showFileSeed,
+  [`${TEMPLATES}/today.md`]: todaySeed,
 };
+const engineSettings = parseEngineSettings(JSON.parse(settingsFile));
 
 const GREETING = [
   "\x1b[1mharness playground\x1b[0m \x1b[2m· the daemon runs in this page; this shell shares its files with the agent\x1b[0m",
-  "  \x1b[36m/ask\x1b[0m <prompt>         run a turn on the selected worker (claude, when this page can reach it)",
-  "  \x1b[36m/ask\x1b[0m $ <command>      the shell worker runs one command through the same path",
+  "  \x1b[36m/ask\x1b[0m <prompt>         answered from a template (~/agent/templates) before any inference",
+  "  \x1b[36m/ask\x1b[0m $ <command>      runs a command through the agent's bash tool and its approval",
+  "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether writing one asks first",
   "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
-const settings: Settings = { worker: "shell", tier: "default", approval: "ask" };
-let workerChosen = false;
-/** While the scripted first turn runs, nothing switches its worker (it runs on the shell, never on Claude). */
-let demoRunning = false;
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask" };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -86,6 +103,8 @@ const clock = (at: number) => {
 
 let sample: Sample | undefined;
 let claudeState: "checking" | "ready" | "off" = "checking";
+/** Rewrite the harness's agent directory (~/agent) from its state; set once the page has booted. */
+let resyncHarness: (() => Promise<void>) | undefined;
 const claude = sampleLanguageModel(
   (input, options) =>
     sample
@@ -97,10 +116,12 @@ const runtime = (globalThis as { claude?: { use(name: string): Promise<unknown> 
 const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise.resolve(null)).then((s) => {
   sample = typeof s === "function" ? (s as Sample) : undefined;
   claudeState = sample ? "ready" : "off";
-  if (sample && !workerChosen && !demoRunning) settings.worker = "claude";
+  // Claude is never picked for you: inference is the last resort (it writes templates, asking first, or runs when chosen).
   // A worker restored from a visit where Claude was reachable, on a page where it is not.
-  if (!sample && settings.worker === "claude") settings.worker = "shell";
+  if (!sample && settings.worker === "claude") settings.worker = "templates";
   sync();
+  // Whether Claude can write templates is part of the harness's state (~/agent/agent.ts).
+  void resyncHarness?.().then(refreshFiles);
 });
 
 // ---- controls ---------------------------------------------------------------------------
@@ -127,7 +148,6 @@ $("worker").addEventListener("click", (e) => {
   const worker = (e.target as HTMLElement).closest("button")?.dataset["worker"];
   if (!worker) return;
   settings.worker = worker;
-  workerChosen = true;
   sync();
   pageSaver?.request();
 });
@@ -541,7 +561,6 @@ async function boot() {
   const restored = savedVfs !== undefined || savedPage !== undefined || savedTrace !== undefined;
   if (savedPage) {
     Object.assign(settings, savedPage.settings);
-    workerChosen = true;
     turns.push(...savedPage.turns);
     lastDiff = savedPage.turns.at(-1)?.report.diff ?? lastDiff;
     renderTurns();
@@ -553,10 +572,61 @@ async function boot() {
   bashRef = bash;
   if (savedVfs) await restoreVfs(bash.fs, HOME, savedVfs);
 
+  const templateStore = new TemplateStore(bash.fs, { retireMargin: engineSettings.curation.retireMargin });
+  const judge = lexicalJudge(engineSettings.lexical);
+  const facts = {
+    cwd: () => HOME,
+    files: () => [...files.keys()].filter((f) => !f.startsWith(`${HOME}/agent/`)).map((f) => f.slice(HOME.length + 1)).join("\n"),
+    date: () => new Date().toLocaleDateString([], { weekday: "long", year: "numeric", month: "long", day: "numeric" }),
+    templates: async () => (await templateStore.list()).templates.map((t) => `${t.id}: ${t.description}`).join("\n"),
+    sessions: async () => (playground ? (await playground.sessions()).join("\n") : ""),
+    worker: () => settings.worker,
+  };
+  const engine = new TemplateEngine({
+    store: templateStore,
+    settings: engineSettings,
+    facts,
+    judge: () => judge,
+    generators: () => (claudeState === "ready" ? [claude] : []),
+    generation: () => settings.generate,
+  });
+  // The harness as an Eve agent in its own filesystem (~/AGENTS.md, ~/agent/), kept in sync with its state.
+  const commands: { slash?: SlashCommands } = {};
+  const WORKERS = [
+    { name: "templates", description: "Answers from the templates in ~/agent/templates; generates only what cannot be decided, asking first", model: "harness.templates/templates", instructions: "Answer each request from a template: a decision model picks it, and its holes are filled from facts, the request and choices. Write, fill or rewrite a template only when nothing else answers, and only with consent." },
+    { name: "echo", description: "Echoes the prompt: no model, no tools" },
+    { name: "shell", description: "Runs `$ <command>` through the bash tool, deterministically", model: "harness.playground/shell" },
+    { name: "claude", description: "Claude through this artifact's sample capability: inference on every turn, only when picked", model: "claude.sample/sample", instructions: INSTRUCTIONS },
+  ];
+  const approvalOf = (name: string) => {
+    const generation = engine.approval(name);
+    if (generation !== undefined) return generation === "user-approval" ? "asks first (/generate ask)" : generation === "denied" ? "off (/generate off)" : "runs on its own (/generate auto)";
+    return name === "readFile" ? "never asks" : settings.approval === "ask" ? "asks first (/approve ask)" : "runs on its own (/approve auto)";
+  };
+  const harnessState = async (): Promise<HarnessState> => ({
+    instructions: INSTRUCTIONS,
+    workers: WORKERS,
+    tools: { ...vfsTools(bash), ...engine.tools() },
+    approval: approvalOf,
+    settings,
+    decisionModel: `${judge.provider}/${judge.modelId}`,
+    generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
+    templates: (await templateStore.list()).templates,
+    facts: Object.keys(facts),
+    commands: commands.slash?.list() ?? [],
+    sessions: playground ? await playground.sessions() : [],
+  });
+  let syncing = Promise.resolve();
+  const syncHarness = () => (syncing = syncing.then(async () => void (await syncAgentDir(bash.fs, await harnessState()))).catch((e: unknown) => void storageProblem(`agent directory: ${String(e)}`)));
+  resyncHarness = syncHarness;
   playground = await Playground.start({
     bash,
     tracer,
-    models: { shell: shellModel(), claude },
+    instructions: async () => (await bash.fs.readFile(`${AGENT}/instructions.md`).catch(() => INSTRUCTIONS)).trim() || INSTRUCTIONS,
+    afterTurn: syncHarness,
+    models: { templates: engine.model(), shell: shellModel(), claude },
+    tools: engine.tools(),
+    toolApproval: (name) => engine.approval(name),
     worker: () => settings.worker,
     approval: () => settings.approval,
     onSnapshot,
@@ -566,16 +636,19 @@ async function boot() {
   const p = playground;
   vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));
   pageSaver = new Coalesced(() => stores.page.save({ version: 1, sessionId: p.sessionId, settings: { ...settings }, turns }), (e) => storageProblem(`page: ${e}`));
-  withSlashCommands(bash, new SlashCommands({
+  const slash = (commands.slash = new SlashCommands({
     playground: p,
     tracer,
     settings,
     prompter,
     write,
-    workers: ["echo", "shell", "claude"],
+    workers: ["templates", "echo", "shell", "claude"],
+    engine,
+    store: templateStore,
     onChange: () => {
       sync();
       pageSaver?.request();
+      void syncHarness().then(refreshFiles);
     },
     onTurn: (prompt, report) => {
       const { files: after, ...summary } = report;
@@ -591,6 +664,8 @@ async function boot() {
     },
     onReset: reset,
   }));
+  withSlashCommands(bash, slash);
+  await syncHarness();
   await refreshFiles();
   sync();
 
@@ -613,17 +688,15 @@ async function boot() {
     return;
   }
 
-  // A first turn through the whole path (the shell worker, so no model usage), typed as a person would.
+  // A first turn through the whole path, typed as a person would: a template (run-command) answers it, so no inference.
   const was = { worker: settings.worker, approval: settings.approval };
-  demoRunning = true;
   document.documentElement.dataset["demo"] = "running";
-  settings.worker = "shell";
+  settings.worker = "templates";
   settings.approval = "auto";
   await shell.handleInput(`/ask $ echo "- [x] ran a turn through the daemon" >> notes/todo.md && tail -n 1 notes/todo.md`);
   await shell.handleInput("\r");
-  demoRunning = false;
   delete document.documentElement.dataset["demo"];
-  Object.assign(settings, was, workerChosen || claudeState !== "ready" ? {} : { worker: "claude" });
+  Object.assign(settings, was);
   sync();
   saveAll();
   term.focus();
