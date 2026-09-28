@@ -73,6 +73,8 @@ const GREETING = [
 
 const settings: Settings = { worker: "shell", tier: "default", approval: "ask" };
 let workerChosen = false;
+/** While the scripted first turn runs, nothing switches its worker (it runs on the shell, never on Claude). */
+let demoRunning = false;
 const tracer = new Tracer(() => Date.now());
 const t0 = Date.now();
 
@@ -91,7 +93,7 @@ const runtime = (globalThis as { claude?: { use(name: string): Promise<unknown> 
 const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise.resolve(null)).then((s) => {
   sample = typeof s === "function" ? (s as Sample) : undefined;
   claudeState = sample ? "ready" : "off";
-  if (sample && !workerChosen) settings.worker = "claude";
+  if (sample && !workerChosen && !demoRunning) settings.worker = "claude";
   // A worker restored from a visit where Claude was reachable, on a page where it is not.
   if (!sample && settings.worker === "claude") settings.worker = "shell";
   sync();
@@ -259,7 +261,7 @@ selectTab(TABS.find((t) => t === store.get("harness-playground-tab")) ?? "timeli
 
 // ---- turns ------------------------------------------------------------------------------
 
-const turns: { prompt: string; report: TurnReport }[] = [];
+const turns: { prompt: string; report: Omit<TurnReport, "files"> }[] = [];
 let lastDiff: VfsDiff = { added: [], modified: [], removed: [] };
 
 function renderTurns() {
@@ -317,7 +319,7 @@ function renderFiles() {
       { style: `padding-left:${12 + (rel.length - 1) * 16}px` },
       h("span", { className: `m ${mark === "+" ? "mark-added" : mark === "~" ? "mark-modified" : ""}` }, mark),
       open,
-      h("span", { className: "size" }, `${entry.size} B`),
+      h("span", { className: "size" }, entry.link === undefined ? `${entry.size} B` : `→ ${entry.link}`),
     );
     if (path === selected) li.setAttribute("aria-current", "true");
     items.push(li);
@@ -328,7 +330,7 @@ function renderFiles() {
   $("viewer").hidden = entry === undefined;
   if (entry && selected) {
     $("viewer-path").textContent = selected;
-    $("viewer-text").textContent = entry.text ?? `(${entry.size} bytes: too large to show)`;
+    $("viewer-text").textContent = entry.link !== undefined ? `(a link to ${entry.link})` : (entry.text ?? `(${entry.size} bytes: too large to show)`);
   }
 }
 
@@ -435,7 +437,7 @@ const storageProblem = (error: string) => tracer.record({ kind: "host", name: "s
 /** One record of the playground's IndexedDB database. Once a reset begins, only clearing writes. */
 const kept = (key: string) => {
   const storage = resilient(() => new IndexedDbStorage({ name: "harness-playground", key }), storageProblem);
-  return { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.save(undefined) } satisfies SnapshotStorage & { clear(): Promise<void> };
+  return { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.clear() } satisfies SnapshotStorage & { clear(): Promise<void> };
 };
 const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page") };
 let pageSaver: Coalesced | undefined;
@@ -525,11 +527,15 @@ async function boot() {
       pageSaver?.request();
     },
     onTurn: (prompt, report) => {
-      turns.push({ prompt, report });
+      const { files: after, ...kept } = report;
+      turns.push({ prompt, report: kept });
       lastDiff = report.diff;
       renderTurns();
-      void refreshFiles();
-      saveAll();
+      // The turn's own walk is the Files tab's; files are saved only when the turn changed some.
+      files = new Map(after);
+      renderFiles();
+      pageSaver?.request();
+      if (report.diff.added.length + report.diff.modified.length + report.diff.removed.length > 0) vfsSaver?.request();
     },
     onReset: reset,
   }))
@@ -558,10 +564,14 @@ async function boot() {
 
   // A first turn through the whole path (the shell worker, so no model usage), typed as a person would.
   const was = { worker: settings.worker, approval: settings.approval };
+  demoRunning = true;
+  document.documentElement.dataset["demo"] = "running";
   settings.worker = "shell";
   settings.approval = "auto";
   await shell.handleInput(`ask '$ echo "- [x] ran a turn through the daemon" >> notes/todo.md && tail -n 1 notes/todo.md'`);
   await shell.handleInput("\r");
+  demoRunning = false;
+  delete document.documentElement.dataset["demo"];
   Object.assign(settings, was, workerChosen || claudeState !== "ready" ? {} : { worker: "claude" });
   sync();
   saveAll();

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { Bash } from "just-bash";
+import { Bash, defineCommand } from "just-bash";
 import type { ModelMessage } from "ai";
 import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
@@ -48,7 +48,7 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     for (const n of ["acp:initialize #0", "acp:session/new #1", "acp:session/prompt #2", "worker:prompt", "worker:end · end_turn"]) expect(names).toContain(n);
   });
 
-  it("PG1.2 a command the person allows runs in the shared filesystem, and the turn reports what changed", async () => {
+  it("PG1.2 a command the person allows runs in the shared filesystem, and the turn reports what changed and the files after it", async () => {
     const { playground, tracer, bash } = await start();
     const t = turn();
     const report = await playground.prompt("$ echo made > new.txt && echo more >> README.md", t.handlers);
@@ -56,6 +56,7 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     expect(await bash.readFile(`${HOME}/new.txt`)).toBe("made\n");
     expect(report).toMatchObject({ stopReason: "end_turn", diff: { added: [`${HOME}/new.txt`], modified: [`${HOME}/README.md`], removed: [] }, toolCalls: 1, modelCalls: 2 });
     expect(t.said()).toBe("exit 0\n");
+    expect(report.files.get(`${HOME}/new.txt`)).toEqual({ size: 5, text: "made\n" });
     expect(tracer.events().find((e) => e.kind === "vfs")).toMatchObject({ name: "changes · 1 added, 1 modified, 0 removed" });
   });
 
@@ -121,6 +122,17 @@ describe("the playground: the browser host driven over ACP from the page", () =>
     expect(report.stopReason).toBe("refusal");
     expect(t.updates.some((u) => u.sessionUpdate === "notice" && u.description === "model down")).toBe(true);
   });
+  it("PG1.10 the agent's shell shares the terminal's files but not its commands: the harness cannot be driven from a tool call", async () => {
+    const { playground, bash } = await start({ approval: () => "auto" });
+    bash.registerCommand(defineCommand("harness", async () => ({ stdout: "drove the harness\n", stderr: "", exitCode: 0 })));
+    expect((await bash.exec("harness", { cwd: HOME })).stdout).toBe("drove the harness\n");
+    const t = turn();
+    await playground.prompt("$ harness reset", t.handlers);
+    expect(t.said()).toMatch(/^exit 127\n.*command not found/s);
+    await playground.prompt("$ echo mine > agent.txt", turn().handlers);
+    expect(await bash.readFile(`${HOME}/agent.txt`)).toBe("mine\n");
+  });
+
   it("PG1.9 what the host cannot hand to anyone (a snapshot that fails to save) shows up in the trace", async () => {
     const { playground, tracer } = await start({ worker: () => "echo", storage: { load: async () => undefined, save: async () => Promise.reject(new Error("disk full")) } });
     await playground.prompt("hi", turn().handlers);

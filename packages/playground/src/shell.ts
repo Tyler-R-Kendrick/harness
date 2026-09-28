@@ -122,7 +122,7 @@ export class TurnRenderer {
   }
 }
 
-export function reportLines(report: TurnReport): string {
+export function reportLines(report: Omit<TurnReport, "files">): string {
   const { added, modified, removed } = report.diff;
   const changed = added.length + modified.length + removed.length;
   const changes = changed === 0 ? "no file changes" : `${added.length} added, ${modified.length} modified, ${removed.length} removed`;
@@ -237,6 +237,7 @@ export function harnessCommands(ctx: ShellContext): Command[] {
       case "approve":
         return choose("policy", arg, POLICIES, () => settings.approval, (v) => (settings.approval = v));
       case "trace": {
+        if (arg !== undefined && !/^[1-9]\d*$/.test(arg)) return fail("usage: harness trace [n], n a positive whole number\n");
         const n = Number(arg ?? 20);
         return ok(tracer.events().slice(-n).map(traceLine).join("\n") + "\n");
       }

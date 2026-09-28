@@ -20,6 +20,8 @@ export interface FileEntry {
   readonly size: number;
   /** The file's text, when it is small enough to keep. */
   readonly text?: string;
+  /** A symbolic link's target (the link is listed, never followed). */
+  readonly link?: string;
 }
 
 export interface VfsDiff {
@@ -69,7 +71,7 @@ export function vfsApproval(policy: () => ApprovalPolicy): (options: { readonly 
   return ({ toolCall }) => (policy() === "ask" && toolCall.toolName !== "readFile" ? "user-approval" : "not-applicable");
 }
 
-/** Every file under `root`, depth first in name order, with its size and (when small) its text. */
+/** Every file under `root`, depth first in name order, with its size and (when small) its text; links are listed with their target, not followed. */
 export async function walk(fs: IFileSystem, root: string, options: { readonly maxText?: number } = {}): Promise<Map<string, FileEntry>> {
   const maxText = options.maxText ?? 64_000;
   const files = new Map<string, FileEntry>();
@@ -77,8 +79,9 @@ export async function walk(fs: IFileSystem, root: string, options: { readonly ma
     const names = await fs.readdir(dir).catch(() => []);
     for (const name of [...names].sort()) {
       const path = `${dir}/${name}`.replace(/^\/\//, "/");
-      const stat = await fs.stat(path);
-      if (stat.isDirectory) await visit(path);
+      const stat = await fs.lstat(path);
+      if (stat.isSymbolicLink) files.set(path, { size: 0, link: await fs.readlink(path) });
+      else if (stat.isDirectory) await visit(path);
       else if (stat.size > maxText) files.set(path, { size: stat.size });
       else files.set(path, { size: stat.size, text: await fs.readFile(path) });
     }
@@ -93,7 +96,7 @@ export function diffVfs(before: ReadonlyMap<string, FileEntry>, after: ReadonlyM
   const removed = [...before.keys()].filter((p) => !after.has(p));
   const modified = [...after].filter(([p, e]) => {
     const was = before.get(p);
-    return was !== undefined && (was.size !== e.size || was.text !== e.text);
+    return was !== undefined && (was.size !== e.size || was.text !== e.text || was.link !== e.link);
   });
   return { added, modified: modified.map(([p]) => p), removed };
 }
