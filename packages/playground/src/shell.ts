@@ -25,7 +25,7 @@ export interface Settings {
   generate: Generation;
   /** Which decision model picks templates, by slug: `auto` (the best this browser runs), `lexical` (the lexical judge alone), or a catalog id. */
   decide: string;
-  /** Which model writes templates, by slug: `auto` (a local one this browser runs, then Claude), `claude` (Claude alone), or a catalog id. */
+  /** Which model writes templates, by slug: `auto` (a local one this browser runs), `claude` (Claude alone), or a catalog id. */
   writer: string;
 }
 
@@ -330,7 +330,7 @@ export class SlashCommands {
       if (v === undefined && decider) return ok(`${settings.decide} (one of ${slugs.join(", ")})\ndecision model: ${decider.status(settings.decide)}\n`);
       return choose("decide", v, slugs, () => settings.decide, (d) => (settings.decide = d));
     });
-    cli.command("writer [slug]", "Which model writes templates: auto (a local one this browser runs, then Claude), claude, or a catalog id").action((v: string | undefined) => {
+    cli.command("writer [slug]", "Which model writes templates: auto (a local one this browser runs), claude, or a catalog id").action((v: string | undefined) => {
       const { writer } = this.#ctx;
       const slugs = writer?.slugs() ?? [settings.writer];
       if (v === undefined && writer) return ok(`${settings.writer} (one of ${slugs.join(", ")})\ngenerator: ${writer.status(settings.writer)}\n`);

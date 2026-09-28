@@ -70,7 +70,7 @@ model at all. Only the parts nobody can decide need a generator.
     alone and `none` as "something else: a question none of these answers", averaged over
     rotations, taking a template at 0.6 (`decision.accept`), and with the lexical judge
     behind it: 20 of 26, one wrong answer ("what is the capital of France?" listed the
-    files), five requests left without a template (they go to generation, with consent).
+    files), five requests left without a template (they go to local inference).
     The lexical judge alone (`lexical.accept`, 0.6): 18 of 26, three wrong answers ("run
     the tests" ran a command, "delete all my files" listed them, "summarize README.md"
     showed it).
@@ -145,8 +145,7 @@ model at all. Only the parts nobody can decide need a generator.
   request, runs with no inference; the timeline's model spans carry the decision
   (template, decision model, probability, where each hole came from).
 - The lexical decision model is weak with paraphrases that share no words with a
-  template's description or examples; a request it cannot place goes to generation (with
-  consent), which adds a template that then matches such requests. Julia 1 places them
+  template's description or examples; a request it cannot place goes to local inference (`/generate auto`), which adds a template that then matches such requests. Julia 1 places them
   (it picks the file "open the readme" means, which shares no word with README.md's name
   beyond itself), and without any inference.
 - A model's catch-all option is weak (ADR 0016): a request no template answers can still
@@ -162,7 +161,7 @@ model at all. Only the parts nobody can decide need a generator.
   arithmetic and anything it does not know; they are not kept, so the same question costs
   inference again.
 - A written template that runs but says the wrong thing is kept; `/rate bad <why>`
-  rewrites it (local first, then Claude).
+  rewrites it (the local model; Claude only under `/writer claude`).
 
 ## Revisit when
 

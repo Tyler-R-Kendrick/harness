@@ -241,15 +241,21 @@ const detected = detectCapabilities()
   });
 /** The writer slug's local model once it has loaded (local inference is mandatory: a question waits for it), or none for claude. */
 async function localModel(): Promise<{ id: string; port: LanguageModelV4 } | undefined> {
-  if (settings.writer === CLAUDE) return undefined;
+  const slug = settings.writer;
+  if (slug === CLAUDE) return undefined;
   await detected;
-  const port = await localGenerators.ready(settings.writer);
-  const id = localGenerators.current(settings.writer)?.id;
+  const port = await localGenerators.ready(slug);
+  const id = localGenerators.current(slug)?.id;
   return port && id ? { id, port } : undefined;
 }
 /** Load the local models the slugs want, once the browser's capabilities are known: auto's picks on their own, named ones when asked or kept. */
-const wantLocalModels = (asked: boolean) =>
+let wantedSlugs = "";
+const wantLocalModels = (changed: boolean) =>
   void detected.then(() => {
+    const slugs = `${settings.decide} ${settings.writer}`;
+    // Only a slug just typed is asked for: every turn also calls this, and must not download a named model again or retry a failed one.
+    const asked = changed && slugs !== wantedSlugs;
+    wantedSlugs = slugs;
     decisionModels.want(settings.decide, asked);
     localGenerators.want(settings.writer, asked);
     sync();
@@ -665,6 +671,7 @@ async function reset() {
   await Promise.all([vfsSaver?.flush(), pageSaver?.flush(), traceSaver.flush()]);
   const sessions = playground?.snapshot().sessions.map((s) => s.id) ?? [];
   await Promise.all([...Object.values(stores), ...sessions.map(conversationRecord)].map((s) => s.clear()));
+  for (const m of catalog.models) store.remove(pastKey(m.id));
   location.reload();
 }
 

@@ -268,6 +268,26 @@ describe("the template engine: answers from templates before inference", () => {
     expect((await ask3("what is the capital of France?")).text).toMatch(/could not write a template: no generator is available/i);
   });
 
+  it("TE1.17 a local model that enforces no JSON Schema answers a request that needs a fill or a refine itself, so a rating never blocks a template", async () => {
+    const answerer = new MockLanguageModelV4({
+      provider: "local",
+      modelId: "tiny",
+      doGenerate: async (): Promise<LanguageModelV4GenerateResult> => ({ content: [{ type: "text", text: "Pines hold the snow." }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] }),
+    });
+    const { ask, store } = setup({ answerers: [answerer] });
+    const { values: _v, ...draft } = haiku;
+    await store.put({ ...draft, kind: "reply", helpful: 0, harmful: 0, version: 1, origin: "written", holes: haiku.holes as never });
+    const filled = await ask("write a haiku about winter");
+    expect(filled.steps[0]!.toolCalls[0]).toMatchObject({ toolName: "fill_template" });
+    expect(filled.text).toBe("Pines hold the snow.");
+    expect(filled.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { answered: true, by: "local/tiny", after: "fill_template" } });
+    await store.feedback("list-files", "harmful", "say here are");
+    const refined = await ask("list the files");
+    expect(refined.steps[0]!.toolCalls[0]).toMatchObject({ toolName: "refine_template" });
+    expect(refined.text).toBe("Pines hold the snow.");
+    expect(refined.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { answered: true, after: "refine_template" } });
+  });
+
   it("TE1.8 generation never asks: it runs on auto, and is refused when off; bash and writes follow the approval policy elsewhere", () => {
     const { engine, setGeneration } = setup({ generation: "auto" });
     expect(engine.approval("write_template")).toBe("not-applicable");

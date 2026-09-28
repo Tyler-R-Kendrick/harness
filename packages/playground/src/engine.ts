@@ -4,7 +4,7 @@
  * which template answers with a decision model, fills the holes it can without
  * generating, and replies (a reply template) or runs the script (a script template, through
  * the `bash` tool and its approval). Only what cannot be decided is generated, through
- * tools that ask first: writing a template when none fits, filling a template's text
+ * tools that never ask: writing a template when none fits, filling a template's text
  * holes, and rewriting one rated harmful. A written template is a file in the virtual
  * filesystem, so the next similar request costs no inference.
  */
@@ -134,28 +134,29 @@ export class TemplateEngine {
       write_template: tool({
         description: "Write a new reply template for a request no template answers; when none can be written, answer the request itself (local inference).",
         inputSchema: z.object({ request: z.string() }),
-        execute: async ({ request }) => {
-          const written = await this.#generate(this.#options.generators, async (model) => this.#store(await this.#write(model, this.#options.settings.generation.write, request, await this.#factList()), model, request));
-          const answerers = "error" in written ? ((await this.#options.answerers?.()) ?? []) : [];
-          if (answerers.length === 0) return written;
-          // No template: the model answers this request itself, and nothing is kept.
-          const refused = this.lastWriteProblems;
-          const answered = await this.#generate(() => answerers, async (model) => ({ answer: await this.#answer(model, request), by: modelName(model) }));
-          this.lastWriteProblems = [...refused, ...this.lastWriteProblems];
-          return { ...answered, problems: [...refused, ...(answered.problems ?? [])] };
-        },
+        execute: async ({ request }) => this.#orAnswer(request, await this.#generate(this.#options.generators, async (model) => this.#store(await this.#write(model, this.#options.settings.generation.write, request, await this.#factList()), model, request))),
       }),
       fill_template: tool({
         description: "Write the text holes of a template for a request (spends inference on the holes only).",
         inputSchema: z.object({ id: z.string(), request: z.string(), holes: z.array(z.string()) }),
-        execute: ({ id, request, holes }) => this.#generate(this.#options.generators, (model) => this.#fill(model, id, request, holes)),
+        execute: async ({ id, request, holes }) => this.#orAnswer(request, await this.#generate(this.#options.generators, (model) => this.#fill(model, id, request, holes))),
       }),
       refine_template: tool({
         description: "Rewrite a template rated harmful, following the feedback (spends inference).",
         inputSchema: z.object({ id: z.string(), request: z.string(), note: z.string() }),
-        execute: ({ id, request, note }) => this.#generate(this.#options.generators, (model) => this.#refine(model, id, request, note)),
+        execute: async ({ id, request, note }) => this.#orAnswer(request, await this.#generate(this.#options.generators, (model) => this.#refine(model, id, request, note))),
       }),
     };
+  }
+
+  /** A generation that could not write (no local model enforces a JSON Schema, or its answer was refused): the local model answers the request itself, and nothing is kept. */
+  async #orAnswer(request: string, written: Generated): Promise<Generated> {
+    const answerers = "error" in written ? ((await this.#options.answerers?.()) ?? []) : [];
+    if (answerers.length === 0) return written;
+    const refused = this.lastWriteProblems;
+    const answered = await this.#generate(() => answerers, async (model) => ({ answer: await this.#answer(model, request), by: modelName(model) }));
+    this.lastWriteProblems = [...refused, ...this.lastWriteProblems];
+    return { ...answered, problems: [...refused, ...(answered.problems ?? [])] };
   }
 
   async #respond(prompt: LanguageModelV4Prompt): Promise<Reply> {

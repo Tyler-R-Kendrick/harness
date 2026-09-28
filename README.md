@@ -253,7 +253,7 @@ const agentTools = await workflowTools(workflows); // the library's workflows, f
 To try it by hand, build the browser playground: one HTML file with the daemon, a
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
-claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0014). A
+claude.ai artifact, `/ask` answers from templates first, and only what no template answers goes to local inference (ADR 0014). A
 decision model picks the template, chosen for the browser (`/decide auto`, local first: Julia 1
 where there is WebGPU and room for its 614 MB, once) or named by its slug (`/decide <id>`), with
 the lexical judge until it is ready or where none fits. Local inference is mandatory and never asked

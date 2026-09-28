@@ -262,7 +262,7 @@ describe("the template engine's commands", () => {
     expect(await t.run("/decide julia")).toMatchObject({ exitCode: 2, stderr: "unknown decide julia (one of auto, lexical, org/decider)\n" });
   });
 
-  it("TM6.6 /writer shows and sets which model writes templates by slug: auto (a local one for this browser, then Claude), claude, or a catalog id", async () => {
+  it("TM6.6 /writer shows and sets which model writes templates by slug: auto (a local one for this browser), claude, or a catalog id", async () => {
     const t = await withEngine();
     expect((await t.run("/writer")).stdout).toBe("auto (one of auto, claude, org/writer)\ngenerator: auto: Writer: ready\n");
     expect((await t.run("/status")).stdout).toMatch(/^writer\s+auto: auto: Writer: ready$/m);
