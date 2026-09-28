@@ -131,4 +131,15 @@ describe("dream on the native host", () => {
     expect(bare).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "rejected", gate: "approval-for-side-effects" }, {}, {}] });
     expect((bare as { rounds: unknown[] }).rounds).toHaveLength(3);
   });
+
+  it("PX2.66 the daemon's and the CLI's dream give no tool catalog, so the harness preset enforces none and a candidate over action nodes can commit", async () => {
+    const store = new MemoryProceduralStore();
+    await store.revisions.put(RevisionRecordSchema.parse({ id: revisionId(seed), graph, parents: [], document: seed, edits: null, origin: "import", evidence: {}, decision: { kind: "head" }, at: 0 }));
+    await store.heads.set(graph, undefined, revisionId(seed));
+    const model = new MockLanguageModelV4({
+      doGenerate: async () => ({ content: [{ type: "text", text: JSON.stringify(shorter) }], finishReason: { unified: "stop", raw: undefined }, usage: usage(1, 1), warnings: [] }),
+    });
+    const result = await nativeDream({ store, settings, model, sessions: async () => [], sideEffectFree: ["search"] })(graph);
+    expect(result).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "committed" }, {}, {}] });
+  });
 });

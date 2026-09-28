@@ -326,6 +326,18 @@ describe("gates beyond the paper", () => {
     expect(pending(repaired, "evaluate").graph.edges.some((e) => e.to === "Start")).toBe(false);
   });
 
+  it("PD1.79 a dream given no tool catalog has none to enforce: action nodes pass structure, and the refiner is shown no tools", () => {
+    const { tools: _unknown, ...noCatalog } = harness();
+    const selecting = answer(dreamStart(noCatalog), selected(1)).state;
+    expect(pending(selecting, "refine").request.tools).toEqual([]);
+    const h = answer(selecting, { kind: "refined", result: { edits: addVerify, raw: "{}" } }).state;
+    // It passes structure, and the evidence gate decides.
+    expect(pending(h, "reject").record.decision).toMatchObject({ kind: "rejected-gate", gate: "evidence" });
+    // An empty catalog given is still a catalog: every action node is outside it.
+    const empty = answer(answer(dreamStart(harness({ tools: [] })), selected(1)).state, { kind: "refined", result: { edits: addVerify, raw: "{}" } }).state;
+    expect(pending(empty, "reject").record.decision).toMatchObject({ kind: "rejected-structure", diagnostics: expect.arrayContaining([expect.objectContaining({ code: "tool-not-in-catalog" })]) });
+  });
+
   it("PD1.51 the evidence gate rejects a change live traffic does not support, before any evaluation", () => {
     const s = answer(answer(dreamStart(harness()), selected(1)).state, { kind: "refined", result: { edits: addVerify, raw: "{}" } }).state;
     const reject = pending(s, "reject");

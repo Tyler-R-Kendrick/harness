@@ -86,7 +86,7 @@ export interface RunDreamOptions {
   ports: DreamPorts;
   /** `{task_description}` for the refiner. */
   task?: string;
-  /** The tool catalog. */
+  /** The tool catalog; without one, none is enforced (see `DreamInput.tools`). */
   tools?: readonly string[];
   /** Tools declared free of side effects. */
   sideEffectFree?: readonly string[];
@@ -167,7 +167,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
-      tools: options.tools ?? [],
+      ...(options.tools === undefined ? {} : { tools: options.tools }),
       // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,
