@@ -659,6 +659,14 @@ As built (P6). These refine the shapes above; the names other phases use keep th
 - `Daemon.publish(input: { source: string; type: string; sessionId?: string; correlationId?: string; cause?: string; payload: unknown }): Result<HookEvent, HookError>`
   is host-side only. Peers cannot choose `source`.
 
+As built (A1). These are additions; nothing above changed meaning.
+
+- `Daemon.readLog(sessionId: string, from = 0, to = Infinity): readonly LogEntry<unknown>[]`
+  is host-side only. It returns the session's entries in `[from, to)` without copying
+  any other session's log (`snapshot()` copies them all). Entries compacted below the
+  log's base are gone, so a read starts there; a read past the head, or of an unknown
+  session, is empty; a negative or fractional bound is a `RangeError` (DM10.12–DM10.15).
+
 ## P9: resolver and policy (`resolver.ts`, `policy.ts`, `pinning.ts`)
 
 - `ResolverSchema` (data plus `resolverJsonSchema()`, drift-tested). Its rules are
