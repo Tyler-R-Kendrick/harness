@@ -7,20 +7,35 @@ import type { ConversationStore } from "@harness/workers";
 
 /** Bytes in the JSON: `{ "$bytes": <base64> }`. */
 const BYTES = "$bytes";
+/** An object that would read as a tag, escaped: `{ "$object": <its entries> }`. */
+const OBJECT = "$object";
 
-function replacer(_key: string, value: unknown): unknown {
-  return value instanceof Uint8Array ? { [BYTES]: Buffer.from(value).toString("base64") } : value;
+const isTag = (key: string | undefined) => key === BYTES || key === OBJECT;
+
+function onlyKey(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const keys = Object.keys(value);
+  return keys.length === 1 ? keys[0] : undefined;
+}
+
+// `this` is the holder: its own value is read before `toJSON` (a Buffer's) has run.
+function replacer(this: unknown, key: string, value: unknown): unknown {
+  const own = (this as Record<string, unknown>)[key];
+  if (own instanceof Uint8Array) return { [BYTES]: Buffer.from(own.buffer, own.byteOffset, own.byteLength).toString("base64") };
+  if (own instanceof ArrayBuffer) return { [BYTES]: Buffer.from(own).toString("base64") };
+  return isTag(onlyKey(value)) ? { [OBJECT]: Object.entries(value as object) } : value;
 }
 
 function reviver(_key: string, value: unknown): unknown {
-  if (typeof value !== "object" || value === null) return value;
-  const keys = Object.keys(value);
-  const tagged = (value as Record<string, unknown>)[BYTES];
-  return keys.length === 1 && typeof tagged === "string" ? new Uint8Array(Buffer.from(tagged, "base64")) : value;
+  const key = onlyKey(value);
+  const inner = key === undefined ? undefined : (value as Record<string, unknown>)[key];
+  if (key === BYTES && typeof inner === "string") return new Uint8Array(Buffer.from(inner, "base64"));
+  if (key === OBJECT && Array.isArray(inner)) return Object.fromEntries(inner as [string, unknown][]);
+  return value;
 }
 
 /**
- * Snapshot storage in a single JSON file (bytes kept as tagged base64). Saves are atomic (a crash leaves the old or
+ * Snapshot storage in a single JSON file (bytes kept as tagged base64, objects that look tagged escaped). Saves are atomic (a crash leaves the old or
  * the new snapshot) and serialized, so the last one issued is the one that lands.
  */
 export class FileStorage implements SnapshotStorage {
