@@ -88,6 +88,14 @@ describe("harness-procedural CLI", () => {
     await expect(cli("dream", "g", "--model", "provider/model")).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
   });
 
+  it("PX2.124 dream --procedural-tools gives the dream the tools a deployment declares free of side effects; an invalid file is refused", async () => {
+    const { dir, cli } = await setup();
+    await writeFile(join(dir, "tools.json"), JSON.stringify({ sideEffectFree: ["search"] }));
+    await expect(cli("dream", "g", "--model", "provider/model", "--procedural-tools", join(dir, "tools.json"))).rejects.toMatchObject({ code: 1, stdout: expect.stringContaining('"no-head"') });
+    await writeFile(join(dir, "bad.json"), JSON.stringify({ sideEffectFree: ["search", "search"] }));
+    await expect(cli("dream", "g", "--model", "provider/model", "--procedural-tools", join(dir, "bad.json"))).rejects.toMatchObject({ code: 2, stderr: expect.stringMatching(/^--procedural-tools .*bad\.json: invalid tool declarations[\s\S]*declared twice: search/) });
+  });
+
   it("PX2.91 dream --procedural-eval gates on the task suite, solved by the model given; a suite this CLI cannot run is refused", async () => {
     const { dir, cli, json } = await setup();
     const file = join(dir, "graph.json");

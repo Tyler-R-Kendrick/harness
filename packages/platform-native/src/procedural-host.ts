@@ -285,8 +285,9 @@ export function nativeDream(options: {
  *   `base` tools plus exactly the workflows the core the session reads this turn binds
  *   (`step.core`), each only while its staged code hashes to the binding.
  * - `composer` makes dream's composer (`nativeDream({ composer })`) over the specs of the
- *   base tools as they are when a dream starts, and `catalog` lists them as dream's tool
- *   catalog (`nativeDream({ tools })`), which the harness preset enforces.
+ *   base tools as they are when a dream starts, and `catalog` lists them, after the
+ *   `builtins` (a harness worker's own tools, which the host does not run), as dream's
+ *   tool catalog (`nativeDream({ tools })`), which the harness preset enforces.
  */
 export function nativeComposition(options: {
   readonly dir: string;
@@ -297,11 +298,13 @@ export function nativeComposition(options: {
   readonly base?: () => ToolSet | Promise<ToolSet>;
   /** The shared workflow library's directory, if the host has one. */
   readonly shared?: string;
+  /** Tools sessions have that the host does not run: a harness adapter's builtins. */
+  readonly builtins?: readonly string[];
 }): HostComposition {
-  const { settings, step, ask, base } = options;
+  const { settings, step, ask, base, builtins } = options;
   const dir = join(options.dir, "staging");
   if (options.shared !== undefined && resolve(options.shared) === resolve(dir)) throw new Error(`the shared workflow library (${options.shared}) cannot be procedural's staging library`);
-  return composition({ staging: staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask }), settings, step, ...(base === undefined ? {} : { base }) });
+  return composition({ staging: staging({ files: new WorkflowFiles(dir), codeMode: aiCodeMode, ask }), settings, step, ...(base === undefined ? {} : { base }), ...(builtins === undefined ? {} : { builtins }) });
 }
 
 /**

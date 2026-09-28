@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,7 +11,7 @@ import { EchoWorker } from "@harness/workers";
 import type { HookEvent } from "@harness/core";
 import { approvalInbox, applyEdits, EditSetSchema, FORMAT, GraphIdSchema, MemoryProceduralStore, parseCompositionSettings, parseGraph, revisionId, RevisionRecordSchema } from "@harness/procedural";
 import type { ApprovalNotice, RevisionRecord } from "@harness/procedural";
-import { buildNativeEnsemble, hookNotifier, loadProceduralSettings, nativeDream, NodeHost, pumpHookEvents, snapshotSessions, terminalApprover } from "@harness/platform-native";
+import { buildNativeEnsemble, hookNotifier, loadProceduralSettings, loadProceduralTools, nativeDream, NodeHost, pumpHookEvents, snapshotSessions, terminalApprover } from "@harness/platform-native";
 
 const settings = loadProceduralSettings();
 const graph = GraphIdSchema.parse("team/search");
@@ -198,5 +198,14 @@ describe("dream on the native host", () => {
     });
     const result = await nativeDream({ store, settings, model, sessions: async () => [], sideEffectFree: ["search"] })(graph);
     expect(result).toMatchObject({ status: "done", rounds: [{ round: 1, outcome: "committed" }, {}, {}] });
+  });
+
+  it("PX2.122 the tools declared free of side effects load from procedural's data file (none) by default, or from a deployment's copy; an invalid file throws", () => {
+    expect(loadProceduralTools()).toEqual({ $schema: "./tools.schema.json", sideEffectFree: [] });
+    const file = join(mkdtempSync(join(tmpdir(), "procedural-")), "tools.json");
+    writeFileSync(file, JSON.stringify({ sideEffectFree: ["search"] }));
+    expect(loadProceduralTools(file)).toEqual({ sideEffectFree: ["search"] });
+    writeFileSync(file, JSON.stringify({ sideEffectFree: [""] }));
+    expect(() => loadProceduralTools(file)).toThrow(/invalid tool declarations/);
   });
 });
