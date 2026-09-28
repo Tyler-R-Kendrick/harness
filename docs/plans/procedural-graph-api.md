@@ -1121,7 +1121,9 @@ their meaning.
 
 The finalization resolved the cross-phase wiring the phases recorded here (composition in
 dream, live reflection, dream from the host, the stride as settings data, the tokenizer,
-the evaluator contract and scripted environment, rejection records). Still open:
+the evaluator contract and scripted environment, rejection records). A1 resolved the
+store and log plumbing (records keyed by graph and id with a v1 migration, reverts that
+write no record, `Daemon.readLog`, one owner per store directory). Still open:
 
 - P6 × P12: dream on the daemon has no approver (the permission flow, MX3, is per
   session and dream runs outside any session), no configured `Evaluator`, and no session
