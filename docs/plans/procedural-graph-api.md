@@ -982,6 +982,9 @@ As built (P13). The names above keep their meaning; these are the refinements.
 - `pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[]`.
   The overlay's `observed` events are the statistics, because support counts distinct
   sessions per path, which `EdgeStats` does not keep. A redelivered turn counts once.
+  A turn's score is its latest re-observation's (feedback's `rescore`, by `seq`), so a
+  turn scored only by `procedural.feedback` after it was observed counts; a
+  re-observation of a turn never observed counts nothing.
   - `PathCandidate = { path: NodeName[]; support: number; turns: number; meanScore: Score }`.
   - `CompositionSettings = { support, minScore: Score, maxLength }`, parsed by
     `parseCompositionSettings`, with `data/composition.json` and a drift-tested

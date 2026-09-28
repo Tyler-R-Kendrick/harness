@@ -81,14 +81,20 @@ const isAction = (g: ProceduralGraph, node: NodeName): boolean => nodeById(g, no
  * interior nodes have out-degree 1. A path is a candidate when turns of at least
  * `support` distinct sessions walked it and its mean over scored turns is at least
  * `minScore`. A redelivered turn counts once (its first delivery), and a turn that walks
- * a path twice counts once. Candidates come longest first, then by support, mean score
+ * a path twice counts once. A turn's score is its latest re-observation's (feedback, by
+ * `rescore.seq`), else its own; a re-observation of a turn never observed counts nothing.
+ * Candidates come longest first, then by support, mean score
  * and path; a candidate lying inside one already kept is dropped.
  */
 export function pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[] {
-  const turns = new Map<string, { session: string; path: readonly NodeName[]; score: Score | null }>();
+  const turns = new Map<string, { session: string; path: readonly NodeName[]; score: Score | null; seq: number }>();
   for (const e of events) {
-    if (e.kind !== "observed" || turns.has(e.turnKey)) continue;
-    turns.set(e.turnKey, { session: e.turnKey.slice(0, e.turnKey.indexOf("/")), path: e.path, score: e.score });
+    if (e.kind !== "observed") continue;
+    const known = turns.get(e.turnKey);
+    // Feedback re-observes a turn with a new score: the latest (by seq) is the turn's.
+    if (e.rescore !== undefined) {
+      if (known !== undefined && e.rescore.seq > known.seq) turns.set(e.turnKey, { ...known, score: e.score, seq: e.rescore.seq });
+    } else if (known === undefined) turns.set(e.turnKey, { session: e.turnKey.slice(0, e.turnKey.indexOf("/")), path: e.path, score: e.score, seq: 0 });
   }
   const tally = new Map<string, { path: NodeName[]; sessions: Set<string>; turns: number; scored: number; sum: number }>();
   for (const { session, path, score } of turns.values()) {
