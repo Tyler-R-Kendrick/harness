@@ -6,7 +6,7 @@ import { gateway } from "@ai-sdk/gateway";
 import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel } from "ai";
 import { z } from "zod";
 import type { Entropy } from "@harness/core";
-import { Evolution, judgeCritic, modelProposer, StateSchema } from "@harness/evolution";
+import { Evolution, holdoutRemaining, judgeCritic, modelProposer, StateSchema } from "@harness/evolution";
 import type { Documents, EvolutionPorts, LedgerRecord, Settings } from "@harness/evolution";
 import { CognitiveError } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
@@ -249,11 +249,11 @@ class Host {
     if ((await this.#storage.load()) !== undefined && !force) throw new Error(`${this.#statePath} holds a run: \`run\` continues it, \`start --force\` begins again`);
     const documents = readDocuments(this.#loaded);
     const { evolve, holdout } = this.#split;
-    this.#say(`measuring the base harness: ${evolve.length} evolve tasks${holdout ? ` and ${holdout.length} holdout tasks` : ""}, ${this.#settings.trials} trials each`);
+    this.#say(`measuring the base harness: ${evolve.length} evolve tasks, ${this.#settings.trials} trials each${holdout ? `; ${holdout.length} holdout tasks are kept for confirming winners` : ""}`);
     const evolution = await Evolution.start({ surface: buildSurface(this.#loaded), settings: this.#settings, split: this.#split, documents, ports: { evaluate: this.#evaluate, entropy: this.#entropy } });
     await this.#save({ format: "harness.evolution-run/v1", base: JSON.parse(JSON.stringify(documents)) as Run["base"], tasks: this.#tasks, evolution: undefined }, evolution);
     const state = StateSchema.parse(evolution.save());
-    this.#say(`base score ${state.base.score.toFixed(4)}${state.base.cost === undefined ? "" : `, ${Math.round(state.base.cost)} tokens a trial`}${state.holdout?.incumbent ? `; on the holdout ${state.holdout.incumbent.score.toFixed(4)}` : ""}`);
+    this.#say(`base score ${state.base.score.toFixed(4)}${state.base.cost === undefined ? "" : `, ${Math.round(state.base.cost)} tokens a trial`}`);
     this.#say(`run started in ${this.#statePath}: ${this.#settings.rounds} rounds`);
   }
 
@@ -323,7 +323,7 @@ class Host {
     const state = StateSchema.parse(evolution.save());
     this.#say(`run ${this.#statePath}: round ${evolution.completed} of ${this.#settings.rounds}${evolution.done ? " (over)" : ""}`);
     this.#say(`base score ${state.base.score.toFixed(4)}; incumbent ${(evolution.trajectory.at(-1) ?? state.base.score).toFixed(4)} (${signed((evolution.trajectory.at(-1) ?? state.base.score) - state.base.score)})`);
-    if (state.holdout) this.#say(`holdout: ${state.holdout.state.budget} of ${this.#settings.holdout.budget} overfitting answers left after ${state.holdout.state.queries} queries`);
+    if (state.holdout) this.#say(`holdout: ${holdoutRemaining(state.holdout, this.#settings.holdout)} of ${this.#settings.holdout.budget} queries left after ${state.holdout.queries} made`);
     this.#say(`mechanisms: ${evolution.mechanisms.length}`);
     for (const m of evolution.mechanisms) this.#say(`  ${m.id} (round ${m.round}, lower bound ${signed(m.lower)}${m.entangled ? ", entangled" : ""}) [${m.components.join(", ")}]: ${m.hypothesis}`);
     const records = evolution.records.slice(-last);

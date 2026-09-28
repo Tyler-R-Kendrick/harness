@@ -47,16 +47,17 @@ const read = (path: string) => readFileSync(path, "utf8");
 const readState = (s: Scenario) => StateSchema.parse((JSON.parse(read(s.state)) as { evolution: unknown }).evolution);
 
 describe("harness-evolution start, round and run", () => {
-  it("EH4.1 start measures the base harness on the evolve tasks and the holdout, and saves a run in the state file", async () => {
-    const s = scenario(tmp(), { holdout: 8 });
+  it("EH4.1 start measures the base harness on the evolve tasks only (the holdout is kept for confirming winners), and saves a run in the state file", async () => {
+    const s = scenario(tmp(), { holdout: 12 });
     const r = await cli(["start", "--config", s.config]);
     expect(r).toMatchObject({ code: 0, err: "" });
-    expect(r.out).toMatch(/measuring the base harness: 24 evolve tasks and 8 holdout tasks, 2 trials each/);
-    expect(r.out).toMatch(/base score 0\.\d{4}, 1000 tokens a trial; on the holdout 0\.\d{4}/);
+    expect(r.out).toMatch(/measuring the base harness: 24 evolve tasks, 2 trials each; 12 holdout tasks are kept for confirming winners/);
+    expect(r.out).toMatch(/base score 0\.\d{4}, 1000 tokens a trial\n/);
+    expect(r.out).not.toMatch(/on the holdout/);
     expect(r.out).toContain(`run started in ${s.state}: 3 rounds`);
     const state = readState(s);
     expect(state.round).toBe(0);
-    expect(state.holdout?.incumbent).toBeDefined();
+    expect(state.holdout).toEqual({ queries: 0 });
     expect((JSON.parse(read(s.state)) as { base: unknown }).base).toEqual({ policy: { rules: {}, prompt: { system: "Work carefully." } } });
   });
 
@@ -72,7 +73,7 @@ describe("harness-evolution start, round and run", () => {
   });
 
   it("EH4.3 round runs one round on the proposer's model and saves it; a real gain is accepted", async () => {
-    const s = scenario(tmp(), { holdout: 8 });
+    const s = scenario(tmp(), { holdout: 12 });
     await cli(["start", "--config", s.config]);
     const asked: string[] = [];
     const p = proposer();
@@ -89,7 +90,7 @@ describe("harness-evolution start, round and run", () => {
   });
 
   it("EH4.4 run starts a run when there is none, goes on to the end, and only reports when it is run again", async () => {
-    const s = scenario(tmp(), { holdout: 8 });
+    const s = scenario(tmp(), { holdout: 12 });
     const p = proposer();
     const r = await cli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
     expect(r.code).toBe(0);
@@ -204,15 +205,15 @@ describe("harness-evolution start, round and run", () => {
 });
 
 describe("harness-evolution status", () => {
-  it("EH5.1 status reports the round, the incumbent's score against the base, the holdout's budget, the mechanisms and the last records", async () => {
-    const s = scenario(tmp(), { holdout: 8 });
+  it("EH5.1 status reports the round, the incumbent's score against the base, the holdout's queries left, the mechanisms and the last records", async () => {
+    const s = scenario(tmp(), { holdout: 12 });
     const p = proposer();
     await cli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
     const r = await cli(["status", "--config", s.config]);
     expect(r.code).toBe(0);
     expect(r.out).toContain(`run ${s.state}: round 3 of 3 (over)`);
     expect(r.out).toMatch(/base score 0\.\d{4}; incumbent 0\.\d{4} \(\+0\.\d{4}\)/);
-    expect(r.out).toMatch(/holdout: \d of 2 overfitting answers left after \d queries/);
+    expect(r.out).toMatch(/holdout: [012] of 2 queries left after [012] made/);
     expect(r.out).toMatch(/mechanisms: 1\n {2}r0A\.e1 \(round 0, lower bound \+0\.\d{4}\) \[config\]: verify helps/);
     expect(r.out).toContain("last 3 records:");
     expect(r.out).toMatch(/0A change accepted/);
@@ -222,7 +223,7 @@ describe("harness-evolution status", () => {
 
 describe("harness-evolution documents", () => {
   async function finished() {
-    const s = scenario(tmp(), { holdout: 8 });
+    const s = scenario(tmp(), { holdout: 12 });
     const p = proposer();
     await cli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
     return s;
@@ -394,7 +395,7 @@ const readEvolution = (s: TextScenario) => StateSchema.parse((JSON.parse(read(s.
 
 describe("harness-evolution on text documents", () => {
   it("EH11.14 a scripted proposer's edit to a text file is accepted when it really helps; the state holds the text, not JSON", async () => {
-    const s = textScenario(tmp(), { holdout: 8 });
+    const s = textScenario(tmp(), { holdout: 12 });
     const p = proposing(() => rewrite("verify: off", "verify: on"));
     await textCli(["start", "--config", s.config]);
     const r = await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
@@ -508,15 +509,16 @@ describe("harness-evolution on text documents", () => {
   });
 
   it("EH11.21 a check that takes too long screens the proposal naming the limit; a check that cannot start stops the run (the host's fault, not the proposal's)", async () => {
-    // The base text passes at once; text with the edit in it hangs.
-    const slow = { command: [NODE, "-e", `if (require("fs").readFileSync(0, "utf8").includes("verify: on")) setTimeout(() => {}, 60000)`], timeoutMs: 300 };
+    // The base text passes at once; text with the edit in it hangs. The limit is generous so that starting Node for the
+    // base text's check never races it on a loaded machine (a 300 ms limit failed start when the host was busy).
+    const slow = { command: [NODE, "-e", `if (require("fs").readFileSync(0, "utf8").includes("verify: on")) setTimeout(() => {}, 60000)`], timeoutMs: 2500 };
     const s = textScenario(tmp(), { document: { check: slow } });
     await textCli(["start", "--config", s.config]);
     const p = proposing(() => rewrite("verify: off", "verify: on"));
     const r = await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
     expect(r.err).toBe("");
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/0A change screened: .*agent fails its check: the check took longer than 300 ms and was stopped/);
+    expect(r.out).toMatch(/0A change screened: .*agent fails its check: the check took longer than 2500 ms and was stopped/);
     // Start measures the base, which must pass the check too; a check that cannot start fails the round or start, whichever meets it first.
     const missing = textScenario(tmp(), { document: { check: { command: ["/no/such/check"] } } });
     const noStart = await textCli(["start", "--config", missing.config]);

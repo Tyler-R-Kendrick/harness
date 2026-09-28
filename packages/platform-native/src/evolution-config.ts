@@ -102,6 +102,8 @@ const TaskSchema = z.strictObject({
   reference: text.exactOptional(),
   /** The cluster the task was drawn with (a practice area, a repository). */
   group: text.exactOptional(),
+  /** The task's share of the score (default 1). Set here, not by the evaluator: an evaluator that reports another weight for the task fails the evaluation. */
+  weight: z.number().positive().finite().exactOptional(),
 });
 
 /**
@@ -135,7 +137,7 @@ export const EvolutionConfigSchema = z
     tasks: z.strictObject({
       /** The tasks the search sees. */
       evolve: z.array(TaskSchema).min(1),
-      /** Tasks the proposer never sees, queried only through Thresholdout. */
+      /** Tasks the proposer never sees, queried only to confirm a winner (a budgeted holdout). */
       holdout: z.array(TaskSchema).exactOptional(),
     }),
     /** A command (argv) that runs the harness the documents describe: `{documents, tasks, k}` as JSON on stdin, the task runs as JSON on stdout. */
@@ -357,7 +359,7 @@ export function buildSplit({ config }: LoadedConfig): Split {
 
 const TrialSchema = z.strictObject({ reward: ScoreSchema, tokens: TokensSchema.exactOptional(), feedback: z.string().exactOptional() });
 
-/** What an evaluator writes on stdout: one run per task, its trials' rewards (in [0, 1]), the tokens they spent, and what the verifier said. Fewer trials than k are missing trials. */
+/** What an evaluator writes on stdout: one run per task, its trials' rewards (in [0, 1]), the tokens they spent, and what the verifier said. Fewer trials than k are missing trials. `group` and `weight` may be omitted (the config's stand); reporting another is an error when the run is measured. */
 export const TaskRunsSchema = z.array(z.strictObject({ task: text, group: text.exactOptional(), weight: z.number().positive().exactOptional(), trials: z.array(TrialSchema) }));
 
 export function parseTaskRuns(output: string): readonly TaskRun[] {

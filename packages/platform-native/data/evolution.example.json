@@ -29,7 +29,7 @@
   },
   "tasks": {
     "evolve": [
-      { "id": "order-status-1", "text": "A customer asks where their order is, twice, in different words.", "group": "orders" },
+      { "id": "order-status-1", "text": "A customer asks where their order is, twice, in different words.", "group": "orders", "weight": 2 },
       { "id": "booking-1", "text": "A customer books a table and changes the time once.", "group": "bookings" }
     ],
     "holdout": [{ "id": "refund-1", "text": "A customer asks for a refund on a late order.", "group": "orders" }]

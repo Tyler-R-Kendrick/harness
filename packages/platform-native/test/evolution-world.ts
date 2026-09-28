@@ -60,7 +60,7 @@ export const SETTINGS = {
   explore: { window: 2, reserved: 0 },
   select: { rule: "calibrated", alpha: 0.1, resamples: 400, margin: 0.02, saving: 0.05, beta0: 0.1, beta1: 35 },
   prune: { after: 5, every: 10 },
-  holdout: { threshold: 0.05, sigma: 0, budget: 2, confirm: 0 },
+  holdout: { alpha: 0.1, budget: 2 },
   leakage: { ngram: 6 },
   repair: 1,
   invalid: 0.15,

@@ -124,7 +124,7 @@ describe("a full run against a real suite", () => {
     const state = StateSchema.parse(restored.save());
     expect(state.base.score).toBeLessThan(0.55);
     expect(state.base.score).toBeGreaterThan(BASE - 0.25);
-    expect(state.holdout?.state.queries).toBeGreaterThanOrEqual(1);
+    expect(state.holdout?.queries).toBeGreaterThanOrEqual(1);
     const accepted = restored.records.filter((r) => r.outcome === "accepted");
     expect(accepted).toHaveLength(1);
     expect(accepted[0]!.measured).toMatchObject({ verdict: "supported", holdout: { exhausted: false } });
@@ -178,5 +178,44 @@ describe("a full run on a text document, against real child processes", () => {
     // --write puts the text in the file exactly: CRLF kept, no JSON quoting.
     expect(await evolutionCommand(["documents", "--config", s.config, "--write"], { stdout: () => {}, stderr: () => {} })).toBe(0);
     expect(readFileSync(s.agent)).toEqual(Buffer.from("You are an agent.\r\nverify: on\r\nbe brief\r\n"));
+  });
+});
+
+describe("task weights and groups: the config decides, the evaluator may only agree", () => {
+  const WEIGHTED = { evolve: Array.from({ length: 24 }, (_, i) => ({ id: `e${String(i).padStart(3, "0")}`, text: `Case e${i}`, group: `g${i % 12}`, ...(i === 0 ? { weight: 3 } : {}) })) };
+  /** An evaluator that writes `extra` on each task run and rewards only the task e000. */
+  const start = async (extra: string) => {
+    const script = `let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => { const { tasks, k } = JSON.parse(s); process.stdout.write(JSON.stringify(tasks.map((t) => ({ task: t.id, ${extra} trials: Array.from({ length: k }, () => ({ reward: t.id === "e000" ? 1 : 0 })) })))); });`;
+    const s0 = scenario(tmp(), { evaluator: [process.execPath, "-e", script], config: { tasks: WEIGHTED } });
+    const config = loadEvolutionConfig(s0.config);
+    const settings = parseSettings(SETTINGS);
+    const evolution = await Evolution.start({ surface: buildSurface(config), settings, split: buildSplit(config), documents: readDocuments(config), ports: { evaluate: commandEvaluator(config), entropy: new SeededEntropy(3) } });
+    return { config, evolution };
+  };
+
+  it("EH14.1 a task's weight in the config reaches the split (and only that task has one); a weight that is not positive and finite is refused", () => {
+    const config = parseEvolutionConfig({ documents: { a: { path: "a.json" } }, components: ["prompt"], tasks: { evolve: [{ id: "t1", text: "x", weight: 3 }, { id: "t2", text: "y" }], holdout: [{ id: "h1", text: "z", weight: 0.5 }] }, evaluator: { command: ["node"] } });
+    const split = buildSplit({ config, dir: "." });
+    expect(split.evolve.map((t) => t.weight)).toEqual([3, undefined]);
+    expect(split.holdout?.map((t) => t.weight)).toEqual([0.5]);
+    const weighted = (weight: unknown) => () => parseEvolutionConfig({ documents: { a: { path: "a.json" } }, components: ["prompt"], tasks: { evolve: [{ id: "t1", text: "x", weight }] }, evaluator: { command: ["node"] } });
+    for (const bad of [0, -1, "2"]) expect(weighted(bad)).toThrow(/weight/);
+    expect(weighted(Infinity)).toThrow(/weight/);
+  });
+
+  it("EH14.2 an evaluator that omits group and weight is measured with the config's: the weighted task counts three times in the score", async () => {
+    const { evolution } = await start("");
+    expect(StateSchema.parse(evolution.save()).base.score).toBeCloseTo(3 / 26);
+  });
+
+  it("EH14.3 an evaluator that repeats the config's group and weight is accepted", async () => {
+    const { evolution } = await start(`...(t.id === "e000" ? { group: "g0", weight: 3 } : {}),`);
+    expect(StateSchema.parse(evolution.save()).base.score).toBeCloseTo(3 / 26);
+  });
+
+  it("EH14.4 an evaluator that reports another weight or group than the config's fails the evaluation, naming the task and both values", async () => {
+    await expect(start(`...(t.id === "e000" ? { weight: 5 } : {}),`)).rejects.toThrow(/the evaluator reported weight 5 for task e000, but the task set says 3/);
+    await expect(start(`...(t.id === "e000" ? { group: "other" } : {}),`)).rejects.toThrow(/the evaluator reported group "other" for task e000, but the task set says "g0"/);
+    await expect(start(`weight: 2,`)).rejects.toThrow(/the evaluator reported weight 2 for task e000, but the task set says 3/);
   });
 });
