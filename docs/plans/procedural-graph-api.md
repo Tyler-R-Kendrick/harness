@@ -1087,6 +1087,41 @@ the names above keep their meaning.
   `propose` puts the record unless its id already holds a record that is not a rejection
   (one already waiting, from an earlier round, a replay or an import, is not announced
   again; a head's record stays), then calls `inbox.pending`.
+- **The inbox (`approvals.ts`).** Every record of a graph with decision `pending-approval`
+  waits: a dream's proposals and import proposals alike.
+  - `listApprovals({store, graph})` returns `ApprovalList = {graph, head?, approvals}`,
+    oldest first, each an `ApprovalSummary`: `{candidate, graph, origin, parent, onHead,
+    dream?, at, edits, gate?, tools}` (the gate and tools from `evidence.approval`).
+  - `approveCandidate({store, record, preset, clock})` re-runs, against the current head,
+    the gates that need no evaluator. Structure: on the head it was proposed on (and for
+    an import) the document as it is under the preset's cycle policy; on a later head the
+    candidate's edits applied there by `prepareCandidate`, leaving out additions the head
+    already has (the same node, or the same edge the deletions leave) and carrying the
+    workflow bindings of the nodes it adds (a composition). Evidence, when the preset
+    lists it and the candidate has edits: `evidenceGate` over the overlay folded from the
+    graph's first head, which must be on the current head (`no live evidence yet: …`
+    otherwise; a preset without an overlay fails as in dream); a composition's
+    `evidence.composition` support counts. An import has no live evidence to show, and
+    approving it is the decision. Then the revision (parents: the head; the candidate's
+    origin, dream, edits and evidence plus `approved: {candidate, on, gates}`) commits by
+    compare-and-set and the overlay is rebased onto it (`absorbedEntries`), as a dream
+    commit is. A candidate rebased onto a later head commits under its new id, and its own
+    record's decision becomes `{kind: "approved", revision}`, a new `Decision` kind; one
+    whose edits the head already has is `unchanged` and marked approved as the head.
+  - `ApprovalResult` is `committed {revision, previous}`, `unchanged {head}`, `declined`,
+    or `refused {reason, gate?}` where `gate` is `structure`, `evidence` or `head` (a lost
+    compare-and-set: the id's earlier record is put back, or the rebased candidate is
+    remembered as rejected by `head`, as a dream's lost race is). A candidate that is not
+    waiting, is redacted, or whose graph has no readable head is refused. A refused
+    candidate keeps waiting.
+  - `declineCandidate({store, record})` records `rejected-gate` under the gate that asked
+    (`approval` for an import) with the approval gate's reason, `declined by the
+    approver`, so a dream with deduplication remembers it.
+  - Notices for the host's hook bus: `ApprovalNotice` is
+    `procedural.approval.requested {graph, candidate, origin, parent, dream?, gate?, tools}`
+    (`requestedNotice(record)`) or `procedural.approval.decided {graph, candidate,
+    decision: "approved" | "declined", revision?}` (`decidedNotice(result)`, none for a
+    refusal). `approvalInbox(notify)` is dream's `ApprovalInbox` over a notifier.
 
 ## Open issues
 
