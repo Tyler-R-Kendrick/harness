@@ -51,9 +51,22 @@ describe("the filesystem across reloads", () => {
     expect(await bare.readFile(`${HOME}/a.txt`)).toBe("a");
   });
 
+  it("PS1.2c links are kept as links (dangling ones and ones to a parent too) and restored as links", async () => {
+    const from = new Bash({ cwd: HOME, files: { [`${HOME}/a.txt`]: "a" } });
+    await from.exec("mkdir d; ln -s ../a.txt d/alias; ln -s nowhere dangling; ln -s .. up", { cwd: HOME });
+    const snapshot = await snapshotVfs(from.fs, HOME);
+    expect(snapshot.links).toEqual({ [`${HOME}/d/alias`]: "../a.txt", [`${HOME}/dangling`]: "nowhere", [`${HOME}/up`]: ".." });
+    const to = new Bash({ files: {} });
+    await restoreVfs(to.fs, HOME, structuredClone(snapshot));
+    expect(await to.fs.readlink(`${HOME}/up`)).toBe("..");
+    expect(await to.readFile(`${HOME}/d/alias`)).toBe("a");
+    expect(await walk(to.fs, HOME)).toEqual(await walk(from.fs, HOME));
+  });
+
   it("PS1.3 a stored snapshot is parsed: anything but the current shape is no snapshot", () => {
-    expect(parseVfsSnapshot({ version: 1, files: { "/a": new Uint8Array([1]) }, dirs: ["/d"] })).toEqual({ version: 1, files: { "/a": new Uint8Array([1]) }, dirs: ["/d"] });
-    for (const bad of [undefined, null, "x", { version: 2, files: {}, dirs: [] }, { version: 1, files: { "/a": "text" }, dirs: [] }, { version: 1, files: {}, dirs: [3] }]) expect(parseVfsSnapshot(bad)).toBeUndefined();
+    expect(parseVfsSnapshot({ version: 1, files: { "/a": new Uint8Array([1]) }, dirs: ["/d"] })).toEqual({ version: 1, files: { "/a": new Uint8Array([1]) }, dirs: ["/d"], links: {} });
+    expect(parseVfsSnapshot({ version: 1, files: {}, dirs: [], links: { "/l": "t" } })?.links).toEqual({ "/l": "t" });
+    for (const bad of [undefined, null, "x", { version: 2, files: {}, dirs: [] }, { version: 1, files: { "/a": "text" }, dirs: [] }, { version: 1, files: {}, dirs: [3] }, { version: 1, files: {}, dirs: [], links: { "/l": 1 } }]) expect(parseVfsSnapshot(bad)).toBeUndefined();
   });
 });
 
@@ -91,12 +104,15 @@ describe("conversations across reloads", () => {
 describe("storage that may not work (a private window, a blocked site)", () => {
   it("PS4.1 a failed load is no state and a failed save is reported, never thrown", async () => {
     const errors: string[] = [];
-    const broken = resilient({ load: () => Promise.reject(new Error("no IndexedDB")), save: () => Promise.reject(new Error("quota")) }, (e) => errors.push(e));
+    const broken = resilient({ load: () => Promise.reject(new Error("no IndexedDB")), save: async () => {} }, (e) => errors.push(e));
     expect(await broken.load()).toBeUndefined();
-    await broken.save({});
+    const full = resilient({ load: async () => "kept", save: () => Promise.reject(new Error("quota")) }, (e) => errors.push(e));
+    expect(await full.load()).toBe("kept");
+    await full.save({});
+    await full.clear();
     const odd = resilient({ load: () => Promise.reject("odd"), save: async () => {} }, (e) => errors.push(e));
     expect(await odd.load()).toBeUndefined();
-    expect(errors).toEqual(["load failed: no IndexedDB", "save failed: quota", "load failed: odd"]);
+    expect(errors).toEqual(["load failed: no IndexedDB", "save failed: quota", "save failed: quota", "load failed: odd"]);
   });
 
   it("PS4.2 storage that cannot even be opened is none", async () => {
@@ -107,6 +123,27 @@ describe("storage that may not work (a private window, a blocked site)", () => {
     expect(await none.load()).toBeUndefined();
     await none.save(1);
     expect(errors).toEqual(["storage unavailable: indexedDB is not defined"]);
+  });
+});
+
+describe("storage that could not be read", () => {
+  it("PS4.3 after a failed load, saves are skipped (reported once), so what could not be read is not overwritten; clearing always writes", async () => {
+    const errors: string[] = [];
+    const writes: unknown[] = [];
+    let failing = true;
+    const storage = resilient({ load: () => (failing ? Promise.reject(new Error("busy")) : Promise.resolve("ok")), save: async (v) => void writes.push(v) }, (e) => errors.push(e));
+    expect(await storage.load()).toBeUndefined();
+    await storage.save(1);
+    await storage.save(2);
+    failing = false;
+    expect(await storage.load()).toBe("ok");
+    await storage.save(3);
+    expect(writes).toEqual([3]);
+    failing = true;
+    await storage.load();
+    await storage.clear();
+    expect(writes).toEqual([3, undefined]);
+    expect(errors).toEqual(["load failed: busy", "not saving: the stored value could not be read", "load failed: busy"]);
   });
 });
 

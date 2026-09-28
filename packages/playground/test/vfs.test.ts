@@ -61,6 +61,17 @@ describe("walking and diffing the filesystem", () => {
     expect((await walk(bash.fs, "/")).get("/etc/x")).toEqual({ size: 2, text: "no" });
   });
 
+  it("VF3.4 links are listed with their target, never followed: a dangling link and a link to a parent are fine; a changed target is a modification", async () => {
+    const bash = shell({ [`${HOME}/a.txt`]: "a" });
+    await bash.exec("ln -s nowhere dangling; ln -s .. up; ln -s a.txt alias", { cwd: HOME });
+    const files = await walk(bash.fs, HOME);
+    expect([...files.keys()]).toEqual([`${HOME}/a.txt`, `${HOME}/alias`, `${HOME}/dangling`, `${HOME}/up`]);
+    expect(files.get(`${HOME}/dangling`)).toEqual({ size: 0, link: "nowhere" });
+    expect(files.get(`${HOME}/up`)).toEqual({ size: 0, link: ".." });
+    await bash.exec("rm alias; ln -s dangling alias", { cwd: HOME });
+    expect(diffVfs(files, await walk(bash.fs, HOME)).modified).toEqual([`${HOME}/alias`]);
+  });
+
   it("VF3.2 a diff names what was added, modified and removed", async () => {
     const bash = shell({ [`${HOME}/keep`]: "k", [`${HOME}/edit`]: "1", [`${HOME}/gone`]: "g" });
     const before = await walk(bash.fs, HOME);
