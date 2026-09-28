@@ -13,6 +13,10 @@
  *   and before appending every event, so a run whose epoch went stale stops before it
  *   writes anything: a stale epoch cannot commit. A run that throws releases the lease
  *   (the log keeps what finished, so any holder resumes it).
+ * - **Ports.** The `started` entry records what the dream runs with (an evaluator, an
+ *   approver, an approvals inbox, a composer), because the reducer's commands depend on
+ *   them. A holder with other ports cannot replay the dream's events as its own commands,
+ *   so it starts a new dream instead; a log written before the record replays as it is.
  * - **Commits** put the record, then move the head by compare-and-set. When another
  *   writer moved the head meanwhile, the record is put again as rejected by `head`, and
  *   the dream ends.
@@ -20,6 +24,7 @@
 import type { LanguageModel } from "ai";
 import { z } from "zod";
 import type { ToolSpec, Workflow } from "@harness/workflows";
+import { canonicalJson } from "./canonical.ts";
 import { compilePath, composeCandidate, pathCandidates, recordedRuns } from "./compose.ts";
 import type { CompositionSettings, WorkflowBinding } from "./compose.ts";
 import { DreamEventSchema, dreamStart, dreamStep } from "./dream.ts";
@@ -129,6 +134,8 @@ const StartedSchema = z.strictObject({
   stride: z.int().positive(),
   /** The Clock's time the dream started (absent in logs written before the schedule read it). */
   at: z.int().min(0).exactOptional(),
+  /** What the dream runs with (absent in logs written before replay checked it). */
+  ports: z.strictObject({ evaluator: z.boolean(), approver: z.boolean(), inbox: z.boolean(), compose: z.boolean() }).exactOptional(),
 });
 type Started = z.output<typeof StartedSchema>;
 /** An entry of a graph's dream log: a dream's `started` entry, or one of its events. */
@@ -178,6 +185,10 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
   const holds = (): Promise<boolean> => store.lease.renew(graph, holder, lease.epoch);
   const log = store.dreams(graph);
   const overlayLog = store.overlay(graph);
+  /** What this run has, as the started entry records it. */
+  const mode = { evaluator: ports.evaluator !== undefined, approver: ports.approver !== undefined, inbox: ports.inbox !== undefined, compose: settings.dream.compose === true && ports.composer !== undefined };
+  /** Whether this run can replay a dream: one started with the same ports, or before they were recorded. */
+  const replayable = (started: Started): boolean => started.ports === undefined || canonicalJson(started.ports) === canonicalJson(mode);
 
   async function inputOf(started: Started): Promise<DreamInput> {
     const record = await store.revisions.get(graph, started.head);
@@ -191,9 +202,9 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       graph,
       head: parsed.graph,
       settings: settings.dream,
-      evaluator: ports.evaluator !== undefined,
-      approver: ports.approver !== undefined,
-      inbox: ports.inbox !== undefined,
+      evaluator: mode.evaluator,
+      approver: mode.approver,
+      inbox: mode.inbox,
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
@@ -201,7 +212,7 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,
-      compose: settings.dream.compose === true && ports.composer !== undefined,
+      compose: mode.compose,
       ...(options.tokenizer && { tokenizer: options.tokenizer }),
       ...(settings.overlay && settings.live && { overlay: { state: foldAll(started.head, events), live: settings.live } }),
     };
@@ -277,6 +288,7 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
       train,
       stride: options.stride ?? settings.dream.stride ?? (ports.evaluator === undefined ? DEFAULT_SELECT : Math.max(1, Math.ceil(train.length / settings.dream.rounds))),
       at: ports.clock.now(),
+      ports: mode,
     };
     await log.append([started]);
     return started;
@@ -332,7 +344,8 @@ async function leased(options: RunDreamOptions, holder: string, lease: Lease): P
   const lastStart = entries.map((e) => e.kind).lastIndexOf("started");
   let started = lastStart < 0 ? undefined : StartedSchema.parse(entries[lastStart]);
   let state: DreamState | undefined;
-  if (started !== undefined) {
+  // A dream started with other ports is left as it is: this run starts a new one.
+  if (started !== undefined && replayable(started)) {
     const dream = started.dream;
     // Every entry after the last `started` one is an event.
     const events = entries.slice(lastStart + 1) as Extract<DreamLogEntry, { kind: "event" }>[];
