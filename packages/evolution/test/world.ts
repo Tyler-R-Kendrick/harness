@@ -149,7 +149,7 @@ export function settings(overrides: Record<string, unknown> = {}): Settings {
       beta1: 35,
     },
     prune: { after: 1, every: 10 },
-    holdout: { threshold: 0.05, sigma: 0, budget: 2, confirm: 0 },
+    holdout: { alpha: 0.1, budget: 2 },
     leakage: { ngram: 6 },
     repair: 1,
     invalid: 0.15,

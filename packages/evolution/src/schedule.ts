@@ -1,16 +1,25 @@
 import { z } from "zod";
 
 /**
- * The annealed edit budget of Eq. (4): b_t = ceil(b_min + (b_max - b_min) (1 + cos(pi t / T)) / 2).
- * Early rounds may bundle several coordinated edits; late rounds make single attributable
- * ones. Rounds past T keep b_min; a run of no rounds keeps b_max.
+ * The annealed edit budget of Eq. (4), with one deviation from the paper: over the rounds
+ * t = 0 .. T-1,
+ *
+ *   b_t = round(b_min + (b_max - b_min) (1 + cos(pi t / (T - 1))) / 2).
+ *
+ * The paper's formula divides t by T and takes the ceiling; but t stops at T - 1 inside a
+ * run, so the cosine never reaches its end and the ceiling rounds anything above b_min up,
+ * and the budget never gets down to b_min (T = 20, b from 4 to 1 ends at 2, against
+ * Table 5's "final-round edit budget" of 1). Here the last round is exactly b_min and the
+ * first exactly b_max. Early rounds may bundle several coordinated edits; late rounds make
+ * single attributable ones. A tie rounds up. A round outside the run is clamped to it; a run
+ * of one round (or of none) keeps b_max.
  */
 export function editBudget(t: number, T: number, bMin: number, bMax: number): number {
-  if (T <= 0) return bMax;
-  const at = Math.max(0, Math.min(t, T));
-  const v = bMin + (bMax - bMin) * 0.5 * (1 + Math.cos((Math.PI * at) / T));
-  // Rounded first, so 1.0000000002 at t = T does not become 2.
-  return Math.ceil(Math.round(v * 1e9) / 1e9);
+  if (T <= 1) return bMax;
+  const at = Math.max(0, Math.min(t, T - 1));
+  const v = bMin + (bMax - bMin) * 0.5 * (1 + Math.cos((Math.PI * at) / (T - 1)));
+  // Rounded to nine places first, so that a tie (1.4999999999999998 for 1.5) still rounds up.
+  return Math.round(Math.round(v * 1e9) / 1e9);
 }
 
 /**
@@ -73,7 +82,9 @@ export function roundLevel(alpha: number, round: number, rounds: number, perRoun
  * certify anything. The acceptance test flips the signs of whole groups' differences, so
  * with G groups its smallest possible p-value is 2^-G (every group flipped the way the
  * data lean): a level at or below that can never be met, however large the gain. This is
- * the least G with 2^-G < level.
+ * the least G with 2^-G < level. It is exact for the enumerated test (up to 14 groups) and
+ * a floor for the Monte Carlo one. Groups on which the two harnesses never differ are
+ * counted but can never help certify anything, so it is necessary, not sufficient.
  */
 export function minimumGroups(level: number): number {
   if (!(level > 0 && level < 1)) throw new RangeError(`a level is in (0, 1), not ${level}`);

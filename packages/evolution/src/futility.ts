@@ -10,13 +10,22 @@ import { Uniform } from "./random.ts";
  * Validity, by construction. The acceptance decision is untouched: a candidate is
  * accepted only through the same full-sample test, at the same level (the round's share
  * of alpha, see `roundLevel`), on the same full measurement it would have had without
- * staging. Staging decides only whether that measurement is completed. So
+ * staging. Staging decides only whether that measurement is completed. So, for any one
+ * candidate,
  *   accepted = (not stopped) and (the full-sample test admits it)
- * is a subset of the unstaged acceptance event, and P(false acceptance) can only fall:
- * futility stopping removes acceptances, never adds them. That holds whatever the
- * prefix, the stopping level or the dependence between the stages, so the run-wide
- * bound alpha needs no adjustment and `futility.alpha` is a tuning knob for power, not an
- * error budget.
+ * is a subset of the unstaged acceptance event: staging can only remove a candidate's own
+ * acceptance, never add one, and each test still fails to a false claim with probability
+ * at most its level, so the run-wide bound alpha needs no adjustment and `futility.alpha`
+ * is a tuning knob for power, not an error budget. That holds whatever the prefix, the
+ * stopping level or the dependence between the stages.
+ *
+ * It is a statement about each candidate, not about a whole run's outcome. Which candidate
+ * WINS a round depends on which others were admissible: when the best candidate is stopped
+ * a weaker admissible one can win in its place, so a run with staging is not in general a
+ * subset of the same run without it. And the second stage of a staged candidate is
+ * evaluated after the incumbent's window (the incumbent is measured in full alongside the
+ * first stage), which is why the full-sample test compares it with that measurement of the
+ * incumbent on the same tasks, exactly as an unstaged candidate is compared.
  *
  * What it costs is power, and how much is bounded. A candidate whose true gain is at
  * least -margin is stopped only if the prefix's one-sided upper confidence bound (at

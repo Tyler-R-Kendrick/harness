@@ -19,7 +19,7 @@ describe("an evolution run", () => {
     const e = await start(w);
     expect(e.completed).toBe(0);
     expect(e.incumbent?.k).toBe(2);
-    expect(w.calls.map((c) => c.tasks.length)).toEqual([40, 10]);
+    expect(w.calls.map((c) => c.tasks.length)).toEqual([40]); // the holdout is not measured until it is queried (RS19.55)
     await expect(Evolution.start({ surface: w.surface, settings: settings(), split: w.split, documents: { policy: { rules: {}, prompt: { system: "" } } }, ports: { evaluate: w.evaluate, entropy: new SeededEntropy(1) } })).rejects.toThrow(/base harness's policy does not parse/);
     await expect(Evolution.start({ surface: w.surface, settings: settings(), split: w.split, documents: w.documents, ports: { evaluate: async () => [], entropy: new SeededEntropy(1) } })).rejects.toThrow(/evaluation is invalid: 80 of 80 trials missing/);
     // The paper's rule without a delta evaluates the base harness twice and calibrates it.
@@ -146,30 +146,30 @@ describe("an evolution run", () => {
     expect(tangled.mechanisms[0]!.entangled).toBe(true);
   });
 
-  it("RS9.8 a gain the holdout does not confirm is refused and spends the holdout; a spent holdout confirms nothing", async () => {
+  it("RS9.8 a winner the holdout does not confirm is refused and spends a query; a spent holdout confirms nothing", async () => {
     const w = world({ n: 40, holdout: 20, base: () => 0, effects: { memorize: (i, h) => (!h && i < 20 ? 1 : 0), general: (i, h) => ((h ? i < 10 : i < 20) ? 1 : 0) } });
-    const e = await start(w, settings({ holdout: { threshold: 0.05, sigma: 0, budget: 1, confirm: 0 } }));
+    const e = await start(w, settings({ holdout: { alpha: 0.1, budget: 1 } }));
     const { propose } = scripted((r) => (r.candidate === "A" ? toggle(r.round === 0 ? "memorize" : "general") : toggle(`noop${r.round}`)));
     const overfit = await e.round(ports(w, propose));
     expect(overfit.accepted).toBeUndefined();
-    expect(byCandidate(overfit.records)["A"]).toMatchObject({ outcome: "rejected", reason: expect.stringMatching(/supported gain.*; not confirmed on the holdout: its answer 0\.0000 is not above 0 \(the evolve set was overfit\)/), measured: { holdout: { answer: 0, overfit: true, exhausted: false, state: { budget: 0, overfits: 1 } } } });
+    expect(byCandidate(overfit.records)["A"]).toMatchObject({ outcome: "rejected", reason: expect.stringMatching(/supported gain.*; not confirmed on the holdout$/), measured: { holdout: { gain: 0, confirmed: false, exhausted: false, remaining: 0 } } });
     expect(rules(e)).toEqual({});
     const spent = await e.round(ports(w, propose));
-    expect(byCandidate(spent.records)["A"]).toMatchObject({ outcome: "rejected", reason: expect.stringMatching(/the holdout is spent/), measured: { holdout: { exhausted: true } } });
+    expect(byCandidate(spent.records)["A"]).toMatchObject({ outcome: "rejected", reason: expect.stringMatching(/the holdout is spent/), measured: { holdout: { exhausted: true, confirmed: false } } });
   });
 
-  it("RS9.9 a gain the holdout agrees with is confirmed, and the new incumbent's holdout measurement is kept for the next query", async () => {
+  it("RS9.9 a gain the holdout agrees with is confirmed; each query measures the incumbent afresh, not from an earlier draw", async () => {
     const w = world({ n: 40, holdout: 20, base: () => 0, effects: { general: (i, h) => ((h ? i < 10 : i < 20) ? 1 : 0), more: (i, h) => ((h ? i >= 10 && i < 15 : i >= 20 && i < 30) ? 1 : 0) } });
     const e = await start(w);
     const { propose } = scripted((r) => (r.candidate === "A" ? toggle(r.round === 0 ? "general" : "more") : toggle(`noop${r.round}`)));
     const first = await e.round(ports(w, propose));
     expect(first.accepted).toBe("A");
-    expect(byCandidate(first.records)["A"]!.measured!.holdout).toMatchObject({ answer: 0.5, overfit: false });
+    expect(byCandidate(first.records)["A"]!.measured!.holdout).toMatchObject({ gain: 0.5, confirmed: true, remaining: 1 });
     const before = w.calls.length;
     const second = await e.round(ports(w, propose));
     expect(second.accepted).toBe("A");
-    // The incumbent on the evolve set, A, B, the ablation, and A on the holdout: the incumbent's holdout score was kept.
-    expect(w.calls.slice(before).map((c) => c.tasks.length)).toEqual([40, 40, 40, 40, 20]);
+    // The incumbent on the evolve set, A, B, the ablation, then A and the incumbent, both on the holdout (2 evaluations a query).
+    expect(w.calls.slice(before).map((c) => c.tasks.length)).toEqual([40, 40, 40, 40, 20, 20]);
     expect(rules(e)).toEqual({ general: true, more: true });
   });
 

@@ -10,7 +10,7 @@ const ENGINEERING: Calibrated = { rule: "paper", delta: 0.02, beta0: 0.15, beta1
 
 const RULE: CalibratedRule = { rule: "calibrated", alpha: 0.1, resamples: 1000, margin: 0.01, saving: 0.05, beta0: 0.1, beta1: 40 };
 
-/** A measured candidate with a paired gain, its bounds, and a relative cost change. */
+/** A measured candidate with a paired gain, its bounds, and a relative cost change (whose bounds are, here, the change itself: no cost noise). */
 const cand = (label: string, gain: number, lower: number, upper: number, costChange: number | undefined, extra: Partial<Measured> = {}): Measured => ({
   label,
   kind: "change",
@@ -18,7 +18,7 @@ const cand = (label: string, gain: number, lower: number, upper: number, costCha
   gain,
   lower,
   upper,
-  ...(costChange === undefined ? {} : { costChange }),
+  ...(costChange === undefined ? {} : { costChange, costLower: costChange, costUpper: costChange }),
   components: ["prompt"],
   guards: [],
   ...extra,
@@ -68,7 +68,7 @@ describe("the paper's selection rule (Algorithm 2), as published", () => {
 });
 
 describe("the calibrated rule", () => {
-  const ctx = { drift: 0, anchor: { score: 0.4, cost: 1000 } };
+  const ctx = { drift: 0, certified: 0, anchor: { cost: 1000 } };
 
   it("RS8.4 a change is a gain only when its lower bound is above zero, and its cost is paid for by that lower bound, not by the point estimate", () => {
     expect(calibratedDecision(cand("A", 0.03, 0.01, 0.05, 0.2), RULE, ctx)).toMatchObject({ admissible: true, reason: expect.stringMatching(/^supported gain/) });
@@ -81,8 +81,10 @@ describe("the calibrated rule", () => {
     expect(calibratedDecision(cand("big", 0.05, -0.001, 0.1, 0), RULE, ctx)).toMatchObject({ admissible: false, reason: expect.stringMatching(/no supported gain .* and saves no more than 5\.0%/) });
     expect(calibratedDecision(cand("cheap", -0.002, -0.008, 0.004, -0.2), RULE, ctx)).toMatchObject({ admissible: true, reason: expect.stringMatching(/^non-inferior .* saves 20\.0%/) });
     expect(calibratedDecision(cand("cheap", -0.002, -0.008, 0.004, undefined), RULE, ctx).admissible).toBe(false);
-    expect(calibratedDecision(cand("risky", -0.002, -0.02, 0.01, -0.2), RULE, ctx)).toMatchObject({ admissible: false, reason: expect.stringMatching(/may be worse than the incumbent by more than the margin/) });
-    expect(calibratedDecision(cand("edge", -0.002, -0.01, 0.01, -0.05), RULE, ctx).admissible).toBe(true);
+    expect(calibratedDecision(cand("risky", -0.002, -0.02, 0.01, -0.2), RULE, ctx)).toMatchObject({ admissible: false, reason: expect.stringMatching(/may be worse than the incumbent by the margin or more: lower bound -0\.0200 <= -0\.0100/) });
+    // The boundary is strict: a lower bound at exactly -margin is not above it (RS19.30).
+    expect(calibratedDecision(cand("edge", -0.002, -0.01, 0.01, -0.05), RULE, ctx).admissible).toBe(false);
+    expect(calibratedDecision(cand("edge", -0.002, -0.0099, 0.01, -0.05), RULE, ctx).admissible).toBe(true);
   });
 
   it("RS8.6 removing a mechanism is admissible when non-inferior and not costlier than beta0; accepted losses accumulate against the margin", () => {
@@ -90,19 +92,29 @@ describe("the calibrated rule", () => {
     expect(calibratedDecision(prune(-0.004, -0.009), RULE, ctx)).toMatchObject({ admissible: true, reason: expect.stringMatching(/^non-inferior .* removes a mechanism/) });
     expect(calibratedDecision(prune(-0.004, -0.009, 0.5), RULE, ctx)).toMatchObject({ admissible: false, reason: expect.stringMatching(/removing it costs \+50\.0% tokens/) });
     expect(calibratedDecision(prune(-0.004, -0.009, 0.1), RULE, ctx).admissible).toBe(true);
-    expect(calibratedDecision(prune(-0.004, -0.009), RULE, { ...ctx, drift: 0.007 })).toMatchObject({ admissible: false, reason: expect.stringMatching(/accumulated losses 0\.0110 would exceed the margin 0\.0100/) });
-    expect(calibratedDecision(prune(0.004, -0.009), RULE, { ...ctx, drift: 0.009 }).admissible).toBe(true);
-    expect(calibratedDecision(prune(-0.001, -0.009), RULE, { ...ctx, drift: 0.0085 }).admissible).toBe(true);
+    // The account is a CUSUM of lower bounds (RS19.11): -0.009 on top of 0.007 is 0.016.
+    expect(calibratedDecision(prune(-0.004, -0.009), RULE, { ...ctx, drift: 0.007 })).toMatchObject({ admissible: false, reason: expect.stringMatching(/accumulated losses 0\.0160 .* would exceed the margin 0\.0100/) });
+    expect(calibratedDecision(prune(-0.004, -0.009), RULE, { ...ctx, drift: 0.0005 }).admissible).toBe(true);
+    // A point gain does not reset it (it used to); a lower bound above zero pays it down by that much.
+    expect(calibratedDecision(prune(0.004, -0.009), RULE, { ...ctx, drift: 0.009 }).admissible).toBe(false);
+    expect(calibratedDecision(prune(0.004, 0.002), RULE, { ...ctx, drift: 0.009 }).admissible).toBe(true);
   });
 
-  it("RS8.7 cost is also capped against the base harness, so allowances do not compound round after round", () => {
-    // +20% on the incumbent is paid for, but the harness would be 2.2x the base's cost for a total gain of 0.13 (0.1 + 40 * 0.13 = 5.3: allowed).
-    expect(calibratedDecision(cand("A", 0.03, 0.01, 0.05, 0.2, { cost: 2200 }), RULE, ctx).admissible).toBe(true);
-    // Against a base scoring what the candidate does, the whole +120% is unpaid.
-    expect(calibratedDecision(cand("A", 0.03, 0.01, 0.05, 0.2, { cost: 2200 }), RULE, { ...ctx, anchor: { score: 0.53, cost: 1000 } })).toMatchObject({ admissible: false, reason: expect.stringMatching(/\+120\.0% tokens over the base harness/) });
-    expect(calibratedDecision(cand("A", 0.03, 0.01, 0.05, 0.2, { cost: 2200 }), RULE, { ...ctx, anchor: { score: 0.53 } }).admissible).toBe(true);
-    // A saving that is non-inferior is still held to the cap.
-    expect(calibratedDecision(cand("S", 0, -0.005, 0.005, -0.1, { cost: 2200 }), RULE, { ...ctx, anchor: { score: 0.5, cost: 1000 } }).admissible).toBe(false);
+  it("RS8.7 cost is also capped against the base harness by the certified gain (the sum of accepted lower bounds), so allowances do not compound round after round", () => {
+    const c = cand("A", 0.03, 0.01, 0.05, 0.2, { cost: 2200 });
+    // +20% on the incumbent is paid for, but the harness would be 2.2x the base's cost: +120% needs a certified total of (1.2 - 0.1) / 40 = 0.0275.
+    expect(calibratedDecision(c, RULE, { ...ctx, certified: 0.0174 }).admissible).toBe(false);
+    expect(calibratedDecision(c, RULE, { ...ctx, certified: 0.0176 }).admissible).toBe(true);
+    expect(calibratedDecision(c, RULE, ctx)).toMatchObject({ admissible: false, reason: expect.stringMatching(/\+120\.0% tokens over the base harness, more than the \+50\.0% its certified gain pays for/) });
+    // The point score does not pay: a candidate whose point gain is large but whose certified total is not is capped by the latter.
+    expect(calibratedDecision(cand("A", 0.3, 0.01, 0.5, 0.2, { cost: 2200 }), RULE, ctx).admissible).toBe(false);
+    // Nothing known of the base harness's cost: no cap.
+    expect(calibratedDecision(c, RULE, { ...ctx, anchor: {} }).admissible).toBe(true);
+    // A saving that is non-inferior is still held to the cap (+120% against 0.1 + 40 * max(0, -0.005)).
+    expect(calibratedDecision(cand("S", 0, -0.005, 0.005, -0.1, { cost: 2200 }), RULE, ctx).admissible).toBe(false);
+    // A negative certified total pays for nothing beyond beta0.
+    expect(calibratedDecision(cand("S", 0, -0.005, 0.005, -0.1, { cost: 1090 }), RULE, { ...ctx, certified: -0.4 }).admissible).toBe(true);
+    expect(calibratedDecision(cand("S", 0, -0.005, 0.005, -0.1, { cost: 1110 }), RULE, { ...ctx, certified: -0.4 }).admissible).toBe(false);
   });
 
   it("RS8.8 domain guards are non-compensatory", () => {

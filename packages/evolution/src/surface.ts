@@ -19,7 +19,7 @@ import { z } from "zod";
  * and the host's `check`, and every edit keeps the inverse that takes it back out.
  */
 
-const { applyPatch, compare, getValueByPointer, _areEquals: equal } = jsonpatch;
+const { _areEquals: equal } = jsonpatch;
 
 const text = z.string().min(1);
 const pointer = z.string().regex(/^(\/.*)?$/, "a JSON Pointer (empty, or starting with /)");
@@ -75,7 +75,8 @@ export const PatchOpSchema = z.discriminatedUnion("op", [
     path: z.string(),
     value: z.json(),
   }),
-  z.strictObject({ op: z.literal("remove"), path: z.string() }),
+  /** `length`: for an array element, the array's length after the removal (later indices moved, so what is left of the array is how it is told). */
+  z.strictObject({ op: z.literal("remove"), path: z.string(), length: z.int().min(0).exactOptional() }),
   /**
    * A text edit as recorded: `before + old + after` becomes `before + new + after`, where
    * the context is present only when `new` alone would not be found exactly once (a
@@ -91,7 +92,12 @@ export const PatchOpSchema = z.discriminatedUnion("op", [
 ]);
 export type PatchOp = z.output<typeof PatchOpSchema>;
 
-/** What an edit did to one document: the diff it wrote, and the patch that undoes it. */
+/**
+ * What an edit did to one document: the ops as it applied them, and the ops that undo them.
+ * For JSON, the inverse at each position undoes the write at that position and they are
+ * applied last to first (an append is written at the index it took; an element's removal
+ * keeps the array's length after it). For text, the inverse is already in the order to apply.
+ */
 export const ChangeSchema = z.strictObject({
   document: text,
   wrote: z.array(PatchOpSchema).readonly(),
@@ -169,6 +175,9 @@ export function defineSurface(spec: { readonly documents: Readonly<Record<string
 /** A JSON document's diff holds JSON Patch operations only. */
 const isJsonOp = (op: PatchOp): op is Exclude<PatchOp, { op: "edit" }> => op.op !== "edit";
 
+/** A value as a recorded op holds it (JSON, whatever the document's own type says). */
+const asJson = (value: unknown): Extract<PatchOp, { op: "add" }>["value"] => value as never;
+
 const isText = (spec: DocumentSpec | undefined): spec is TextDocumentSpec => spec?.kind === "text";
 
 const defaultClassify = (_: string, value: unknown) => (typeof value === "string" ? "prompt" : "config");
@@ -185,11 +194,187 @@ const overlaps = (a: string, b: string) => a === b || b.startsWith(`${a}/`) || a
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e)).split("\n")[0]!;
 
-function diff(before: unknown, after: unknown): { wrote: PatchOp[]; inverse: PatchOp[] } {
-  // compare() takes objects and arrays; a document is one, as its schema says.
-  const wrote = z.array(PatchOpSchema).parse(compare(before as object, after as object));
-  const inverse = z.array(PatchOpSchema).parse(compare(after as object, before as object));
-  return { wrote, inverse };
+/** A named entry of a map that is its own (never one `Object.prototype` has: `toString`, `constructor`, ...). */
+const own = <T>(map: Readonly<Record<string, T>>, key: string): T | undefined => (Object.hasOwn(map, key) ? map[key] : undefined);
+
+// ---- JSON documents ------------------------------------------------------------------
+
+const isContainer = (value: unknown): value is Record<string, unknown> | unknown[] => typeof value === "object" && value !== null;
+
+/** A deep copy of a JSON value (own properties only; a key named `__proto__` stays a key). */
+function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) return value.map(cloneJson) as T;
+  if (isContainer(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, cloneJson(v)])) as T;
+  return value;
+}
+
+/** An array index as JSON Pointer writes it: no sign, no leading zeros. */
+const INDEX = /^(0|[1-9][0-9]*)$/;
+
+const pointerSegments = (path: string): string[] => {
+  if (path === "") return [];
+  if (!path.startsWith("/")) throw new Error(`${JSON.stringify(path)} is not a JSON pointer`);
+  const segments = path
+    .slice(1)
+    .split("/")
+    .map((s) => s.replaceAll("~1", "/").replaceAll("~0", "~"));
+  if (segments.includes("__proto__")) throw new Error("modifying __proto__ is not allowed");
+  return segments;
+};
+
+const pointerOf = (segments: readonly string[]): string => segments.map((s) => `/${s.replaceAll("~", "~0").replaceAll("/", "~1")}`).join("");
+
+/** The value at a path, following own keys and array indices only; undefined wherever the walk leaves the document (JSON has no undefined). */
+function lookup(document: unknown, segments: readonly string[]): unknown {
+  let node = document;
+  for (const key of segments) {
+    if (Array.isArray(node)) node = INDEX.test(key) ? node[Number(key)] : undefined;
+    else if (isContainer(node) && Object.hasOwn(node, key)) node = (node as Record<string, unknown>)[key];
+    else return undefined;
+  }
+  return node;
+}
+
+/** One op as it was written: the ops it was applied as, and the value it wrote or removed (what the footprint counts and the classifier reads). */
+interface Step {
+  readonly path: string;
+  readonly value: unknown;
+}
+
+interface JsonResult {
+  readonly document: unknown;
+  readonly wrote: PatchOp[];
+  readonly inverse: PatchOp[];
+  readonly steps: Step[];
+}
+
+type JsonOp = Exclude<BareOp, { op: "edit" }>;
+
+/**
+ * Apply the ops of one edit to a JSON document, in order, on a copy. Each op is recorded
+ * as it was applied (an append at the index it took, an add over a key as a replace, a
+ * removal with the value it removed) with the op that takes it back out: the change is
+ * what the ops did, not a positional diff of two documents, so an insert in an array is
+ * one add however long the array. An op that changes nothing is not recorded.
+ */
+function applyJsonOps(name: string, current: unknown, ops: readonly JsonOp[], restoring = false): JsonResult {
+  let document = cloneJson(current);
+  const wrote: PatchOp[] = [];
+  const inverse: PatchOp[] = [];
+  const steps: Step[] = [];
+  const record = (w: JsonPatchOp, i: JsonPatchOp, value: unknown) => {
+    wrote.push(w);
+    inverse.push(i);
+    steps.push({ path: w.path, value });
+  };
+  for (const op of ops) {
+    const segments = pointerSegments(op.path);
+    if (segments.length === 0) {
+      if (op.op === "remove") throw new Error(`the root of ${name} cannot be removed`);
+      // An object or an array root stays one (its schema says which); a root that is a scalar may be replaced.
+      if (!restoring && isContainer(document) && !isContainer(op.value)) throw new Error(`the root of ${name} must stay an object or an array`);
+      if (equal(document, op.value)) continue;
+      record({ op: "replace", path: "", value: cloneJson(op.value) }, { op: "replace", path: "", value: asJson(document) }, op.value);
+      document = cloneJson(op.value);
+      continue;
+    }
+    const key = segments[segments.length - 1]!;
+    const parent = lookup(document, segments.slice(0, -1));
+    const fail = (reason: string) => new Error(`cannot ${op.op} at ${op.path}: ${reason}`);
+    if (!isContainer(parent)) throw fail("its parent does not exist");
+    if (Array.isArray(parent)) {
+      const append = op.op === "add" && key === "-";
+      if (!append && !INDEX.test(key)) throw fail("the index is not valid");
+      const at = append ? parent.length : Number(key);
+      if (at > parent.length || (op.op !== "add" && at === parent.length)) throw fail("the index is out of range");
+      const path = pointerOf([...segments.slice(0, -1), String(at)]);
+      if (op.op === "add") {
+        parent.splice(at, 0, cloneJson(op.value));
+        record({ op: "add", path, value: cloneJson(op.value) }, { op: "remove", path }, op.value);
+      } else if (op.op === "remove") {
+        const [previous] = parent.splice(at, 1);
+        record({ op: "remove", path, length: parent.length }, { op: "add", path, value: asJson(previous) }, previous);
+      } else {
+        const previous = parent[at];
+        if (equal(previous, op.value)) continue;
+        parent[at] = cloneJson(op.value);
+        record({ op: "replace", path, value: cloneJson(op.value) }, { op: "replace", path, value: asJson(previous) }, op.value);
+      }
+      continue;
+    }
+    const exists = Object.hasOwn(parent, key);
+    if (op.op !== "add" && !exists) throw fail("there is nothing there");
+    if (op.op === "remove") {
+      const previous = parent[key];
+      delete parent[key];
+      record({ op: "remove", path: op.path }, { op: "add", path: op.path, value: asJson(previous) }, previous);
+      continue;
+    }
+    const previous = parent[key];
+    if (exists && equal(previous, op.value)) continue;
+    parent[key] = cloneJson(op.value);
+    record({ op: exists ? "replace" : "add", path: op.path, value: cloneJson(op.value) }, exists ? { op: "replace", path: op.path, value: asJson(previous) } : { op: "remove", path: op.path }, op.value);
+  }
+  return { document, wrote, inverse, steps };
+}
+
+/** A JSON Patch op as recorded (a text edit is not one). */
+type JsonPatchOp = Exclude<PatchOp, { op: "edit" }>;
+
+/** Whether what an op wrote still holds in the document (a removal: that nothing is at its path, or of an array element, that the array is as long as the removal left it). */
+function holds(document: unknown, op: JsonPatchOp): boolean {
+  let segments: string[];
+  try {
+    segments = pointerSegments(op.path);
+  } catch {
+    return false;
+  }
+  if (op.op !== "remove") return equal(lookup(document, segments), op.value);
+  const parent = lookup(document, segments.slice(0, -1));
+  const key = segments[segments.length - 1] ?? "";
+  // An array is as long as the removal left it (a removal recorded before its length was: it left nothing at the index).
+  if (Array.isArray(parent)) return INDEX.test(key) && (op.length === undefined ? Number(key) >= parent.length : parent.length === op.length);
+  return isContainer(parent) && !Object.hasOwn(parent, key);
+}
+
+/**
+ * Take a JSON change back out. Its writes are undone from the last to the first (the
+ * inverse at each position undoes the write at that position), each only while it holds
+ * in the document as the later ones leave it. A change whose inverse does not pair with
+ * its writes (as saved before ops were replayed) is checked as a whole against the
+ * document, then its inverse is applied in order. It refuses, and never throws.
+ */
+function revertJson(current: unknown, change: Change): { readonly document: unknown } | { readonly problems: string[] } {
+  const { wrote, inverse } = change;
+  if (!wrote.every(isJsonOp) || !inverse.every(isJsonOp)) return { problems: [`${change.document} is JSON: an edit op applies to text documents`] };
+  const changed = (op: JsonPatchOp) => ({ problems: [`${change.document}${op.path} was changed after the edit`] });
+  const paired = inverse.length === wrote.length && inverse.every((op, k) => op.path === wrote[k]!.path);
+  let document = cloneJson(current);
+  const undo = (inv: JsonPatchOp) => {
+    document = applyJsonOps(change.document, document, [inv], true).document;
+  };
+  if (paired) {
+    for (let k = wrote.length - 1; k >= 0; k--) {
+      const w = wrote[k]!;
+      if (!holds(document, w)) return changed(w);
+      try {
+        undo(inverse[k]!);
+      } catch {
+        return changed(w);
+      }
+    }
+    return { document };
+  }
+  const stale = wrote.find((op) => !holds(document, op));
+  if (stale) return changed(stale);
+  for (const inv of inverse) {
+    try {
+      undo(inv);
+    } catch {
+      return changed(inv);
+    }
+  }
+  return { document };
 }
 
 // ---- text documents ------------------------------------------------------------------
@@ -201,6 +386,9 @@ function occurrences(text: string, needle: string): number[] {
   for (let i = text.indexOf(needle); i !== -1; i = text.indexOf(needle, i + 1)) at.push(i);
   return at;
 }
+
+/** Whether a string has no lone surrogate (String.prototype.isWellFormed, which this package's ES2022 library does not have). */
+const wellFormed = (s: string) => !/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
 
 const preview = (s: string) => JSON.stringify(s.length > 40 ? `${s.slice(0, 40)}...` : s);
 
@@ -259,13 +447,19 @@ function applyTextOps(name: string, current: unknown, ops: readonly BareOp[]): T
   const wrote: PatchOp[] = [];
   const inverse: PatchOp[] = [];
   const regions: (readonly [string, string])[] = [];
+  const checked = (result: string) => {
+    if (!wellFormed(result)) throw new Error(`${name} would hold a lone surrogate`);
+    return result;
+  };
   for (const op of ops) {
     if (op.op === "edit") {
+      if (!wellFormed(op.old)) throw new Error(`the old text has a lone surrogate: ${preview(op.old)}`);
+      if (!wellFormed(op.new)) throw new Error(`the new text has a lone surrogate: ${preview(op.new)}`);
       const at = occurrences(text, op.old);
       if (at.length !== 1) throw new Error(at.length === 0 ? `the old text is not in ${name}: ${preview(op.old)}` : `the old text occurs ${at.length} times in ${name}, not exactly once: ${preview(op.old)}`);
       if (op.new === op.old) continue;
       const start = at[0]!;
-      const next = text.slice(0, start) + op.new + text.slice(start + op.old.length);
+      const next = checked(text.slice(0, start) + op.new + text.slice(start + op.old.length));
       const context = anchor(next, start, op.new.length);
       if (context === undefined) {
         // The whole text was deleted: only a replace of the whole text can be taken back.
@@ -280,6 +474,7 @@ function applyTextOps(name: string, current: unknown, ops: readonly BareOp[]): T
     } else if (op.op === "replace" && op.path === "") {
       if (typeof op.value !== "string") throw new Error(`${name} is text: a replace at its root needs a string`);
       if (op.value === text) continue;
+      checked(op.value);
       wrote.push({ op: "replace", path: "", value: op.value });
       inverse.unshift({ op: "replace", path: "", value: text });
       regions.push([text, op.value]);
@@ -314,14 +509,27 @@ function revertText(current: unknown, change: Change): { readonly text: string }
 /** The part of a document an op touches: a JSON pointer, or (text) the characters its `old` occupies in the original. The root pointer is the whole document. */
 type Region = { readonly document: string; readonly path: string } | { readonly document: string; readonly start: number; readonly end: number };
 
+/** The first segment of a path that indexes an array of the original document (or, where the document has nothing there to tell, looks like an index: a number or `-`); -1 when none does. */
+function arrayIndexAt(original: unknown, segments: readonly string[]): number {
+  let node = original;
+  for (const [i, key] of segments.entries()) {
+    if (Array.isArray(node)) return i;
+    if (isContainer(node)) node = Object.hasOwn(node, key) ? (node as Record<string, unknown>)[key] : undefined;
+    else if (key === "-" || INDEX.test(key)) return i;
+  }
+  return -1;
+}
+
 /**
  * An edit of a text document is located by its `old` in the ORIGINAL text; one that is not
  * found exactly once there (it needs an earlier edit's output, or is ambiguous) cannot be
  * shown independent and counts as the whole document, as does any op that is not an edit.
+ * A JSON op is its path, except that an array's indices move as elements are inserted and
+ * removed, so a path through an index (or `-`) of an array is that array.
  */
 function regionOf(surface: Surface, documents: Documents, op: Op): Region {
-  if (isText(surface.documents[op.document])) {
-    const original = documents[op.document];
+  const original = own(documents, op.document);
+  if (isText(own(surface.documents, op.document))) {
     if (op.op === "edit" && typeof original === "string") {
       const at = occurrences(original, op.old);
       if (at.length === 1)
@@ -333,17 +541,25 @@ function regionOf(surface: Surface, documents: Documents, op: Op): Region {
     }
     return { document: op.document, path: "" };
   }
-  return { document: op.document, path: op.op === "edit" ? "" : op.path };
+  if (op.op === "edit") return { document: op.document, path: "" };
+  let segments: string[];
+  try {
+    segments = pointerSegments(op.path);
+  } catch {
+    return { document: op.document, path: op.path };
+  }
+  const index = arrayIndexAt(original, segments);
+  return { document: op.document, path: index === -1 ? op.path : pointerOf(segments.slice(0, index)) };
 }
 
-/** Where two regions overlap, as they are named in a refusal; undefined when they do not. */
+/** Where two regions overlap, as they are named in a refusal; undefined when they do not. Regions that touch (one ends where the other starts) are dependent: the context that finds one again may lie in the other. */
 function clash(a: Region, b: Region): string | undefined {
   if (a.document !== b.document) return undefined;
   if ("path" in a && "path" in b) return overlaps(a.path, b.path) ? `${a.document}${a.path.length <= b.path.length ? a.path : b.path}` : undefined;
   if ("path" in a || "path" in b) return a.document;
   const start = Math.max(a.start, b.start);
   const end = Math.min(a.end, b.end);
-  return start < end ? `${a.document}[${start}:${end}]` : undefined;
+  return start <= end ? `${a.document}[${start}:${end}]` : undefined;
 }
 
 function parseAll(surface: Surface, documents: Documents, changed: Iterable<string>): string[] {
@@ -353,6 +569,29 @@ function parseAll(surface: Surface, documents: Documents, changed: Iterable<stri
     if (!result.success) return [`${name} no longer parses: ${z.prettifyError(result.error)}`];
     const problem = isText(spec) ? spec.check?.(String(documents[name])) : undefined;
     return problem === undefined ? [] : [`${name} fails its check: ${problem}`];
+  });
+}
+
+/**
+ * The edits of a text document that could not be taken out on their own: those whose
+ * recorded context, found again in the text all the edits made, is not where it was written
+ * (another edit rewrote it, to text that holds it). Each edit's revert is tried here, against
+ * the text of the others alone; only a revert that would put text in the wrong place counts
+ * (one that refuses is safe, and is left to the round to call entangled).
+ */
+function misplaced(name: string, original: string, made: string, edits: readonly { readonly id: string; readonly change: Change }[]): string[] {
+  if (edits.length < 2) return [];
+  return edits.flatMap((mine) => {
+    const reverted = revertText(made, mine.change);
+    if ("problem" in reverted) return [];
+    const others = edits.filter((e) => e !== mine).flatMap((e) => e.change.wrote);
+    let expected: string | undefined;
+    try {
+      expected = applyTextOps(name, original, others).text;
+    } catch {
+      // The others alone do not apply to the original (they leaned on the text this edit wrote): nothing to compare with.
+    }
+    return reverted.text === expected ? [] : [`edit ${mine.id} could not be taken out of ${name} on its own: the text that locates it overlaps another edit's (make them one edit, or leave more text between them)`];
   });
 }
 
@@ -395,36 +634,34 @@ export function applyProposal(
   const applied: AppliedEdit[] = [];
   const changedDocs: string[] = [];
   for (const edit of edits) {
-    const unknown = edit.ops.find((o) => !(o.document in surface.documents) || !(o.document in documents));
+    const unknown = edit.ops.find((o) => !Object.hasOwn(surface.documents, o.document) || !Object.hasOwn(documents, o.document));
     if (unknown) {
       problems.push(`edit ${edit.id} names no document of the surface: ${unknown.document}`);
       continue;
     }
     const names = [...new Set(edit.ops.map((o) => o.document))];
-    const after: Record<string, unknown> = {};
-    const texts: Record<string, TextResult> = {};
+    const after = new Map<string, unknown>();
+    const results = new Map<string, TextResult | JsonResult>();
     try {
       for (const name of names) {
         const ops = edit.ops.filter((o) => o.document === name).map(({ document: _, ...op }) => op);
         if (isText(surface.documents[name])) {
-          texts[name] = applyTextOps(name, working[name], ops);
-          after[name] = texts[name].text;
+          const result = applyTextOps(name, working[name], ops);
+          results.set(name, result);
+          after.set(name, result.text);
         } else {
           const patch = ops.flatMap((op) => (op.op === "edit" ? [] : [op]));
           if (patch.length < ops.length) throw new Error(`${name} is JSON: an edit op applies to text documents`);
-          after[name] = applyPatch(working[name], patch, true, false).newDocument;
+          const result = applyJsonOps(name, working[name], patch);
+          results.set(name, result);
+          after.set(name, result.document);
         }
       }
     } catch (e) {
       problems.push(`edit ${edit.id} does not apply: ${message(e)}`);
       continue;
     }
-    const changes = names
-      .map((name) => ({
-        document: name,
-        ...(texts[name] ?? diff(working[name], after[name])),
-      }))
-      .filter((c) => c.wrote.length > 0);
+    const changes = names.map((name) => ({ document: name, wrote: results.get(name)!.wrote, inverse: results.get(name)!.inverse })).filter((c) => c.wrote.length > 0);
     if (changes.length === 0) {
       problems.push(`edit ${edit.id} changes nothing`);
       continue;
@@ -437,8 +674,9 @@ export function applyProposal(
         if (!surface.components.includes(component)) problems.push(`edit ${edit.id} changes ${where}, which the surface classifies as ${component}, not one of ${surface.components.join(", ")}`);
         components.add(component);
       };
+      const result = results.get(change.document)!;
       if (isText(spec)) {
-        for (const [before, now] of texts[change.document]!.regions) {
+        for (const [before, now] of (result as TextResult).regions) {
           footprint += changedLines(before, now);
           const named = spec.classifyText?.(before, now) ?? [];
           for (const component of named.length ? named : [spec.component ?? "prompt"]) claim(change.document, component);
@@ -446,28 +684,29 @@ export function applyProposal(
         continue;
       }
       const classify = spec.classify ?? defaultClassify;
-      for (const op of change.wrote.filter(isJsonOp)) {
-        const value = op.op === "remove" ? getValueByPointer(working[change.document], op.path) : op.value;
-        footprint += leaves(value);
-        claim(`${change.document}${op.path}`, classify(op.path, value));
+      for (const step of (result as JsonResult).steps) {
+        footprint += leaves(step.value);
+        claim(`${change.document}${step.path}`, classify(step.path, step.value));
       }
     }
-    for (const name of names) working[name] = after[name];
+    for (const name of names) working[name] = after.get(name);
     changedDocs.push(...names);
     applied.push({
       id: edit.id,
       hypothesis: edit.hypothesis,
       targets: edit.targets,
       predicted: edit.predicted,
-      changes: changes.map(({ document, wrote, inverse }) => ({
-        document,
-        wrote,
-        inverse,
-      })),
+      changes,
       components: [...components].sort(),
       footprint,
     });
   }
+  if (problems.length === 0)
+    for (const name of new Set(changedDocs)) {
+      if (!isText(surface.documents[name])) continue;
+      const mine = applied.flatMap((e) => e.changes.filter((c) => c.document === name).map((change) => ({ id: e.id, change })));
+      problems.push(...misplaced(name, documents[name] as string, working[name] as string, mine));
+    }
   problems.push(...parseAll(surface, working, changedDocs));
   return problems.length ? { kind: "refused", problems } : { kind: "applied", documents: working, edits: applied };
 }
@@ -476,35 +715,26 @@ export function applyProposal(
  * Take an accepted edit back out of the documents: its inverse patch, applied only while
  * every part it wrote still holds what it wrote (an edit a later one rewrote is no longer
  * one mechanism that can be removed on its own). For text, the inverse edits must each be
- * found exactly once, so text that was altered, or now occurs twice, refuses.
+ * found exactly once, so text that was altered, or now occurs twice, refuses. It refuses
+ * for whatever it cannot take out, and never throws.
  */
 export function revert(surface: Surface, documents: Documents, changes: readonly Change[]): Applied<{ readonly documents: Documents }> {
-  const reverted = new Map<string, string>();
+  const working: Record<string, unknown> = { ...documents };
   const problems = changes.flatMap((c) => {
-    if (isText(surface.documents[c.document])) {
-      const r = revertText(documents[c.document], c);
+    const spec = own(surface.documents, c.document);
+    if (spec === undefined || !Object.hasOwn(documents, c.document)) return [`${c.document} is not a document of the surface`];
+    if (isText(spec)) {
+      const r = revertText(working[c.document], c);
       if ("problem" in r) return [r.problem];
-      reverted.set(c.document, r.text);
+      working[c.document] = r.text;
       return [];
     }
-    return c.wrote.flatMap((op) => {
-      if (op.op === "edit") return [`${c.document} is JSON: an edit op applies to text documents`];
-      const now = getValueByPointer(documents[c.document], op.path);
-      const intact = op.op === "remove" ? now === undefined : equal(now, op.value);
-      return intact ? [] : [`${c.document}${op.path} was changed after the edit`];
-    });
+    const r = revertJson(working[c.document], c);
+    if ("problems" in r) return r.problems;
+    working[c.document] = r.document;
+    return [];
   });
   if (problems.length) return { kind: "refused", problems };
-  const working: Record<string, unknown> = { ...documents };
-  for (const c of changes)
-    working[c.document] =
-      reverted.get(c.document) ??
-      applyPatch(
-        working[c.document],
-        c.inverse.filter((op) => op.op !== "edit"),
-        true,
-        false,
-      ).newDocument;
   const invalid = parseAll(
     surface,
     working,

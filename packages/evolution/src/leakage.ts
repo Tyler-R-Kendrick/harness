@@ -13,16 +13,34 @@ const CREDENTIAL = /AIza[0-9A-Za-z_-]{35}|sk-[A-Za-z0-9]{20,}|api_key\s*=\s*["']
 
 const words = (s: string) => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
+/** The strings of a value: its string values and every object key, however deep. */
 function* strings(value: unknown): Generator<string> {
   if (typeof value === "string") yield value;
-  else if (typeof value === "object" && value !== null) for (const v of Object.values(value)) yield* strings(v);
+  else if (Array.isArray(value)) for (const v of value) yield* strings(v);
+  else if (typeof value === "object" && value !== null)
+    for (const [key, v] of Object.entries(value)) {
+      yield key;
+      yield* strings(v);
+    }
+}
+
+/** The text a JSON Pointer names: its segments unescaped, read as one text (spaced, as words) and as one path (slashed, as a task id may be). */
+function* named(path: string): Generator<string> {
+  const segments = path
+    .split("/")
+    .slice(1)
+    .map((s) => s.replaceAll("~1", "/").replaceAll("~0", "~"));
+  if (segments.length === 0) return;
+  yield segments.join(" ");
+  yield segments.join("/");
 }
 
 const escape = (s: string) => s.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
 
 /**
  * The deterministic half of the paper's critic, and stricter than a denylist: the text an
- * edit adds must not name an evolve task, repeat a run of `ngram` words from any task's
+ * edit adds (the strings of the values it adds, their object keys, and the path it adds
+ * them at) must not name an evolve task, repeat a run of `ngram` words from any task's
  * text or reference answer, or carry a credential. Screening happens before evaluation,
  * so a leaking candidate never earns the inflated score that would make later rounds
  * build on it. What it cannot see is fitting that copies no words (a rule tuned to the
@@ -31,7 +49,7 @@ const escape = (s: string) => s.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
  * text; what it removes adds nothing.
  */
 export function leaks(changes: readonly Change[], tasks: readonly Task[], settings: { readonly ngram: number }): string[] {
-  const added = changes.flatMap((c) => c.wrote.flatMap((op) => (op.op === "remove" ? [] : op.op === "edit" ? [op.new] : [...strings(op.value)])));
+  const added = changes.flatMap((c) => c.wrote.flatMap((op) => (op.op === "remove" ? [] : op.op === "edit" ? [op.new] : [...named(op.path), ...strings(op.value)])));
   const reasons: string[] = [];
   if (added.some((s) => CREDENTIAL.test(s))) reasons.push("it carries a credential");
   const grams = new Map<string, string>();

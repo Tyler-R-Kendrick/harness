@@ -17,7 +17,7 @@
     "futility": { "fraction": 0.5, "alpha": 0.05 }
   },
   "prune": { "after": 2, "every": 6 },
-  "holdout": { "threshold": 0.03, "sigma": 0.01, "budget": 4, "confirm": 0 },
+  "holdout": { "alpha": 0.1, "budget": 4 },
   "leakage": { "ngram": 6 },
   "repair": 3,
   "invalid": 0.15,

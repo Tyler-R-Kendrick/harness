@@ -34,10 +34,3 @@ export class Uniform {
     return Math.floor(this.next() * n);
   }
 }
-
-/** Laplace noise with scale `b` (mean 0, mean absolute deviation b), by inversion. */
-export function laplace(u: Uniform, b: number): number {
-  if (b === 0) return 0;
-  const v = u.next() - 0.5;
-  return -b * Math.sign(v) * Math.log(1 - 2 * Math.abs(v));
-}

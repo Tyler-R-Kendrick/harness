@@ -164,10 +164,12 @@ describe("text documents: independence is computed from the ranges the edits occ
     expect(grown.kind).toBe("applied");
   });
 
-  it("RS13.11 ranges that touch end to start do not overlap; one character shared does", () => {
+  it("RS13.11 ranges that touch end to start are dependent (the context that finds one again may lie in the other); a gap of one character is enough to be independent", () => {
     // "alpha\n" is [0,6) and "beta" is [6,10).
-    expect(two([on("notes", "alpha\n", "A\n")], [on("notes", "beta", "B")]).kind).toBe("applied");
-    expect(two([on("notes", "beta", "B")], [on("notes", "alpha\n", "A\n")]).kind).toBe("applied");
+    expect(two([on("notes", "alpha\n", "A\n")], [on("notes", "beta", "B")])).toEqual({ kind: "refused", problems: ["edits a and b both touch notes[6:6]: they are one edit, or not independent"] });
+    expect(two([on("notes", "beta", "B")], [on("notes", "alpha\n", "A\n")])).toEqual({ kind: "refused", problems: ["edits a and b both touch notes[6:6]: they are one edit, or not independent"] });
+    // "alpha" is [0,5) and "beta" [6,10): the newline between them is in neither.
+    expect(two([on("notes", "alpha", "A")], [on("notes", "beta", "B")]).kind).toBe("applied");
     // "alpha\nb" is [0,7): it shares the "b" at 6.
     expect(two([on("notes", "alpha\nb", "AB")], [on("notes", "beta", "B")])).toEqual({ kind: "refused", problems: ["edits a and b both touch notes[6:7]: they are one edit, or not independent"] });
     expect(two([on("notes", "beta", "B")], [on("notes", "alpha\nb", "AB")])).toEqual({ kind: "refused", problems: ["edits a and b both touch notes[6:7]: they are one edit, or not independent"] });
@@ -570,7 +572,7 @@ describe("text documents in an evolution run", () => {
         ? {
             summary: "two",
             edits: [
-              { id: "e1", hypothesis: "verify", targets: "t", ops: [on("code", "# rules\n", "# rules\nenable verify\n")] },
+              { id: "e1", hypothesis: "verify", targets: "t", ops: [on("code", "# rules", "# rules\nenable verify")] },
               { id: "e2", hypothesis: "fluff", targets: "t", ops: [on("code", "mode = base", "mode = base\nenable fluff")] },
             ],
           }

@@ -128,10 +128,11 @@ describe("the paper's noise band delta", () => {
 });
 
 describe("schedules", () => {
-  it("RS3.1 the edit budget anneals from b_max to b_min on a half cosine (Eq. 4)", () => {
+  it("RS3.1 the edit budget anneals from b_max to b_min on a half cosine over the run's rounds (Eq. 4, with the deviation of RS19.47: it reaches b_min in the last round)", () => {
     const table = Array.from({ length: 20 }, (_, t) => editBudget(t, 20, 1, 4));
-    for (let t = 0; t < 20; t++) expect(table[t]).toBe(Math.ceil(1 + 3 * 0.5 * (1 + Math.cos((Math.PI * t) / 20))));
+    for (let t = 0; t < 20; t++) expect(table[t]).toBe(Math.round(1 + 3 * 0.5 * (1 + Math.cos((Math.PI * t) / 19))));
     expect(table[0]).toBe(4);
+    expect(table[19]).toBe(1);
     expect(table).toEqual([...table].sort((a, b) => b - a));
     expect(editBudget(20, 20, 1, 4)).toBe(1);
     expect(editBudget(25, 20, 1, 4)).toBe(1);

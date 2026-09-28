@@ -2,18 +2,17 @@ import type { Entropy } from "@harness/core";
 import { compare, noiseBand } from "./compare.ts";
 import type { Comparison } from "./compare.ts";
 import { isFutile, permute, prefixSize } from "./futility.ts";
-import { startHoldout, thresholdout } from "./holdout.ts";
+import { holdoutLevel, holdoutRemaining } from "./holdout.ts";
 import { leaks } from "./leakage.ts";
 import type { Task } from "./leakage.ts";
 import { componentYield, paperStall, render, stalled, tried, verdictOf } from "./ledger.ts";
 import type { LedgerRecord, Row } from "./ledger.ts";
 import { measure, pool } from "./measure.ts";
-import type { Measurement, TaskRun } from "./measure.ts";
-import { Uniform } from "./random.ts";
+import type { Measurement, TaskInfo, TaskRun } from "./measure.ts";
 import { editBudget, minimumGroups, roundLevel } from "./schedule.ts";
-import { DocumentsSchema, parse, parseSettings, StateSchema } from "./schemas.ts";
+import { DocumentsSchema, errorControlDifferences, errorControlKey, parse, parseSettings, StateSchema } from "./schemas.ts";
 import type { Mechanism, Settings, State } from "./schemas.ts";
-import { calibratedDecision, choose, paperDecision } from "./select.ts";
+import { advance, calibratedDecision, choose, paperDecision } from "./select.ts";
 import type { Decision, Measured } from "./select.ts";
 import { applyProposal, ProposalSchema, revert } from "./surface.ts";
 import type { AppliedEdit, Documents, Proposal, Surface } from "./surface.ts";
@@ -69,10 +68,19 @@ export interface EvolutionPorts {
   readonly entropy: Entropy;
 }
 
+/**
+ * A task of the task set. `group` and `weight` are decided here, by whoever built the
+ * split, and not by the evaluator: a run that reports another group or weight is refused,
+ * and a task that has no run (a crash) keeps them. The weight (default 1) is the task's
+ * share of the score (Harvey LAB weighs a task by its rubric criteria); the group (default:
+ * the task itself) is the unit of generalization the tests flip.
+ */
+export type EvolveTask = Task & { readonly weight?: number };
+
 export interface Split {
-  readonly evolve: readonly Task[];
-  /** Tasks the proposer never sees, queried only through Thresholdout. */
-  readonly holdout?: readonly Task[];
+  readonly evolve: readonly EvolveTask[];
+  /** Tasks the proposer never sees, queried only to confirm a winner (see holdout.ts). */
+  readonly holdout?: readonly EvolveTask[];
 }
 
 export interface RoundReport {
@@ -98,6 +106,24 @@ const FORMAT = "harness.evolution/v1";
 
 const describeEdits = (edits: readonly AppliedEdit[]): LedgerRecord["edits"] => edits.map((e) => ({ id: e.id, hypothesis: e.hypothesis, targets: e.targets, components: e.components, footprint: e.footprint, predicted: e.predicted }));
 
+/** A drafted candidate's measurement and comparison, as selection sees it. */
+function measuredOf(d: Drafted, m: Measurement, c: Comparison, guards: readonly string[]): Measured {
+  return {
+    label: d.label,
+    kind: d.kind,
+    score: m.score,
+    ...(m.cost === undefined ? {} : { cost: m.cost }),
+    gain: c.gain,
+    lower: c.lower,
+    upper: c.upper,
+    ...(c.costChange === undefined ? {} : { costChange: c.costChange }),
+    ...(c.costLower === undefined ? {} : { costLower: c.costLower }),
+    ...(c.costUpper === undefined ? {} : { costUpper: c.costUpper }),
+    components: [...new Set(d.edits.flatMap((e) => e.components))],
+    guards,
+  };
+}
+
 function checkDocuments(surface: Surface, documents: Documents): void {
   for (const [name, spec] of Object.entries(surface.documents)) {
     const result = spec.schema.safeParse(documents[name]);
@@ -107,6 +133,17 @@ function checkDocuments(surface: Surface, documents: Documents): void {
   }
 }
 
+/** What the task set says of each task (group and weight), refusing a weight that is not positive and finite and a task listed twice. */
+function knownTasks(split: Split): ReadonlyMap<string, TaskInfo> {
+  const known = new Map<string, TaskInfo>();
+  for (const t of [...split.evolve, ...(split.holdout ?? [])]) {
+    if (known.has(t.id)) throw new RangeError(`task ${t.id} is in the task set twice`);
+    if (t.weight !== undefined && !(t.weight > 0 && Number.isFinite(t.weight))) throw new RangeError(`the weight of task ${t.id} must be positive and finite, not ${t.weight}`);
+    known.set(t.id, { group: t.group ?? t.id, weight: t.weight ?? 1 });
+  }
+  return known;
+}
+
 /** The number of groups of tasks in an evolve set, a task with no group being its own. */
 export function evolveGroups(tasks: readonly Task[]): number {
   return new Set(tasks.map((t) => t.group ?? t.id)).size;
@@ -114,7 +151,11 @@ export function evolveGroups(tasks: readonly Task[]): number {
 
 /**
  * Under the calibrated rule a run whose evolve set has fewer groups than its smallest test
- * level can resolve would run to its end and accept nothing: refused up front instead.
+ * level can resolve would run to its end and accept nothing: refused up front instead. The
+ * same holds for the holdout at its confirmation level. Groups are counted as given: which
+ * of them the harnesses will differ on cannot be known up front, and a group on which they
+ * never differ counts here but adds nothing that can certify a change, so this is a
+ * necessary condition for certifying anything, not a sufficient one.
  */
 function checkPower(settings: Settings, split: Split): void {
   const rule = settings.select;
@@ -123,7 +164,13 @@ function checkPower(settings: Settings, split: Split): void {
   for (let t = 0; t < settings.rounds; t++) level = Math.min(level, roundLevel(rule.alpha, t, settings.rounds, settings.candidates + 1, rule.spending));
   const needed = minimumGroups(level);
   const groups = evolveGroups(split.evolve);
-  if (groups < needed) throw new Error(`the evolve set has ${groups} groups, and a run whose smallest test is at level ${Number(level.toPrecision(2))} needs at least ${needed} for any change to be certifiable: use more tasks, more groups, fewer rounds or candidates, or a larger alpha`);
+  if (groups < needed) throw new Error(`the evolve set has ${groups} groups, and a run whose smallest test is at level ${Number(level.toPrecision(2))} needs at least ${needed} for any change to be certifiable: use more tasks, more groups, fewer rounds or candidates, or a larger alpha (groups are counted as given: a group on which the harnesses never differ counts here and certifies nothing)`);
+  if (split.holdout?.length) {
+    const beta = holdoutLevel(settings.holdout);
+    const wanted = minimumGroups(beta);
+    const held = evolveGroups(split.holdout);
+    if (held < wanted) throw new Error(`the holdout has ${held} groups, and confirming at level ${Number(beta.toPrecision(2))} needs at least ${wanted}: use more holdout tasks or groups, a larger holdout.alpha or a smaller holdout.budget (groups are counted as given)`);
+  }
 }
 
 /**
@@ -134,23 +181,51 @@ function checkPower(settings: Settings, split: Split): void {
  * published (`select.rule: "paper"`) or calibrated (the default; see select.ts and ADR
  * 0014). A round draws candidates, screens them, measures them with the incumbent in the
  * same window on the evolve set, and accepts at most one; under the calibrated rule it
- * also tries removing one accepted mechanism (pruning by ablation), and confirms a gain on
- * the holdout through Thresholdout. State changes only when a round completes, so a
- * round that fails (an unreachable evaluator, an invalid incumbent evaluation) can be
- * run again.
+ * also tries removing one accepted mechanism (pruning by ablation), and confirms the winner
+ * on the holdout (holdout.ts). State changes only when a round completes, so a round that
+ * fails (an unreachable evaluator, an invalid evaluation) can be run again; every
+ * evaluation of a failed round has settled by the time it throws.
+ *
+ * What the calibrated rule guarantees and what it does not. Every claim a candidate makes
+ * (a gain, a saving, a removal's price, non-inferiority) is tested by a paired
+ * randomization test on the evolve set at a level fixed in advance from (rounds,
+ * candidates, alpha, spending), so that the probability, over the run, of accepting a
+ * change for which some claim is false is at most alpha under the sharp null of each test:
+ * "this harness and the incumbent are the same, and the two measurements are fresh noise on
+ * the same tasks". That is a guarantee about the measurement, and it is what alpha means.
+ * It is NOT a guarantee that a certified gain transfers to new tasks: the proposer reads the
+ * failures of the evolve tasks, so the candidates are chosen by looking at the very data
+ * they are tested on, and a change fitted to those tasks can be certified on them. Transfer
+ * is addressed only by the holdout, which confirms the winner on tasks the proposer never
+ * saw, within its own budget and error level; the leakage screen catches only copying. The
+ * loss a run may take in total is bounded by the margin (a CUSUM of lower bounds, select.ts),
+ * the cost by the certified gain; both hold at the same alpha. The settings that fix these
+ * levels are kept in the state, and a restore with different ones is refused (the run's
+ * alpha is spent against them). A state saved before that adopts the settings it is
+ * restored with, and holds them from then on.
  */
 export class Evolution {
   readonly #surface: Surface;
   readonly #settings: Settings;
   readonly #split: Split;
+  readonly #known: ReadonlyMap<string, TaskInfo>;
   #state: State;
 
   constructor(options: { readonly surface: Surface; readonly settings: Settings; readonly split: Split; readonly saved: unknown }) {
     this.#surface = options.surface;
     this.#settings = parseSettings(options.settings);
     this.#split = options.split;
+    this.#known = knownTasks(options.split);
     checkPower(this.#settings, options.split);
-    this.#state = parse(StateSchema, "saved evolution", options.saved);
+    const state = parse(StateSchema, "saved evolution", options.saved);
+    // A run keeps the settings its error control was paid for with. A state saved before they were kept adopts the current ones.
+    const key = errorControlKey(this.#settings);
+    if (state.errorControl === undefined) this.#state = { ...state, errorControl: key };
+    else {
+      const different = errorControlDifferences(state.errorControl, key);
+      if (different.length) throw new Error(`the saved run was made with different error-control settings (${different.join("; ")}): a run's alpha is spent against the levels of its tests, so these are kept to its end; start a new run to change them`);
+      this.#state = state;
+    }
   }
 
   /** Measure the base harness H_0 (twice, to calibrate the paper's delta when it is not given) and begin a run. */
@@ -158,18 +233,17 @@ export class Evolution {
     const { surface, split, documents, ports } = options;
     const settings = parseSettings(options.settings);
     checkDocuments(surface, documents);
+    const known = knownTasks(split);
     checkPower(settings, split);
     const k = settings.trials;
     const measureOn = async (tasks: readonly Task[]) => {
-      const m = measure(await ports.evaluate(documents, tasks, k), ids(tasks), k);
+      const m = measure(await ports.evaluate(jsonCopy(documents), tasks, k), ids(tasks), k, known);
       if (m.missing > settings.invalid * m.expected) throw new Error(`the base harness's evaluation is invalid: ${m.missing} of ${m.expected} trials missing`);
       return m;
     };
     const base = await measureOn(split.evolve);
     const rule = settings.select;
-    const u = new Uniform(ports.entropy);
     const delta = rule.rule === "paper" ? (rule.delta ?? noiseBand([base, await measureOn(split.evolve)], { z: rule.z ?? 2, resamples: 2000, entropy: ports.entropy }).delta) : undefined;
-    const holdout = split.holdout?.length ? { state: startHoldout(settings.holdout, u), incumbent: await measureOn(split.holdout) } : undefined;
     const saved = {
       format: FORMAT,
       round: 0,
@@ -177,11 +251,13 @@ export class Evolution {
       base,
       incumbent: [base],
       observed: base,
-      ...(holdout ? { holdout } : {}),
+      ...(split.holdout?.length ? { holdout: { queries: 0 } } : {}),
+      errorControl: errorControlKey(settings),
       ...(delta === undefined ? {} : { delta }),
       best: base.score,
       trajectory: [base.score],
       drift: 0,
+      certified: 0,
       mechanisms: [],
       records: [],
     };
@@ -197,8 +273,9 @@ export class Evolution {
     return this.#state.round >= this.#settings.rounds;
   }
 
+  /** The incumbent's documents: a copy, so what a caller does to it cannot corrupt the run. */
   get documents(): Documents {
-    return this.#state.documents;
+    return jsonCopy(this.#state.documents);
   }
 
   get records(): readonly LedgerRecord[] {
@@ -232,6 +309,7 @@ export class Evolution {
     const t = state.round;
     const k = settings.trials;
     const evolveIds = ids(this.#split.evolve);
+    const known = this.#known;
     const budget = editBudget(t, settings.rounds, settings.budget.min, settings.budget.max);
     const isStalled = paper ? paperStall(state.trajectory, t, settings.explore.window, state.delta!) : stalled(state.records, t, settings.explore.window);
     const exercised = tried(state.records);
@@ -276,9 +354,9 @@ export class Evolution {
     const later = order.slice(stage);
     const firstIds = ids(first);
     const jobs = [...(paper ? [] : [{ documents: state.documents, staged: false }]), ...drafted.map((d) => ({ documents: d.documents, staged: staging && d.kind === "change" }))];
-    const firstRuns = await Promise.all(jobs.map((j) => ports.evaluate(j.documents, j.staged ? first : evolve, k)));
+    const firstRuns = await settled(jobs.map((j) => ports.evaluate(jsonCopy(j.documents), j.staged ? first : evolve, k)));
     const freshRuns = paper ? undefined : firstRuns.shift();
-    const fresh = freshRuns && measure(freshRuns, evolveIds, k);
+    const fresh = freshRuns && measure(freshRuns, evolveIds, k, known);
     if (fresh && fresh.missing > settings.invalid * fresh.expected) throw new Error(`the incumbent's evaluation is invalid: ${fresh.missing} of ${fresh.expected} trials missing; run the round again`);
     // A candidate is compared with the incumbent measured in the same window with as many
     // trials (which the randomization test needs to be exact); earlier measurements of the
@@ -299,10 +377,11 @@ export class Evolution {
         freshRuns!.filter((r) => inPrefix.has(r.task)),
         firstIds,
         k,
+        known,
       );
       drafted.forEach((d, i) => {
         if (d.kind !== "change") return;
-        const m = measure(firstRuns[i]!, firstIds, k);
+        const m = measure(firstRuns[i]!, firstIds, k, known);
         prefixed.set(i, m);
         if (invalid(m)) return;
         const comparison = compare(m, prefixReference, { alpha: futility.alpha, resamples, entropy: ports.entropy });
@@ -310,10 +389,10 @@ export class Evolution {
         else finishing.push(i);
       });
     }
-    const secondRuns = new Map(await Promise.all(finishing.map(async (i) => [i, await ports.evaluate(drafted[i]!.documents, later, k)] as const)));
+    const secondRuns = new Map(await settled(finishing.map(async (i) => [i, await ports.evaluate(jsonCopy(drafted[i]!.documents), later, k)] as const)));
     // Each candidate's measurement on all the evolve tasks (its one evaluation, or its two stages merged: measure() counts a
     // task with no run as all its trials missing), or, for one that stopped or was invalid at the prefix, the prefix's.
-    const evaluated = drafted.map((_, i) => (secondRuns.has(i) ? measure([...firstRuns[i]!, ...secondRuns.get(i)!], evolveIds, k) : (prefixed.get(i) ?? measure(firstRuns[i]!, evolveIds, k))));
+    const evaluated = drafted.map((_, i) => (secondRuns.has(i) ? measure([...firstRuns[i]!, ...secondRuns.get(i)!], evolveIds, k, known) : (prefixed.get(i) ?? measure(firstRuns[i]!, evolveIds, k, known))));
 
     // ---- selection ---------------------------------------------------------------------
     const judged: { draft: Drafted; measurement: Measurement; against: Measurement; alpha: number; abandoned: boolean; candidate: Measured; decision: Decision }[] = [];
@@ -322,7 +401,7 @@ export class Evolution {
       const early = stopped.get(i);
       if (early) {
         const c = early.comparison;
-        const candidate: Measured = { label: d.label, kind: d.kind, score: m.score, ...(m.cost === undefined ? {} : { cost: m.cost }), gain: c.gain, lower: c.lower, upper: c.upper, ...(c.costChange === undefined ? {} : { costChange: c.costChange }), components: [...new Set(d.edits.flatMap((e) => e.components))], guards: [] };
+        const candidate = measuredOf(d, m, c, []);
         const reason = `abandoned for futility after ${stage} of ${evolve.length} evolve tasks: the gain's upper bound ${c.upper.toFixed(4)} (level ${c.alpha}) is below -${margin.toFixed(4)}, so it can be neither a supported gain nor non-inferior; the other ${later.length} tasks were not evaluated`;
         judged.push({ draft: d, measurement: m, against: early.against, alpha: c.alpha, abandoned: true, candidate, decision: { admissible: false, reason, verdict: verdictOf(candidate) } });
         return;
@@ -332,22 +411,11 @@ export class Evolution {
         return;
       }
       const c = compare(m, reference, { alpha: level, resamples, entropy: ports.entropy });
-      const candidate: Measured = {
-        label: d.label,
-        kind: d.kind,
-        score: m.score,
-        ...(m.cost === undefined ? {} : { cost: m.cost }),
-        gain: c.gain,
-        lower: c.lower,
-        upper: c.upper,
-        ...(c.costChange === undefined ? {} : { costChange: c.costChange }),
-        components: [...new Set(d.edits.flatMap((e) => e.components))],
-        guards: ports.guards?.(m, reference) ?? [],
-      };
+      const candidate = measuredOf(d, m, c, ports.guards?.(m, reference) ?? []);
       const decision =
         rule.rule === "paper"
           ? paperDecision(candidate, { ...rule, delta: state.delta! }, { best: state.best, accepted: this.#acceptedComponents(), structural: this.#surface.structural })
-          : calibratedDecision(candidate, rule, { drift: state.drift, anchor: { score: state.base.score, ...(state.base.cost === undefined ? {} : { cost: state.base.cost }) } });
+          : calibratedDecision(candidate, rule, { drift: state.drift, certified: state.certified, anchor: state.base.cost === undefined ? {} : { cost: state.base.cost } });
       judged.push({ draft: d, measurement: m, against: reference, alpha: level, abandoned: false, candidate, decision });
     });
     const chosen = choose(
@@ -355,21 +423,35 @@ export class Evolution {
       paper ? "score" : "lower",
     );
     let winner = judged.find((j) => j.candidate === chosen);
+    // The winner is put to the holdout: measured with the incumbent, fresh and in one window, and confirmed by the same test at the holdout's level (holdout.ts).
     let holdout: NonNullable<LedgerRecord["measured"]>["holdout"];
-    let holdoutState = state.holdout;
-    let confirmed = false;
-    if (winner && !paper && winner.draft.kind === "change" && state.holdout && this.#split.holdout?.length) {
-      const hIds = ids(this.#split.holdout);
-      const incumbentOnHoldout = state.holdout.incumbent ?? measure(await ports.evaluate(state.documents, this.#split.holdout, k), hIds, k);
-      const winnerOnHoldout = measure(await ports.evaluate(winner.draft.documents, this.#split.holdout, k), hIds, k);
-      const answer = thresholdout(state.holdout.state, settings.holdout, { evolve: winner.candidate.gain, holdout: winnerOnHoldout.score - incumbentOnHoldout.score }, new Uniform(ports.entropy));
-      holdout = answer.kind === "exhausted" ? { exhausted: true, state: answer.state } : { answer: answer.answer, overfit: answer.overfit, exhausted: false, state: answer.state };
-      confirmed = answer.kind === "answer" && answer.answer > settings.holdout.confirm;
-      holdoutState = { state: answer.state, ...(confirmed ? { incumbent: winnerOnHoldout } : { incumbent: incumbentOnHoldout }) };
-      if (!confirmed) {
-        const why = answer.kind === "exhausted" ? "the holdout is spent: no gain can be confirmed any more" : `not confirmed on the holdout: its answer ${answer.answer.toFixed(4)} is not above ${settings.holdout.confirm}${answer.overfit ? " (the evolve set was overfit)" : ""}`;
-        winner = { ...winner, decision: { ...winner.decision, admissible: false, reason: `${winner.decision.reason}; ${why}` } };
+    const holdoutTasks = this.#split.holdout;
+    let queries = state.holdout?.queries ?? 0;
+    if (winner && !paper && holdoutTasks?.length) {
+      const hs = settings.holdout;
+      let confirmed = false;
+      let why: string;
+      if (queries >= hs.budget) {
+        holdout = { confirmed, exhausted: true, remaining: 0 };
+        why = "the holdout is spent: no change can be confirmed any more";
+      } else {
+        const level = holdoutLevel(hs);
+        const both = await settled([ports.evaluate(jsonCopy(winner.draft.documents), holdoutTasks, k), ports.evaluate(jsonCopy(state.documents), holdoutTasks, k)]);
+        const hIds = ids(holdoutTasks);
+        const heldWinner = measure(both[0]!, hIds, k, known);
+        const heldIncumbent = measure(both[1]!, hIds, k, known);
+        // An invalid measurement is an outage, not evidence: it throws before anything is kept, and no query is spent.
+        if (invalid(heldWinner)) throw new Error(`the holdout evaluation of candidate ${winner.draft.label} is invalid: ${heldWinner.missing} of ${heldWinner.expected} trials missing; run the round again`);
+        if (invalid(heldIncumbent)) throw new Error(`the holdout evaluation of the incumbent is invalid: ${heldIncumbent.missing} of ${heldIncumbent.expected} trials missing; run the round again`);
+        const answer = compare(heldWinner, heldIncumbent, { alpha: level, resamples, entropy: ports.entropy });
+        // The claim being confirmed: a supported gain needs a holdout lower bound above zero; a saving or a removal, the same non-inferiority as on the evolve set (strictly above -margin).
+        confirmed = winner.draft.kind === "change" && winner.candidate.lower > 0 ? answer.lower > 0 : answer.lower > -margin;
+        queries++;
+        holdout = { gain: answer.gain, lower: answer.lower, upper: answer.upper, level, confirmed, exhausted: false, remaining: holdoutRemaining({ queries }, hs) };
+        // Not the holdout's numbers: the reason is what the proposer reads, and it may learn one bit of a query.
+        why = "not confirmed on the holdout";
       }
+      if (!confirmed) winner = { ...winner, decision: { ...winner.decision, admissible: false, reason: `${winner.decision.reason}; ${why}` } };
     }
     const accepted = winner?.decision.admissible ? winner : undefined;
 
@@ -399,6 +481,9 @@ export class Evolution {
           upper: j.candidate.upper,
           alpha: j.alpha,
           ...(j.candidate.costChange === undefined ? {} : { costChange: j.candidate.costChange }),
+          ...(j.candidate.costLower === undefined ? {} : { costLower: j.candidate.costLower }),
+          // Absent while a cost change is present: the upper bound is unbounded (too few tasks reported tokens on both sides; JSON has no infinity).
+          ...(j.candidate.costUpper === undefined || !Number.isFinite(j.candidate.costUpper) ? {} : { costUpper: j.candidate.costUpper }),
           verdict: verdictOf(j.candidate),
           hits: predicted.filter(improved),
           misses: predicted.filter((p) => !improved(p)),
@@ -417,7 +502,6 @@ export class Evolution {
       const c = accepted.candidate;
       if (accepted.draft.kind === "prune") mechanisms = mechanisms.filter((m) => m.id !== accepted.draft.target!.id);
       else mechanisms = [...mechanisms, ...accepted.draft.edits.map((e) => ({ id: `r${t}${accepted.draft.label}.${e.id}`, round: t, hypothesis: e.hypothesis, components: e.components, changes: e.changes, lower: c.lower }))];
-      const supported = accepted.draft.kind === "change" && c.lower > 0;
       next = {
         ...state,
         documents: jsonCopy(accepted.draft.documents),
@@ -426,13 +510,12 @@ export class Evolution {
         observed: accepted.measurement,
         best: Math.max(state.best, c.score),
         trajectory: [...state.trajectory, paper ? c.score : estimate.score],
-        drift: supported ? 0 : state.drift + Math.max(0, -c.gain),
-        ...(holdoutState ? { holdout: confirmed ? holdoutState : { state: holdoutState.state } } : {}),
+        ...(paper ? {} : advance(state, c.lower)),
       };
     } else {
-      next = { ...state, incumbent: fresh ? [...state.incumbent, fresh] : state.incumbent, observed: fresh ?? state.observed, trajectory: [...state.trajectory, estimate.score], ...(holdoutState ? { holdout: holdoutState } : {}) };
+      next = { ...state, incumbent: fresh ? [...state.incumbent, fresh] : state.incumbent, observed: fresh ?? state.observed, trajectory: [...state.trajectory, estimate.score] };
     }
-    this.#state = { ...next, round: t + 1, mechanisms, records: [...state.records, ...records] };
+    this.#state = { ...next, ...(state.holdout || holdoutTasks?.length ? { holdout: { queries } } : {}), round: t + 1, mechanisms, records: [...state.records, ...records] };
     return { round: t, budget, stalled: isStalled, ...(paper ? {} : { level }), records, ...(accepted ? { accepted: accepted.draft.label } : {}) };
   }
 
@@ -442,7 +525,8 @@ export class Evolution {
     let previous: unknown;
     let edits: readonly AppliedEdit[] = [];
     for (let attempt = 0; attempt <= this.#settings.repair; attempt++) {
-      const raw = await ports.propose(attempt === 0 ? request : { ...request, problems, previous });
+      // Every call gets its own copy of the documents: a proposer that edits them in place must not change the state, nor what the next candidate is shown.
+      const raw = await ports.propose({ ...(attempt === 0 ? request : { ...request, problems, previous }), documents: jsonCopy(request.documents) });
       previous = raw;
       const checked = await this.#screen(ports, request, raw);
       if (!("problems" in checked)) return checked;
@@ -510,6 +594,18 @@ export class Evolution {
 }
 
 const ids = (tasks: readonly Task[]) => tasks.map((t) => t.id);
+
+/**
+ * Promise.all, except that it waits for every promise to settle before it throws the
+ * first rejection: when a round fails no evaluator keeps running in the background (they
+ * are external processes and cost money), and a retry does not overlap the failed attempt.
+ */
+async function settled<T>(promises: readonly Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(promises);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
+  return results.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
 
 /** Documents as the state keeps them: a copy, parsed as JSON. */
 const jsonCopy = (documents: Documents): State["documents"] => parse(DocumentsSchema, "documents", JSON.parse(JSON.stringify(documents)));

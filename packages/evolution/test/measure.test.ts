@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { measure, pool, score, tokens } from "@harness/evolution";
 import { SeededEntropy } from "@harness/testkit";
-import { Uniform, laplace } from "../src/random.ts";
+import { Uniform } from "../src/random.ts";
 import { runs } from "./helpers.ts";
 
 describe("scores, costs and measurements", () => {
@@ -84,13 +84,5 @@ describe("randomness from the entropy port", () => {
     expect(again.next()).toBe(draws[0]);
     const seen = new Set(Array.from({ length: 200 }, () => u.index(3)));
     expect([...seen].sort()).toEqual([0, 1, 2]);
-  });
-
-  it("RS1.9 Laplace noise is centered with mean absolute deviation equal to its scale", () => {
-    const u = new Uniform(new SeededEntropy(3));
-    const xs = Array.from({ length: 20000 }, () => laplace(u, 2));
-    expect(xs.reduce((s, x) => s + x, 0) / xs.length).toBeCloseTo(0, 1);
-    expect(xs.reduce((s, x) => s + Math.abs(x), 0) / xs.length).toBeCloseTo(2, 1);
-    expect(laplace(u, 0)).toBe(0);
   });
 });

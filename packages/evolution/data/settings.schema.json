@@ -244,28 +244,20 @@
     "holdout": {
       "type": "object",
       "properties": {
-        "threshold": {
+        "alpha": {
           "type": "number",
-          "exclusiveMinimum": 0
-        },
-        "sigma": {
-          "type": "number",
-          "minimum": 0
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
         },
         "budget": {
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
-        },
-        "confirm": {
-          "type": "number"
         }
       },
       "required": [
-        "threshold",
-        "sigma",
-        "budget",
-        "confirm"
+        "alpha",
+        "budget"
       ],
       "additionalProperties": false
     },

@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { HoldoutStateSchema } from "./holdout.ts";
 
 /**
  * The edit history L_t (the paper's Eq. 10), one record per candidate a round drew. The
@@ -37,12 +36,30 @@ export const RecordSchema = z.strictObject({
       upper: z.number(),
       alpha: z.number().positive(),
       costChange: z.number().exactOptional(),
+      /** Confidence bounds on the relative cost change, at the same level (an absent upper bound with a cost change present is unbounded). */
+      costLower: z.number().exactOptional(),
+      costUpper: z.number().exactOptional(),
       verdict: z.enum(VERDICTS),
       /** Predicted tasks that improved, and predicted tasks that did not. */
       hits: z.array(text).readonly(),
       misses: z.array(text).readonly(),
-      /** The holdout's answer, when the candidate was checked on it. */
-      holdout: z.strictObject({ answer: z.number().exactOptional(), overfit: z.boolean().exactOptional(), exhausted: z.boolean(), state: HoldoutStateSchema }).exactOptional(),
+      /**
+       * The holdout's confirmation of the winner, when it was put to it: the comparison with
+       * the incumbent on the holdout tasks (gain, bounds at `level`; absent when the holdout
+       * was already spent), whether it confirmed, and the queries left. The proposer never
+       * reads these numbers (see `render`): only whether the change was accepted.
+       */
+      holdout: z
+        .strictObject({
+          gain: z.number().exactOptional(),
+          lower: z.number().exactOptional(),
+          upper: z.number().exactOptional(),
+          level: z.number().positive().exactOptional(),
+          confirmed: z.boolean(),
+          exhausted: z.boolean(),
+          remaining: z.int().min(0),
+        })
+        .exactOptional(),
     })
     .exactOptional(),
 });
