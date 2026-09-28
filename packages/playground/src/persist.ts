@@ -72,7 +72,11 @@ const turnReport = z.object({
 const pageState = z.object({
   version: z.literal(1),
   sessionId: z.string().optional(),
-  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z.enum(GENERATIONS).default("ask"), decide: z
+  settings: z.object({ worker: z.string(), tier: z.enum(["quick", "default", "complex"]), approval: z.enum(["ask", "auto"]), generate: z
+      .enum(["ask", ...GENERATIONS])
+      // Generation never asks any more: a page kept when it asked first runs on auto.
+      .transform((g) => (g === "ask" ? "auto" : g))
+      .default("auto"), decide: z
       .string()
       .min(1)
       // Pages kept when this was "model" or "lexical": "model" meant the decision model, which auto now picks.

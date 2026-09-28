@@ -85,25 +85,43 @@ model at all. Only the parts nobody can decide need a generator.
   holes) and `refine_template` (a template rated harmful with a reason, rewritten the
   next time it is chosen; the old version kept under `.history`). A written template is
   a file, so the next similar request costs no inference.
-- **Generating needs consent.** The generation tools ask for approval ("Spend inference to
-  …?") unless `/generate auto`; `/generate off` turns them off, and the engine then says
-  which holes or request it could not answer.
-- **Generators are tried local first, and a written template is tried before it is kept.**
-  Which model writes is a slug (`/writer [slug]`), chosen as decision models are
-  (`auto` picks the catalog's best-ranked local generator this browser can run that
-  enforces a JSON Schema, Qwen3.5 0.8B today, needing WebGPU and room for its 716 MB after
-  the decision model's download; a catalog id names one; `claude` leaves Claude alone).
-  Generators are asked in order, the local one when it is ready, then Claude through
-  `sample` when reachable, and the next is asked when one fails: it throws, its answer is
-  not a template, or its template fails the trial. The trial: every hole of the template
-  has a value for this request, it does not repeat a template already kept (same kind and
-  body), and a script runs cleanly (exit 0) on a throwaway copy of the files within
-  `generation.trialMs`. The turn's metadata, the header's pill and `~/AGENTS.md` say who
-  wrote it and why the ones before did not. A generator writes to a schema bounded by the
-  settings (a kebab-case id, 1 to 3 short examples, a capped body, `generation.maxTokens`)
-  and is shown seed templates as worked examples (`generation.examples`). Claude is
-  otherwise used only when a person picks the `claude` worker, and never picked for them.
-- **The local generator was measured before it went first.** Qwen3.5 0.8B wrote templates
+- **Local inference is mandatory, and never asked about.** Asking before every generation
+  ("Spend inference to …?") put a question in front of each request no template answered;
+  there is no such question now. `/generate auto` (the default) runs generation, and
+  `/generate off` turns it off (the engine then says which holes or request it could not
+  answer). A page kept when it asked first runs on auto.
+- **A local model runs in every browser.** Which model writes and answers is a slug
+  (`/writer [slug]`), chosen as decision models are: `auto` ranks the catalog's local
+  generators for a browser (Qwen3.5 0.8B, then SmolLM2 135M) and loads the first that fits
+  on its own. The fit rules are the decision model's, with one difference: a generator is
+  mandatory, so when none fits, auto loads the smallest this browser can run at all
+  (room, data and past visits aside; a model larger than `choice.gpuBytes`, 200 MB, still
+  needs WebGPU), and the status says why it would have been skipped. SmolLM2 135M is 137 MB
+  as int8 and runs on onnxruntime-web's WebAssembly with no WebGPU, so every browser has
+  one. A request waits for the local model to load. A catalog id names a model; `claude`
+  makes Claude through `sample` write and answer alone. Claude is otherwise used only when
+  a person picks the `claude` worker, and never picked for them.
+- **A model that enforces a JSON Schema writes templates; any local model answers.** When
+  no template answers, the local model writes one when it enforces a JSON Schema (a
+  template is written as one); when it does not, or its template fails the trial, it
+  answers the request itself (`generation.answer`, at most `generation.answerTokens`), and
+  nothing is kept. Writers are asked in order and the next is asked when one fails: it
+  throws, its answer is not a template, or its template fails the trial. The trial: every
+  hole of the template has a value for this request, it does not repeat a template already
+  kept (same kind and body), and a script runs cleanly (exit 0) on a throwaway copy of the
+  files within `generation.trialMs`. The turn's metadata, the header's pill and
+  `~/AGENTS.md` say who wrote or answered and why the ones before did not. A writer writes
+  to a schema bounded by the settings (a kebab-case id, 1 to 3 short examples, a capped
+  body, `generation.maxTokens`) and is shown seed templates as worked examples
+  (`generation.examples`).
+- **SmolLM2 135M was measured before it went in.** Natively on CPU it answers short
+  questions in 0.4 to 4.5 s ("The capital of France is Paris.", Hamlet's author, `ls -l`
+  for listing files; 17 × 23 it gets wrong). Under a JSON Schema it loops: asked for a
+  population it writes digits without end (`1242232323…`) until the token budget, so the
+  catalog claims no constraints for it and it never writes templates. In Chromium with no
+  WebGPU, the built page loads it on its own and answers "What is the capital of France?"
+  in a 6 s turn, asking nothing (LA1.1, on real weights).
+- **Qwen3.5 0.8B was measured as a template writer.** It wrote templates
   natively (CPU, 10 to 150 s each) for 8 requests no seed answers:
   - Asked with the unbounded schema, 2 of 8 answers were cut off before the JSON closed,
     ids were "1", and every template was a script (prose run as one, for a joke).
@@ -136,11 +154,13 @@ model at all. Only the parts nobody can decide need a generator.
   `/rate bad` rewrites a template given a request it should not answer.
 - The claude.ai artifact may not be allowed to fetch the model or onnxruntime-web's
   WebAssembly: the pill then says it could not load, and the lexical judge decides.
-- The local generator is a 716 MB download, loaded on its own where it fits (WebGPU and
-  room): a browser that runs it spends Claude only on templates it cannot write, but
-  most templates are still Claude's (the measurement above). A script is run on a copy
-  of the files before a person approves the real run; the copy has no network and is
-  thrown away.
+- Every browser downloads a local model on its first visit without being asked: 137 MB
+  (SmolLM2 135M) where there is no WebGPU or room for more, 716 MB (Qwen3.5 0.8B) where
+  there is. A script is run on a copy of the files before a person approves the real run;
+  the copy has no network and is thrown away.
+- SmolLM2 135M's answers are short and often right on common knowledge, and wrong on
+  arithmetic and anything it does not know; they are not kept, so the same question costs
+  inference again.
 - A written template that runs but says the wrong thing is kept; `/rate bad <why>`
   rewrites it (local first, then Claude).
 
@@ -149,7 +169,8 @@ model at all. Only the parts nobody can decide need a generator.
 - A decision model is measured to place requests without the lexical judge's help, or
   without averaging over orders: drop them (one question instead of one per option).
 - A local generator for a browser is measured to write templates whose bodies are right
-  (not only well-formed): let it write without the trial's refusals sending most of them
-  to Claude, or give it narrower jobs (only the text holes) if that is where it is right.
+  (not only well-formed), or a model that small enforces a JSON Schema without looping:
+  let it write templates, and keep its answers as templates, so a question asked again
+  costs no inference.
 - Templates grow past what a 20-option question and lexical narrowing handle: narrow
   with embeddings (the memory extension's recall) instead.

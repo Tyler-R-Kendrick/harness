@@ -63,9 +63,11 @@ describe("the page's own state across reloads", () => {
   it("PS2.1 the current session, the settings and the turns are parsed back; anything else is no state", () => {
     const state = { version: 1, sessionId: "ses_1", settings: { worker: "shell", tier: "quick", approval: "auto", generate: "off", decide: "lexical", writer: "claude" }, turns: [{ prompt: "hi", report }] };
     expect(parsePageState(state)).toEqual(state);
-    // A page kept before generation had a setting asks first.
+    // A page kept before generation had a setting runs it on auto.
     // Settings saved before a setting existed take its default.
-    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings).toMatchObject({ generate: "ask", decide: "auto", writer: "auto" });
+    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings).toMatchObject({ generate: "auto", decide: "auto", writer: "auto" });
+    // Generation never asks: a page kept when it asked first runs on auto.
+    expect(parsePageState({ ...state, settings: { ...state.settings, generate: "ask" } })?.settings.generate).toBe("auto");
     // The decision model is a slug: auto, lexical, or a catalog id (one no longer in the catalog decides lexically).
     expect(parsePageState({ ...state, settings: { ...state.settings, decide: "org/decider" } })?.settings.decide).toBe("org/decider");
     // A page kept when the choice was "model" or "lexical": the model is now auto's pick.

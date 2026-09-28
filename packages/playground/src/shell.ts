@@ -21,7 +21,7 @@ export interface Settings {
   worker: string;
   tier: ModelTier;
   approval: ApprovalPolicy;
-  /** Whether generating (spending inference on a template) asks first, runs on auto, or is off. */
+  /** Whether the local model writes templates and answers (auto, never asking), or is off. */
   generate: Generation;
   /** Which decision model picks templates, by slug: `auto` (the best this browser runs), `lexical` (the lexical judge alone), or a catalog id. */
   decide: string;
@@ -84,6 +84,9 @@ export class Prompter {
 
 function toolOutput(raw: unknown): string {
   const r = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  // A generation: who generated (the reply that follows gives the text).
+  if (typeof r["by"] === "string" && typeof r["answer"] === "string") return `answered by ${r["by"]}`;
+  if (typeof r["by"] === "string" && typeof r["id"] === "string") return `template ${r["id"]} by ${r["by"]}`;
   if (typeof r["exitCode"] !== "number") return JSON.stringify(raw);
   const out = `${String(r["stdout"])}${String(r["stderr"])}`.trimEnd().split("\n");
   const shown = out.slice(0, 3).join("\n    ") + (out.length > 3 ? "\n    …" : "");
@@ -147,17 +150,8 @@ export function traceLine(e: TraceEvent): string {
   return `${String(e.seq).padStart(4)} ${e.kind.padEnd(6)} ${arrow} ${e.name}${e.duration === undefined ? "" : ` (${e.duration}ms)`}`;
 }
 
-/** What each generation tool spends inference on, as the approval asks it. */
-const SPENDING: Readonly<Record<string, (input: Record<string, unknown>) => string>> = {
-  write_template: (i) => `write a template for "${String(i["request"])}"`,
-  fill_template: (i) => `fill ${Array.isArray(i["holes"]) ? i["holes"].join(", ") : "the holes"} of template ${String(i["id"])}`,
-  refine_template: (i) => `rewrite template ${String(i["id"])} (${String(i["note"])})`,
-};
-
 /** The question a permission request asks in the terminal. */
 export function question(request: RequestPermissionRequest): string {
-  const spend = SPENDING[request.toolCall.title ?? ""];
-  if (spend) return `Spend inference to ${spend((request.toolCall.rawInput ?? {}) as Record<string, unknown>)}?`;
   const input = request.toolCall.rawInput as { command?: unknown } | undefined;
   return `Allow ${request.toolCall.title ?? "this tool"}${typeof input?.command === "string" ? `: ${input.command}` : ` ${JSON.stringify(request.toolCall.rawInput ?? {})}`}?`;
 }
@@ -329,7 +323,7 @@ export class SlashCommands {
     cli.command("worker [name]", "Show or pick the worker for the next turn").action((v: string | undefined) => choose("worker", v, this.#ctx.workers, () => settings.worker, (w) => (settings.worker = w)));
     cli.command("tier [tier]", "Show or pick Claude's tier: quick, default or complex").action((v: string | undefined) => choose("tier", v, TIERS, () => settings.tier, (t) => (settings.tier = t)));
     cli.command("approve [policy]", "Ask before commands and writes, or run them on auto").action((v: string | undefined) => choose("policy", v, POLICIES, () => settings.approval, (p) => (settings.approval = p)));
-    cli.command("generate [mode]", "Whether writing a template (inference) asks first, runs on auto, or is off").action((v: string | undefined) => choose("generate", v, GENERATIONS, () => settings.generate, (g) => (settings.generate = g)));
+    cli.command("generate [mode]", "Whether the local model writes templates and answers what none does (auto, never asking), or is off").action((v: string | undefined) => choose("generate", v, GENERATIONS, () => settings.generate, (g) => (settings.generate = g)));
     cli.command("decide [slug]", "Which decision model picks templates: auto (the best this browser runs), lexical, or a catalog id").action((v: string | undefined) => {
       const { decider } = this.#ctx;
       const slugs = decider?.slugs() ?? [settings.decide];

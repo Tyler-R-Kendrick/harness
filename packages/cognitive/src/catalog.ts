@@ -32,6 +32,9 @@ const env = z.record(z.string(), z.string());
 const questionType = z.strictObject({ id: z.int().min(0), name: id });
 
 /** How each runtime runs a model; file names refer to the model's artifact. */
+/** Tasks whose requests carry images. */
+const IMAGE_TASKS: readonly TaskCategory[] = ["vision-qa", "ocr", "document-parsing", "chart-understanding"];
+
 const RUN = {
   /** A model on the Vercel AI Gateway, by its gateway id. */
   "ai-gateway": z.strictObject({ model: id }),
@@ -162,8 +165,11 @@ const Model = z
         if (m.constraints.some((c) => c !== "json-schema")) issue("llama.cpp-server enforces only JSON Schema constraints here", "constraints");
       } else issue(`${m.runtime} models cannot enforce constraints`, "constraints");
     }
-    if (m.runtime === "transformers.js" && (m.ports.includes("generator") || m.ports.includes("document-parser")) !== (m.run.modelClass !== undefined)) {
-      issue("a transformers.js generator or document parser, and only those, names its model class", "run", "modelClass");
+    if (m.runtime === "transformers.js") {
+      // An image-text-to-text model loads through its class and processor; a text-only generator is a causal LM with its tokenizer.
+      const readsImages = m.ports.includes("document-parser") || m.tasks.some((t) => IMAGE_TASKS.includes(t));
+      if (readsImages && m.run.modelClass === undefined) issue("a transformers.js model that reads images names its model class", "run", "modelClass");
+      if (m.run.modelClass !== undefined && !m.ports.includes("generator") && !m.ports.includes("document-parser")) issue("only a generator or document parser names a model class", "run", "modelClass");
     }
     if (m.runtime === "onnxruntime-decision") {
       const { run } = m;

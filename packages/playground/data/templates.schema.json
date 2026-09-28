@@ -120,6 +120,15 @@
           "type": "string",
           "minLength": 1
         },
+        "answer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answerTokens": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 9007199254740991
+        },
         "maxTokens": {
           "type": "integer",
           "minimum": 64,
@@ -174,6 +183,8 @@
         "write",
         "fill",
         "refine",
+        "answer",
+        "answerTokens",
         "maxTokens",
         "trialMs",
         "examples",

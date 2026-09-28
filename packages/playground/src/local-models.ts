@@ -25,6 +25,8 @@ export interface Role {
   readonly instead: string;
   /** What is said when the last call went to the stand-in, e.g. "the last decision fell back to the lexical judge". */
   readonly fellBack: string;
+  /** Whether a local model is mandatory: with none that fits, auto loads the smallest this browser can run anyway. */
+  readonly mandatory?: boolean;
 }
 
 type State<P> = { readonly kind: "idle" } | { readonly kind: "loading" } | { readonly kind: "ready"; readonly port: P } | { readonly kind: "failed"; readonly reason: string };
@@ -42,6 +44,7 @@ export class LocalModel<P> {
   #state: State<P> = { kind: "idle" };
   #unkept: string | undefined;
   #fellBack: readonly string[] = [];
+  #waiting: (() => void)[] = [];
 
   constructor(options: {
     readonly model: Described;
@@ -71,6 +74,15 @@ export class LocalModel<P> {
   #settle(state: State<P>): void {
     this.#state = state;
     this.#onChange();
+    for (const wake of this.#waiting.splice(0)) wake();
+  }
+
+  /** The model's port once it has loaded (loading it if it has not started), or undefined if it could not load. */
+  ready(): Promise<P | undefined> {
+    if (this.#state.kind === "ready") return Promise.resolve(this.#state.port);
+    if (this.#state.kind === "failed") return Promise.resolve(undefined);
+    this.load();
+    return new Promise((resolve) => this.#waiting.push(() => resolve(this.port)));
   }
 
   status(): string {
@@ -176,10 +188,21 @@ export class LocalModels<P, M extends Candidate = Candidate> {
 
   /** Auto's pick: the best-ranked model that fits this browser, skipping any that failed to load on this visit. */
   #auto(capabilities: Capabilities): Choice<M> {
-    return chooseModel(this.#ranked, capabilities, this.#settings, this.#past, (id) => {
+    const veto = (id: string) => {
       const failure = this.#models.get(id)?.failure;
       return failure === undefined ? undefined : `could not load: ${failure}`;
-    });
+    };
+    return chooseModel(this.#ranked, capabilities, this.#settings, this.#past, veto, this.#role.mandatory === true);
+  }
+
+  /** The slug's model once it has loaded, waiting for it (and for auto, moving past one that fails to load); undefined without one. */
+  async ready(slug: string): Promise<P | undefined> {
+    for (;;) {
+      const model = this.current(slug);
+      if (!model) return undefined;
+      const port = await model.ready();
+      if (port !== undefined || slug !== AUTO || this.current(slug) === model) return port;
+    }
   }
 
   /** Auto's pick for this browser, before it loads (to reserve its download's room), once the capabilities are known. */
@@ -232,10 +255,11 @@ export class LocalModels<P, M extends Candidate = Candidate> {
     }
     if (this.#ranked.length === 0) return `none for a browser in the catalog; ${instead}`;
     if (!this.#capabilities) return `checking what this browser can run; ${instead} meanwhile`;
-    const { model, skipped } = this.#auto(this.#capabilities);
+    const { model, skipped, forced } = this.#auto(this.#capabilities);
     const nameOf = (id: string) => this.#ranked.find((m) => m.id === id)?.name ?? id;
     if (!model) return `none fits this browser (${skipped.map((s) => `${nameOf(s.id)}: ${s.reason}`).join("; ")}); ${instead} (/${command} ${this.#ranked[0]!.id} loads one anyway)`;
     const over = skipped.map((s) => `${nameOf(s.id)} (${s.reason})`).join("; ");
-    return `${this.#models.get(model.id)!.status()}${over === "" ? "" : `; picked for this browser over ${over}`}`;
+    const anyway = forced === undefined ? "" : `; loaded though ${forced}: local inference is mandatory`;
+    return `${this.#models.get(model.id)!.status()}${over === "" ? "" : `; picked for this browser over ${over}`}${anyway}`;
   }
 }

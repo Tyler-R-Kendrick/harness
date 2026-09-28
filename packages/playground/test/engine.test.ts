@@ -8,6 +8,7 @@ import { usage } from "@harness/cognitive";
 import { lexicalDecider, modelDecider } from "../src/decide.ts";
 import type { Decider } from "../src/decide.ts";
 import { TemplateEngine } from "../src/engine.ts";
+import { GENERATIONS } from "../src/engine.ts";
 import type { Generation } from "../src/engine.ts";
 import { parseEngineSettings } from "../src/engine-settings.ts";
 import { TEMPLATES, TemplateStore } from "../src/templates.ts";
@@ -37,7 +38,7 @@ function named(modelId: string, ...replies: unknown[]) {
   return model;
 }
 
-function setup(options: { files?: Record<string, string>; generation?: Generation; generators?: MockLanguageModelV4[]; deciders?: () => Decider[] } = {}) {
+function setup(options: { files?: Record<string, string>; generation?: Generation; generators?: MockLanguageModelV4[]; answerers?: MockLanguageModelV4[]; deciders?: () => Decider[] } = {}) {
   const files = { [`${HOME}/README.md`]: "# hello\n", ...SEEDS, ...options.files };
   const bash = new Bash({ cwd: HOME, files });
   /** Scripts tried before a written template is kept, each on its own copy of the files. */
@@ -53,7 +54,9 @@ function setup(options: { files?: Record<string, string>; generation?: Generatio
     settings,
     facts: { cwd: () => HOME, files: () => "README.md", date: () => "2026-09-28", templates: () => "list-files: Lists the files" },
     deciders: options.deciders ?? (() => [lexicalDecider(settings.lexical)]),
-    generators: () => options.generators ?? [],
+    // As the page gives them: once the local model is ready (a promise).
+    generators: async () => options.generators ?? [],
+    answerers: async () => options.answerers ?? [],
     generation: () => generation,
     trial,
   });
@@ -154,7 +157,7 @@ describe("the template engine: answers from templates before inference", () => {
     const { ask, setGeneration } = setup({ generation: "off" });
     const off = await ask("write a haiku about the sea");
     expect(off.steps[0]!.toolCalls).toEqual([]);
-    expect(off.text).toMatch(/no template answers this.*generation is off.*\/generate ask/is);
+    expect(off.text).toMatch(/no template answers this.*generation is off.*\/generate auto/is);
     setGeneration("auto");
     const none = await ask("write a haiku about the sea");
     expect(none.text).toMatch(/could not write a template: no generator is available/i);
@@ -236,18 +239,47 @@ describe("the template engine: answers from templates before inference", () => {
     expect(told.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { by: "test/clock", problems: ["test/copier: it repeats today"] } });
   });
 
-  it("TE1.8 generation asks for approval unless it is on auto; bash and writes follow the approval policy elsewhere", () => {
-    const { engine, setGeneration } = setup({ generation: "ask" });
-    expect(engine.approval("write_template")).toBe("user-approval");
+  it("TE1.16 when no template can be written, the local model answers the request itself, with no question asked; the metadata says so, and nothing is kept", async () => {
+    const answerer = new MockLanguageModelV4({
+      provider: "local",
+      modelId: "tiny",
+      doGenerate: async (): Promise<LanguageModelV4GenerateResult> => ({ content: [{ type: "text", text: "The capital of France is Paris." }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] }),
+    });
+    // No writer (the local model enforces no JSON Schema): the answer comes straight away.
+    const { ask, store, engine } = setup({ answerers: [answerer] });
+    const before = (await store.list()).templates.length;
+    const told = await ask("what is the capital of France?");
+    expect(told.text).toBe("The capital of France is Paris.");
+    expect(told.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { answered: true, by: "local/tiny", after: "write_template" } });
+    expect((await store.list()).templates).toHaveLength(before);
+    const call = answerer.doGenerateCalls[0]!;
+    expect(call.maxOutputTokens).toBe(settings.generation.answerTokens);
+    expect(JSON.stringify(call.prompt)).toContain(settings.generation.answer);
+    // A writer whose template is refused leaves the request to the answerer, and the refusal shows.
+    const refused = named("writer", { ...haiku, body: "{{a}}{{b}}" });
+    const { ask: ask2, engine: engine2 } = setup({ generators: [refused], answerers: [answerer] });
+    const second = await ask2("what is the capital of France?");
+    expect(second.text).toBe("The capital of France is Paris.");
+    expect(second.steps.at(-1)!.providerMetadata).toMatchObject({ harness: { answered: true, problems: [expect.stringMatching(/^test\/writer: .*next to each other/)] } });
+    expect(engine2.lastWriteProblems).toEqual([expect.stringMatching(/^test\/writer: /)]);
+    expect(engine.lastWriteProblems).toEqual([]);
+    // With no local model at all, the reply says so.
+    const { ask: ask3 } = setup();
+    expect((await ask3("what is the capital of France?")).text).toMatch(/could not write a template: no generator is available/i);
+  });
+
+  it("TE1.8 generation never asks: it runs on auto, and is refused when off; bash and writes follow the approval policy elsewhere", () => {
+    const { engine, setGeneration } = setup({ generation: "auto" });
+    expect(engine.approval("write_template")).toBe("not-applicable");
     expect(engine.approval("bash")).toBeUndefined();
-    setGeneration("auto");
     expect(engine.approval("fill_template")).toBe("not-applicable");
+    expect([...GENERATIONS]).toEqual(["auto", "off"]);
     setGeneration("off");
     expect(engine.approval("refine_template")).toBe("denied");
   });
 
   it("TE1.9 a declined generation is reported, and a template that needs text while generation is off says which holes", async () => {
-    const { engine, store, setGeneration } = setup({ generation: "ask" });
+    const { engine, store, setGeneration } = setup({ generation: "auto" });
     const { values: _v, ...draft } = haiku;
     await store.put({ ...draft, kind: "reply", helpful: 0, harmful: 0, version: 1, origin: "written", holes: haiku.holes as never });
     const declined = await generateText({

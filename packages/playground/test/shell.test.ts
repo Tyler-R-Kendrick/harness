@@ -17,7 +17,7 @@ afterEach(async () => {
 async function terminal(answer?: (key: Prompter) => void) {
   const tracer = new Tracer(() => Date.now());
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
-  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "auto", writer: "auto" };
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "auto", decide: "auto", writer: "auto" };
   const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
   open.push(playground);
   let out = "";
@@ -70,7 +70,7 @@ describe("the terminal's slash commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "auto", writer: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "auto", decide: "auto", writer: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
       expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
@@ -101,7 +101,7 @@ describe("the terminal's slash commands", () => {
     expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
     expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
     expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
-    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "auto", writer: "auto" });
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "auto", decide: "auto", writer: "auto" });
     expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
@@ -241,12 +241,12 @@ describe("the template engine's commands", () => {
     return { ...t, run, engine, store, decider };
   }
 
-  it("TM6.1 /generate shows and sets whether generating asks first, runs on auto, or is off", async () => {
+  it("TM6.1 /generate shows and sets whether the local model generates (auto, never asking) or is off; asking first is no option", async () => {
     const t = await withEngine();
-    expect((await t.run("/generate")).stdout).toBe("ask (one of ask, auto, off)\n");
+    expect((await t.run("/generate")).stdout).toBe("auto (one of auto, off)\n");
     expect((await t.run("/generate off")).stdout).toBe("generate: off\n");
     expect(t.settings.generate).toBe("off");
-    expect(await t.run("/generate always")).toMatchObject({ exitCode: 2 });
+    expect(await t.run("/generate ask")).toMatchObject({ exitCode: 2 });
   });
 
   it("TM6.5 /decide shows and sets which decision model decides by slug: auto (picked for this browser), lexical, or a catalog id; how it is doing shows in /decide and /status", async () => {
@@ -336,6 +336,9 @@ describe("rendering a turn in the terminal", () => {
     expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { content: "x" } }))).toBe('  ✓ {"content":"x"}\r\n');
     expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: "text" }))).toBe('  ✓ "text"\r\n');
     expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { stdout: "", stderr: "", exitCode: 3 } }))).toBe("  ✓ exit 3\r\n");
+    // A generation says who generated, not the text the reply then gives.
+    expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { answer: "Paris.", by: "local/tiny", problems: [] } }))).toBe("  ✓ answered by local/tiny\r\n");
+    expect(plain(r.update({ sessionUpdate: "tool_call_update", toolCallId: "1", status: "completed", rawOutput: { id: "greet", values: { name: "Ada" }, by: "local/tiny" } }))).toBe("  ✓ template greet by local/tiny\r\n");
   });
 
   it("TM3.3b a turn's report lists the files it added, modified and removed", () => {
@@ -349,15 +352,11 @@ describe("rendering a turn in the terminal", () => {
     expect(traceLine({ seq: 9, at: 0, kind: "acp", name: "initialize #0", direction: "in" })).toBe("   9 acp    → initialize #0");
   });
 
-  it("TM3.5 a permission question names the tool and its command, or its input; a generation says it spends inference, and on what", () => {
+  it("TM3.5 a permission question names the tool and its command, or its input (generation never asks)", () => {
     const ask = (toolCall: object) => question({ sessionId: "s", toolCall: { toolCallId: "c", ...toolCall }, options: [] });
     expect(ask({ title: "bash", rawInput: { command: "ls" } })).toBe("Allow bash: ls?");
     expect(ask({ title: "writeFile", rawInput: { path: "a" } })).toBe('Allow writeFile {"path":"a"}?');
     expect(ask({})).toBe("Allow this tool {}?");
-    expect(ask({ title: "write_template", rawInput: { request: "a haiku" } })).toBe('Spend inference to write a template for "a haiku"?');
-    expect(ask({ title: "fill_template", rawInput: { id: "haiku", holes: ["poem", "title"] } })).toBe("Spend inference to fill poem, title of template haiku?");
-    expect(ask({ title: "fill_template", rawInput: { id: "haiku" } })).toBe("Spend inference to fill the holes of template haiku?");
-    expect(ask({ title: "refine_template", rawInput: { id: "haiku", note: "shorter" } })).toBe("Spend inference to rewrite template haiku (shorter)?");
   });
 });
 

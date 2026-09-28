@@ -62,7 +62,16 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => (byRuntime(c, "cactus-wasm")["embedding"] = { query: "{text}", document: "{text}", dimensions: [8] })).toThrow(/an embedder, and only an embedder/);
     const vision = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "transformers.js" && (m["ports"] as string[]).includes("generator"))!;
     refused((c) => delete (vision(c)["run"] as Record<string, unknown>)["modelClass"]).toThrow(/names its model class/);
-    refused((c) => ((compressor(c)["run"] as Record<string, unknown>)["modelClass"] = "X")).toThrow(/names its model class/);
+    refused((c) => ((compressor(c)["run"] as Record<string, unknown>)["modelClass"] = "X")).toThrow(/only a generator or document parser names a model class/);
+    // A generator that reads no images is a text-only causal LM: it names no class.
+    const textOnly = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "transformers.js" && (m["ports"] as string[]).includes("generator") && !(m["run"] as Record<string, unknown>)["modelClass"]);
+    expect(textOnly(catalogFile)).toBeDefined();
+    for (const task of ["vision-qa", "ocr", "document-parsing", "chart-understanding"]) refused((c) => ((textOnly(c)!["tasks"] as string[]).push(task))).toThrow(/reads images names its model class/);
+    // A document parser reads images whatever its tasks say.
+    refused((c) => {
+      const m = textOnly(c)!;
+      (m["ports"] as string[]).push("document-parser");
+    }).toThrow(/reads images names its model class/);
   });
 
   it("CT1.3 preferences and benchmark rows must name catalog models that serve the task", () => {

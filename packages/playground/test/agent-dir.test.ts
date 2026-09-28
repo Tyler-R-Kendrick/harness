@@ -23,7 +23,7 @@ function state(overrides: Partial<HarnessState> = {}): HarnessState {
       bash: tool({ description: "Run a bash command", inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string" } }, required: ["command"] }) }),
     },
     approval: (name) => (name === "bash" ? "asks first (/approve ask)" : "runs on its own"),
-    settings: { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: "auto", writer: "auto" },
+    settings: { worker: "templates", tier: "default", approval: "ask", generate: "auto", decide: "auto", writer: "auto" },
     decisionModel: "harness.lexical/tf-idf",
     generators: ["claude.sample/sample"],
     templates: [showFile, listFiles],
@@ -60,7 +60,7 @@ describe("the harness as an Eve agent directory in the filesystem", () => {
     const agent = await bash.readFile(`${AGENT}/agent.ts`);
     expect(agent).toContain('import { defineAgent } from "eve";');
     expect(agent).toContain('model: "harness.templates/templates"');
-    expect(agent).toMatch(/generate: "ask"/);
+    expect(agent).toMatch(/generate: "auto"/);
     expect(agent).toMatch(/decisionModel: "harness.lexical\/tf-idf"/);
     expect(agent).toMatch(/writer: "auto"/);
     expect(await bash.readFile(`${HOME}/AGENTS.md`)).toContain("- Generators, cheapest first (/writer auto): claude.sample/sample");

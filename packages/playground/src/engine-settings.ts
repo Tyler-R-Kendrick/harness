@@ -48,6 +48,10 @@ const EngineSettingsSchema = z.strictObject({
     fill: Prompt,
     /** Rewriting a template from feedback. */
     refine: Prompt,
+    /** How a model answers a request itself when no template can be written. */
+    answer: Prompt,
+    /** The most tokens such an answer may take. */
+    answerTokens: z.number().int().min(16),
     /** The most tokens a generator's answer may take (a small model can loop until it is cut off). */
     maxTokens: z.number().int().min(64),
     /** How long a written script may run on a copy of the files before it is kept (milliseconds). */

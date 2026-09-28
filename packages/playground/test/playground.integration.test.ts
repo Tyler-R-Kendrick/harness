@@ -102,38 +102,44 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.5 the decision model and the generator are picked for this browser (auto): headless Chromium has no WebGPU, so none fits, nothing is downloaded, and the page says why; a model named by its slug (/decide <id>) is tried anyway", async () => {
+  it("PI1.5 the decision model and the local model are picked for this browser (auto): headless Chromium has no WebGPU, so no decision model fits and the page says why, while the smallest local model (WebAssembly) loads without asking; a model named by its slug (/decide <id>) is tried anyway", async () => {
     const { page, errors } = await open();
     const requested: string[] = [];
     page.on("request", (r) => requested.push(r.url()));
     await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("none fits"));
     expect(await page.locator("#decide-pill").textContent()).toBe("Decides: lexical");
     expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/^\/decide auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model\); the lexical judge decides/);
-    // The same holds for the generator: none fits, so Claude writes (when reachable), and nothing is downloaded.
-    await page.waitForFunction(() => document.getElementById("writer-pill")?.getAttribute("title")?.includes("none fits"));
-    expect(await page.locator("#writer-pill").textContent()).toBe("Writes: Claude");
-    expect(await page.locator("#writer-pill").getAttribute("title")).toMatch(/^\/writer auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model\); Claude writes templates, when reachable/);
+    // Local inference is mandatory: the smallest local model runs on WebAssembly, so auto loads it on its own (here its files
+    // cannot be fetched, and the page says so); the larger one needs WebGPU. Claude is never the stand-in.
+    await page.waitForFunction(() => document.getElementById("writer-pill")?.getAttribute("title")?.includes("could not load"), undefined, { timeout: 30_000 });
+    expect(await page.locator("#writer-pill").textContent()).toBe("Writes: none");
+    expect(await page.locator("#writer-pill").getAttribute("title")).toMatch(/^\/writer auto: none fits this browser \(.+: no WebGPU adapter for a \d+ MB model; .+: could not load: .+\); nothing answers without a local model/);
+    // A question no template answers gets the local model's answer, or says there is none: it never asks.
+    await type(page, "/ask what is the capital of France?");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    expect(await terminalText(page)).toMatch(/Could not write a template: no generator is available here/);
+    expect(await terminalText(page)).not.toMatch(/Spend inference|Allow write_template/);
     await type(page, "/decide");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("decision model: "));
     // The terminal wraps long lines: compare with the wrapping taken out. The slugs are auto, lexical, then the catalog's ids.
     const shown = (await terminalText(page)).replace(/\s+/g, "");
     expect(shown).toMatch(/auto\(oneofauto,lexical,[^)]+\)decisionmodel:nonefitsthisbrowser/);
     const slug = /auto\(oneofauto,lexical,([^,)]+)/.exec(shown)![1]!;
-    expect(requested.filter((u) => u.includes("huggingface.co"))).toEqual([]);
+    expect(requested.filter((u) => u.includes(slug))).toEqual([]);
     // Named, the model loads even though auto skipped it; here its files cannot be fetched, and the page says so.
     await type(page, `/decide ${slug}`);
     await page.waitForFunction(() => document.getElementById("decide-pill")?.getAttribute("title")?.includes("could not load"), undefined, { timeout: 30_000 });
     expect(await page.locator("#decide-pill").getAttribute("title")).toMatch(/could not load \(.+\); the lexical judge decides; named by \/decide, though auto would skip it \(no WebGPU adapter/);
-    expect(requested.some((u) => u.includes("huggingface.co"))).toBe(true);
+    expect(requested.some((u) => u.includes(slug))).toBe(true);
     // The template still answers, decided lexically, and the timeline says the model did not load.
     await type(page, "/ask what files are here?");
-    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "3");
     expect(await terminalText(page)).toContain("README.md");
     await page.click("#tab-timeline");
     expect(await page.locator("#events").innerText()).toContain("decision model");
-    // ~ is home in the terminal too.
+    // ~ is home in the terminal too; AGENTS.md says neither model loaded.
     await type(page, "cat ~/AGENTS.md | grep -c 'could not load'");
-    await page.waitForFunction(() => /\n1\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
+    await page.waitForFunction(() => /\n2\s*\n/.test(document.getElementById("terminal")?.innerText ?? ""));
     expect(errors).toEqual([]);
     await page.close();
   });
@@ -200,7 +206,7 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
-  it("PI1.3 with the artifact runtime's sample capability, Claude is not picked for you: with no template it writes one (asked first), the next like request costs no inference, and it runs as a worker only when chosen", async () => {
+  it("PI1.3 with the artifact runtime's sample capability, Claude is not picked for you: named (/writer claude), with no template it writes one without asking, the next like request costs no inference, and it runs as a worker only when chosen", async () => {
     const { page } = await open(() => {
       const greet = { id: "greet", description: "Greets someone by name", examples: ["say hello to Ada"], kind: "reply", body: "Hello, {{name}}!", holes: { name: { description: "who", source: "pattern", pattern: "hello to (\\w+)" } }, values: {} };
       const replies = [
@@ -233,10 +239,10 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("false");
     expect(await sampled()).toBe(0);
 
+    await type(page, "/writer claude");
     await type(page, "/ask say hello to Ada");
-    await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Spend inference to write a template"));
-    await page.keyboard.press("y");
     await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    expect(await terminalText(page)).not.toMatch(/Spend inference|Allow write_template/);
     expect(await terminalText(page)).toContain("Hello, Ada!");
     expect(await terminalText(page)).toContain("+ /home/user/agent/templates/greet.md");
     expect(await sampled()).toBe(1);

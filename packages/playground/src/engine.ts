@@ -27,8 +27,8 @@ import { report } from "./shell-model.ts";
 import { HOLE_SOURCES, parseTemplate, TEMPLATE_KINDS, templateFile } from "./templates.ts";
 import type { Template, TemplateStore } from "./templates.ts";
 
-/** Whether generating (spending inference) asks first, runs on its own, or is off. */
-export const GENERATIONS = ["ask", "auto", "off"] as const;
+/** Whether generating (local inference, never asked about) runs, or is off. */
+export const GENERATIONS = ["auto", "off"] as const;
 export type Generation = (typeof GENERATIONS)[number];
 
 /** The tools that spend inference. */
@@ -43,8 +43,10 @@ export interface EngineOptions {
   readonly facts: Facts;
   /** The decision models now, in the order they are asked (the lexical one last, and alone until a model has loaded). */
   readonly deciders: () => readonly Decider[];
-  /** Models that can write templates, cheapest first (local ones before Claude); each is asked until one writes. */
-  readonly generators: () => readonly LanguageModelV4[];
+  /** Models that can write templates, cheapest first; each is asked until one writes (the page waits for its local model). */
+  readonly generators: () => readonly LanguageModelV4[] | Promise<readonly LanguageModelV4[]>;
+  /** Models that answer a request themselves when no template can be written; the first that answers is kept to. */
+  readonly answerers?: () => readonly LanguageModelV4[] | Promise<readonly LanguageModelV4[]>;
   readonly generation: () => Generation;
   /**
    * Runs a script on a throwaway copy of the files: a written script template is tried
@@ -69,7 +71,7 @@ function writtenSchema(limits: EngineSettings["generation"]["limits"]) {
 type Written = z.output<ReturnType<typeof writtenSchema>>;
 
 /** What a generation tool returns: the template and the values it wrote, or why it could not; and why the generators before it did not. */
-type Generated = ({ readonly id: string; readonly values: Readonly<Record<string, string>>; readonly by: string } | { readonly error: string }) & { readonly problems?: readonly string[] };
+type Generated = ({ readonly id: string; readonly values: Readonly<Record<string, string>>; readonly by: string } | { readonly answer: string; readonly by: string } | { readonly error: string }) & { readonly problems?: readonly string[] };
 
 interface Reply {
   readonly text?: string;
@@ -100,7 +102,7 @@ export class TemplateEngine {
   approval(toolName: string): ToolApprovalStatus {
     if (!isGeneration(toolName)) return undefined;
     const generation = this.#options.generation();
-    return generation === "ask" ? "user-approval" : generation === "auto" ? "not-applicable" : "denied";
+    return generation === "auto" ? "not-applicable" : "denied";
   }
 
   /** The engine's model: decides, fills, replies or calls a tool; never generates text itself. */
@@ -130,19 +132,28 @@ export class TemplateEngine {
   tools(): ToolSet {
     return {
       write_template: tool({
-        description: "Write a new reply template for a request no template answers (spends inference).",
+        description: "Write a new reply template for a request no template answers; when none can be written, answer the request itself (local inference).",
         inputSchema: z.object({ request: z.string() }),
-        execute: ({ request }) => this.#generate(async (model) => this.#store(await this.#write(model, this.#options.settings.generation.write, request, await this.#factList()), model, request)),
+        execute: async ({ request }) => {
+          const written = await this.#generate(this.#options.generators, async (model) => this.#store(await this.#write(model, this.#options.settings.generation.write, request, await this.#factList()), model, request));
+          const answerers = "error" in written ? ((await this.#options.answerers?.()) ?? []) : [];
+          if (answerers.length === 0) return written;
+          // No template: the model answers this request itself, and nothing is kept.
+          const refused = this.lastWriteProblems;
+          const answered = await this.#generate(() => answerers, async (model) => ({ answer: await this.#answer(model, request), by: modelName(model) }));
+          this.lastWriteProblems = [...refused, ...this.lastWriteProblems];
+          return { ...answered, problems: [...refused, ...(answered.problems ?? [])] };
+        },
       }),
       fill_template: tool({
         description: "Write the text holes of a template for a request (spends inference on the holes only).",
         inputSchema: z.object({ id: z.string(), request: z.string(), holes: z.array(z.string()) }),
-        execute: ({ id, request, holes }) => this.#generate((model) => this.#fill(model, id, request, holes)),
+        execute: ({ id, request, holes }) => this.#generate(this.#options.generators, (model) => this.#fill(model, id, request, holes)),
       }),
       refine_template: tool({
         description: "Rewrite a template rated harmful, following the feedback (spends inference).",
         inputSchema: z.object({ id: z.string(), request: z.string(), note: z.string() }),
-        execute: ({ id, request, note }) => this.#generate((model) => this.#refine(model, id, request, note)),
+        execute: ({ id, request, note }) => this.#generate(this.#options.generators, (model) => this.#refine(model, id, request, note)),
       }),
     };
   }
@@ -163,7 +174,7 @@ export class TemplateEngine {
     const generation = this.#options.generation();
     const template = decision.template;
     if (!template) {
-      if (generation === "off") return { text: "No template answers this, and generation is off: /generate ask lets a generator write one (asking first), or add one under ~/agent/templates.", meta };
+      if (generation === "off") return { text: "No template answers this, and generation is off: /generate auto lets the local model write one or answer, or add one under ~/agent/templates.", meta };
       return { call: { toolName: "write_template", input: { request } }, meta };
     }
     if (template.refine !== undefined && generation !== "off") return { call: { toolName: "refine_template", input: { id: template.id, request, note: template.refine } }, meta };
@@ -180,7 +191,7 @@ export class TemplateEngine {
     this.lastProblems = problems;
     const holes = { ...meta, ...(problems.length > 0 ? { problems } : {}), holes: Object.fromEntries(Object.keys(values).map((h) => [h, written[h] === undefined ? holeOf(template, h, facts).source : "generated"])) };
     if (missing.length > 0) {
-      if (Object.keys(written).length > 0 || this.#options.generation() === "off") return { text: `Template ${template.id} needs text for ${missing.join(", ")}, and generation is off or did not write it: /generate ask lets a generator fill it.`, meta: holes };
+      if (Object.keys(written).length > 0 || this.#options.generation() === "off") return { text: `Template ${template.id} needs text for ${missing.join(", ")}, and generation is off or did not write it: /generate auto lets the local model fill it.`, meta: holes };
       return { call: { toolName: "fill_template", input: { id: template.id, request, holes: missing } }, meta: holes };
     }
     this.last = { templateId: template.id, request };
@@ -199,13 +210,14 @@ export class TemplateEngine {
     const generated = (result.output.type === "json" ? result.output.value : { error: "the tool gave no result" }) as Generated;
     const problems = generated.problems && generated.problems.length > 0 ? { problems: [...generated.problems] } : {};
     if ("error" in generated) return { text: `Could not ${verb} a template: ${generated.error}`, meta: { ...meta, ...problems } };
+    if ("answer" in generated) return { text: generated.answer, meta: { ...meta, answered: true, by: generated.by, ...problems } };
     const template = await this.#options.store.get(generated.id);
     if (!template) return { text: `Could not ${verb} a template: ${generated.id} is gone.`, meta };
     return this.#render(template, request, generated.values, { template: template.id, by: generated.by, after: result.toolName, ...problems });
   }
 
   /** Ask each generator in order until one writes: one that throws, or whose answer is not a template, leaves it to the next. */
-  async #generate(run: (model: LanguageModelV4) => Promise<Generated>): Promise<Generated> {
+  async #generate(models: () => readonly LanguageModelV4[] | Promise<readonly LanguageModelV4[]>, run: (model: LanguageModelV4) => Promise<Generated>): Promise<Generated> {
     const problems: string[] = [];
     // The page hears every failure; the result carries those before the one that answered (or failed last).
     const done = (generated: Generated, before: readonly string[]): Generated => {
@@ -213,7 +225,7 @@ export class TemplateEngine {
       return before.length === 0 ? generated : { ...generated, problems: before };
     };
     let last: string | undefined;
-    for (const model of this.#options.generators()) {
+    for (const model of await models()) {
       try {
         return done(await run(model), [...problems]);
       } catch (e) {
@@ -222,6 +234,14 @@ export class TemplateEngine {
       }
     }
     return last === undefined ? done({ error: "no generator is available here" }, []) : done({ error: last }, problems.slice(0, -1));
+  }
+
+  /** The model's own answer to a request, briefly: what a question gets when no template can be written. */
+  async #answer(model: LanguageModelV4, request: string): Promise<string> {
+    const { generation } = this.#options.settings;
+    const { text } = await generateText({ model, system: generation.answer, prompt: request, maxOutputTokens: generation.answerTokens, maxRetries: 0 });
+    if (text.trim() === "") throw new Error("it gave no answer");
+    return text.trim();
   }
 
   async #factList(): Promise<string> {

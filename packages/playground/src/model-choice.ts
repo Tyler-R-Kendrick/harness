@@ -40,15 +40,34 @@ export interface Choice<M> {
   readonly model?: M;
   /** The better-ranked candidates that did not fit, and why. */
   readonly skipped: readonly { readonly id: string; readonly reason: string }[];
+  /** Why the chosen model would have been skipped, when it was chosen only because one is mandatory. */
+  readonly forced?: string;
 }
 
-/** The first of the ranked candidates (best first) that fits this browser, and is not vetoed (one that failed to load, say). */
-export function chooseModel<M extends Candidate>(ranked: readonly M[], capabilities: Capabilities, settings: EngineSettings["choice"], past: (id: string) => Past | undefined, veto: (id: string) => string | undefined = () => undefined): Choice<M> {
+/** Whether this browser can run the model at all (a large local model needs WebGPU); room, data and past visits aside. */
+const runnable = (m: Omit<Candidate, "id">, capabilities: Capabilities, settings: EngineSettings["choice"]) => m.locality !== "local" || m.downloadBytes <= settings.gpuBytes || capabilities.webgpu;
+
+/**
+ * The first of the ranked candidates (best first) that fits this browser, and is not vetoed
+ * (one that failed to load, say). When one is mandatory and none fits, the smallest that
+ * this browser can run at all is chosen anyway (room, data and past visits aside).
+ */
+export function chooseModel<M extends Candidate>(
+  ranked: readonly M[],
+  capabilities: Capabilities,
+  settings: EngineSettings["choice"],
+  past: (id: string) => Past | undefined,
+  veto: (id: string) => string | undefined = () => undefined,
+  mandatory = false,
+): Choice<M> {
   const skipped: { id: string; reason: string }[] = [];
   for (const m of ranked) {
     const reason = veto(m.id) ?? unfit(m, capabilities, settings, past(m.id));
     if (reason === undefined) return { model: m, skipped };
     skipped.push({ id: m.id, reason });
   }
-  return { skipped };
+  if (!mandatory) return { skipped };
+  const smallest = [...ranked].filter((m) => veto(m.id) === undefined && runnable(m, capabilities, settings)).sort((a, b) => a.downloadBytes - b.downloadBytes)[0];
+  if (!smallest) return { skipped };
+  return { model: smallest, skipped: skipped.filter((s) => s.id !== smallest.id), forced: skipped.find((s) => s.id === smallest.id)!.reason };
 }
