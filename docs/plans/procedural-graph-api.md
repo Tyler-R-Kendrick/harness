@@ -1154,6 +1154,21 @@ above keep their meaning.
   It resolves and pins at a turn boundary exactly as a step does, so the tools built from
   it and the turn's guidance read one core (I3). Without a turn id every call is a
   boundary.
+- **Host pieces (`compose-host.ts`, portable).** The host brings files, a code mode and a
+  model for `tools.ask`:
+  - `StagingFiles` is a `WorkflowLibrary` with `journal(run): SnapshotStorage`, the
+    host's durable store of its own (never the shared library).
+  - `staging({files, codeMode, ask}): Staging` is `{library: StagingLibrary over the files,
+    host(tools): WorkflowHost}`; `host` runs staged workflows on a session's base tools,
+    journaled in the files.
+  - `toolSpecs(tools)` is each tool's input JSON Schema (and description): what
+    `compilePath` types a compiled workflow's inputs and questions by.
+  - `composer({settings, staging, tools, runs?})` is dream's `Composer` over those specs
+    and the staging library.
+  - `sessionTools({step, staging, base?})` is a worker's per-turn tools
+    (`(scope) => Promise<ToolSet>`, for `sessionAgent({ tools })`): the base (a `ToolSet`,
+    or a function told the turn's scope) plus `revisionTools` on `step.core(scope)`, with
+    `staging.host(base)` running the workflows; without a graph, the base.
 
 ## Open issues
 
