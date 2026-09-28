@@ -3,7 +3,8 @@
  * core's tool router (`route`, with its calibrated confidence) is offered one tool,
  * `choose_graph`, whose input schema admits only the candidate graphs, so a constrained
  * router spends tokens on the choice alone. The tool carries the route prompt (settings
- * data) with the candidates listed; calling nothing chooses no graph.
+ * data) with the candidates listed; calling nothing, or calls naming different graphs,
+ * chooses no graph.
  */
 import type { LanguageModel } from "ai";
 import { route } from "@harness/cognitive";
@@ -30,8 +31,8 @@ export function modelGraphRouter(deps: { readonly model: LanguageModel; readonly
   const { model, settings } = deps;
   return async ({ prompt, candidates }) => {
     const routing = await route(model, { input: prompt, tools: [graphTool(settings.prompts.route, candidates)] });
-    // The schema admits only candidates, so a valid call names one.
-    const chosen = candidates.find((c) => routing.valid.some((call) => call.arguments["graph"] === c.graph));
-    return { graph: chosen?.graph, confidence: routing.confidence };
+    // The schema admits only candidates, so a valid call names one; calls that name different ones choose none.
+    const named = candidates.filter((c) => routing.valid.some((call) => call.arguments["graph"] === c.graph));
+    return { graph: named.length === 1 ? named[0]!.graph : undefined, confidence: routing.confidence };
   };
 }
