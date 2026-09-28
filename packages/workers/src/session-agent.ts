@@ -182,7 +182,6 @@ export interface TurnLearning {
   recall(task: string): Promise<{ readonly playbook: string }>;
 }
 
-/** A call's conversation: its messages, or its prompt (text is one user message). */
 /** A call's conversation: its messages, or its prompt as messages (a text prompt is one user message). */
 export const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
   call.messages ?? (typeof call.prompt === "string" ? [{ role: "user", content: call.prompt }] : (call.prompt ?? []));
