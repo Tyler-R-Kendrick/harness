@@ -562,6 +562,7 @@ function prepareOptions(state: DreamState, extraTools?: readonly string[]): Prep
   const { input } = state;
   return {
     cycles: input.settings.cycles,
+    // Stryker disable next-line ConditionalExpression: equivalent; an undefined `tools` option is no catalog to prepareCandidate either
     ...(input.settings.enforceToolCatalog && input.tools !== undefined && { tools: extraTools === undefined ? input.tools : [...input.tools, ...extraTools] }),
     ...(input.settings.editFilter && { filter: { observations: state.work.observations } }),
   };

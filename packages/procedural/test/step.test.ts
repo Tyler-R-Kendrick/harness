@@ -102,6 +102,11 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(await hook.prepare(input(s, [user("q")], { sessionId: "intruder", sessionMeta: { graph: GRAPH, team: "other" } }))).toBeUndefined();
     const reader = await setup("paper", { resolver: byMeta });
     expect(await proceduralStep({ ...reader.deps, policy: parsePolicy({ rules: [{ when: { actions: ["write"] }, allow: false }] }) }).prepare(input(reader, [user("q")], { sessionMeta: { graph: GRAPH } }))).toBeUndefined();
+    expect(await proceduralStep({ ...reader.deps, policy: parsePolicy({ rules: [{ when: { actions: ["read"] }, allow: false }] }) }).prepare(input(reader, [user("q")], { sessionMeta: { graph: GRAPH } }))).toBeUndefined();
+    // A session that resolves to no graph never reaches the policy (whose graph patterns need one).
+    const patterned = parsePolicy({ rules: [{ when: { graph: "team/*" }, allow: true }], default: "deny" });
+    expect(await proceduralStep({ ...reader.deps, policy: patterned }).prepare(input(reader, [user("q")], { sessionId: "none" }))).toBeUndefined();
+    expect(reader.notices).toEqual([]);
     expect(s.guidance.doGenerateCalls).toHaveLength(0);
     expect(await s.store.pins.get("intruder")).toBeUndefined();
     await hook.prepare(input(s, [user("q")], { sessionId: "member", sessionMeta: { graph: GRAPH, team: "retrieval" } }));

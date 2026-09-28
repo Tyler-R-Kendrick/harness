@@ -167,6 +167,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
+      // Stryker disable next-line ConditionalExpression: equivalent; the reducer reads an undefined `tools` as an absent one
       ...(options.tools === undefined ? {} : { tools: options.tools }),
       // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
