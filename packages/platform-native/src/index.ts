@@ -19,5 +19,5 @@ export { FileHarnessStore, harnessAdapter, harnessWorker, parseHarnessSpec, pars
 export type { HarnessSpec, SandboxSpec } from "./harness-host.ts";
 export { evolutionCommand } from "./evolution-command.ts";
 export type { EvolutionDeps, EvolutionIo } from "./evolution-command.ts";
-export { buildSplit, buildSurface, commandEvaluator, evolutionConfigJsonSchema, loadEvolutionConfig, parseEvolutionConfig, parseTaskRuns } from "./evolution-config.ts";
+export { buildSplit, buildSurface, commandEvaluator, evolutionConfigJsonSchema, isTextDocument, loadEvolutionConfig, parseEvolutionConfig, parseTaskRuns, textCheck } from "./evolution-config.ts";
 export type { EvolutionConfig } from "./evolution-config.ts";

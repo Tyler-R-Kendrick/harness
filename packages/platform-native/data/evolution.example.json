@@ -1,10 +1,17 @@
 {
   "$schema": "./evolution.schema.json",
-  "description": "A template for harness-evolution: evolve the dialogue's settings against a suite. Copy it, point `evaluator` at a command that runs the harness with the documents it is sent and scores the tasks, and list your own tasks.",
+  "description": "A template for harness-evolution: evolve the dialogue's settings (a JSON document) and an instructions file (a text document, edited by replacing text that occurs once and written back verbatim) against a suite. Copy it, point `evaluator` at a command that runs the harness with the documents it is sent and scores the tasks, and list your own tasks.",
   "documents": {
     "dialogue": {
       "path": "../../dialogue/data/settings.json",
       "schema": "../../dialogue/data/settings.schema.json"
+    },
+    "instructions": {
+      "kind": "text",
+      "path": "./instructions.md",
+      "component": "prompt",
+      "regions": [{ "pattern": "^## Limits", "component": "threshold" }],
+      "check": { "command": ["node", "./check-instructions.ts"], "timeoutMs": 10000 }
     }
   },
   "components": ["prompt", "threshold", "lexicon", "config"],

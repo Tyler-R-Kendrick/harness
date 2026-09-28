@@ -8,9 +8,11 @@ import { scriptedJudge, SeededEntropy } from "@harness/testkit";
 import { buildSplit, buildSurface, commandEvaluator, loadEvolutionConfig, parseEvolutionConfig, parseTaskRuns, readDocuments } from "../src/evolution-config.ts";
 import type { EvolutionConfig } from "../src/evolution-config.ts";
 import { evolutionCommand } from "../src/evolution-command.ts";
-import { BASE, proposer, scenario, SETTINGS, truth } from "./evolution-world.ts";
+import { AGENT, BASE, proposer, proposing, rewrite, scenario, SETTINGS, textScenario, textTruth, truth } from "./evolution-world.ts";
 
 const SIM = new URL("./fixtures/sim-evaluator.ts", import.meta.url).pathname;
+const SIM_TEXT = new URL("./fixtures/sim-text-evaluator.ts", import.meta.url).pathname;
+const TEXT_CHECK = new URL("./fixtures/text-check.mjs", import.meta.url).pathname;
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
@@ -139,5 +141,42 @@ describe("a full run against a real suite", () => {
     // Resuming a finished run measures nothing.
     const evaluator = async () => Promise.reject(new Error("measured"));
     expect(await evolutionCommand(["run", "--config", s.config, "--model", "proposer"], { stdout: () => {}, stderr: () => {} }, { languageModel: () => p.model, evaluate: evaluator })).toBe(0);
+  });
+});
+
+describe("a full run on a text document, against real child processes", () => {
+  it("EH11.25 a real evaluator scores the text file (its behaviour depends on a line in it), a real check command screens a bad edit and its problem reaches the proposer, and the run accepts a real text edit that --write puts in the file verbatim", async () => {
+    const check = { command: [process.execPath, TEXT_CHECK], timeoutMs: 20_000 };
+    const crlf = AGENT.replaceAll("\n", "\r\n");
+    const s = textScenario(tmp(), { text: crlf, holdout: 12, evaluator: [process.execPath, SIM_TEXT], document: { check } });
+    // First a proposal the check refuses; the repair attempt (the next call) is the real edit.
+    const p = proposing((call) => (call === 0 ? rewrite("be brief", "BROKEN") : rewrite("verify: off", "verify: on")));
+    let out = "";
+    let err = "";
+    const started = Date.now();
+    const code = await evolutionCommand(["run", "--config", s.config, "--model", "proposer"], { stdout: (t) => void (out += t), stderr: (t) => void (err += t) }, { languageModel: () => p.model, entropy: new SeededEntropy(3) });
+    expect({ code, err }).toEqual({ code: 0, err: "" });
+    expect(Date.now() - started).toBeLessThan(30_000);
+    expect(out).toMatch(/round 1 of 3: accepted A/);
+    expect(out).toMatch(/the run is over: 3 rounds/);
+    // The check's stderr line, from a real process, is what the proposer was told.
+    expect(p.prompts[1]).toContain("the instructions contain a BROKEN marker");
+
+    const file = JSON.parse(readFileSync(s.state, "utf8")) as { base: Record<string, unknown>; evolution: unknown };
+    const config = loadEvolutionConfig(s.config);
+    const restored = new Evolution({ surface: buildSurface(config), settings: parseSettings(SETTINGS), split: buildSplit(config), saved: file.evolution });
+    expect(restored.documents["agent"]).toBe("You are an agent.\r\nverify: on\r\nbe brief\r\n");
+    expect(restored.mechanisms.map((m) => m.id)).toEqual(["r0A.e1"]);
+    expect(textTruth(restored.documents)).toBeCloseTo(0.8);
+    expect(textTruth(file.base)).toBeCloseTo(BASE);
+    const accepted = restored.records.filter((r) => r.outcome === "accepted");
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]!.measured).toMatchObject({ verdict: "supported" });
+    expect(accepted[0]!.measured!.lower).toBeGreaterThan(0);
+    expect(StateSchema.parse(restored.save()).base.score).toBeLessThan(0.55);
+
+    // --write puts the text in the file exactly: CRLF kept, no JSON quoting.
+    expect(await evolutionCommand(["documents", "--config", s.config, "--write"], { stdout: () => {}, stderr: () => {} })).toBe(0);
+    expect(readFileSync(s.agent)).toEqual(Buffer.from("You are an agent.\r\nverify: on\r\nbe brief\r\n"));
   });
 });

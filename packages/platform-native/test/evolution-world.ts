@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scriptedModel } from "@harness/testkit";
 
@@ -115,4 +115,54 @@ export function proposer() {
   let calls = 0;
   const model = scriptedModel(() => JSON.stringify(enable(calls++ === 0 ? "verify" : `noop${calls}`)));
   return { model, calls: () => calls };
+}
+
+// ---- a text document -----------------------------------------------------------------------------
+
+/** The text harness: an agent's instructions as one text file, where the line `verify: on` is what really helps (the same truth as the policy's `verify` rule). */
+export const AGENT = "You are an agent.\nverify: off\nbe brief\n";
+
+/** The probability a trial succeeds with an agent text (a document named `agent`) that says `verify: on`. */
+export const textTruth = (documents: Record<string, unknown>): number => Math.min(1, BASE + (String(documents["agent"]).includes("verify: on") ? 0.5 : 0));
+
+/** As `simulate`, for the text harness. */
+export function simulateText({ documents, tasks, k }: EvaluatorInput) {
+  const p = textTruth(documents);
+  const text = String(documents["agent"]);
+  return tasks.map((t) => ({
+    task: t.id,
+    ...(t.group === undefined ? {} : { group: t.group }),
+    trials: Array.from({ length: k }, (_, j) => ({ reward: uniform(`${text}|${t.id}|${j}`) < p ? 1 : 0, tokens: 1000, feedback: `p=${p}` })),
+  }));
+}
+
+export interface TextScenario {
+  readonly dir: string;
+  readonly config: string;
+  readonly state: string;
+  readonly agent: string;
+}
+
+/** The files of a run over a text document `agent` (and, beside it, the JSON `policy`, unchanged) in `dir`. */
+export function textScenario(dir: string, options: { readonly text?: string; readonly document?: Record<string, unknown>; readonly evaluator?: readonly string[]; readonly holdout?: number } = {}): TextScenario {
+  const s = scenario(dir, { ...(options.holdout === undefined ? {} : { holdout: options.holdout }), ...(options.evaluator ? { evaluator: options.evaluator } : {}) });
+  writeFileSync(join(dir, "agent.txt"), options.text ?? AGENT);
+  const config = JSON.parse(readFileSync(s.config, "utf8")) as { documents: Record<string, unknown> };
+  config.documents = { agent: { kind: "text", path: "agent.txt", component: "prompt", ...options.document }, policy: config.documents["policy"] };
+  writeFileSync(s.config, `${JSON.stringify(config, null, 2)}\n`);
+  return { dir, config: s.config, state: s.state, agent: join(dir, "agent.txt") };
+}
+
+/** A proposal replacing the one occurrence of `old` in the agent text. */
+export const rewrite = (old: string, replacement: string) => ({
+  summary: `rewrite ${old}`,
+  edits: [{ id: "e1", hypothesis: `${replacement} helps`, targets: "failures", ops: [{ op: "edit", document: "agent", old, new: replacement }] }],
+});
+
+/** A proposer model that answers `proposal(call)` (the call's number counted from 0), and keeps the prompts it was sent. */
+export function proposing(proposal: (call: number) => unknown) {
+  let calls = 0;
+  const prompts: string[] = [];
+  const model = scriptedModel((options) => (prompts.push(JSON.stringify(options.prompt)), JSON.stringify(proposal(calls++))));
+  return { model, calls: () => calls, prompts };
 }

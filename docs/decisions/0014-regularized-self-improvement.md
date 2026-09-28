@@ -261,7 +261,7 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   the harness as a child process (`{documents, tasks, k}` on stdin, task runs on stdout,
   parsed into refined types). The run is saved atomically after every completed round, so a
   failed round changes nothing and `run` resumes; documents are written back only on
-  request, and never over files that changed since the run started (EH1.1–EH12.x, and end
+  request, and never over files that changed since the run started (EH1.1–EH12.6, and end
   to end with a real child-process evaluator and a holdout, EH10.1). The proposer and the
   critic are gateway models, or the critic is the ensemble's judge.
 - **Models are AI SDK models.** The proposer is `generateText` constrained to the proposal's

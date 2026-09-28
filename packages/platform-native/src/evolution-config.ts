@@ -1,12 +1,54 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { z } from "zod";
+import { exponential } from "@harness/dialogue";
 import { defineSurface, ScoreSchema, TokensSchema } from "@harness/evolution";
-import type { Documents, EvolutionPorts, Split, Surface, TaskRun } from "@harness/evolution";
+import type { DocumentInput, Documents, EvolutionPorts, Split, Surface, TaskRun } from "@harness/evolution";
 
 const text = z.string().min(1);
 const pointer = z.string().regex(/^(\/.*)?$/, "a JSON Pointer (empty, or starting with /)");
+
+/** A regular expression that compiles and cannot take exponential time (the dialogue's guard, which refuses the patterns models write; a config's are checked the same way). */
+const PatternSchema = z
+  .string()
+  .min(1)
+  .superRefine((source, ctx) => {
+    try {
+      new RegExp(source);
+    } catch (e) {
+      ctx.addIssue({ code: "custom", message: `not a regular expression: ${(e as Error).message}` });
+      return;
+    }
+    if (exponential(source)) ctx.addIssue({ code: "custom", message: `can take exponential time: ${source}` });
+  });
+
+/** A JSON document: a file of JSON, the schema it must keep satisfying (a JSON Schema file), and which paths are which component (see `classify`). */
+const JsonDocumentSchema = z.strictObject({ kind: z.literal("json").exactOptional(), path: text, schema: text.exactOptional() });
+
+/**
+ * A text document (`kind: "text"`): a file that is raw text, such as source code or prose,
+ * edited by replacing text that occurs exactly once, and written back verbatim. Each changed
+ * region (the text an edit replaced and what it wrote) belongs to the component of the first
+ * of `regions` whose pattern matches either, else to `component` (else `prompt`). `check` is
+ * a liveness command: it gets the whole text on stdin, exits 0 when the text is fine, and
+ * otherwise says why on stderr (its first line is the problem the proposer is shown).
+ */
+const TextDocumentSchema = z.strictObject({
+  kind: z.literal("text"),
+  path: text,
+  component: text.exactOptional(),
+  regions: z.array(z.strictObject({ pattern: PatternSchema, component: text })).default([]),
+  check: z
+    .strictObject({
+      command: z.array(text).min(1),
+      /** Where it runs; by default the configuration file's directory. */
+      cwd: text.exactOptional(),
+      /** The check's time limit; a check that takes longer fails the candidate. */
+      timeoutMs: z.int().positive().default(10_000),
+    })
+    .exactOptional(),
+});
 
 const TaskSchema = z.strictObject({
   id: text,
@@ -27,8 +69,8 @@ export const EvolutionConfigSchema = z
   .strictObject({
     $schema: z.string().exactOptional(),
     description: text.exactOptional(),
-    /** The evolvable harness: document name (what edits and the evaluator call it) to its JSON file, and the JSON Schema that file must keep satisfying. */
-    documents: z.record(text, z.strictObject({ path: text, schema: text.exactOptional() })),
+    /** The evolvable harness: document name (what edits and the evaluator call it) to its file: JSON (with the JSON Schema it must keep satisfying) or, with `kind: "text"`, raw text. */
+    documents: z.record(text, z.discriminatedUnion("kind", [JsonDocumentSchema, TextDocumentSchema])),
     /** The component vocabulary K. */
     components: z.array(text).min(1),
     /** Components that add machinery rather than change text or constants (K_str). */
@@ -69,6 +111,12 @@ export const EvolutionConfigSchema = z
   .superRefine((c, ctx) => {
     const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: "custom", path, message });
     if (Object.keys(c.documents).length === 0) issue(["documents"], "name at least one document");
+    for (const [name, d] of Object.entries(c.documents)) {
+      if (d.kind !== "text") continue;
+      if (d.component !== undefined && !c.components.includes(d.component)) issue(["documents", name, "component"], `not one of the components: ${d.component}`);
+      if (d.component === undefined && !c.components.includes("prompt")) issue(["documents", name, "component"], "a text document without a component is a prompt, which is not one of the components");
+      for (const [i, r] of d.regions.entries()) if (!c.components.includes(r.component)) issue(["documents", name, "regions", i, "component"], `not one of the components: ${r.component}`);
+    }
     for (const [i, s] of c.structural.entries()) if (!c.components.includes(s)) issue(["structural", i], `structural components must be components: ${s}`);
     for (const [i, r] of c.classify.rules.entries()) {
       if (!c.components.includes(r.component)) issue(["classify", "rules", i, "component"], `not one of the components: ${r.component}`);
@@ -120,9 +168,30 @@ export function loadEvolutionConfig(file: string): LoadedConfig {
 
 const isContainer = (value: unknown) => typeof value === "object" && value !== null;
 
-/** The files of the surface's documents, parsed. */
-export function readDocuments({ config, dir }: LoadedConfig): Documents {
-  return Object.fromEntries(Object.entries(config.documents).map(([name, d]) => [name, readJson(resolve(dir, d.path), `document ${name}`)]));
+const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+/** A text file's text, exactly: line endings and a byte order mark kept; bytes that are not UTF-8 would not survive being written back, so they are refused. */
+const readText = (path: string, what: string): string => {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(path);
+  } catch (e) {
+    throw new Error(`cannot read ${what} ${path}: ${(e as Error).message}`);
+  }
+  try {
+    return utf8.decode(bytes);
+  } catch {
+    throw new Error(`${what} ${path} is not UTF-8 text`);
+  }
+};
+
+/** Whether a document is text (a file written back verbatim) rather than JSON. */
+export const isTextDocument = ({ config }: LoadedConfig, name: string): boolean => config.documents[name]!.kind === "text";
+
+/** The files of the surface's documents: JSON parsed, text as it is. */
+export function readDocuments(loaded: LoadedConfig): Documents {
+  const { config, dir } = loaded;
+  return Object.fromEntries(Object.entries(config.documents).map(([name, d]) => [name, d.kind === "text" ? readText(resolve(dir, d.path), `document ${name}`) : readJson(resolve(dir, d.path), `document ${name}`)]));
 }
 
 /** A document's path in its file. */
@@ -142,14 +211,68 @@ function classifier(config: EvolutionConfig, name: string): Classify {
   };
 }
 
+/** The first line of a check's stderr, trimmed and bounded: the problem the proposer is shown. */
+const firstLine = (stderr: string) => {
+  const line = stderr.trim().split("\n")[0]!.trim();
+  return line.length > 300 ? `${line.slice(0, 300)}...` : line;
+};
+
+/** The most a check may write, on either stream. */
+const CHECK_OUTPUT_LIMIT = 64 * 1024;
+
 /**
- * The surface the configuration names. A document's schema is a JSON Schema file, turned
- * into a zod schema by zod's own `fromJSONSchema` (no validator of ours); a document
- * without one only has to be a JSON object or array.
+ * A text document's liveness check as the surface declares it: a synchronous function of
+ * the text. `Surface.check` is synchronous (applying a proposal is), so this runs the
+ * command with `spawnSync`, which blocks this process for at most `timeoutMs`; nothing
+ * else in a round runs meanwhile, and evaluations are child processes, not this thread.
+ * Exit 0 is fine. A nonzero exit, a time out and output past the bound are the candidate's
+ * problem (a change can hang or flood a compiler). A command that cannot start is not:
+ * it throws, so the round fails instead of every candidate being refused for the host's fault.
+ */
+export function textCheck({ command, cwd, timeoutMs }: { readonly command: readonly string[]; readonly cwd?: string; readonly timeoutMs: number }, dir: string): (text: string) => string | undefined {
+  const [file, ...args] = command as [string, ...string[]];
+  const where = cwd === undefined ? dir : resolve(dir, cwd);
+  return (input) => {
+    const r = spawnSync(file, args, { cwd: where, input, timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: CHECK_OUTPUT_LIMIT, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+    const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ETIMEDOUT") return `the check took longer than ${timeoutMs} ms and was stopped`;
+    if (code === "ENOBUFS") return `the check wrote more than ${CHECK_OUTPUT_LIMIT} bytes and was stopped`;
+    // A child that exits before reading its input closes the pipe: its exit code says why.
+    if (r.error && code !== "EPIPE") throw new Error(`cannot start the check ${file}: ${r.error.message}`);
+    if (r.status === 0) return undefined;
+    if (r.status === null) return `the check was stopped by signal ${r.signal}`;
+    return firstLine(r.stderr) || `the check exited with code ${r.status}`;
+  };
+}
+
+/** A text document's classifier of a changed region: the component of the first region whose pattern matches its old or its new text; none when no region does (the document's component then applies). */
+function regionClassifier(regions: readonly { readonly pattern: string; readonly component: string }[]): (before: string, after: string) => readonly string[] {
+  const patterns = regions.map((r) => ({ test: new RegExp(r.pattern), component: r.component }));
+  return (before, after) => {
+    const hit = patterns.find((p) => p.test.test(before) || p.test.test(after));
+    return hit === undefined ? [] : [hit.component];
+  };
+}
+
+/**
+ * The surface the configuration names. A JSON document's schema is a JSON Schema file,
+ * turned into a zod schema by zod's own `fromJSONSchema` (no validator of ours); a
+ * document without one only has to be a JSON object or array. A text document is the
+ * surface's own text document, with its regions as `classifyText` and its `check` command.
  */
 export function buildSurface({ config, dir }: LoadedConfig): Surface {
   const documents = Object.fromEntries(
-    Object.entries(config.documents).map(([name, d]): [string, { schema: z.ZodType; classify: Classify }] => {
+    Object.entries(config.documents).map(([name, d]): [string, DocumentInput] => {
+      if (d.kind === "text")
+        return [
+          name,
+          {
+            kind: "text",
+            ...(d.component === undefined ? {} : { component: d.component }),
+            ...(d.regions.length ? { classifyText: regionClassifier(d.regions) } : {}),
+            ...(d.check === undefined ? {} : { check: textCheck(d.check, dir) }),
+          },
+        ];
       let schema: z.ZodType = z.json().refine(isContainer, "a JSON object or array");
       if (d.schema !== undefined) {
         const file = resolve(dir, d.schema);

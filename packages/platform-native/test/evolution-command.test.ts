@@ -1,15 +1,17 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { applyProposal, Evolution, parseSettings, ProposalSchema, StateSchema } from "@harness/evolution";
-import { probability } from "@harness/cognitive";
+import { Ensemble, probability } from "@harness/cognitive";
+import type { ModelDescriptor } from "@harness/cognitive";
 import { scriptedJudge, scriptedModel, SeededEntropy } from "@harness/testkit";
 import { buildSplit, buildSurface, loadEvolutionConfig, readDocuments } from "../src/evolution-config.ts";
+import { loadCatalog } from "../src/catalog-files.ts";
 import { evolutionCommand } from "../src/evolution-command.ts";
 import type { EvolutionDeps } from "../src/evolution-command.ts";
-import { enable, proposer, scenario, SETTINGS, simulate, truth } from "./evolution-world.ts";
-import type { EvaluatorInput, Scenario } from "./evolution-world.ts";
+import { AGENT, enable, proposer, proposing, rewrite, scenario, SETTINGS, simulate, simulateText, textScenario, textTruth, truth } from "./evolution-world.ts";
+import type { EvaluatorInput, Scenario, TextScenario } from "./evolution-world.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -30,6 +32,9 @@ interface Result {
   readonly out: string;
   readonly err: string;
 }
+
+/** The evaluate port on the simulated text suite, in this process. */
+const evaluateText: NonNullable<EvolutionDeps["evaluate"]> = async (documents, tasks, k) => simulateText({ documents, tasks, k } as EvaluatorInput) as never;
 
 async function cli(args: readonly string[], deps: EvolutionDeps = {}): Promise<Result> {
   let out = "";
@@ -378,5 +383,320 @@ describe("the surface a config names", () => {
     const r = await cli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
     expect(r.out).toMatch(/0A change accepted/);
     expect(readState(s).mechanisms[0]?.components).toEqual(["config"]);
+  });
+});
+
+// ---- text documents ------------------------------------------------------------------------------
+
+const NODE = process.execPath;
+const textCli = (args: readonly string[], deps: EvolutionDeps = {}) => cli(args, { evaluate: evaluateText, ...deps });
+const readEvolution = (s: TextScenario) => StateSchema.parse((JSON.parse(read(s.state)) as { evolution: unknown }).evolution);
+
+describe("harness-evolution on text documents", () => {
+  it("EH11.14 a scripted proposer's edit to a text file is accepted when it really helps; the state holds the text, not JSON", async () => {
+    const s = textScenario(tmp(), { holdout: 8 });
+    const p = proposing(() => rewrite("verify: off", "verify: on"));
+    await textCli(["start", "--config", s.config]);
+    const r = await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    expect(r).toMatchObject({ code: 0, err: "" });
+    expect(r.out).toMatch(/round 1 of 3: accepted A /);
+    expect(r.out).toMatch(/0A change accepted\s+gain \+0\.\d{4} \[\+0\.\d{4}, \+0\.\d{4}\] supported: /);
+    const state = readEvolution(s);
+    expect(state.documents["agent"]).toBe("You are an agent.\nverify: on\nbe brief\n");
+    expect(state.mechanisms.map((m) => [m.id, m.components])).toEqual([["r0A.e1", ["prompt"]]]);
+    expect(textTruth(state.documents)).toBeCloseTo(0.8);
+    expect((JSON.parse(read(s.state)) as { base: unknown }).base).toEqual({ agent: AGENT, policy: { rules: {}, prompt: { system: "Work carefully." } } });
+  });
+
+  it("EH11.15 documents --write writes the incumbent's text back verbatim: the trailing newline, CRLF line endings and a missing final newline exactly as they were", async () => {
+    for (const [name, text] of [
+      ["trailing newline", AGENT],
+      ["CRLF", "You are an agent.\r\nverify: off\r\nbe brief\r\n"],
+      ["no final newline", "You are an agent.\nverify: off\nbe brief"],
+      ["byte order mark", "\uFEFFYou are an agent.\nverify: off\n"],
+      ["JSON-looking", '{"verify": "verify: off"}'],
+    ] as const) {
+      const s = textScenario(tmp(), { text });
+      const p = proposing(() => rewrite("verify: off", "verify: on"));
+      await textCli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+      const r = await textCli(["documents", "--config", s.config, "--write"]);
+      expect(r, name).toMatchObject({ code: 0, err: "" });
+      expect(r.out, name).toContain(`agent (${s.agent}): differs: the incumbent's would replace the file`);
+      expect(r.out, name).toContain(`wrote ${s.agent}`);
+      expect(readFileSync(s.agent), name).toEqual(Buffer.from(text.replace("verify: off", "verify: on")));
+      const again = await textCli(["documents", "--config", s.config, "--write"]);
+      expect(again.out, name).toContain(`agent (${s.agent}): the file holds the incumbent's`);
+      expect(again.out).toContain("nothing to write");
+    }
+  });
+
+  it("EH11.16 documents without --write compares and writes nothing; a text file the run did not change is unchanged", async () => {
+    const s = textScenario(tmp());
+    await textCli(["start", "--config", s.config]);
+    const same = await textCli(["documents", "--config", s.config, "--write"]);
+    expect(same.out).toContain(`agent (${s.agent}): unchanged`);
+    expect(same.out).toContain("nothing to write");
+    const p = proposing(() => rewrite("verify: off", "verify: on"));
+    await textCli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    const r = await textCli(["documents", "--config", s.config]);
+    expect(r.out).toContain("nothing was written; --write replaces the files that differ");
+    expect(read(s.agent)).toBe(AGENT);
+  });
+
+  it("EH11.17 --write refuses, writing nothing, a text file that changed since the run started (even by a line ending); --force replaces it", async () => {
+    const s = textScenario(tmp());
+    const p = proposing(() => rewrite("verify: off", "verify: on"));
+    await textCli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    // Only the line endings differ from what the run started from.
+    const crlf = AGENT.replaceAll("\n", "\r\n");
+    writeFileSync(s.agent, crlf);
+    const refused = await textCli(["documents", "--config", s.config, "--write"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toBe(`nothing was written: ${s.agent} changed since the run started; --force replaces it anyway\n`);
+    expect(refused.out).toContain(`agent (${s.agent}): differs, and the file is not what the run started from`);
+    expect(read(s.agent)).toBe(crlf);
+    expect(await textCli(["documents", "--config", s.config, "--write", "--force"])).toMatchObject({ code: 0 });
+    expect(read(s.agent)).toBe("You are an agent.\nverify: on\nbe brief\n");
+  });
+
+  it("EH11.18 a text document and a JSON document written together: each in its own form, and one changed file blocks the write of both", async () => {
+    const s = textScenario(tmp());
+    const both = (n: number) => ({
+      summary: "both",
+      edits: [
+        { id: "a", hypothesis: "verify helps", targets: "failures", ops: [{ op: "edit", document: "agent", old: "verify: off", new: "verify: on" }] },
+        ...(n < 0 ? [] : [{ id: "b", hypothesis: "b", targets: "t", ops: [{ op: "add", document: "policy", path: "/rules/x", value: true }] }]),
+      ],
+    });
+    const settings = JSON.parse(read(join(s.dir, "settings.json"))) as typeof SETTINGS;
+    writeFileSync(join(s.dir, "settings.json"), JSON.stringify({ ...settings, budget: { min: 2, max: 2 }, candidates: 1 }));
+    const p = proposing(() => both(0));
+    await textCli(["run", "--config", s.config, "--model", "m", "--max-rounds", "1"], { languageModel: () => p.model });
+    const state = readEvolution(s);
+    expect(state.documents["agent"]).toBe("You are an agent.\nverify: on\nbe brief\n");
+    expect(state.documents["policy"]).toEqual({ rules: { x: true }, prompt: { system: "Work carefully." } });
+    writeFileSync(s.agent, "edited by hand\n");
+    const refused = await textCli(["documents", "--config", s.config, "--write"]);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain(s.agent);
+    expect(read(join(s.dir, "policy.json"))).toBe(`${JSON.stringify({ rules: {}, prompt: { system: "Work carefully." } }, null, 2)}\n`);
+    await textCli(["documents", "--config", s.config, "--write", "--force"]);
+    expect(read(s.agent)).toBe("You are an agent.\nverify: on\nbe brief\n");
+    expect(JSON.parse(read(join(s.dir, "policy.json")))).toEqual({ rules: { x: true }, prompt: { system: "Work carefully." } });
+  });
+
+  it("EH11.19 regions decide a text edit's component, and the mechanism records it", async () => {
+    const s = textScenario(tmp(), { document: { component: "prompt", regions: [{ pattern: "^verify", component: "skill" }] } });
+    const p = proposing(() => rewrite("verify: off", "verify: on"));
+    await textCli(["start", "--config", s.config]);
+    await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    expect(readEvolution(s).mechanisms.map((m) => m.components)).toEqual([["skill"]]);
+  });
+
+  it("EH11.20 a proposal that fails the document's check is screened with the check's problem; one the check passes goes on", async () => {
+    const check = { command: [NODE, "-e", `const s = require("fs").readFileSync(0, "utf8"); if (s.includes("BROKEN")) { console.error("agent.txt: BROKEN marker\\nmore"); process.exit(1) }`] };
+    const s = textScenario(tmp(), { document: { check } });
+    await textCli(["start", "--config", s.config]);
+    const broken = proposing(() => rewrite("verify: off", "BROKEN"));
+    const r = await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => broken.model });
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/0A change screened: .*agent fails its check: agent\.txt: BROKEN marker/);
+    expect(r.out).not.toContain("more");
+    expect(r.out).toContain("nothing accepted");
+    const fine = proposing(() => rewrite("verify: off", "verify: on"));
+    expect((await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => fine.model })).out).toMatch(/1A change accepted/);
+  });
+
+  it("EH11.21 a check that takes too long screens the proposal naming the limit; a check that cannot start stops the run (the host's fault, not the proposal's)", async () => {
+    // The base text passes at once; text with the edit in it hangs.
+    const slow = { command: [NODE, "-e", `if (require("fs").readFileSync(0, "utf8").includes("verify: on")) setTimeout(() => {}, 60000)`], timeoutMs: 300 };
+    const s = textScenario(tmp(), { document: { check: slow } });
+    await textCli(["start", "--config", s.config]);
+    const p = proposing(() => rewrite("verify: off", "verify: on"));
+    const r = await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/0A change screened: .*agent fails its check: the check took longer than 300 ms and was stopped/);
+    // Start measures the base, which must pass the check too; a check that cannot start fails the round or start, whichever meets it first.
+    const missing = textScenario(tmp(), { document: { check: { command: ["/no/such/check"] } } });
+    const noStart = await textCli(["start", "--config", missing.config]);
+    expect(noStart.code).toBe(1);
+    expect(noStart.err).toMatch(/^cannot start the check \/no\/such\/check: /);
+    expect(() => readFileSync(missing.state)).toThrow(/ENOENT/);
+  });
+
+  it("EH11.24 a base text that fails its check stops start, saying so; nothing is saved", async () => {
+    const failing = { command: [NODE, "-e", `console.error("cannot compile"); process.exit(1)`] };
+    const s = textScenario(tmp(), { document: { check: failing } });
+    expect(await textCli(["start", "--config", s.config])).toMatchObject({ code: 1, err: "the base harness's agent fails its check: cannot compile\n" });
+    expect(() => readFileSync(s.state)).toThrow(/ENOENT/);
+  });
+
+  it("EH11.22 an edit whose old text is not in the file, or occurs twice, is screened with that reason", async () => {
+    const s = textScenario(tmp(), { text: "a\nb\na\n" });
+    await textCli(["start", "--config", s.config]);
+    const twice = proposing(() => rewrite("a", "c"));
+    expect((await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => twice.model })).out).toMatch(/screened: .*the old text occurs 2 times in agent, not exactly once/);
+    const absent = proposing(() => rewrite("zzz", "c"));
+    expect((await textCli(["round", "--config", s.config, "--model", "m"], { languageModel: () => absent.model })).out).toMatch(/screened: .*the old text is not in agent: "zzz"/);
+  });
+
+  it("EH11.23 a text file that is not UTF-8 stops start with the file's name", async () => {
+    const s = textScenario(tmp());
+    writeFileSync(s.agent, Buffer.from([0x61, 0xff]));
+    expect(await textCli(["start", "--config", s.config])).toMatchObject({ code: 1, err: `document agent ${s.agent} is not UTF-8 text\n` });
+  });
+});
+
+// ---- the critic from the ensemble ----------------------------------------------------------------
+
+/** A catalog model that is a judge on this host: tests pick models by the port they serve, never by name. */
+const judgeModel = loadCatalog().models.find((m) => m.platforms.includes("native") && m.tasks.includes("judgment") && m.ports.includes("judge")) as ModelDescriptor;
+
+/** An ensemble factory for the command: what it was asked for, what it closed, and an ensemble whose one judge is `load`. */
+function ensembles(load: () => Promise<{ judge?: ReturnType<typeof scriptedJudge> }>, options: { members?: boolean; descriptor?: ModelDescriptor } = {}) {
+  const asked: unknown[] = [];
+  let closed = 0;
+  const factory: NonNullable<EvolutionDeps["ensemble"]> = (o) => {
+    asked.push(o);
+    const ensemble = new Ensemble({ platform: "native" });
+    if (options.members !== false) ensemble.register(options.descriptor ?? judgeModel, load as never);
+    return { ensemble, close: async () => void closed++ };
+  };
+  return { factory, asked, closed: () => closed };
+}
+
+describe("harness-evolution --critic ensemble", () => {
+  it("EH12.1 the critic is the ensemble's judge: the round screens with it, exactly as it answers, and the ensemble is closed afterwards", async () => {
+    const s = scenario(tmp());
+    await cli(["start", "--config", s.config]);
+    const judge = scriptedJudge(() => ({ type: "boolean", probability: probability(0.9) }));
+    const e = ensembles(async () => ({ judge }));
+    const p = proposer();
+    const r = await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: e.factory });
+    expect(r).toMatchObject({ code: 0, err: "" });
+    expect(judge.requests.length).toBeGreaterThan(0);
+    expect(r.out).toMatch(/0A change screened: critic: it reads as specific to the evolve tasks \(p = 0\.90\)/);
+    expect(e.closed()).toBe(1);
+    // A critic that finds nothing specific lets the real gain through.
+    const fair = scriptedJudge(() => ({ type: "boolean", probability: probability(0.1) }));
+    const again = await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: ensembles(async () => ({ judge: fair })).factory });
+    expect(again.code).toBe(0);
+    expect(fair.requests.length).toBeGreaterThan(0);
+  });
+
+  it("EH12.2 the ensemble is built where the host builds its own: --model-cache and --llama-server, else HARNESS_MODEL_CACHE and LLAMA_SERVER, else the host's default cache", async () => {
+    const s = scenario(tmp());
+    await cli(["start", "--config", s.config]);
+    const asked = async (args: readonly string[]) => {
+      await cli(["start", "--config", s.config, "--force"]);
+      const e = ensembles(async () => ({ judge: scriptedJudge() }));
+      await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble", ...args], { languageModel: () => proposer().model, ensemble: e.factory });
+      return e.asked;
+    };
+    expect(await asked(["--model-cache", "/models", "--llama-server", "/bin/llama-server"])).toEqual([{ cacheDir: "/models", llamaServer: "/bin/llama-server" }]);
+    vi.stubEnv("HARNESS_MODEL_CACHE", "/env/models");
+    vi.stubEnv("LLAMA_SERVER", "/env/llama-server");
+    expect(await asked([])).toEqual([{ cacheDir: "/env/models", llamaServer: "/env/llama-server" }]);
+    expect(await asked(["--model-cache", "/models"])).toEqual([{ cacheDir: "/models", llamaServer: "/env/llama-server" }]);
+    vi.stubEnv("HARNESS_MODEL_CACHE", "");
+    vi.stubEnv("LLAMA_SERVER", "");
+    expect(await asked([])).toEqual([{ cacheDir: join(homedir(), ".cache", "harness", "models") }]);
+  });
+
+  it("EH12.3 with no judge reachable the command fails with exit 1 saying so and why, before any round, saves nothing and closes the ensemble; it never runs without the critic", async () => {
+    const s = scenario(tmp());
+    await cli(["start", "--config", s.config]);
+    const before = read(s.state);
+    const p = proposer();
+    const none = ensembles(async () => ({}), { members: false });
+    const r = await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: none.factory });
+    expect(r).toMatchObject({ code: 1, out: "", err: "--critic ensemble: no judge could be reached\n" });
+    expect(none.closed()).toBe(1);
+    expect(p.calls()).toBe(0);
+    expect(read(s.state)).toBe(before);
+    // A member that does not declare the judge port is never tried, so it leaves no reason to give.
+    const mute = ensembles(async () => ({}), { descriptor: { ...judgeModel, ports: judgeModel.ports.filter((port) => port !== "judge") } as ModelDescriptor });
+    expect(await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: mute.factory })).toMatchObject({ code: 1, err: "--critic ensemble: no judge could be reached\n" });
+    // One that declares it and does not deliver says so.
+    const liar = ensembles(async () => ({}));
+    expect((await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: liar.factory })).err).toBe(`--critic ensemble: no judge could be reached: ${judgeModel.id}: adapter does not provide the judge port it declared\n`);
+    const down = ensembles(() => Promise.reject(new Error("no credential for the gateway")));
+    const why = await cli(["run", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: down.factory });
+    expect(why).toMatchObject({ code: 1, out: "" });
+    expect(why.err).toBe(`--critic ensemble: no judge could be reached: ${judgeModel.id}: no credential for the gateway\n`);
+    expect(down.closed()).toBe(1);
+    expect(p.calls()).toBe(0);
+    expect(read(s.state)).toBe(before);
+  });
+
+  it("EH12.3b anything else that goes wrong reaching the judge is not disguised as an unreachable judge; the ensemble is still closed", async () => {
+    const s = scenario(tmp());
+    await cli(["start", "--config", s.config]);
+    let closed = 0;
+    const broken = { ensemble: { resolve: () => Promise.reject(new TypeError("the ensemble is broken")) } as unknown as Ensemble, close: async () => void closed++ };
+    expect(await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => proposer().model, ensemble: () => broken })).toMatchObject({ code: 1, err: "the ensemble is broken\n" });
+    expect(closed).toBe(1);
+  });
+
+  it("EH12.3c by default the ensemble is the native host's own, built on --model-cache: with every fetch refused and no credential, no judge is reached and the run says so (nothing is downloaded)", async () => {
+    vi.stubEnv("AI_GATEWAY_API_KEY", "");
+    vi.stubEnv("VERCEL_OIDC_TOKEN", "");
+    const fetched: string[] = [];
+    vi.stubGlobal("fetch", async (input: unknown) => (fetched.push(String(input)), new Response("offline", { status: 503 })));
+    const dir = tmp();
+    const s = scenario(dir);
+    await cli(["start", "--config", s.config]);
+    const p = proposer();
+    const r = await cli(["round", "--config", s.config, "--model", "m", "--critic", "ensemble", "--model-cache", join(dir, "models")], { languageModel: () => p.model });
+    vi.unstubAllGlobals();
+    expect(r.code).toBe(1);
+    expect(r.out).toBe("");
+    expect(r.err).toMatch(/^--critic ensemble: no judge could be reached/);
+    expect(p.calls()).toBe(0);
+  });
+
+  it("EH12.4 a run that is already over builds no ensemble: nothing to screen, nothing to load", async () => {
+    const s = scenario(tmp());
+    const p = proposer();
+    await cli(["run", "--config", s.config, "--model", "m"], { languageModel: () => p.model });
+    const e = ensembles(async () => ({ judge: scriptedJudge() }));
+    expect(await cli(["run", "--config", s.config, "--model", "m", "--critic", "ensemble"], { languageModel: () => p.model, ensemble: e.factory })).toMatchObject({ code: 0, out: "the run is over: 3 of 3 rounds\n" });
+    expect(e.asked).toEqual([]);
+  });
+
+  it("EH12.5 --critic ensemble and --critic-model together, an unknown critic, and ensemble options without --critic ensemble are usage errors (exit 2), before any file is read", async () => {
+    const s = scenario(tmp());
+    const misuse = async (args: string[], message: RegExp) => {
+      const r = await cli(args);
+      expect(r.code, args.join(" ")).toBe(2);
+      expect(r.err).toMatch(message);
+      expect(r.err).toContain("usage: harness-evolution <command>");
+      expect(r.out).toBe("");
+    };
+    const round = ["round", "--config", s.config, "--model", "m"];
+    await misuse([...round, "--critic", "ensemble", "--critic-model", "j"], /^--critic and --critic-model are alternatives: give one, the ensemble's judge or a gateway model\n/);
+    await misuse([...round, "--critic", "gateway"], /^--critic takes "ensemble", not "gateway"\n/);
+    await misuse(["status", "--config", s.config, "--critic", "ensemble"], /^--critic is for round and run\n/);
+    await misuse([...round, "--model-cache", "/x"], /^--model-cache is for --critic ensemble\n/);
+    await misuse([...round, "--critic-model", "j", "--llama-server", "/x"], /^--llama-server is for --critic ensemble\n/);
+    // Nothing was built or measured.
+    expect(() => readFileSync(s.state)).toThrow(/ENOENT/);
+  });
+
+  it("EH12.6 --critic-model still gives the gateway's judge, and no critic still runs without one", async () => {
+    const s = scenario(tmp());
+    await cli(["start", "--config", s.config]);
+    const asked: string[] = [];
+    const judge = scriptedJudge(() => ({ type: "boolean", probability: probability(0.9) }));
+    const e = ensembles(async () => ({ judge: scriptedJudge() }));
+    const p = proposer();
+    const r = await cli(["round", "--config", s.config, "--model", "m", "--critic-model", "other/judge"], { languageModel: () => p.model, evaluationModel: (id) => (asked.push(id), judge), ensemble: e.factory });
+    expect(asked).toEqual(["other/judge"]);
+    expect(e.asked).toEqual([]);
+    expect(r.out).toMatch(/screened: critic: /);
+    const none = await cli(["round", "--config", s.config, "--model", "m"], { languageModel: () => proposer().model, ensemble: e.factory });
+    expect(none.code).toBe(0);
+    expect(e.asked).toEqual([]);
   });
 });

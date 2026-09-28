@@ -1,5 +1,6 @@
 import { getRandomValues } from "node:crypto";
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel } from "ai";
@@ -7,20 +8,29 @@ import { z } from "zod";
 import type { Entropy } from "@harness/core";
 import { Evolution, judgeCritic, modelProposer, StateSchema } from "@harness/evolution";
 import type { Documents, EvolutionPorts, LedgerRecord, Settings } from "@harness/evolution";
+import { CognitiveError } from "@harness/cognitive";
+import type { Ensemble } from "@harness/cognitive";
 import { gatewayEvaluationModel } from "@harness/models";
 import writeFileAtomic from "write-file-atomic";
 import { loadEvolutionSettings } from "./catalog-files.ts";
-import { buildSplit, buildSurface, commandEvaluator, documentPath, loadEvolutionConfig, readDocuments } from "./evolution-config.ts";
+import { buildNativeEnsemble } from "./cognitive-host.ts";
+import type { NativeEnsembleOptions } from "./cognitive-host.ts";
+import { buildSplit, buildSurface, commandEvaluator, documentPath, isTextDocument, loadEvolutionConfig, readDocuments } from "./evolution-config.ts";
 import type { LoadedConfig } from "./evolution-config.ts";
 import { FileStorage } from "./file-storage.ts";
 
 export const USAGE =
   "usage: harness-evolution <command> --config <evolution.json> [--state <file>] [--settings <file>]\n" +
   "  start [--force]                       measure the base harness and begin a run (a run in progress is kept unless --force)\n" +
-  "  round --model <gateway id> [--critic-model <gateway id>]\n" +
-  "                                        one round\n" +
-  "  run --model <gateway id> [--critic-model <gateway id>] [--max-rounds <n>]\n" +
+  "  round --model <gateway id> [<critic>]  one round\n" +
+  "  run --model <gateway id> [<critic>] [--max-rounds <n>]\n" +
   "                                        rounds until the run is done (starts one if there is none; run again to resume)\n" +
+  "  <critic> is --critic-model <gateway id> (an AI Gateway judge), or\n" +
+  "           --critic ensemble [--model-cache <dir>] [--llama-server <path>]\n" +
+  "                                        (the judge the native host's ensemble reaches, built as `harness --cognitive` builds it;\n" +
+  "                                         the cache is --model-cache, else $HARNESS_MODEL_CACHE, else ~/.cache/harness/models,\n" +
+  "                                         and llama-server is --llama-server, else $LLAMA_SERVER)\n" +
+  "                                        with neither, proposals are screened by the leakage checks alone\n" +
   "  status [--last <n>]                   the round, the incumbent's score, its mechanisms and the last records\n" +
   "  documents [--write [--force]]         compare the incumbent's documents with their files; --write replaces the files\n" +
   "                                        that still hold what the run started from (--force: whatever they hold)\n";
@@ -37,6 +47,8 @@ export interface EvolutionDeps {
   readonly languageModel?: (id: string) => LanguageModel;
   /** The critic's judge by gateway id; by default the AI Gateway's. */
   readonly evaluationModel?: (id: string) => EvaluationModel;
+  /** The native host's ensemble, for `--critic ensemble`; by default the cognitive core `harness --cognitive` builds. */
+  readonly ensemble?: (options: NativeEnsembleOptions) => { readonly ensemble: Ensemble; close(): Promise<void> };
   /** Runs the harness on tasks; by default the configured evaluator command. */
   readonly evaluate?: EvolutionPorts["evaluate"];
   /** Randomness; by default the host's (as the daemon's). */
@@ -56,6 +68,12 @@ type Run = z.output<typeof RunSchema>;
 
 class Usage extends Error {}
 
+/** Where the round's critic comes from: an AI Gateway judge by id, or the native host's ensemble. */
+type Critic = { readonly kind: "model"; readonly id: string } | { readonly kind: "ensemble"; readonly cacheDir: string; readonly llamaServer?: string };
+
+const nonEmpty = (value: string | undefined) => (value === undefined || value === "" ? undefined : value);
+const optional = <K extends string>(key: K, value: string | undefined) => (value === undefined ? {} : ({ [key]: value } as { [P in K]: string }));
+
 const COMMANDS = ["start", "round", "run", "status", "documents"];
 const OPTIONS = {
   config: { type: "string" },
@@ -63,6 +81,9 @@ const OPTIONS = {
   settings: { type: "string" },
   model: { type: "string" },
   "critic-model": { type: "string" },
+  critic: { type: "string" },
+  "model-cache": { type: "string" },
+  "llama-server": { type: "string" },
   "max-rounds": { type: "string" },
   last: { type: "string" },
   force: { type: "boolean", default: false },
@@ -98,7 +119,21 @@ export async function evolutionCommand(argv: readonly string[], io: EvolutionIo,
     const needsModel = command === "round" || command === "run";
     if (needsModel && values.model === undefined) throw new Usage(`${command} needs --model: the proposer's model, a gateway id`);
     if (values["critic-model"] !== undefined && !needsModel) throw new Usage("--critic-model is for round and run");
+    if (values.critic !== undefined && !needsModel) throw new Usage("--critic is for round and run");
+    if (values.critic !== undefined && values.critic !== "ensemble") throw new Usage(`--critic takes "ensemble", not "${values.critic}"`);
+    if (values.critic !== undefined && values["critic-model"] !== undefined) throw new Usage("--critic and --critic-model are alternatives: give one, the ensemble's judge or a gateway model");
+    for (const option of ["model-cache", "llama-server"] as const) if (values[option] !== undefined && values.critic === undefined) throw new Usage(`--${option} is for --critic ensemble`);
     if (values.write && command !== "documents") throw new Usage("--write is for documents");
+    const critic: Critic | undefined =
+      values.critic !== undefined
+        ? {
+            kind: "ensemble",
+            cacheDir: values["model-cache"] ?? nonEmpty(process.env["HARNESS_MODEL_CACHE"]) ?? join(homedir(), ".cache", "harness", "models"),
+            ...optional("llamaServer", values["llama-server"] ?? nonEmpty(process.env["LLAMA_SERVER"])),
+          }
+        : values["critic-model"] === undefined
+          ? undefined
+          : { kind: "model", id: values["critic-model"] };
     const last = count("last", values.last, 5);
     const maxRounds = count("max-rounds", values["max-rounds"], Infinity);
 
@@ -112,10 +147,10 @@ export async function evolutionCommand(argv: readonly string[], io: EvolutionIo,
         await host.start(values.force);
         break;
       case "round":
-        await host.rounds(values.model!, values["critic-model"], 1, "round");
+        await host.rounds(values.model!, critic, 1, "round");
         break;
       case "run":
-        await host.rounds(values.model!, values["critic-model"], maxRounds, "run");
+        await host.rounds(values.model!, critic, maxRounds, "run");
         break;
       case "status":
         await host.status(last);
@@ -208,8 +243,27 @@ class Host {
     this.#say(`run started in ${this.#statePath}: ${this.#settings.rounds} rounds`);
   }
 
+  /**
+   * The judge the critic screens with, and what to close after the run. An ensemble judge is
+   * resolved now, so that a critic that was asked for and cannot be had fails the command
+   * before any round is spent, never running without it.
+   */
+  async #critic(critic: Critic): Promise<{ model: EvaluationModel; close(): Promise<void> }> {
+    if (critic.kind === "model") return { model: (this.#deps.evaluationModel ?? gatewayEvaluationModel)(critic.id), close: async () => {} };
+    const { ensemble, close } = (this.#deps.ensemble ?? buildNativeEnsemble)({ cacheDir: critic.cacheDir, ...optional("llamaServer", critic.llamaServer) });
+    try {
+      await ensemble.resolve("judgment", "judge");
+    } catch (e) {
+      await close();
+      if (!(e instanceof CognitiveError)) throw e;
+      const reasons = ensemble.members().flatMap((m) => (m.descriptor.tasks.includes("judgment") && m.reason ? [`${m.id}: ${m.reason}`] : []));
+      throw new Error(`--critic ensemble: no judge could be reached${reasons.length ? `: ${reasons.join("; ")}` : ""}`);
+    }
+    return { model: ensemble.evaluationModel(), close };
+  }
+
   /** Rounds, up to `limit`, each saved as it completes. */
-  async rounds(model: string, criticModel: string | undefined, limit: number, command: "round" | "run"): Promise<void> {
+  async rounds(model: string, critic: Critic | undefined, limit: number, command: "round" | "run"): Promise<void> {
     let loaded = await this.#load();
     if (loaded === undefined) {
       if (command === "round") throw new Error(`no run in ${this.#statePath}: \`start\` one first`);
@@ -222,23 +276,28 @@ class Host {
       this.#say(`the run is over: ${evolution.completed} of ${this.#settings.rounds} rounds`);
       return;
     }
-    const ports: EvolutionPorts = {
-      evaluate: this.#evaluate,
-      propose: modelProposer((this.#deps.languageModel ?? ((id) => gateway(id)))(model), this.#settings.proposer),
-      ...(criticModel === undefined ? {} : { critic: judgeCritic((this.#deps.evaluationModel ?? gatewayEvaluationModel)(criticModel), this.#settings.critic) }),
-      entropy: this.#entropy,
-    };
-    for (let n = 0; n < limit && !evolution.done; n++) {
-      const at = evolution.completed;
-      let report;
-      try {
-        report = await evolution.round(ports);
-      } catch (e) {
-        throw new Error(`round ${at} failed: ${e instanceof Error ? e.message : String(e)}\nthe run is unchanged at ${at} of ${this.#settings.rounds} rounds; run the command again to resume`);
+    const judge = critic === undefined ? undefined : await this.#critic(critic);
+    try {
+      const ports: EvolutionPorts = {
+        evaluate: this.#evaluate,
+        propose: modelProposer((this.#deps.languageModel ?? ((id) => gateway(id)))(model), this.#settings.proposer),
+        ...(judge === undefined ? {} : { critic: judgeCritic(judge.model, this.#settings.critic) }),
+        entropy: this.#entropy,
+      };
+      for (let n = 0; n < limit && !evolution.done; n++) {
+        const at = evolution.completed;
+        let report;
+        try {
+          report = await evolution.round(ports);
+        } catch (e) {
+          throw new Error(`round ${at} failed: ${e instanceof Error ? e.message : String(e)}\nthe run is unchanged at ${at} of ${this.#settings.rounds} rounds; run the command again to resume`);
+        }
+        await this.#save(run, evolution);
+        this.#say(`round ${report.round + 1} of ${this.#settings.rounds}: ${report.accepted === undefined ? "nothing accepted" : `accepted ${report.accepted}`} (edit budget ${report.budget}${report.stalled ? ", stalled: exploring" : ""}${report.level === undefined ? "" : `, test level ${report.level.toFixed(5)}`})`);
+        for (const r of report.records) this.#io.stdout(line(r));
       }
-      await this.#save(run, evolution);
-      this.#say(`round ${report.round + 1} of ${this.#settings.rounds}: ${report.accepted === undefined ? "nothing accepted" : `accepted ${report.accepted}`} (edit budget ${report.budget}${report.stalled ? ", stalled: exploring" : ""}${report.level === undefined ? "" : `, test level ${report.level.toFixed(5)}`})`);
-      for (const r of report.records) this.#io.stdout(line(r));
+    } finally {
+      await judge?.close();
     }
     this.#say(evolution.done ? `the run is over: ${this.#settings.rounds} rounds; \`documents\` compares the incumbent's documents with their files` : `${evolution.completed} of ${this.#settings.rounds} rounds done`);
   }
@@ -279,7 +338,8 @@ class Host {
     }
     if (diverged.length && !force) throw new Error(`nothing was written: ${diverged.map((n) => documentPath(this.#loaded, n)).join(", ")} changed since the run started; --force replaces ${diverged.length === 1 ? "it" : "them"} anyway`);
     for (const n of pending) {
-      await writeFileAtomic(documentPath(this.#loaded, n), `${JSON.stringify(incumbent[n], null, 2)}\n`);
+      // JSON is written as the run's file format; text is written exactly as the run holds it.
+      await writeFileAtomic(documentPath(this.#loaded, n), isTextDocument(this.#loaded, n) ? String(incumbent[n]) : `${JSON.stringify(incumbent[n], null, 2)}\n`);
       this.#say(`wrote ${documentPath(this.#loaded, n)}`);
     }
     if (pending.length === 0) this.#say("nothing to write");
