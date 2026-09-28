@@ -439,7 +439,11 @@ const kept = (key: string) => {
   const storage = resilient(() => new IndexedDbStorage({ name: "harness-playground", key }), storageProblem);
   return { load: () => storage.load(), save: (value: unknown) => (resetting ? Promise.resolve() : storage.save(value)), clear: () => storage.clear() } satisfies SnapshotStorage & { clear(): Promise<void> };
 };
+// `conversations` held every session's conversation in one record before they got a record each; reset still clears it.
 const stores = { daemon: kept("daemon"), conversations: kept("conversations"), vfs: kept("vfs"), page: kept("page") };
+/** Each session's conversation, in a record of its own (`conversation:<session id>`). */
+const conversationRecords = new Map<string, ReturnType<typeof kept>>();
+const conversationRecord = (sessionId: string) => conversationRecords.get(sessionId) ?? (conversationRecords.set(sessionId, kept(`conversation:${sessionId}`)), conversationRecords.get(sessionId)!);
 let pageSaver: Coalesced | undefined;
 let vfsSaver: Coalesced | undefined;
 const saveAll = () => {
@@ -457,7 +461,8 @@ async function reset() {
   resetting = true;
   await playground?.close();
   await Promise.all([vfsSaver?.flush(), pageSaver?.flush()]);
-  await Promise.all(Object.values(stores).map((s) => s.clear()));
+  const sessions = playground?.snapshot().sessions.map((s) => s.id) ?? [];
+  await Promise.all([...Object.values(stores), ...sessions.map(conversationRecord)].map((s) => s.clear()));
   location.reload();
 }
 
@@ -510,7 +515,7 @@ async function boot() {
     approval: () => settings.approval,
     onSnapshot,
     storage: stores.daemon,
-    conversations: storedConversations(stores.conversations),
+    conversations: storedConversations(conversationRecord),
   });
   const p = playground;
   vfsSaver = new Coalesced(async () => stores.vfs.save(await snapshotVfs(bash.fs, HOME)), (e) => storageProblem(`files: ${e}`));

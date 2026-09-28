@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
-import { AgentWorker, EchoWorker, rememberTurns, sessionAgent, storedConversations } from "@harness/workers";
+import { AgentWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { workflowTools } from "@harness/workflows";
 import type { Worker } from "@harness/workers";
 import { buildNativeEnsemble } from "./cognitive-host.ts";
-import { conversationsFile, FileStorage } from "./file-storage.ts";
+import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
@@ -47,7 +47,7 @@ const { values } = parseArgs({
 
 if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
-    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--conversations <file>]\n" +
+    "usage: harness (--stdio | --socket <path> | --ws <port> [--ws-token-file <file>] [--ws-origin <origin>]...) [--state <file>] [--conversations <dir>]\n" +
       "               [--worker echo|model|ensemble|harness] [--model <gateway id>]\n" +
       "               [--harness claude-code|codex|acp:<package>@<version>:<executable> [--harness-state <file>]\n" +
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
@@ -91,10 +91,10 @@ const cognitive =
       })
     : undefined;
 const instructions = values.system === undefined ? {} : { instructions: values.system };
-// Agent workers keep each session's conversation beside the daemon's state, so a restarted
-// daemon's sessions continue where they stopped (`--conversations` puts it elsewhere).
-const conversationsPath = conversationsFile(values);
-const conversations = conversationsPath === undefined ? {} : { conversations: storedConversations(new FileStorage(conversationsPath)) };
+// Agent workers keep each session's conversation (a file each) beside the daemon's state, so
+// a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
+const conversationsPath = conversationsDir(values);
+const conversations = conversationsPath === undefined ? {} : { conversations: fileConversations(conversationsPath) };
 if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
   process.exit(2);

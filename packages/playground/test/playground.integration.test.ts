@@ -47,6 +47,25 @@ async function booted(page: Page, errors: string[] = []) {
   });
 }
 
+/** The keys of the playground's IndexedDB records that hold something. */
+const storedKeys = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<string[]>((resolve) => {
+        const open = indexedDB.open("harness-playground", 1);
+        open.onsuccess = () => {
+          const store = open.result.transaction("snapshots").objectStore("snapshots");
+          const keys: string[] = [];
+          store.openCursor().onsuccess = (e) => {
+            const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+            if (!cursor) return resolve(keys);
+            if (cursor.value !== undefined) keys.push(String(cursor.key));
+            cursor.continue();
+          };
+        };
+      }),
+  );
+
 const terminalText = (page: Page) => page.locator("#terminal").innerText();
 
 async function type(page: Page, line: string) {
@@ -114,12 +133,14 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     expect(after).toMatch(/kept\s*\nfrom the agent/);
     expect(after).toContain(`* ${session}`);
 
+    expect(await storedKeys(page)).toContain(`conversation:${session}`);
     const reloaded = page.waitForEvent("load");
     await type(page, "harness reset");
     await reloaded;
     await booted(page);
     expect(await page.evaluate(() => document.documentElement.dataset["booted"])).toBe("fresh");
     expect(await page.locator("#count-turns").textContent()).toBe("1");
+    expect((await storedKeys(page)).filter((k) => k.startsWith("conversation:"))).toEqual([expect.not.stringContaining(session)]);
     await type(page, "ls kept.txt");
     await page.waitForFunction(() => /No such file/i.test(document.getElementById("terminal")?.innerText ?? ""));
     await page.close();
