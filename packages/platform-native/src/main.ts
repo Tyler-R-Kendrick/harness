@@ -127,6 +127,7 @@ const step =
     ...procedural,
     resolver: loadProceduralResolver(values["procedural-resolver"]),
     principal,
+    ...(proceduralPolicy === undefined ? {} : { policy: proceduralPolicy }),
     ...(values.harness === undefined ? {} : { model: cognitive?.ensemble.languageModel("chat") ?? gateway(values.model) }),
   });
 const instructions = values.system === undefined ? {} : { instructions: values.system };

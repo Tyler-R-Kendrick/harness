@@ -9,6 +9,7 @@ import {
   GUIDANCE_LABEL,
   MemoryProceduralStore,
   parseGraph,
+  parsePolicy,
   parseResolver,
   parseSettings,
   proceduralStep,
@@ -90,6 +91,38 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
     expect(await hook.turn({ ...input(s, [user("q")]), lastAction: undefined })).toBeUndefined();
     expect(s.guidance.doGenerateCalls).toHaveLength(0);
     expect(s.notices).toEqual([]);
+  });
+
+  it("PW1.64 the access policy decides which graphs a session may be guided by: it needs read and write (its turns feed the overlay), and a denied session is left unguided and unpinned", async () => {
+    // The session's meta names its graph, and the policy lets only the retrieval team's sessions near it.
+    const byMeta = parseResolver({ rules: [{ when: { meta: { graph: "*" } }, graph: "${meta.graph}" }] });
+    const policy = parsePolicy({ rules: [{ when: { meta: { team: "retrieval" } }, allow: true }, { when: { actions: ["write"], meta: { role: "reader" } }, allow: false }], default: "deny" });
+    const s = await setup("paper", { resolver: byMeta });
+    const hook = proceduralStep({ ...s.deps, policy });
+    expect(await hook.prepare(input(s, [user("q")], { sessionId: "intruder", sessionMeta: { graph: GRAPH, team: "other" } }))).toBeUndefined();
+    const reader = await setup("paper", { resolver: byMeta });
+    expect(await proceduralStep({ ...reader.deps, policy: parsePolicy({ rules: [{ when: { actions: ["write"] }, allow: false }] }) }).prepare(input(reader, [user("q")], { sessionMeta: { graph: GRAPH } }))).toBeUndefined();
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+    expect(await s.store.pins.get("intruder")).toBeUndefined();
+    await hook.prepare(input(s, [user("q")], { sessionId: "member", sessionMeta: { graph: GRAPH, team: "retrieval" } }));
+    expect(s.records.map((r) => r.graph)).toEqual([GRAPH]);
+    // The policy sees the session's cwd and the host's principal too.
+    const byCwd = parsePolicy({ rules: [{ when: { cwdUnder: "/repo", principal: "me" }, allow: true }], default: "deny" });
+    const cwd = await setup("paper");
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "me" }).prepare(input(cwd, [user("q")]));
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "you" }).prepare(input(cwd, [user("q")], { sessionId: "s2" }));
+    await proceduralStep({ ...cwd.deps, policy: byCwd, principal: "me" }).prepare(input(cwd, [user("q")], { sessionId: "s3", cwd: "/elsewhere" }));
+    expect(cwd.records).toHaveLength(1);
+  });
+
+  it("PW1.65 a session whose graph has no head yet is left unguided, without a warning on every step", async () => {
+    const s = await setup("paper", { resolver: parseResolver({ rules: [{ when: {}, graph: "not/imported" }] }) });
+    const hook = proceduralStep(s.deps);
+    expect(await hook.prepare(input(s, [user("q")]))).toBeUndefined();
+    expect(await hook.turn({ ...input(s, [user("q")], { turnId: "t2" }), lastAction: undefined })).toBeUndefined();
+    expect(s.guidance.doGenerateCalls).toHaveLength(0);
+    expect(s.notices).toEqual([]);
+    expect(await s.store.pins.get("s1")).toBeUndefined();
   });
 
   it("PW1.31 the resolver sees the session's meta and cwd", async () => {
