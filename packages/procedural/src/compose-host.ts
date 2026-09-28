@@ -113,13 +113,15 @@ export interface HostComposition {
   readonly composer: () => Promise<Composer>;
   /** Dream's tool catalog: the base tools' names, when it is called. */
   readonly catalog: () => Promise<string[]>;
+  /** A plan's tools (`modelTasks`): the base tools as they are then, plus exactly the workflows `core` (its graph's head) binds. */
+  readonly planTools: (core: ProceduralGraph | undefined) => Promise<ToolSet>;
 }
 
 /**
  * Composition on a host whose sessions share one set of base tools (the host's own, read
- * anew each time): each session's per-turn tools, and for each dream its composer and its
+ * anew each time): each session's per-turn tools, for each dream its composer and its
  * tool catalog, so dream compiles paths of the tools sessions have and its catalog check
- * sees them.
+ * sees them, and for each plan run the tools its tasks call.
  */
 export function composition(options: {
   readonly staging: Staging;
@@ -133,5 +135,9 @@ export function composition(options: {
     tools: sessionTools({ step, staging: s, base }),
     composer: async () => composer({ settings, staging: s, tools: await base() }),
     catalog: async () => Object.keys(await base()),
+    planTools: async (core) => {
+      const tools = await base();
+      return core === undefined ? tools : revisionTools({ base: tools, pinnedCore: core, staging: s.host(tools) });
+    },
   };
 }
