@@ -49,9 +49,8 @@ const SavedStoreSchema = z.discriminatedUnion("format", [ProceduralStoreDocument
 function unrevert(record: RevisionRecord): RevisionRecord {
   let current = record;
   while (current.origin === "revert") {
-    const replaces = current.evidence["replaces"];
-    if (typeof replaces !== "object" || replaces === null) break;
-    const replaced = RevisionRecordSchema.safeParse({ ...replaces, id: current.id, graph: current.graph, document: current.document });
+    // Anything but a record's fields (absent, a string, a scrubbed record) fails to parse.
+    const replaced = RevisionRecordSchema.safeParse(Object.assign({}, current.evidence["replaces"], { id: current.id, graph: current.graph, document: current.document }));
     if (!replaced.success) break;
     current = replaced.data;
   }

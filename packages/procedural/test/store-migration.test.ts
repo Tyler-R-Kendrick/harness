@@ -78,6 +78,14 @@ describe("migrating a v1 procedural store", () => {
     expect(migrateStoreDocument(v1({ revisions: [dream] })).revisions).toEqual([dream]);
   });
 
+  it("PS1.56 a v2 store loads as it was saved: a head whose record another graph holds gets no copy", async () => {
+    const shared = record(["Plan"], { graph: graphB });
+    const saved = { ...v1({ revisions: [shared], heads: [{ graph: graphA, revision: shared.id, history: [] }] }), format: STORE_FORMAT };
+    const { store } = await loaded(saved);
+    expect(await store.revisions.get(graphA, shared.id)).toBeUndefined();
+    expect(await store.revisions.get(graphB, shared.id)).toEqual(shared);
+  });
+
   it("PS1.54 a v1 store is checked like a v2 one: a malformed v1 store is rejected, never migrated or overwritten", async () => {
     const r = record([]);
     const bad = { ...v1(), revisions: [{ ...r, id: record(["Plan"]).id }] };

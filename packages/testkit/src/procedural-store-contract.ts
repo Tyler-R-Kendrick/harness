@@ -346,6 +346,10 @@ export function proceduralStoreContract(label: string, make: () => Promise<Proce
       await store.revisions.put(r);
       await store.redact(record(graphA, ["Plan"]).id);
       expect(await store.revisions.list(graphA)).toEqual([r]);
+      // Nothing was redacted, so the id is not either: a record put under it later keeps its text.
+      const later = record(graphB, ["Plan"]);
+      await store.revisions.put(later);
+      expect(await store.revisions.get(graphB, later.id)).toEqual(later);
     });
 
     it("PS1.25 a redacted revision stays redacted when the same id is put again", async () => {

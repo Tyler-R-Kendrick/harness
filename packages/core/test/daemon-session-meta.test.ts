@@ -185,9 +185,11 @@ describe("host-side log reads", () => {
   it("DM10.13 readLog of an unknown session is empty, and a negative or fractional bound is a RangeError", () => {
     const { daemon, first } = twoSessions();
     expect(daemon.readLog("ses_unknown")).toStrictEqual([]);
-    for (const [from, to] of [[-1, undefined], [0.5, undefined], [0, -1], [0, 1.5], [Number.NaN, undefined]] as const) {
-      expect(() => daemon.readLog(first, from, to)).toThrow(RangeError);
+    for (const [from, to] of [[-1, undefined], [0.5, undefined], [Number.NaN, undefined]] as const) {
+      expect(() => daemon.readLog(first, from, to)).toThrow(new RangeError(`from must be a whole number of at least 0, not ${from}`));
     }
+    for (const to of [-1, 1.5]) expect(() => daemon.readLog(first, 0, to)).toThrow(new RangeError(`to must be a whole number of at least 0, not ${to}`));
+    expect(daemon.readLog(first, 0, 0)).toStrictEqual([]);
   });
 
   it("DM10.14 readLog copies no session's log but the one read, and what it returns is the caller's", () => {
