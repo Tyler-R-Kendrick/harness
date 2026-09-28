@@ -29,12 +29,21 @@ export interface StepContext extends TurnScope {
   readonly tools: readonly string[];
 }
 
+/** A harness's tool call as a turn hook is told it. */
+export interface LastCall {
+  readonly name: string;
+  readonly input: unknown;
+  readonly output?: unknown;
+}
+
 /** A turn of an opaque harness, which has no steps to prepare: only its prompt can carry guidance. */
 export interface TurnContext extends TurnScope {
   /** The conversation the worker holds, ending with the turn's prompt. */
   readonly messages: readonly ModelMessage[];
   /** The last tool the harness called in an earlier turn of the session. */
   readonly lastAction: string | undefined;
+  /** That call with its input and, once the harness reported it, its result's output (what a state tracker reads). */
+  readonly lastCall?: LastCall;
   /** The names of the tools the harness offers. */
   readonly tools: readonly string[];
 }
@@ -42,11 +51,12 @@ export interface TurnContext extends TurnScope {
 /**
  * Per-step guidance (e.g. procedural graphs): `prepare` may replace a step's
  * instructions (they carry forward, so rebuild them from `initialInstructions`) or its
- * messages. `turn`, when given, guides an opaque harness's turn: its text is prepended
- * to the prompt.
+ * messages, and may limit the tools that step offers the model (AI SDK `activeTools`;
+ * the next step offers every tool again unless the hook limits it too). `turn`, when
+ * given, guides an opaque harness's turn: its text is prepended to the prompt.
  */
 export interface StepHook {
-  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[] } | undefined>;
+  prepare(context: StepContext): Promise<{ readonly instructions?: Instructions; readonly messages?: readonly ModelMessage[]; readonly activeTools?: readonly string[] } | undefined>;
   turn?(context: TurnContext): Promise<string | undefined>;
 }
 
@@ -65,7 +75,11 @@ function preparing(hook: StepHook, turn: TurnOptions, tools: readonly string[]):
   return async ({ messages, initialInstructions, stepNumber, model }) => {
     try {
       const prepared = await hook.prepare({ ...scope, messages, initialInstructions, stepNumber, model, tools });
-      return { ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }), ...(prepared?.messages ? { messages: [...prepared.messages] } : {}) };
+      return {
+        ...(prepared?.instructions === undefined ? {} : { instructions: prepared.instructions }),
+        ...(prepared?.messages ? { messages: [...prepared.messages] } : {}),
+        ...(prepared?.activeTools ? { activeTools: [...prepared.activeTools] } : {}),
+      };
     } catch (e) {
       scope.report({ sessionUpdate: "notice", severity: "warning", title: "Step guidance failed", description: messageOf(e) });
       return {};

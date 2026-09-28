@@ -20,6 +20,7 @@
  */
 import { z } from "zod";
 import { match } from "./locate.ts";
+import type { ObservedAction } from "./locate.ts";
 import { editFilter } from "./filter.ts";
 import { effectiveGraph, emptyOverlay, entryId, exposed, foldOverlay } from "./overlay.ts";
 import { proposals, statusChanges, structure } from "./overlay-policy.ts";
@@ -196,7 +197,7 @@ export class LiveLearner {
     const draw = { salt: pin?.salt ?? "", probationShare: pin === undefined ? 0 : live.probationShare };
     const pinned = history.pinned;
     const view: EffectiveGraph | undefined = coreGraph === undefined ? undefined : pinned === undefined ? coreView(coreGraph) : effectiveGraph(coreGraph, pinned, draw);
-    const locate = view === undefined ? undefined : (action: string): NodeName | undefined => match(action, view, this.#deps.settings.match);
+    const locate = view === undefined ? undefined : (action: ObservedAction): NodeName | undefined => match(action, view, this.#deps.settings.match);
     const context = { sessionId, turnId, from, pin: fallback, locate };
     // Defined: the first projection found the turn and a pair in these same entries.
     const projection = turnProjection(entries, context)!;

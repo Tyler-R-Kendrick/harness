@@ -146,6 +146,16 @@ describe("sessionAgent's step hook: a per-step AI SDK prepareStep for procedural
     expect(lastAssistant.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "tool-call", toolName: "deploy" })]));
   });
 
+  it("PW1.71 the active tools the hook returns are the only tools that step's model call is offered; without them every tool is", async () => {
+    const tools = { weather: tool({ inputSchema: z.object({}), execute: async () => "ok" }), deploy: tool({ inputSchema: z.object({}), execute: async () => "ok" }) };
+    const offered = (o: LanguageModelV4CallOptions) => (o.tools ?? []).map((t) => t.name);
+    let step = 0;
+    const narrowing: StepHook = { prepare: async () => (step++ === 0 ? { activeTools: ["weather"] } : undefined) };
+    const model = scripted([call("weather", {}), finish("tool-calls")], [...text("ok"), finish()]);
+    await run(new AgentWorker({ agent: sessionAgent({ model, tools, step: narrowing }) }), "hi").done;
+    expect(model.doStreamCalls.map(offered)).toEqual([["weather"], ["weather", "deploy"]]);
+  });
+
   it("PW1.22 the hook is told the names of the tools the turn offers, whether given once or anew each turn", async () => {
     const tools = { weather: tool({ inputSchema: z.object({}), execute: async () => "ok" }), deploy: tool({ inputSchema: z.object({}), execute: async () => "ok" }) };
     const fixed = recording();
@@ -205,6 +215,41 @@ describe("harnessSessions' turn hook: turn-level guidance for opaque harness wor
     await run(worker, "thanks", { turnId: "t2" }).done;
     await run(worker, "again", { turnId: "t3" }).done;
     expect(seen).toEqual([undefined, "weather", "weather"]);
+  });
+
+  it("PW1.67 the next turn's hook is told the previous turn's last call with its input and its result's output, for a state tracker", async () => {
+    const seen: TurnContext["lastCall"][] = [];
+    const { worker } = harnessSetup(
+      (p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"),
+      async (c) => {
+        seen.push(c.lastCall);
+        return undefined;
+      },
+    );
+    await run(worker, "weather?").done;
+    await run(worker, "thanks", { turnId: "t2" }).done;
+    await run(worker, "again", { turnId: "t3" }).done;
+    const lagos = { name: "weather", input: { city: "Lagos" }, output: { city: "Lagos", sky: "clear" } };
+    expect(seen).toEqual([undefined, lagos, lagos]);
+  });
+
+  it("PW1.68 a call whose result the harness never reported is told without an output", async () => {
+    const seen: TurnContext["lastCall"][] = [];
+    const { worker } = harnessSetup(
+      (p) => (p.includes("weather") ? { text: "Lagos:", tool: { name: "weather", input: { city: "Lagos" } } } : "plain"),
+      async (c) => {
+        seen.push(c.lastCall);
+        return undefined;
+      },
+      { toolApproval: { weather: "user-approval" } },
+    );
+    await run(worker, "weather?", {
+      onEvent: (e) => {
+        if (e.type === "permission") worker.permission({ type: "permission", sessionId: "s1", turnId: "t1", requestId: e.requestId, outcome: { outcome: "cancelled" } });
+      },
+    }).done;
+    await run(worker, "thanks", { turnId: "t2" }).done;
+    expect(seen).toEqual([undefined, { name: "weather", input: { city: "Lagos" } }]);
   });
 
   it("PW1.11 no text leaves the prompt as it was, and what the hook reports reaches the client", async () => {

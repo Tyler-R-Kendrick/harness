@@ -5,9 +5,13 @@
       "overlay": false,
       "match": "exact",
       "turnBoundary": "start",
-      "delivery": "system",
+      "delivery": {
+        "to": "system",
+        "activeTools": "all"
+      },
       "guidancePrompt": "paper",
       "guidanceCache": false,
+      "hopUnit": "edge",
       "dream": {
         "mode": "incremental",
         "rounds": 10,
@@ -29,9 +33,13 @@
       "overlay": true,
       "match": "exact",
       "turnBoundary": "carry",
-      "delivery": "trailing-message",
+      "delivery": {
+        "to": "trailing-message",
+        "activeTools": "all"
+      },
       "guidancePrompt": "harness",
       "guidanceCache": true,
+      "hopUnit": "edge",
       "overlayRefresh": "turn",
       "repinOnDream": "turn",
       "live": {

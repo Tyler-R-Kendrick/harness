@@ -40,7 +40,7 @@ improves over time, without retraining:
 
 - running benchmarks or ingestion;
 - choosing a scoping policy for users;
-- hard action constraints (an ablation hook at most);
+- hard action constraints (an ablation hook at most: `delivery.activeTools: "successors"`, §5.2);
 - replacing lessons, memory or the task graph;
 - a write-ahead runtime, which is a separate decision (§6.5).
 
@@ -252,7 +252,10 @@ Learning's `Trajectory` has no score and no revision, so this type wraps its ste
 
 The paper's prompts (App. B.5) are stored verbatim. Hops (`h = 2`), window (`w = 3`) and
 the full-graph fallback are constants, taken from the paper, until an ablation is
-scheduled. A `?` on a gate means it applies only when the graph has an evaluator.
+scheduled. What a hop counts is a setting: `hopUnit: "edge"` (the paper, both presets) or
+`"action"`, where a hop runs through reasoning and status nodes to the next action node,
+so that nodes which are never active cannot hide the next tool. A `?` on a gate means it
+applies only when the graph has an evaluator.
 
 ## 5. The live path
 
@@ -295,7 +298,8 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
    - `"carry"` keeps the previous turn's last action.
 2. **Match.** It resolves `u_t` against the **effective graph**. `exact` is the paper's
    written definition. `case-insensitive` is an option, because the paper's own excerpt
-   pairs `First_Hop_Retrieve` with `first_hop_retrieve`.
+   pairs `First_Hop_Retrieve` with `first_hop_retrieve`. `state-tracker` also reads the
+   node the last call's result declared and bindings' argument predicates (below).
 3. **Build `G_t`:** the `h`-hop neighborhood, or the full effective graph when nothing
    matches.
 4. **Serialize.** The paper's text format (App. B.5), with overlay content labeled. An
@@ -315,6 +319,9 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
      `providerOptions.harness`, replacing the previous tagged message. This keeps the
      system prompt stable for prefix caching, and keeps text derived from tool output out
      of system authority.
+   - `activeTools: "successors"` is the hard-constraint ablation (off in both presets):
+     a step offers only the tools of the active node's successor actions, through AI SDK
+     `activeTools`, and every tool when nothing matches or no successor's tool is offered.
 7. **Record.** `TurnOptions.report(update)` is `AgentWorker`'s own `update`, passed
    through `runtimeContext`.
    - The step record is a notice with
@@ -326,7 +333,11 @@ scheduled. A `?` on a gate means it applies only when the graph has an evaluator
 **Opaque harness workers** (`harnessSessions`) have no `prepareStep`. They get
 turn-level guidance, prepended to the prompt in `harnessSessions.stream` and localized
 from the previous turn's last `tool_call`. Their coarse tool names (Bash, Read, Edit)
-localize poorly with exact `Match`. A `state-tracker` match mode is future work.
+localize poorly with exact `Match`. The `state-tracker` match mode addresses this (built,
+off in both presets): a tool's result, or an environment wrapping tools, may declare the
+active node under `_meta.harness.procedural.node`, and a tool binding may carry an argument
+predicate (a JSON Schema over the call's arguments), so `Bash` running `npm test` can be
+`Run_Tests`. Match takes the declared node first, then the binding, then the id.
 
 ## 6. The dynamic layer: learning from live traffic
 

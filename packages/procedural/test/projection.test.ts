@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { coreView, GraphIdSchema, match, NodeNameSchema, projectTurn, RevisionIdSchema, ScoreSchema, sha256Hex, turnProjection } from "@harness/procedural";
-import type { NodeName, ProjectionContext } from "@harness/procedural";
+import { coreView, GraphIdSchema, match, NodeNameSchema, parseGraph, projectTurn, RevisionIdSchema, ScoreSchema, sha256Hex, turnProjection } from "@harness/procedural";
+import { edge, hotpot } from "./fixtures.ts";
+import type { NodeName, ObservedAction, ProjectionContext } from "@harness/procedural";
 import { call, CORE, ended, GRAPH, logOf, record, result, said, started, thought, user } from "./learner-fixtures.ts";
 import { core, hexId } from "./overlay-fixtures.ts";
 
 const view = coreView(core());
-const locate = (action: string): NodeName | undefined => match(action, view, "case-insensitive");
+const locate = (action: ObservedAction): NodeName | undefined => match(action, view, "case-insensitive");
 const ctx = (more: Partial<ProjectionContext> = {}): ProjectionContext => ({ sessionId: "s1", turnId: "t1", locate, ...more });
 const pin = { graph: GraphIdSchema.parse(GRAPH), core: RevisionIdSchema.parse(CORE), overlay: 3 };
 
@@ -263,5 +264,46 @@ describe("projecting a turn from the session log", () => {
     expect(projectTurn(logOf(turn()), ctx())).toEqual(turnProjection(logOf(turn()), ctx())!.trajectory);
     expect(projectTurn([], ctx())).toBeUndefined();
     expect(NodeNameSchema.parse(turnProjection(logOf(turn()), ctx())!.path[0])).toBe("Start");
+  });
+
+  it("PL1.70 a state tracker locates each call by its arguments and by the node its own result declared", () => {
+    const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+    const parsed = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "Bash" } },
+        { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "Bash", arguments: tests } },
+        { id: "Review", type: "REASONING", description: "Read the failures." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Review"), edge("Review", "End")],
+    });
+    if (!parsed.ok) throw new Error("fixture");
+    const tracker = coreView(parsed.graph);
+    const declares = (node: unknown) => ({ stdout: "2 failed", _meta: { harness: { procedural: { node } } } });
+    const log = [
+      started("t1"),
+      record({ node: "Start" }),
+      call("c1", "Bash", { command: "npm test" }),
+      result("c1", "ok"),
+      call("c2", "Bash", { command: "cat log" }),
+      call("c3", "Bash", { command: "ls" }),
+      result("c3", { stdout: "x" }),
+      result("c2", declares("Review")), // results arrive in any order; each pairs with its call
+      result("c9", declares("End")), // a result of no call in view declares nothing
+      call("c4", "Bash", { command: "ls" }),
+      result("c4", declares(4)),
+      call("c5", "Bash", { command: "ls" }),
+      result("c5", declares("Review"), "in_progress"),
+      { update: { sessionUpdate: "tool_call", title: "Bash" } },
+      // A result without a call id pairs with no call, not even one without an id.
+      { update: { sessionUpdate: "tool_call_update", status: "completed", rawOutput: declares("Review") } },
+      ended("t1"),
+    ];
+    const p = turnProjection(logOf(log), ctx({ locate: (a) => match(a, tracker, "state-tracker") }))!;
+    expect(p.path).toEqual(["Start", "Run_Tests", "Review", "Shell", "Shell", "Shell", "Shell"]);
+    // The paper's modes read only names.
+    expect(turnProjection(logOf(log), ctx({ locate: (a) => match(a, tracker, "exact") }))!.path).toEqual(["Start", "Shell", "Shell", "Shell", "Shell", "Shell", "Shell"]);
   });
 });

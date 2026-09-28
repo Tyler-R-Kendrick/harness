@@ -18,7 +18,8 @@
               "type": "string",
               "enum": [
                 "exact",
-                "case-insensitive"
+                "case-insensitive",
+                "state-tracker"
               ]
             },
             "turnBoundary": {
@@ -29,10 +30,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -44,6 +73,14 @@
             },
             "guidanceCache": {
               "type": "boolean"
+            },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
             },
             "overlayRefresh": {
               "default": "turn",
@@ -279,7 +316,8 @@
               "type": "string",
               "enum": [
                 "exact",
-                "case-insensitive"
+                "case-insensitive",
+                "state-tracker"
               ]
             },
             "turnBoundary": {
@@ -290,10 +328,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -305,6 +371,14 @@
             },
             "guidanceCache": {
               "type": "boolean"
+            },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
             },
             "overlayRefresh": {
               "default": "turn",
@@ -545,7 +619,8 @@
             "type": "string",
             "enum": [
               "exact",
-              "case-insensitive"
+              "case-insensitive",
+              "state-tracker"
             ]
           },
           "turnBoundary": {
@@ -556,10 +631,38 @@
             ]
           },
           "delivery": {
-            "type": "string",
-            "enum": [
-              "system",
-              "trailing-message"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "trailing-message"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "enum": [
+                      "system",
+                      "trailing-message"
+                    ]
+                  },
+                  "activeTools": {
+                    "default": "all",
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "successors"
+                    ]
+                  }
+                },
+                "required": [
+                  "to"
+                ],
+                "additionalProperties": false
+              }
             ]
           },
           "guidancePrompt": {
@@ -571,6 +674,14 @@
           },
           "guidanceCache": {
             "type": "boolean"
+          },
+          "hopUnit": {
+            "default": "edge",
+            "type": "string",
+            "enum": [
+              "edge",
+              "action"
+            ]
           },
           "overlayRefresh": {
             "default": "turn",

@@ -1067,6 +1067,75 @@ their meaning.
     an older head or an import proposal keeps that record. A commit that loses the head
     race puts back the record it replaced, when that record was not the dream's own.
 
+## Localization extensions (plan §5.2's later list)
+
+As built. These are additions; the paper preset keeps the paper's mechanism exactly.
+
+- **Action hops.** `neighborhood(g, node, hops, unit?: HopUnit)` with
+  `type HopUnit = "edge" | "action"` (default `edge`, the paper's). In `action` hops a
+  step ends only at an `ACTION` node: the outgoing edges of a non-action node a hop
+  reaches first belong to that same hop (breadth first), and the action nodes it reaches
+  start the next. Two reasoning nodes after an action (research §2.2 item 3) then no
+  longer hide the next tool: from `Retrieve → Scan_Index → Decide_Capital → Answer_Lookup`,
+  hop 1 runs to `Answer_Lookup`. An edge still appears once; with every node an action the
+  two units agree. `Preset.hopUnit: "edge" | "action"` (default `edge`; both shipped
+  presets say `edge`) is the unit `proceduralStep` passes; `h` stays `HOPS`.
+- **Argument predicates.** A tool binding may carry `arguments: ArgumentPredicate`, a
+  JSON Schema over the call's arguments (`{kind: "tool", name: "Bash", arguments: {type: "object", properties: {command: {type: "string", pattern: "^npm test"}}}}`).
+  `ArgumentPredicateSchema` refuses a schema whose top-level `type` is not `"object"` or
+  that zod's `z.fromJSONSchema` cannot compile (a `malformed` diagnostic at
+  `nodes[i].binding.arguments`). The converter reads a keyword only under a declared
+  `type`. `acceptsArguments(predicate, args)` tests a call, compiling each predicate once.
+  The predicate is part of the document, so of its revision id; like any binding, only
+  seeding, import or dream's composition writes it (I5).
+- **State tracker.** `MatchMode` gains `"state-tracker"`, and `match` takes
+  `string | ObservedAction | undefined`, where
+  `ObservedAction = {name; arguments?; declared?}`: the tool called, the call's
+  arguments, and the node the tool's result declared active. Under `state-tracker` the
+  rules are, in order, each exact and each the first node in document order: the declared
+  node, when the graph has it; a node bound to the tool whose argument predicate accepts
+  the arguments; a node bound to the tool without a predicate; a node whose id is the
+  tool's name. A node whose predicate rejects the call is never matched by its binding.
+  `exact` and `case-insensitive` read only the name, so the paper's `Match` is unchanged.
+  `Preset.match` accepts `"state-tracker"`; both shipped presets stay `exact`.
+- **The step hook as a state tracker.** `proceduralStep` observes the last action with its
+  call's `input` as the arguments and, as `declared`, `_meta.harness.procedural.node` (a
+  string) of the call's own result (the `tool-result` with its `toolCallId` in a later
+  tool message, `json` or `error-json` output). A tool, an MCP server (whose
+  `CallToolResult._meta` is where the AI SDK puts it) or an environment wrapping tools
+  declares the state this way. The step record's `action` is still the tool name.
+- **Harness turns as a state tracker.** The workers' `TurnContext` gains
+  `lastCall?: LastCall` (`{name, input, output?}`): `harnessSessions` remembers the
+  session's last tool call from `onStepEnd` with its id, and pairs it with the result a
+  later step reports (a host-executed tool's result arrives in the next step); a call
+  whose result never came has no `output`. `lastAction` is its name, as before.
+  `TurnInput.lastCall` is the same; the turn variant observes `{name, arguments: input,
+  declared: _meta.harness.procedural.node of output}`, and falls back to `lastAction`
+  alone without it.
+- **Learning and composition locate as guidance did.** `declaredNode(result)` (in
+  `locate.ts`) is the one reader of `_meta.harness.procedural.node`. `ProjectionContext.locate`
+  takes an `ObservedAction`: each `tool_call` is `{name: title, arguments: rawInput}`, and a
+  `completed` or `failed` `tool_call_update` with the same `toolCallId` adds the node its
+  `rawOutput` declared (results may arrive in any order; one of no call in view declares
+  nothing). `unmatched` still lists names. The live learner locates with the preset's
+  mode over these, so a state tracker's paths are the ones guidance saw. `recordedRuns`
+  matches each recorded call with its arguments; recorded steps keep a tool's result as
+  text, so a declared node is not read there (a path through a declared node that its
+  calls' names and arguments do not reach has no recorded run, and composition reports
+  it as not composable).
+- **Successor-only tools (an ablation).** `Preset.delivery` is now
+  `Delivery = {to: "system" | "trailing-message"; activeTools: "all" | "successors"}`
+  (`activeTools` defaults to `all`; a bare placement string still parses, as that
+  placement with every tool). Both shipped presets say `all`. Under `successors`,
+  `prepare` also returns `activeTools`: for each `ACTION` node an edge of hop 1 of the
+  neighborhood reaches (so under action hops the first actions past reasoning and status
+  nodes), the first of its binding's name and its id that the step's `tools` offer (the
+  first, when the tools are unknown), once each. With no matched node, or none of these
+  offered, it returns none, and every tool stays offered. The step record then carries
+  `activeTools?: string[]` (absent when every tool was offered). The workers' `StepHook.prepare`
+  may return `activeTools`, which `sessionAgent` passes to AI SDK `prepareStep` for that
+  step only. The turn variant cannot limit a harness's tools and ignores the setting.
+
 ## Routing sessions to graphs (`resolver.ts`, `routing.ts`)
 
 As built. A resolver rule may route instead of naming a graph (plan §8.1).
