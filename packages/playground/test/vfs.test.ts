@@ -56,9 +56,9 @@ describe("walking and diffing the filesystem", () => {
     const bash = shell({ [`${HOME}/b.txt`]: "bb", [`${HOME}/d/a.txt`]: "a", "/etc/x": "no" });
     const files = await walk(bash.fs, HOME);
     expect([...files.keys()]).toEqual([`${HOME}/b.txt`, `${HOME}/d/a.txt`]);
-    expect(files.get(`${HOME}/b.txt`)).toEqual({ size: 2, text: "bb" });
+    expect(files.get(`${HOME}/b.txt`)).toEqual({ size: 2, mtime: expect.any(Number), text: "bb" });
     expect(await walk(bash.fs, "/nowhere")).toEqual(new Map());
-    expect((await walk(bash.fs, "/")).get("/etc/x")).toEqual({ size: 2, text: "no" });
+    expect((await walk(bash.fs, "/")).get("/etc/x")).toMatchObject({ size: 2, text: "no" });
   });
 
   it("VF3.4 links are listed with their target, never followed: a dangling link and a link to a parent are fine; a changed target is a modification", async () => {
@@ -66,8 +66,8 @@ describe("walking and diffing the filesystem", () => {
     await bash.exec("ln -s nowhere dangling; ln -s .. up; ln -s a.txt alias", { cwd: HOME });
     const files = await walk(bash.fs, HOME);
     expect([...files.keys()]).toEqual([`${HOME}/a.txt`, `${HOME}/alias`, `${HOME}/dangling`, `${HOME}/up`]);
-    expect(files.get(`${HOME}/dangling`)).toEqual({ size: 0, link: "nowhere" });
-    expect(files.get(`${HOME}/up`)).toEqual({ size: 0, link: ".." });
+    expect(files.get(`${HOME}/dangling`)).toMatchObject({ size: 0, link: "nowhere" });
+    expect(files.get(`${HOME}/up`)).toMatchObject({ size: 0, link: ".." });
     await bash.exec("rm alias; ln -s dangling alias", { cwd: HOME });
     expect(diffVfs(files, await walk(bash.fs, HOME)).modified).toEqual([`${HOME}/alias`]);
   });
@@ -81,6 +81,33 @@ describe("walking and diffing the filesystem", () => {
 
   it("VF3.3 files over the text limit are listed with their size but no text", async () => {
     const bash = shell({ [`${HOME}/big`]: "x".repeat(20) });
-    expect((await walk(bash.fs, HOME, { maxText: 10 })).get(`${HOME}/big`)).toEqual({ size: 20 });
+    expect((await walk(bash.fs, HOME, { maxText: 10 })).get(`${HOME}/big`)).toEqual({ size: 20, mtime: expect.any(Number) });
+  });
+
+  it("VF3.5 a same-size edit to a file too large to keep as text is a modification (its time changed); touching a small file without changing it is not", async () => {
+    const bash = shell({ [`${HOME}/big`]: "x".repeat(20), [`${HOME}/small`]: "s" });
+    const before = await walk(bash.fs, HOME, { maxText: 10 });
+    await bash.fs.writeFile(`${HOME}/big`, "y".repeat(20));
+    await bash.fs.utimes(`${HOME}/big`, new Date(0), new Date(before.get(`${HOME}/big`)!.mtime + 1000));
+    await bash.fs.utimes(`${HOME}/small`, new Date(0), new Date(before.get(`${HOME}/small`)!.mtime + 1000));
+    expect(diffVfs(before, await walk(bash.fs, HOME, { maxText: 10 })).modified).toEqual([`${HOME}/big`]);
+  });
+
+  it("VF3.6 a walk given the last one reads again only the files whose size or time changed", async () => {
+    const bash = shell({ [`${HOME}/same`]: "s", [`${HOME}/edited`]: "e" });
+    const before = await walk(bash.fs, HOME);
+    await bash.fs.writeFile(`${HOME}/edited`, "E");
+    await bash.fs.utimes(`${HOME}/edited`, new Date(0), new Date(before.get(`${HOME}/edited`)!.mtime + 1000));
+    const read: string[] = [];
+    const fs = new Proxy(bash.fs, { get: (target, key) => {
+        const value: unknown = Reflect.get(target, key, target);
+        if (key === "readFile") return (path: string) => (read.push(path), target.readFile(path));
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const after = await walk(fs, HOME, { previous: before });
+    expect(read).toEqual([`${HOME}/edited`]);
+    expect(after.get(`${HOME}/same`)?.text).toBe("s");
+    expect(diffVfs(before, after).modified).toEqual([`${HOME}/edited`]);
   });
 });

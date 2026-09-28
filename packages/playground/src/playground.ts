@@ -98,6 +98,8 @@ export class Playground {
   readonly #options: PlaygroundOptions;
   readonly #routes: Routes;
   #session: string | undefined;
+  /** The last walk of the files, which the next starts from. */
+  #files: ReadonlyMap<string, FileEntry> | undefined;
 
   private constructor(host: BrowserHost, acp: ClientSideConnection, options: PlaygroundOptions, routes: Routes) {
     this.host = host;
@@ -195,7 +197,7 @@ export class Playground {
   async prompt(text: string, handlers: TurnHandlers): Promise<TurnReport> {
     const { tracer, bash } = this.#options;
     const sessionId = this.#session ?? (await this.newSession());
-    const before = await walk(bash.fs, HOME);
+    const before = await walk(bash.fs, HOME, { previous: this.#files });
     const from = tracer.last;
     const started = Date.now();
     this.#routes.update = handlers.update;
@@ -207,7 +209,8 @@ export class Playground {
       this.#routes.update = undefined;
       this.#routes.permission = undefined;
     }
-    const files = await walk(bash.fs, HOME);
+    const files = await walk(bash.fs, HOME, { previous: before });
+    this.#files = files;
     const diff = diffVfs(before, files);
     tracer.record({ kind: "vfs", name: `changes · ${diff.added.length} added, ${diff.modified.length} modified, ${diff.removed.length} removed`, detail: diff, sessionId });
     const events = tracer.events().filter((e) => e.seq > from);

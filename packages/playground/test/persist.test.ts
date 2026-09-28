@@ -19,6 +19,9 @@ function cloneStorage(): SnapshotStorage & { value: unknown; saves: number } {
   return s;
 }
 
+/** A walk's entries without their times (a restore writes files anew). */
+const content = async (fs: Parameters<typeof walk>[0]) => new Map([...(await walk(fs, HOME))].map(([path, { mtime: _mtime, ...entry }]) => [path, entry]));
+
 describe("the filesystem across reloads", () => {
   it("PS1.1 a snapshot keeps every file's bytes and every directory under the root; restoring it into a fresh shell reproduces them", async () => {
     const from = new Bash({ cwd: HOME, files: { [`${HOME}/a.txt`]: "alpha\n", [`${HOME}/d/e/f.md`]: "deep" } });
@@ -29,7 +32,7 @@ describe("the filesystem across reloads", () => {
     expect(snapshot.dirs).toEqual([`${HOME}/d`, `${HOME}/d/e`, `${HOME}/empty`, `${HOME}/empty/inner`]);
     const to = new Bash({ cwd: HOME });
     await restoreVfs(to.fs, HOME, structuredClone(snapshot));
-    expect(await walk(to.fs, HOME)).toEqual(await walk(from.fs, HOME));
+    expect(await content(to.fs)).toEqual(await content(from.fs));
     expect([...(await to.fs.readFileBuffer(`${HOME}/bin.dat`))]).toEqual([0, 255, 7]);
     expect((await to.fs.stat(`${HOME}/empty/inner`)).isDirectory).toBe(true);
   });
@@ -60,7 +63,7 @@ describe("the filesystem across reloads", () => {
     await restoreVfs(to.fs, HOME, structuredClone(snapshot));
     expect(await to.fs.readlink(`${HOME}/up`)).toBe("..");
     expect(await to.readFile(`${HOME}/d/alias`)).toBe("a");
-    expect(await walk(to.fs, HOME)).toEqual(await walk(from.fs, HOME));
+    expect(await content(to.fs)).toEqual(await content(from.fs));
   });
 
   it("PS1.3 a stored snapshot is parsed: anything but the current shape is no snapshot", () => {

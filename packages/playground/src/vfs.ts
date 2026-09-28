@@ -18,6 +18,8 @@ export type ApprovalPolicy = "ask" | "auto";
 
 export interface FileEntry {
   readonly size: number;
+  /** When it last changed, in milliseconds since the epoch. */
+  readonly mtime: number;
   /** The file's text, when it is small enough to keep. */
   readonly text?: string;
   /** A symbolic link's target (the link is listed, never followed). */
@@ -71,8 +73,12 @@ export function vfsApproval(policy: () => ApprovalPolicy): (options: { readonly 
   return ({ toolCall }) => (policy() === "ask" && toolCall.toolName !== "readFile" ? "user-approval" : "not-applicable");
 }
 
-/** Every file under `root`, depth first in name order, with its size and (when small) its text; links are listed with their target, not followed. */
-export async function walk(fs: IFileSystem, root: string, options: { readonly maxText?: number } = {}): Promise<Map<string, FileEntry>> {
+/**
+ * Every file under `root`, depth first in name order, with its size, time and (when small)
+ * its text; links are listed with their target, not followed. Given the `previous` walk,
+ * a file whose size and time are unchanged keeps its text from there rather than being read again.
+ */
+export async function walk(fs: IFileSystem, root: string, options: { readonly maxText?: number; readonly previous?: ReadonlyMap<string, FileEntry> | undefined } = {}): Promise<Map<string, FileEntry>> {
   const maxText = options.maxText ?? 64_000;
   const files = new Map<string, FileEntry>();
   const visit = async (dir: string): Promise<void> => {
@@ -80,23 +86,28 @@ export async function walk(fs: IFileSystem, root: string, options: { readonly ma
     for (const name of [...names].sort()) {
       const path = `${dir}/${name}`.replace(/^\/\//, "/");
       const stat = await fs.lstat(path);
-      if (stat.isSymbolicLink) files.set(path, { size: 0, link: await fs.readlink(path) });
+      const known = { size: stat.size, mtime: stat.mtime.getTime() };
+      const was = options.previous?.get(path);
+      if (stat.isSymbolicLink) files.set(path, { ...known, size: 0, link: await fs.readlink(path) });
       else if (stat.isDirectory) await visit(path);
-      else if (stat.size > maxText) files.set(path, { size: stat.size });
-      else files.set(path, { size: stat.size, text: await fs.readFile(path) });
+      else if (stat.size > maxText) files.set(path, known);
+      else if (was?.text !== undefined && was.size === known.size && was.mtime === known.mtime) files.set(path, was);
+      else files.set(path, { ...known, text: await fs.readFile(path) });
     }
   };
   await visit(root);
   return files;
 }
 
-/** What changed between two walks. */
+/** What changed between two walks: files kept as text by their text, others by their size and time, links by their target. */
 export function diffVfs(before: ReadonlyMap<string, FileEntry>, after: ReadonlyMap<string, FileEntry>): VfsDiff {
   const added = [...after.keys()].filter((p) => !before.has(p));
   const removed = [...before.keys()].filter((p) => !after.has(p));
   const modified = [...after].filter(([p, e]) => {
     const was = before.get(p);
-    return was !== undefined && (was.size !== e.size || was.text !== e.text || was.link !== e.link);
+    if (was === undefined) return false;
+    if (was.link !== undefined || e.link !== undefined) return was.link !== e.link;
+    return was.text !== undefined && e.text !== undefined ? was.text !== e.text : was.size !== e.size || was.mtime !== e.mtime;
   });
   return { added, modified: modified.map(([p]) => p), removed };
 }
