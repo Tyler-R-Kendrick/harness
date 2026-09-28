@@ -72,6 +72,18 @@ export class Tracer {
     return () => void this.#listeners.delete(listener);
   }
 
+  /**
+   * Put events from before (a reload) ahead of the ones recorded since, which are
+   * renumbered after them, spans included; numbering continues from there.
+   */
+  restore(older: readonly TraceEvent[]): void {
+    if (older.length === 0) return;
+    const offset = Math.max(...older.map((e) => e.seq));
+    const since = this.#events.map((e) => ({ ...e, seq: e.seq + offset, ...(e.spanOf === undefined ? {} : { spanOf: e.spanOf + offset }) }));
+    this.#events = [...older, ...since].slice(-this.#limit);
+    this.#seq += offset;
+  }
+
   clear(): void {
     this.#events = [];
   }

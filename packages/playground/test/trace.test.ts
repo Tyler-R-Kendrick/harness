@@ -49,6 +49,35 @@ describe("the tracer", () => {
   });
 });
 
+describe("restoring a timeline", () => {
+  it("TR1.4 older events go before the ones recorded since, which are renumbered after them (their spans too); numbering continues", () => {
+    const tracer = new Tracer(() => 5);
+    const span = tracer.span({ kind: "model", name: "call" });
+    span.end();
+    tracer.restore([
+      { seq: 7, at: 1, kind: "acp", name: "old" },
+      { seq: 8, at: 2, kind: "host", name: "older" },
+    ]);
+    expect(tracer.events().map((e) => [e.seq, e.name, e.spanOf])).toEqual([
+      [7, "old", undefined],
+      [8, "older", undefined],
+      [9, "call", undefined],
+      [10, "call", 9],
+    ]);
+    expect(tracer.record({ kind: "host", name: "next" }).seq).toBe(11);
+    expect(tracer.last).toBe(11);
+  });
+
+  it("TR1.5 restoring nothing changes nothing, and the limit still holds", () => {
+    const tracer = new Tracer(() => 0, { limit: 2 });
+    tracer.record({ kind: "host", name: "a" });
+    tracer.restore([]);
+    expect(tracer.events().map((e) => e.seq)).toEqual([1]);
+    tracer.restore([{ seq: 1, at: 0, kind: "host", name: "x" }, { seq: 2, at: 0, kind: "host", name: "y" }]);
+    expect(tracer.events().map((e) => e.name)).toEqual(["y", "a"]);
+  });
+});
+
 describe("summaries of ACP messages", () => {
   it("TR2.1 names requests, notifications (with the update kind), results and errors", () => {
     expect(acpSummary({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: {} })).toBe("session/prompt #3");

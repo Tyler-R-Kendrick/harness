@@ -9,6 +9,7 @@
 import type { IFileSystem } from "just-bash";
 import { z } from "zod";
 import type { SnapshotStorage } from "@harness/core";
+import type { TraceEvent } from "./trace.ts";
 
 const vfsSnapshot = z.object({
   version: z.literal(1),
@@ -149,7 +150,7 @@ export class Coalesced {
   #running: Promise<void> = Promise.resolve();
   #pending = false;
 
-  constructor(save: () => Promise<void>, report: (error: string) => void = () => {}) {
+  constructor(save: () => Promise<void>, report: (error: string) => void) {
     this.#save = save;
     this.#report = report;
   }
@@ -167,4 +168,43 @@ export class Coalesced {
   flush(): Promise<void> {
     return this.#running;
   }
+}
+
+const traceEvent = z.object({
+  seq: z.number().int(),
+  at: z.number(),
+  kind: z.enum(["acp", "worker", "model", "tool", "vfs", "hook", "host"]),
+  name: z.string(),
+  detail: z.unknown().optional(),
+  direction: z.enum(["in", "out"]).optional(),
+  sessionId: z.string().optional(),
+  turnId: z.string().optional(),
+  phase: z.enum(["start", "end"]).optional(),
+  spanOf: z.number().int().optional(),
+  duration: z.number().optional(),
+});
+const storedTrace = z.object({ version: z.literal(1), events: z.array(traceEvent) });
+
+/** A stored timeline's events, or undefined when what is stored is not one. */
+export function parseTrace(value: unknown): TraceEvent[] | undefined {
+  const parsed = storedTrace.safeParse(value);
+  return parsed.success ? (parsed.data.events as TraceEvent[]) : undefined;
+}
+
+/**
+ * An event as plain data to store: its detail written as JSON (bytes named by their
+ * size), cut to a preview past `maxDetail` characters, or a note when it cannot be written.
+ */
+export function storableEvent(event: TraceEvent, options: { readonly maxDetail?: number } = {}): TraceEvent {
+  const { detail, ...rest } = event;
+  if (detail === undefined) return rest;
+  const max = options.maxDetail ?? 16_000;
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(detail, (_key, value: unknown) => (value instanceof Uint8Array ? `[${value.length} bytes]` : value));
+  } catch (e) {
+    return { ...rest, detail: { unstorable: message(e) } };
+  }
+  if (text === undefined) return rest;
+  return { ...rest, detail: text.length > max ? { cut: `${text.length} characters`, preview: text.slice(0, max) } : (JSON.parse(text) as unknown) };
 }
