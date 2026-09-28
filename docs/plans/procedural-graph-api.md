@@ -1088,6 +1088,26 @@ evaluator"; the names above keep their meaning.
   `SnapshotProceduralStore.graphs()` name every graph with a head, in the order each got
   its first. It is not on the `ProceduralStore` port: a host that tends every graph (the
   schedule) takes the list from its own store.
+- **The schedule (`dream-schedule.ts`).** `new DreamSchedule({store, settings: Preset, graphs, dream: DreamRun, clock})`,
+  where `DreamRun = (graph) => Promise<DreamResult>` is the host's `runDream` under its
+  lease holder. `due(graph)` returns `DreamDue = {due, reason?: "every" | "afterTurns", last, turns, overlay}`:
+  `last` is the latest time in the graph's dream log (a `started` entry's `at` or an
+  event's), or the head record's `at` before any dream; `turns` counts the overlay log's
+  `observed` events without `rescore` from the offset the last dream started from; an
+  unset condition never holds, and a graph with no head is never due. `tick()` checks
+  every graph `graphs()` names and dreams those due, and resolves with a
+  `ScheduledDream` per graph it acted on (`{graph, reason, result}`, or `{graph, reason?, error}`
+  for a dream that threw or a dream log that does not parse); it never throws. A graph
+  whose scheduled dream is running is skipped, a tick while another is still checking
+  does nothing, and a preset without a schedule reads nothing (`enabled` is false). The
+  dream log is read incrementally; the schedule also remembers when it started each
+  graph's dream (and the overlay head then), so a dream that throws before it logs
+  anything waits until it is due again. Everything else it reads is in the store, so a
+  restarted host keeps the schedule.
+- **`exclusiveDream(run)`** runs one dream per graph at a time in a process: a call for a
+  graph whose dream is running answers `busy` at once and leaves the lease alone (a
+  holder may take its own lease again, which would strand the running dream). Another
+  process's dream holds the lease, so `runDream` answers `busy`.
 
 ## Open issues
 
