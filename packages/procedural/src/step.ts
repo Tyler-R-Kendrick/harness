@@ -85,6 +85,8 @@ export interface StepInput extends StepScope {
 export interface TurnInput extends StepScope {
   readonly messages: readonly ModelMessage[];
   readonly lastAction: string | undefined;
+  /** The harness's last call with its input and its result's output, when known (what a state tracker reads). */
+  readonly lastCall?: { readonly name: string; readonly input: unknown; readonly output?: unknown };
   readonly tools?: readonly string[];
 }
 
@@ -141,11 +143,18 @@ const outputText = (output: ToolResultPart["output"]): string => (output.type ==
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const field = (v: unknown, key: string): unknown => (isRecord(v) ? v[key] : undefined);
 
-/** The node a tool's result declares active: `_meta.harness.procedural.node` of its JSON value. */
-function declaredBy(output: ToolResultPart["output"]): string | undefined {
-  if (output.type !== "json" && output.type !== "error-json") return undefined;
-  const node = field(field(field(field(output.value, "_meta"), "harness"), "procedural"), "node");
+/** The node a tool's result declares active: `_meta.harness.procedural.node`, a string. */
+function declaredIn(value: unknown): string | undefined {
+  const node = field(field(field(field(value, "_meta"), "harness"), "procedural"), "node");
   return typeof node === "string" ? node : undefined;
+}
+
+/** The node a tool result part declares, in its JSON value. */
+const declaredBy = (output: ToolResultPart["output"]): string | undefined => (output.type === "json" || output.type === "error-json" ? declaredIn(output.value) : undefined);
+
+/** An action observed from a call's name, arguments and the node its result declared. */
+function observe(name: string, args: unknown, declared: string | undefined): ObservedAction {
+  return { name, arguments: args, ...(declared === undefined ? {} : { declared }) };
 }
 
 /**
@@ -162,8 +171,7 @@ function lastCall(messages: readonly ModelMessage[]): { action: ObservedAction; 
     if (last === undefined) continue;
     const results = messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? r.content : []));
     const own = results.find((p) => p.type === "tool-result" && p.toolCallId === last.toolCallId);
-    const declared = own?.type === "tool-result" ? declaredBy(own.output) : undefined;
-    const action: ObservedAction = { name: last.toolName, arguments: last.input, ...(declared === undefined ? {} : { declared }) };
+    const action = observe(last.toolName, last.input, own?.type === "tool-result" ? declaredBy(own.output) : undefined);
     return { action, others: calls.slice(0, -1).map((c) => c.toolName) };
   }
   return undefined;
@@ -329,7 +337,9 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       const session = await enter(input, () => false);
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");
-      const last = preset.turnBoundary === "start" || input.lastAction === undefined ? undefined : { name: input.lastAction };
+      const call = input.lastCall;
+      const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredIn(call.output));
+      const last = preset.turnBoundary === "start" ? undefined : known;
       return advise(input, { ...session, view: session.view }, last, [], deps.model);
     },
   };

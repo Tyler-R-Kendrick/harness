@@ -16,7 +16,7 @@ import {
   sha256Hex,
   StepRecordSchema,
 } from "@harness/procedural";
-import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord } from "@harness/procedural";
+import type { OverlayEvent, Pin, ProceduralStepDeps, Resolver, Settings, StepInput, StepNotice, StepRecord, TurnInput } from "@harness/procedural";
 import { answering } from "./models.ts";
 import { cautionOnCore, idOf, noteOnCore, proposed, saltWhere, shortcut, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "./step-fixtures.ts";
@@ -336,6 +336,26 @@ describe("proceduralStep: the live path as a worker step hook (plan §5)", () =>
       expect(await nodeAt("state-tracker", [bash("ls")])).toBe("Shell");
       // The paper's exact Match ignores the declaration.
       expect(await nodeAt("paper", [bash("ls"), bashResult(declaring("Review"))])).toBe("Shell");
+    });
+
+    it("PW1.69 the turn variant tracks a harness's last call too: its input picks the node, and its output may declare one", async () => {
+      const s = await setup("custom", { settings: withPreset("harness", { match: "state-tracker" }) });
+      await seed(s.store, tracked.graph);
+      const hook = proceduralStep(s.deps);
+      const turn = (turnId: string, lastCall: TurnInput["lastCall"]) => hook.turn({ ...input(s, [user("q")], { turnId }), lastAction: lastCall?.name, ...(lastCall ? { lastCall } : {}) });
+      await turn("t1", { name: "Bash", input: { command: "npm test" } });
+      await turn("t2", { name: "Bash", input: { command: "ls" }, output: { _meta: { harness: { procedural: { node: "Review" } } } } });
+      await turn("t3", { name: "Bash", input: { command: "ls" }, output: { _meta: { harness: { procedural: { node: 3 } } } } });
+      await turn("t4", undefined);
+      // Without the call, the name alone: the bare binding.
+      await hook.turn({ ...input(s, [user("q")], { turnId: "t5" }), lastAction: "Bash" });
+      expect(s.records.map((r) => [r.node, r.action])).toEqual([
+        ["Run_Tests", "Bash"],
+        ["Review", "Bash"],
+        ["Shell", "Bash"],
+        ["Start", null],
+        ["Shell", "Bash"],
+      ]);
     });
   });
 

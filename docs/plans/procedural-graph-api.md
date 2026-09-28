@@ -1104,6 +1104,14 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   tool message, `json` or `error-json` output). A tool, an MCP server (whose
   `CallToolResult._meta` is where the AI SDK puts it) or an environment wrapping tools
   declares the state this way. The step record's `action` is still the tool name.
+- **Harness turns as a state tracker.** The workers' `TurnContext` gains
+  `lastCall?: LastCall` (`{name, input, output?}`): `harnessSessions` remembers the
+  session's last tool call from `onStepEnd` with its id, and pairs it with the result a
+  later step reports (a host-executed tool's result arrives in the next step); a call
+  whose result never came has no `output`. `lastAction` is its name, as before.
+  `TurnInput.lastCall` is the same; the turn variant observes `{name, arguments: input,
+  declared: _meta.harness.procedural.node of output}`, and falls back to `lastAction`
+  alone without it.
 
 ## Open issues
 
