@@ -2,16 +2,18 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { HookEvent } from "@harness/core";
 import { EchoWorker } from "@harness/workers";
-import { invokeCognitive } from "@harness/cognitive";
+import { MockLanguageModelV4 } from "ai/test";
+import { Ensemble, HARNESS, invokeCognitive, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
+import { GRAPH_TOOL, GraphIdSchema, importGraph, logTrajectories, MemoryProceduralStore, parsePolicy, parseResolver, resolveGraph, revisionId, RevisionIdSchema, ScoreSchema, seedGraph } from "@harness/procedural";
 import type { RevisionId } from "@harness/procedural";
-import { scriptedHarness, scriptedModel } from "@harness/testkit";
+import { promptText, scriptedHarness, scriptedModel } from "@harness/testkit";
 import {
   buildNativeEnsemble,
+  daemonSessions,
   harnessWorker,
   hostAuthorizer,
   hostPorts,
@@ -21,6 +23,7 @@ import {
   loadProceduralResolver,
   loadProceduralSettings,
   nativeProceduralStep,
+  nativeStepEvictions,
   NodeHost,
   pumpHookEvents,
   sessionLogReader,
@@ -40,7 +43,7 @@ function client(host: NodeHost) {
     for (let i = 0; i < 400 && !replies.has(mine); i++) await new Promise((r) => setTimeout(r, 5));
     return replies.get(mine)!["result"] as Record<string, unknown>;
   };
-  return { request };
+  return { request, disconnect: () => connection.disconnect() };
 }
 
 async function withSession() {
@@ -49,7 +52,7 @@ async function withSession() {
   await c.request("initialize", { protocolVersion: 1 });
   const { sessionId } = (await c.request("session/new", { cwd: "/", mcpServers: [] })) as { sessionId: string };
   const prompt = (text: string) => c.request("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
-  return { host, sessionId, prompt };
+  return { host, sessionId, prompt, leave: c.disconnect };
 }
 
 describe("procedural host plumbing", () => {
@@ -153,6 +156,20 @@ describe("procedural host plumbing", () => {
     await host.close();
   });
 
+  it("PX2.69 the log reader reads one session through Daemon.readLog and never copies the daemon's snapshot", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    await prompt("hello");
+    const snapshot = vi.spyOn(host.daemon, "snapshot");
+    const readLog = vi.spyOn(host.daemon, "readLog");
+    const read = sessionLogReader(host.daemon);
+    expect((await read(sessionId, 1, 3)).map((e) => e.offset)).toEqual([1, 2]);
+    expect(await read(sessionId, 2)).toEqual(host.daemon.readLog(sessionId, 2));
+    expect(readLog).toHaveBeenCalledWith(sessionId, 1, 3);
+    expect(readLog).toHaveBeenCalledWith(sessionId, 2, undefined);
+    expect(snapshot).not.toHaveBeenCalled();
+    await host.close();
+  });
+
   it("PX2.44 procedural settings load from the package's own data file by default, or from a tweaked copy", () => {
     const own = require.resolve("@harness/procedural/data/settings.json");
     expect(loadProceduralSettings().presets.harness.overlay).toBe(true);
@@ -190,7 +207,7 @@ describe("procedural guidance and access on the native host", () => {
     expect(await store.pins.get("s2")).toBeUndefined();
   });
 
-  it("PX2.68 the host's step hook applies the access policy it is given: a session the policy denies is left unguided", async () => {
+  it("PX2.118 the host's step hook applies the access policy it is given: a session the policy denies is left unguided", async () => {
     const store = await seeded();
     const resolver = parseResolver({ rules: [{ when: {}, graph: "default" }] });
     const policy = parsePolicy({ rules: [{ when: { meta: { team: "search" } }, allow: true }], default: "deny" });
@@ -212,6 +229,27 @@ describe("procedural guidance and access on the native host", () => {
     await harness.close();
   });
 
+  it("PX2.68 the step hook forgets a session the daemon detaches: its next step is guided afresh", async () => {
+    const { host, sessionId, leave } = await withSession();
+    const store = await seeded();
+    const notices: { _meta: { harness: { procedural: { step: { cached: boolean } } } } }[] = [];
+    const step = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: mine, principal: "me" });
+    const evictions = nativeStepEvictions({ runtime: host.runtime, step, intervalMs: 60_000 });
+    const input = (stepNumber: number) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber, model: scriptedModel(() => "Start by searching."), report: (n: unknown) => void notices.push(n as (typeof notices)[number]) });
+    await step.prepare(input(0));
+    await step.prepare(input(1));
+    await evictions.drain();
+    await step.prepare(input(2));
+    leave();
+    await evictions.drain();
+    await step.prepare(input(3));
+    expect(notices.map((n) => n._meta.harness.procedural.step.cached)).toEqual([false, true, true, false]);
+    evictions.close();
+    // With the pump's own interval, and a log.
+    nativeStepEvictions({ runtime: host.runtime, step, log: () => undefined }).close();
+    await host.close();
+  });
+
   it("PX2.55 the policy file binds to the host's principal; the resolver loads from procedural's data file by default", () => {
     const file = join(mkdtempSync(join(tmpdir(), "procedural-")), "policy.json");
     writeFileSync(file, JSON.stringify({ rules: [{ when: { principal: "me", actions: ["revert"] }, allow: false }] }));
@@ -224,6 +262,30 @@ describe("procedural guidance and access on the native host", () => {
     writeFileSync(file, JSON.stringify({ rules: "none" }));
     expect(() => loadProceduralResolver(file)).toThrow(/invalid procedural resolver/);
     expect(hostPorts.entropy.bytes(16)).toHaveLength(16);
+  });
+
+  it("PX2.119 a routing resolver on the host: the router model chooses the session's graph by its first prompt; without a router, or an ensemble with no router member, the session has none", async () => {
+    const routing = parseResolver({ rules: [{ when: {}, route: { candidates: ["default", "other"], minConfidence: 0.8 } }] });
+    const input = (sessionId: string) => ({ sessionId, turnId: "t1", messages: [{ role: "user" as const, content: "Find it." }], initialInstructions: undefined, stepNumber: 0, model: scriptedModel(() => "Start by searching."), report: () => undefined });
+    const router = new MockLanguageModelV4({
+      doGenerate: async () => ({
+        content: [{ type: "tool-call", toolCallId: "c0", toolName: GRAPH_TOOL, input: JSON.stringify({ graph: "default" }) }],
+        finishReason: { unified: "tool-calls", raw: undefined },
+        usage: usage(),
+        providerMetadata: { [HARNESS]: { confidence: 0.9 } },
+        warnings: [],
+      }),
+    });
+    const store = await seeded();
+    const routed = nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing, router });
+    expect(JSON.stringify((await routed.prepare(input("s1")))?.messages?.at(-1))).toContain("Start by searching.");
+    expect(await store.pins.get("s1")).toMatchObject({ graph: "default" });
+    expect(promptText(router.doGenerateCalls[0]!.prompt)).toContain("Find it.");
+    expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing }).prepare(input("s2"))).toBeUndefined();
+    const memberless = new Ensemble({ platform: "native" }).languageModel("tool-calling", "router");
+    expect(await nativeProceduralStep({ store, settings: loadProceduralSettings(), resolver: routing, router: memberless }).prepare(input("s3"))).toBeUndefined();
+    expect(await store.pins.get("s2")).toBeUndefined();
+    expect(await store.pins.get("s3")).toBeUndefined();
   });
 });
 
@@ -306,6 +368,20 @@ describe("dream's trajectories and lease on the native host", () => {
     expect(await source.select({ graph, revision: RevisionIdSchema.parse("a".repeat(64)), limit: 10 })).toEqual([]);
     const empty = { version: 1, sessions: [{ id: sessionId, cwd: "/", owner: "me", log: {}, tree: {} }], hooks: {} };
     expect(await logTrajectories({ store, sessions: async () => snapshotSessions(empty) }).select({ graph, revision, limit: 5 })).toEqual([]);
+    await host.close();
+  });
+
+  it("PX2.70 dream's session logs from the live daemon are every session's log, read through readLog without a snapshot", async () => {
+    const { host, sessionId, prompt } = await withSession();
+    await prompt("one");
+    const snapshot = vi.spyOn(host.daemon, "snapshot");
+    const logs = daemonSessions(host.daemon);
+    snapshot.mockClear();
+    expect(logs).toEqual([{ id: sessionId, entries: host.daemon.readLog(sessionId) }]);
+    expect(logs[0]!.entries.length).toBeGreaterThan(2);
+    expect(snapshot).not.toHaveBeenCalled();
+    snapshot.mockRestore();
+    expect(logs).toEqual(snapshotSessions(host.daemon.snapshot()));
     await host.close();
   });
 

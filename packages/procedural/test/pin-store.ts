@@ -48,7 +48,8 @@ export class FakeStore implements ProceduralStore {
       this.disk.revisions[record.id] = record;
       return Promise.resolve();
     },
-    get: (id: RevisionId) => Promise.resolve(this.disk.revisions[id]),
+    // Records by id: pinning's tests keep each document in one graph, so a record of another graph is absent.
+    get: (graph: GraphId, id: RevisionId) => Promise.resolve(this.disk.revisions[id]?.graph === graph ? this.disk.revisions[id] : undefined),
     list: (graph: GraphId) => Promise.resolve(Object.values(this.disk.revisions).filter((r) => r.graph === graph)),
   };
 

@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ProbabilitySchema } from "@harness/cognitive";
 import {
+  acceptsArguments,
+  ArgumentPredicateSchema,
   BindingSchema,
   CandidateDocumentSchema,
   canonicalJson,
@@ -109,6 +111,37 @@ describe("bindings", () => {
         { kind: "grant", name: "t" },
       ]),
     ).toEqual([false, false, false, false, false, false]);
+  });
+
+  it("PG1.53 a tool binding may carry an argument predicate: an object JSON Schema over the call's arguments that compiles, kept in the document and its id", () => {
+    const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+    expect(accepts(BindingSchema, [{ kind: "tool", name: "Bash", arguments: tests }, { kind: "tool", name: "Bash", arguments: { type: "object" } }])).toEqual([true, true]);
+    expect(
+      accepts(BindingSchema, [
+        { kind: "tool", name: "Bash", arguments: { properties: { command: { type: "string" } } } }, // not declared an object
+        { kind: "tool", name: "Bash", arguments: { type: "string" } },
+        { kind: "tool", name: "Bash", arguments: { type: "object", properties: { command: { type: "string", pattern: "(" } } } }, // does not compile
+        { kind: "tool", name: "Bash", arguments: { type: "object", properties: { command: { $ref: "#/nowhere" } } } },
+        { kind: "tool", name: "Bash", arguments: "npm test" },
+        { kind: "workflow", name: "w", code: hex("b"), arguments: { type: "object" } },
+      ]),
+    ).toEqual([false, false, false, false, false, false]);
+    const doc = { ...hotpot(), nodes: hotpot().nodes.map((n) => (n.id === "Scan_Index" ? { ...n, binding: { kind: "tool", name: "Bash", arguments: tests } } : n)) };
+    const parsed = parseGraph(doc);
+    expect(parsed.ok && nodeById(parsed.graph, "Scan_Index")?.binding).toEqual({ kind: "tool", name: "Bash", arguments: tests });
+    expect(revisionId(ok(doc))).not.toBe(revisionId(ok(hotpot())));
+    const bad = parseGraph({ ...doc, nodes: doc.nodes.map((n) => (n.id === "Scan_Index" ? { ...n, binding: { kind: "tool", name: "Bash", arguments: { type: "number" } } } : n)) });
+    expect(bad.ok ? [] : bad.diagnostics.map((d) => [d.code, d.at, d.message])).toEqual([["malformed", "nodes[2].binding.arguments", 'an argument predicate is an object schema: its type must be "object"']]);
+    expect(ArgumentPredicateSchema.safeParse({ type: "string" }).error?.issues.map((i) => i.code)).toEqual(["custom"]);
+    const broken = ArgumentPredicateSchema.safeParse({ type: "object", properties: { command: { $ref: "#/nowhere" } } });
+    expect(broken.error?.issues.map((i) => [i.code, i.message])).toEqual([["custom", "an argument predicate must compile: Reference not found: #/nowhere"]]);
+  });
+
+  it("PG1.54 a predicate accepts exactly the arguments its schema does, and asking again gives the same answer", () => {
+    const tests = ArgumentPredicateSchema.parse({ type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] });
+    expect([{ command: "npm test -w x" }, { command: "npm test", cwd: "/" }, { command: "ls" }, {}, "npm test", null].map((a) => acceptsArguments(tests, a))).toEqual([true, true, false, false, false, false]);
+    expect(acceptsArguments(tests, { command: "npm test" })).toBe(true);
+    expect(acceptsArguments(tests, { command: "rm" })).toBe(false);
   });
 });
 

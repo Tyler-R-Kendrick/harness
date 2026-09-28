@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { edgeKey, entryId, exposed, OverlayEventSchema, parseGraph, ScoreSchema } from "@harness/procedural";
 import type { OverlayEvent } from "@harness/procedural";
-import { call, CORE, ended, GRAPH, record, revisionOf, started, user } from "./learner-fixtures.ts";
+import { call, CORE, ended, GRAPH, record, result, revisionOf, said, started, user } from "./learner-fixtures.ts";
 import { paper, preset, setup, turnEnded, turnOf } from "./learner-setup.ts";
 import { cautionOnCore, core, entry, idOf, noteOnCore, observed, proposed, saltWhere, status, toVerify, verifyNode } from "./overlay-fixtures.ts";
 
@@ -174,6 +174,21 @@ describe("the live learner on turn.ended", () => {
     expect(observedOf(loose.store.events())[0]!.path).toEqual(["Start", "Scan_Index"]);
   });
 
+  it("PL1.77 under a state-tracker preset a result's declared node counts only for a tool the core trusts to declare: an unbound grep's is ignored", async () => {
+    const declared = { stdout: "Nolan", _meta: { harness: { procedural: { node: "Bridge_Extract" } } } };
+    const turn = [started("t1"), user("q"), record({ node: "Start" }), call("t1-c0", "grep", { q: "film" }), result("t1-c0", declared), ended("t1")];
+    const tracker = setup({ preset: preset({}, { match: "state-tracker" }) });
+    tracker.pin("s1");
+    tracker.add("s1", turn);
+    await tracker.learner.onHookEvent(turnEnded("s1", "t1"));
+    expect(observedOf(tracker.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
+    const exact = setup();
+    exact.pin("s1");
+    exact.add("s1", turn);
+    await exact.learner.onHookEvent(turnEnded("s1", "t1"));
+    expect(observedOf(exact.store.events())[0]).toMatchObject({ path: ["Start"], unmatched: ["grep"] });
+  });
+
   it("PL1.39 a missing transition seen in minSupport distinct sessions is proposed after the observation; one session's many turns are not support", async () => {
     const t = setup();
     for (const turn of ["t1", "t2", "t3"]) {
@@ -229,14 +244,14 @@ describe("the live learner on turn.ended", () => {
 
   it("PL1.42 a turn the log does not hold, or one naming no graph, is skipped; so is a session id a turn key cannot hold", async () => {
     const t = setup();
-    const missing = { kind: "skipped", reason: "the log does not hold the turn, or it names no graph" };
+    const missing = { kind: "skipped", code: "unknown-turn", reason: "the log does not hold the turn, or it names no graph" };
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toEqual(missing);
     // No cursor yet, so one read from the start is all there is to try.
     expect(t.reads).toEqual([["s1", 0]]);
     t.add("s1", [started("t1"), user("q"), call("c1", "first_hop_retrieve"), ended("t1")]);
     expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toEqual(missing);
     t.add("a/b", turnOf("t1", ["first_hop_retrieve"]));
-    expect(await t.learner.onHookEvent(turnEnded("a/b", "t1"))).toEqual({ kind: "skipped", reason: "a session id with '/' cannot key a turn" });
+    expect(await t.learner.onHookEvent(turnEnded("a/b", "t1"))).toEqual({ kind: "skipped", code: "invalid", reason: "a session id with '/' cannot key a turn" });
     expect(t.store.appends).toBe(0);
   });
 
@@ -277,6 +292,33 @@ describe("the live learner on turn.ended", () => {
     t.add("s1", turnOf("t1", ["first_hop_retrieve"]));
     await t.learner.onHookEvent(turnEnded("s1", "t1"));
     expect(t.store.events()).toEqual([{ kind: "observed", turnKey: "s1/t1", path: ["Start"], unmatched: ["first_hop_retrieve"], score: null, exposure: [] }]);
+  });
+});
+
+describe("transitions into a terminal", () => {
+  it("PL1.73 a turn that answers after a node with an edge to End is observed walking into End, so that edge gets statistics and cautions", async () => {
+    // Answers straight from Bridge_Extract score 0; turns that retrieve first score 1.
+    const t = setup({ score: async (tr) => ({ score: tr.steps.some((s) => s.call !== undefined) ? 1 : 0, source: "judge-probability" }) });
+    for (let i = 0; i < 8; i += 1) {
+      const session = `s${i}`;
+      t.pin(session);
+      t.add(session, i < 4 ? [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")] : turnOf("t1", ["first_hop_retrieve"]));
+      await t.learner.onHookEvent(turnEnded(session, "t1"));
+    }
+    expect(observedOf(t.store.events()).map((e) => e.path)).toEqual([...Array(4).fill(["Bridge_Extract", "End"]), ...Array(4).fill(["Start", "First_Hop_Retrieve"])]);
+    const state = t.state();
+    expect(state.stats[edgeKey("Bridge_Extract", "End")]).toMatchObject({ traversals: 4, scored: 4, scoreSum: 0 });
+    expect(Object.values(state.entries).map((r) => r.entry)).toContainEqual(expect.objectContaining({ kind: "caution", on: { from: "Bridge_Extract", to: "End" } }));
+  });
+});
+
+describe("transitions into a terminal, without the core", () => {
+  it("PL1.75 a turn whose core revision the store lacks walks into no terminal: the path is where its record began", async () => {
+    const t = setup({ withCore: false });
+    t.pin("s1");
+    t.add("s1", [started("t1"), user("q"), record({ node: "Bridge_Extract" }), said("Nolan."), ended("t1")]);
+    expect(await t.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed" });
+    expect(observedOf(t.store.events()).map((e) => e.path)).toEqual([["Bridge_Extract"]]);
   });
 });
 
@@ -348,8 +390,18 @@ describe("feedback", () => {
 
   it("PL1.53 feedback without a pin, or with a score outside [0, 1], is skipped", async () => {
     const t = await observedTurn();
-    expect(await t.learner.feedback("s2", "t1", 0.5)).toEqual({ kind: "skipped", reason: "the session has no pin, so no graph" });
-    for (const bad of [1.5, -0.1, Number.NaN]) expect(await t.learner.feedback("s1", "t1", bad)).toEqual({ kind: "skipped", reason: "a score is a probability in [0, 1]" });
+    expect(await t.learner.feedback("s2", "t1", 0.5)).toEqual({ kind: "skipped", code: "no-pin", reason: "the session has no pin, so no graph" });
+    for (const bad of [1.5, -0.1, Number.NaN]) expect(await t.learner.feedback("s1", "t1", bad)).toEqual({ kind: "skipped", code: "invalid", reason: "a score is a probability in [0, 1]" });
+    expect(t.store.events()).toHaveLength(1);
+  });
+
+  it("PL1.70 feedback says why it skipped a score: a turn the log does not hold, no pin, or an input no turn key or score can hold", async () => {
+    const t = await observedTurn();
+    expect(await t.learner.feedback("s1", "absent", 0.5)).toMatchObject({ kind: "skipped", code: "unknown-turn" });
+    expect(await t.learner.feedback("s2", "t1", 0.5)).toMatchObject({ kind: "skipped", code: "no-pin" });
+    t.pin("a/b");
+    expect(await t.learner.feedback("a/b", "t1", 0.5)).toMatchObject({ kind: "skipped", code: "invalid" });
+    expect(await t.learner.feedback("s1", "t1", 2)).toMatchObject({ kind: "skipped", code: "invalid" });
     expect(t.store.events()).toHaveLength(1);
   });
 

@@ -81,14 +81,21 @@ const isAction = (g: ProceduralGraph, node: NodeName): boolean => nodeById(g, no
  * interior nodes have out-degree 1. A path is a candidate when turns of at least
  * `support` distinct sessions walked it and its mean over scored turns is at least
  * `minScore`. A redelivered turn counts once (its first delivery), and a turn that walks
- * a path twice counts once. Candidates come longest first, then by support, mean score
+ * a path twice counts once. A turn's score is its latest re-observation's (feedback, by
+ * `rescore.seq`), else its own; a re-observation of a turn never observed counts nothing.
+ * Candidates come longest first, then by support, mean score
  * and path; a candidate lying inside one already kept is dropped.
  */
 export function pathCandidates(core: ProceduralGraph, events: readonly OverlayEvent[], settings: CompositionSettings): PathCandidate[] {
-  const turns = new Map<string, { session: string; path: readonly NodeName[]; score: Score | null }>();
+  const turns = new Map<string, { session: string; path: readonly NodeName[]; score: Score | null; seq: number }>();
   for (const e of events) {
-    if (e.kind !== "observed" || turns.has(e.turnKey)) continue;
-    turns.set(e.turnKey, { session: e.turnKey.slice(0, e.turnKey.indexOf("/")), path: e.path, score: e.score });
+    if (e.kind !== "observed") continue;
+    const known = turns.get(e.turnKey);
+    // Feedback re-observes a turn with a new score: the latest (by seq) is the turn's.
+    if (e.rescore !== undefined) {
+      // Stryker disable next-line EqualityOperator: equivalent; a re-observation redelivered with the same seq carries the same score
+      if (known !== undefined && e.rescore.seq > known.seq) turns.set(e.turnKey, { ...known, score: e.score, seq: e.rescore.seq });
+    } else if (known === undefined) turns.set(e.turnKey, { session: e.turnKey.slice(0, e.turnKey.indexOf("/")), path: e.path, score: e.score, seq: 0 });
   }
   const tally = new Map<string, { path: NodeName[]; sessions: Set<string>; turns: number; scored: number; sum: number }>();
   for (const { session, path, score } of turns.values()) {
@@ -141,16 +148,17 @@ export interface RecordedCall {
 }
 
 /**
- * The runs of a path in recorded turns: each window of consecutive tool calls whose
- * names match (under the preset's match mode, by node id or binding name) the path's
- * nodes in order.
+ * The runs of a path in recorded turns: each window of consecutive tool calls that
+ * match the path's nodes in order, under the preset's match mode (by node id or binding
+ * name, and under a state tracker by the calls' arguments too; recorded steps keep a
+ * tool's result as text, so a node it declared is not read here).
  */
 export function recordedRuns(core: ProceduralGraph, trajectories: readonly ScoredTrajectory[], path: readonly NodeName[], mode: MatchMode): RecordedCall[][] {
   const view = coreView(core);
   const runs: RecordedCall[][] = [];
   for (const t of trajectories) {
     const calls = t.steps.flatMap((s) => (s.call ? [{ name: s.call.name, arguments: s.call.arguments }] : []));
-    const nodes = calls.map((c) => match(c.name, view, mode));
+    const nodes = calls.map((c) => match(c, view, mode));
     // A window running past the last call matches nothing: there, every node is undefined.
     nodes.forEach((_, i) => {
       if (path.every((n, k) => nodes[i + k] === n)) runs.push(calls.slice(i, i + path.length));

@@ -340,6 +340,20 @@ describe("DaemonRuntime", () => {
     expect(saves).toEqual([]);
   });
 
+  it("RT2.9 a host event published through the runtime reaches the hook bus under the host's source and is saved; a refused one saves nothing", async () => {
+    const saves: { hooks: { events: { type: string; source: string; payload: unknown }[] } }[] = [];
+    const storage: SnapshotStorage = { load: async () => undefined, save: async (s) => void saves.push(s as (typeof saves)[number]) };
+    const { rt } = await runtime({ storage });
+    const refused = rt.publish({ source: "host", type: "x.y", cause: "evt-404", payload: {} });
+    expect(refused).toMatchObject({ ok: false, error: { code: "unknown_cause" } });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(saves).toEqual([]);
+    const published = rt.publish({ source: "host", type: "x.y", payload: { n: 1 } });
+    expect(published).toMatchObject({ ok: true, value: { type: "x.y", source: "host", payload: { n: 1 } } });
+    await rt.close();
+    expect(saves.at(-1)?.hooks.events).toEqual([expect.objectContaining({ type: "x.y", source: "host", payload: { n: 1 } })]);
+  });
+
   it("RT2.7 a restored runtime saves at once, so the turns it marked interrupted stay marked", async () => {
     const storage = new MemoryStorage();
     const { rt } = await runtime({ storage, worker: { ...idle, run: () => new Promise(() => {}) } });
@@ -399,6 +413,32 @@ describe("DaemonRuntime", () => {
     a.connection.disconnect();
     expect(await b.reply(b.request("session/prompt", { sessionId, prompt: [] }))).toMatchObject({ result: { stopReason: "end_turn" } });
     await rt.close();
+  });
+
+  it("RT1.11 tick listeners run after the daemon's tick, in order, until removed; a failing one is logged and the rest still run", async () => {
+    const { rt, logged } = await runtime();
+    const seen: string[] = [];
+    const removeA = rt.onTick(() => void seen.push("a"));
+    rt.onTick(() => {
+      seen.push("b");
+      throw new Error("b broke");
+    });
+    rt.onTick(async () => {
+      seen.push("c");
+      throw "c rejected";
+    });
+    rt.onTick(async () => void seen.push("d"));
+    rt.tick();
+    expect(seen).toEqual(["a", "b", "c", "d"]);
+    await new Promise((r) => setTimeout(r, 1));
+    expect(logged).toEqual(["tick listener failed: b broke", "tick listener failed: c rejected"]);
+    removeA();
+    removeA();
+    rt.tick();
+    expect(seen.slice(4)).toEqual(["b", "c", "d"]);
+    await rt.close();
+    rt.tick();
+    expect(seen).toHaveLength(7);
   });
 
   it("RT3.9 once closed, the runtime stops following the ensemble", async () => {

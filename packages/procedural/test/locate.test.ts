@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { coreView, match, neighborhood, NodeNameSchema, parseGraph } from "@harness/procedural";
+import { coreView, declaredNode, effectiveGraph, emptyOverlay, foldAll, match, neighborhood, NodeNameSchema, parseGraph, revisionId, terminalAfter } from "@harness/procedural";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "@harness/procedural";
 import { edge, hotpot } from "./fixtures.ts";
+import { proposed } from "./overlay-fixtures.ts";
 import type { DocInput } from "./fixtures.ts";
 
 const view = (doc: DocInput): EffectiveGraph => {
@@ -11,7 +12,7 @@ const view = (doc: DocInput): EffectiveGraph => {
 };
 
 const graphOf = (nodes: DocInput["nodes"], edges: DocInput["edges"]): DocInput => ({ ...hotpot(), nodes, edges });
-const node = (id: string, binding?: { kind: string; name: string; code?: string; content?: string }): DocInput["nodes"][number] =>
+const node = (id: string, binding?: { kind: string; name: string; code?: string; content?: string; declares?: true }): DocInput["nodes"][number] =>
   binding === undefined ? { id, type: "ACTION", description: `${id}.` } : { id, type: "ACTION", description: `${id}.`, binding };
 const hex = "a".repeat(64);
 const name = (n: string) => NodeNameSchema.parse(n);
@@ -97,6 +98,78 @@ describe("match", () => {
   });
 });
 
+describe("match: state-tracker (plan §5.2)", () => {
+  const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+  const edits = { type: "object", properties: { path: { type: "string", pattern: "\\.md$" } }, required: ["path"] };
+  const bash = (id: string, args?: object): DocInput["nodes"][number] => ({ id, type: "ACTION", description: `${id}.`, binding: args === undefined ? { kind: "tool", name: "Bash" } : { kind: "tool", name: "Bash", arguments: args } });
+  // Coarse harness tools: Bash runs tests, docs checks or anything else; a node is also named Edit.
+  const g = view(
+    graphOf(
+      [node("Start"), bash("Shell"), bash("Run_Tests", tests), bash("Check_Docs", edits), node("Edit"), node("Edit_Docs", { kind: "tool", name: "Edit" }), node("End")],
+      [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Check_Docs"), edge("Check_Docs", "Edit"), edge("Edit", "Edit_Docs"), edge("Edit_Docs", "End")],
+    ),
+  );
+
+  // The same graph, where the core trusts Bash and Edit to declare the active node in their results.
+  const trusted = (id: string, args?: object): DocInput["nodes"][number] => ({ id, type: "ACTION", description: `${id}.`, binding: args === undefined ? { kind: "tool", name: "Bash", declares: true } : { kind: "tool", name: "Bash", arguments: args, declares: true } });
+  const trusting = view(
+    graphOf(
+      [node("Start"), trusted("Shell"), trusted("Run_Tests", tests), trusted("Check_Docs", edits), node("Edit"), node("Edit_Docs", { kind: "tool", name: "Edit", declares: true }), node("End")],
+      [edge("Start", "Shell"), edge("Shell", "Run_Tests"), edge("Run_Tests", "Check_Docs"), edge("Check_Docs", "Edit"), edge("Edit", "Edit_Docs"), edge("Edit_Docs", "End")],
+    ),
+  );
+
+  it("PG3.32 a node a trusted tool's result declares wins over the binding and the id; a declared node the graph lacks is ignored", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, trusting, "state-tracker")).toBe("Check_Docs");
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Nowhere" }, trusting, "state-tracker")).toBe("Run_Tests");
+    expect(match({ name: "Edit", declared: "Edit_Docs" }, trusting, "state-tracker")).toBe("Edit_Docs");
+  });
+
+  it("PG3.37 a declared node counts only when the core binds the calling tool with declares: an unbound or untrusted tool's result cannot steer localization", () => {
+    // Bash is bound but not trusted to declare: its predicate decides, not the declared node.
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "state-tracker")).toBe("Run_Tests");
+    // grep is bound nowhere: whatever its result (say, a fetched page) declares is ignored.
+    expect(match({ name: "grep", declared: "End" }, g, "state-tracker")).toBeUndefined();
+    expect(match({ name: "grep", declared: "End" }, trusting, "state-tracker")).toBeUndefined();
+    expect(match({ name: "Edit", declared: "End" }, g, "state-tracker")).toBe("Edit_Docs");
+  });
+
+  it("PG3.33 a binding's argument predicate picks among nodes bound to one coarse tool; a node whose predicate rejects the call is not it", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test -w procedural" } }, g, "state-tracker")).toBe("Run_Tests");
+    expect(match({ name: "Bash", arguments: { path: "docs/features.md" } }, g, "state-tracker")).toBe("Check_Docs");
+    // Nodes with a predicate that holds come before a bare binding, whatever the document order.
+    expect(match({ name: "Bash", arguments: { command: "ls" } }, g, "state-tracker")).toBe("Shell");
+    expect(match({ name: "Bash" }, g, "state-tracker")).toBe("Shell");
+    expect(match("Bash", g, "state-tracker")).toBe("Shell");
+    const narrow = view(graphOf([node("Start"), bash("Run_Tests", tests), node("End")], [edge("Start", "Run_Tests"), edge("Run_Tests", "End")]));
+    expect(match({ name: "Bash", arguments: { command: "ls" } }, narrow, "state-tracker")).toBeUndefined();
+    expect(match({ name: "Bash", arguments: "npm test" }, narrow, "state-tracker")).toBeUndefined();
+  });
+
+  it("PG3.34 then the id, exactly: a binding wins over an id, no action is Start and nothing named is undefined", () => {
+    // Edit_Docs is bound to the tool Edit, and a node is named Edit: the tracker takes the binding.
+    expect(match({ name: "Edit" }, g, "state-tracker")).toBe("Edit_Docs");
+    expect(match("Edit", g, "exact")).toBe("Edit");
+    expect(match("Run_Tests", g, "state-tracker")).toBe("Run_Tests");
+    expect(match(undefined, g, "state-tracker")).toBe("Start");
+    expect(match("run_tests", g, "state-tracker")).toBeUndefined();
+    expect(match({ name: "grep", arguments: {} }, g, "state-tracker")).toBeUndefined();
+  });
+
+  it("PG3.36 a result declares a node with a string at _meta.harness.procedural.node, and nothing else declares one", () => {
+    const at = (node: unknown) => ({ stdout: "ok", _meta: { harness: { procedural: { node } } } });
+    expect(declaredNode(at("Review"))).toBe("Review");
+    expect([at(7), at(null), at(["Review"]), { _meta: { harness: { procedural: "Review" } } }, { _meta: "Review" }, "Review", null, undefined, [at("Review")]].map(declaredNode)).toEqual(Array(9).fill(undefined));
+  });
+
+  it("PG3.35 the paper's modes read only the action's name: a declared node and the arguments change nothing", () => {
+    expect(match({ name: "Bash", arguments: { command: "npm test" }, declared: "Check_Docs" }, g, "exact")).toBe(match("Bash", g, "exact"));
+    expect(match({ name: "Bash", arguments: { command: "npm test" } }, g, "exact")).toBe("Shell");
+    expect(match({ name: "grep", declared: "End" }, g, "exact")).toBeUndefined();
+    expect(match({ name: "edit_docs", declared: "End" }, g, "case-insensitive")).toBe("Edit_Docs");
+  });
+});
+
 describe("neighborhood", () => {
   it("PG3.9 hop 1 is the active node's outgoing edges in document order, hop 2 the edges leaving what hop 1 reaches", () => {
     const g = view(hotpot());
@@ -153,5 +226,66 @@ describe("neighborhood", () => {
     expect(() => neighborhood(g, name("Start"), -1)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Start"), 1.5)).toThrow(RangeError);
     expect(() => neighborhood(g, name("Start"), Number.NaN)).toThrow("hops");
+  });
+
+  // Research §2.2 item 3 (plan §5.2): under exact matching a reasoning node is never active, so
+  // with h = 2 two of them after an action hide the next tool node. Action hops end at ACTION nodes.
+  const reasoning = (id: string): DocInput["nodes"][number] => ({ id, type: "REASONING", description: `${id}.` });
+  const hidden = () =>
+    view(
+      graphOf(
+        [{ id: "Start", type: "STATUS", description: "Begin." }, node("Retrieve"), reasoning("Scan_Index"), reasoning("Decide_Capital"), node("Answer_Lookup"), node("Verify"), { id: "End", type: "STATUS", description: "Done." }],
+        [edge("Start", "Retrieve"), edge("Retrieve", "Scan_Index"), edge("Scan_Index", "Decide_Capital"), edge("Decide_Capital", "Answer_Lookup"), edge("Answer_Lookup", "Verify"), edge("Verify", "End")],
+      ),
+    );
+
+  it("PG3.30 in action hops, two reasoning nodes after an action no longer hide the next tool: hop 1 runs through them to it", () => {
+    const g = hidden();
+    expect(neighborhood(g, name("Retrieve"), 2).hops.map(pairs)).toEqual([["Retrieve→Scan_Index"], ["Scan_Index→Decide_Capital"]]);
+    expect(neighborhood(g, name("Retrieve"), 2, "edge")).toEqual(neighborhood(g, name("Retrieve"), 2));
+    expect(neighborhood(g, name("Retrieve"), 2, "action").hops.map(pairs)).toEqual([["Retrieve→Scan_Index", "Scan_Index→Decide_Capital", "Decide_Capital→Answer_Lookup"], ["Answer_Lookup→Verify"]]);
+    // A non-action active node (Start is a status) counts its first action as hop 1 too; a terminal ends a hop.
+    expect(neighborhood(g, name("Start"), 3, "action").hops.map(pairs)).toEqual([["Start→Retrieve"], ["Retrieve→Scan_Index", "Scan_Index→Decide_Capital", "Decide_Capital→Answer_Lookup"], ["Answer_Lookup→Verify"]]);
+    expect(neighborhood(g, name("Verify"), 2, "action").hops.map(pairs)).toEqual([["Verify→End"], []]);
+  });
+
+  it("PG3.31 in action hops an edge still appears once, breadth first, and a cycle among non-action nodes ends", () => {
+    const g = view(
+      graphOf(
+        [node("Start"), reasoning("R1"), reasoning("R2"), node("A"), node("B"), { id: "End", type: "STATUS", description: "Done." }],
+        [edge("Start", "R1"), edge("Start", "A"), edge("R1", "R2"), edge("R2", "R1"), edge("R2", "B"), edge("A", "B"), edge("B", "End")],
+      ),
+    );
+    expect(neighborhood(g, name("Start"), 3, "action").hops.map(pairs)).toEqual([["Start→R1", "Start→A", "R1→R2", "R2→R1", "R2→B"], ["A→B", "B→End"], []]);
+    expect(neighborhood(g, name("R1"), 1, "action").hops.map(pairs)).toEqual([["R1→R2", "R2→R1", "R2→B"]]);
+    expect(neighborhood(g, name("Start"), 0, "action")).toEqual({ active: "Start", hops: [] });
+  });
+});
+
+describe("terminalAfter", () => {
+  it("PG3.28 the one terminal a node has an edge to (a node with no outgoing edges), or none when it has no such edge or several", () => {
+    const g = view(hotpot());
+    expect(terminalAfter(g, name("Bridge_Extract"))).toBe("End");
+    // Scan_Index leads to Bridge_Extract, which is no terminal; End leads nowhere.
+    expect(terminalAfter(g, name("Scan_Index"))).toBeUndefined();
+    expect(terminalAfter(g, name("End"))).toBeUndefined();
+    const nodes = [...hotpot().nodes, { id: "Failed", type: "STATUS", description: "The task failed." }];
+    const two = view(graphOf(nodes, [...hotpot().edges, edge("Bridge_Extract", "Failed")]));
+    expect(terminalAfter(two, name("Bridge_Extract"))).toBeUndefined();
+    // A terminal beside other successors is still the one terminal; parallel edges to it count once.
+    const mixed = view(graphOf(hotpot().nodes, [...hotpot().edges, edge("Scan_Index", "End"), edge("Scan_Index", "End", "TRIGGERS")]));
+    expect(terminalAfter(mixed, name("Scan_Index"))).toBe("End");
+  });
+
+  it("PG3.29 overlay edges the session sees count: into a terminal, and out of a node that would otherwise be one", () => {
+    const parsed = parseGraph(hotpot());
+    if (!parsed.ok) throw new Error("fixture");
+    const core = parsed.graph;
+    const learned = (from: string, to: string) => proposed({ kind: "edge", from, relation: "LEADS_TO", to, condition: null, guidance: "g", pitfalls: "" }, ["s1"]);
+    const shortcut = effectiveGraph(core, foldAll(revisionId(core), [learned("Scan_Index", "End")]), { salt: "x", probationShare: 1 });
+    expect(terminalAfter(shortcut, name("Scan_Index"))).toBe("End");
+    const onward = effectiveGraph(core, foldAll(revisionId(core), [learned("End", "Start")]), { salt: "x", probationShare: 1 });
+    expect(terminalAfter(onward, name("Bridge_Extract"))).toBeUndefined();
+    expect(terminalAfter(effectiveGraph(core, emptyOverlay(revisionId(core)), { salt: "x", probationShare: 1 }), name("Bridge_Extract"))).toBe("End");
   });
 });

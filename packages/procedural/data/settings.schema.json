@@ -18,7 +18,8 @@
               "type": "string",
               "enum": [
                 "exact",
-                "case-insensitive"
+                "case-insensitive",
+                "state-tracker"
               ]
             },
             "turnBoundary": {
@@ -29,10 +30,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -44,6 +73,14 @@
             },
             "guidanceCache": {
               "type": "boolean"
+            },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
             },
             "overlayRefresh": {
               "default": "turn",
@@ -137,6 +174,24 @@
                   "maximum": 9007199254740991
                 },
                 "stride": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "every": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?=\\d)(?:(\\d+)d)?(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                },
+                "afterTurns": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
@@ -279,7 +334,8 @@
               "type": "string",
               "enum": [
                 "exact",
-                "case-insensitive"
+                "case-insensitive",
+                "state-tracker"
               ]
             },
             "turnBoundary": {
@@ -290,10 +346,38 @@
               ]
             },
             "delivery": {
-              "type": "string",
-              "enum": [
-                "system",
-                "trailing-message"
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "trailing-message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "to": {
+                      "type": "string",
+                      "enum": [
+                        "system",
+                        "trailing-message"
+                      ]
+                    },
+                    "activeTools": {
+                      "default": "all",
+                      "type": "string",
+                      "enum": [
+                        "all",
+                        "successors"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
               ]
             },
             "guidancePrompt": {
@@ -305,6 +389,14 @@
             },
             "guidanceCache": {
               "type": "boolean"
+            },
+            "hopUnit": {
+              "default": "edge",
+              "type": "string",
+              "enum": [
+                "edge",
+                "action"
+              ]
             },
             "overlayRefresh": {
               "default": "turn",
@@ -398,6 +490,24 @@
                   "maximum": 9007199254740991
                 },
                 "stride": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "every": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?=\\d)(?:(\\d+)d)?(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  ]
+                },
+                "afterTurns": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
@@ -545,7 +655,8 @@
             "type": "string",
             "enum": [
               "exact",
-              "case-insensitive"
+              "case-insensitive",
+              "state-tracker"
             ]
           },
           "turnBoundary": {
@@ -556,10 +667,38 @@
             ]
           },
           "delivery": {
-            "type": "string",
-            "enum": [
-              "system",
-              "trailing-message"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "system",
+                  "trailing-message"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "to": {
+                    "type": "string",
+                    "enum": [
+                      "system",
+                      "trailing-message"
+                    ]
+                  },
+                  "activeTools": {
+                    "default": "all",
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "successors"
+                    ]
+                  }
+                },
+                "required": [
+                  "to"
+                ],
+                "additionalProperties": false
+              }
             ]
           },
           "guidancePrompt": {
@@ -571,6 +710,14 @@
           },
           "guidanceCache": {
             "type": "boolean"
+          },
+          "hopUnit": {
+            "default": "edge",
+            "type": "string",
+            "enum": [
+              "edge",
+              "action"
+            ]
           },
           "overlayRefresh": {
             "default": "turn",
@@ -664,6 +811,24 @@
                 "maximum": 9007199254740991
               },
               "stride": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "every": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^(?=\\d)(?:(\\d+)d)?(?:(\\d+)h)?(?:(\\d+)m)?(?:(\\d+)s)?$"
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ]
+              },
+              "afterTurns": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
@@ -828,6 +993,26 @@
       ],
       "additionalProperties": false
     },
+    "sessions": {
+      "type": "object",
+      "properties": {
+        "idleMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "idleMs",
+        "max"
+      ],
+      "additionalProperties": false
+    },
     "graphContext": {
       "type": "object",
       "properties": {
@@ -900,6 +1085,14 @@
         "reflection": {
           "type": "string",
           "minLength": 1
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1
+        },
+        "taskJudge": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -908,7 +1101,8 @@
         "guidanceHarness",
         "refiner",
         "dream",
-        "reflection"
+        "reflection",
+        "route"
       ],
       "additionalProperties": false
     }
@@ -916,6 +1110,7 @@
   "required": [
     "presets",
     "decoding",
+    "sessions",
     "graphContext",
     "prompts"
   ],

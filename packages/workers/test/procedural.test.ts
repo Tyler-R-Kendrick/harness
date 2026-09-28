@@ -6,14 +6,14 @@ import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { HARNESS, usage } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
-import { GUIDANCE_LABEL, MemoryProceduralStore, parseGraph, parseSettings, proceduralStep, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
+import { GUIDANCE_LABEL, MemoryProceduralStore, parseGraph, parseSettings, proceduralStep, projectTurn, SnapshotProceduralStore, StepRecordSchema } from "@harness/procedural";
 import type { ProceduralStepDeps, ProceduralStore, Settings, StepRecord } from "@harness/procedural";
 import { ManualClock, MemoryStorage, nullSandbox, scriptedHarness, SeededEntropy } from "@harness/testkit";
 import { AgentWorker, harnessSessions, sessionAgent } from "@harness/workers";
 import { hotpot } from "../../procedural/test/fixtures.ts";
 import { GRAPH, hotpotGraph, resolver, seed, settingsFile, variant } from "../../procedural/test/step-fixtures.ts";
 
-const finish = (unified: "stop" | "tool-calls" = "stop"): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: usage() });
+const finish = (unified: "stop" | "tool-calls" = "stop", used = usage()): LanguageModelV4StreamPart => ({ type: "finish", finishReason: { unified, raw: undefined }, usage: used });
 const text = (t: string): LanguageModelV4StreamPart[] => [
   { type: "text-start", id: "0" },
   { type: "text-delta", id: "0", delta: t },
@@ -65,6 +65,18 @@ const contents = (m: LanguageModelV4CallOptions["prompt"][number]): string => (t
 const advisories = (o: LanguageModelV4CallOptions) => o.prompt.filter((m) => m.role === "user" && contents(m).startsWith(GUIDANCE_LABEL));
 
 describe("procedural guidance in a session worker (sessionAgent + proceduralStep)", () => {
+  it("PW1.85 successor-only delivery offers each step only the tools of its node's successor actions, and every tool where there are none", async () => {
+    const successors = parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, strict: { ...settingsFile.presets.harness, delivery: { to: "trailing-message", activeTools: "successors" } } } });
+    const d = await deps("strict", successors);
+    const model = scripted([call("first_hop_retrieve"), finish("tool-calls")], [call("Scan_Index", "c2"), finish("tool-calls")], [...text("Answer."), finish()]);
+    const tools = { first_hop_retrieve: retrieve, Scan_Index: retrieve, grep: retrieve };
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools, step: proceduralStep(d) }) });
+    const { events, done } = run(worker, "Who directed the film?");
+    await done;
+    expect(model.doStreamCalls.map((c) => (c.tools ?? []).map((t) => t.name))).toEqual([["first_hop_retrieve"], ["Scan_Index"], ["first_hop_retrieve", "Scan_Index", "grep"]]);
+    expect(records(events).map((r) => r.activeTools)).toEqual([["first_hop_retrieve"], ["Scan_Index"], undefined]);
+  });
+
   it("PW1.15 the paper preset puts the guidance in the system prompt of every step, once, and each step's record lands before its tool call", async () => {
     const d = await deps("paper");
     const model = scripted([call("first_hop_retrieve"), finish("tool-calls")], [...text("Answer."), finish()]);
@@ -73,11 +85,23 @@ describe("procedural guidance in a session worker (sessionAgent + proceduralStep
     await done;
     const systems = model.doStreamCalls.map((c) => c.prompt.filter((m) => m.role === "system").map(contents));
     expect(systems).toEqual([[`Be brief.\n\n${GUIDANCE_LABEL}advice 0`], [`Be brief.\n\n${GUIDANCE_LABEL}advice 1`]]);
-    expect(updates(events).map((u) => u.sessionUpdate)).toEqual(["notice", "tool_call", "tool_call_update", "notice", "agent_message_chunk"]);
+    // Each step's record comes before its model call, and its usage once it ends.
+    expect(updates(events).map((u) => (u.sessionUpdate === "notice" ? u.title : u.sessionUpdate))).toEqual(["Procedural step", "tool_call", "tool_call_update", "Procedural step usage", "Procedural step", "agent_message_chunk", "Procedural step usage"]);
     expect(records(events).map((r) => [r.node, r.action])).toEqual([
       ["Start", null],
       ["First_Hop_Retrieve", "first_hop_retrieve"],
     ]);
+  });
+
+  it("PW1.68 the session log of a guided turn gives its trajectory the model's input and output tokens, and the guidance model's", async () => {
+    const d = await deps("harness");
+    const model = scripted([call("first_hop_retrieve"), finish("tool-calls", usage(120, 9))], [...text("Answer."), finish("stop", usage(150, 4))]);
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools: { first_hop_retrieve: retrieve }, step: proceduralStep(d) }) });
+    const { events, done } = run(worker, "Who directed the film?");
+    await done;
+    const payloads = [{ event: "turn.started", data: { turnId: "t1" } }, ...updates(events).map((update) => ({ update })), { event: "turn.ended", data: { turnId: "t1", stopReason: "end_turn" } }];
+    const trajectory = projectTurn(payloads.map((payload, offset) => ({ offset, payload })), { sessionId: "s1", turnId: "t1" });
+    expect(trajectory?.usage).toEqual({ steps: 3, inputTokens: 270, outputTokens: 13, guidanceTokens: 24 });
   });
 
   it("PW1.16 the harness preset adds one tagged advisory message per model call, never stacked, and never kept in the conversation", async () => {
@@ -194,5 +218,46 @@ describe("procedural guidance for an opaque harness (harnessSessions + procedura
       ["Start", null],
       ["weather", "weather"],
     ]);
+  });
+
+  it("PW1.80 under a state-tracker preset a coarse harness tool is localized by its arguments, or where its result declares", async () => {
+    const d = await deps("tracker", parseSettings({ ...settingsFile, presets: { ...settingsFile.presets, tracker: { ...settingsFile.presets.harness, match: "state-tracker" } } }));
+    const tests = { type: "object", properties: { command: { type: "string", pattern: "^npm test" } }, required: ["command"] };
+    const graph = parseGraph({
+      ...hotpot(),
+      nodes: [
+        { id: "Start", type: "STATUS", description: "Begin." },
+        { id: "Shell", type: "ACTION", description: "Any command.", binding: { kind: "tool", name: "sh", declares: true } },
+        { id: "Run_Tests", type: "ACTION", description: "Run the tests.", binding: { kind: "tool", name: "sh", arguments: tests } },
+        { id: "Review", type: "REASONING", description: "Read the failures." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [
+        { from: "Start", relation: "LEADS_TO", to: "Shell", condition: null, guidance: "", pitfalls: "" },
+        { from: "Shell", relation: "LEADS_TO", to: "Run_Tests", condition: null, guidance: "", pitfalls: "" },
+        { from: "Run_Tests", relation: "LEADS_TO", to: "Review", condition: null, guidance: "", pitfalls: "" },
+        { from: "Review", relation: "LEADS_TO", to: "End", condition: null, guidance: "", pitfalls: "" },
+      ],
+    });
+    if (!graph.ok) throw new Error("fixture");
+    await seed(d.store, graph.graph, GRAPH, "dream");
+    // The environment's tool says where the agent is after reading a log.
+    const sh = tool({
+      inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string" } }, required: ["command"] }),
+      execute: async ({ command }) => (command.startsWith("cat") ? { stdout: "2 failed", _meta: { harness: { procedural: { node: "Review" } } } } : { stdout: "ok" }),
+    });
+    // The prompt arrives with the turn's guidance prepended.
+    const harness = scriptedHarness((p) => {
+      const command = /run (.*)$/.exec(p)?.[1];
+      return command === undefined ? "ok" : { text: "ran", tool: { name: "sh", input: { command } } };
+    });
+    const worker = new AgentWorker({ agent: harnessSessions(new HarnessAgent({ harness, tools: { sh } }), { sandboxSession: nullSandbox, step: proceduralStep(d) }) });
+    const all: WorkerEvent[] = [];
+    for (const [i, prompt] of ["run npm test", "next", "run cat log", "next", "run ls", "next"].entries()) {
+      const turn = run(worker, prompt, `t${i}`);
+      await turn.done;
+      all.push(...turn.events);
+    }
+    expect(records(all).map((r) => r.node)).toEqual(["Start", "Run_Tests", "Run_Tests", "Review", "Review", "Shell"]);
   });
 });

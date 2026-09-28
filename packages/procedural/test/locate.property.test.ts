@@ -17,9 +17,9 @@ const graph = fc
   .uniqueArray(nodeName, { minLength: 1, maxLength: 8, comparator: (a, b) => a === b })
   .chain((ids) =>
     fc.record({
-      nodes: fc.tuple(...ids.map((id) => fc.record({ description: line, binding: fc.option(nodeName, { nil: undefined }) }).map(({ description, binding }): EffectiveNode => {
+      nodes: fc.tuple(...ids.map((id) => fc.record({ description: line, binding: fc.option(nodeName, { nil: undefined }), declares: fc.boolean() }).map(({ description, binding, declares }): EffectiveNode => {
         const n = { id: NodeNameSchema.parse(id), type: "ACTION", description, origin: "core" as const };
-        return binding === undefined ? n : { ...n, binding: { kind: "tool", name: binding } };
+        return binding === undefined ? n : { ...n, binding: { kind: "tool", name: binding, ...(declares ? { declares: true as const } : {}) } };
       }))),
       edges: fc.array(
         fc.record({ from: fc.constantFrom(...ids), to: fc.constantFrom(...ids), condition: fc.option(line, { nil: null }), guidance: line, pitfalls: line }).map(
@@ -61,6 +61,43 @@ describe("neighborhood", () => {
       expect(new Set(edges)).toEqual(new Set(expected));
     });
   });
+
+  /** Some nodes turned into reasoning nodes, by a mask. */
+  const mixed = fc.tuple(graph, fc.array(fc.boolean(), { minLength: 8, maxLength: 8 })).map(([g, mask]): EffectiveGraph => ({ ...g, nodes: g.nodes.map((n, i) => (mask[i] ? n : { ...n, type: "REASONING" })) }));
+
+  /** 0-1 breadth-first distances: entering an ACTION node costs one hop, anything else none (the active node's own type does not count). */
+  function actionDistances(g: EffectiveGraph, from: string): Map<string, number> {
+    const d = new Map([[from, 0]]);
+    const deque = [from];
+    for (let u = deque.shift(); u !== undefined; u = deque.shift()) {
+      for (const e of g.edges) {
+        if (e.from !== u) continue;
+        const cost = g.nodes.find((n) => n.id === e.to)!.type === "ACTION" ? 1 : 0;
+        const via = d.get(u)! + cost;
+        if (!d.has(e.to) || via < d.get(e.to)!) {
+          d.set(e.to, via);
+          if (cost === 0) deque.unshift(e.to);
+          else deque.push(e.to);
+        }
+      }
+    }
+    return d;
+  }
+
+  test.prop([mixed, fc.nat(), fc.nat({ max: 5 })])("PG3.P5 in action hops, hop k holds exactly the edges whose source is k − 1 action nodes away, each once; with every node an action it is the edge count", (g, i, hops) => {
+    const active = pick(g, i).id;
+    const n = neighborhood(g, active, hops, "action");
+    const d = actionDistances(g, active);
+    expect(n.hops).toHaveLength(hops);
+    const listed = n.hops.flat();
+    expect(new Set(listed).size).toBe(listed.length);
+    n.hops.forEach((edges, k) => {
+      const expected = g.edges.filter((e) => d.get(e.from) === k);
+      expect(new Set(edges)).toEqual(new Set(expected));
+    });
+    const actions: EffectiveGraph = { ...g, nodes: g.nodes.map((x) => ({ ...x, type: "ACTION" })) };
+    expect(neighborhood(actions, active, hops, "action")).toEqual(neighborhood(actions, active, hops, "edge"));
+  });
 });
 
 describe("match", () => {
@@ -75,6 +112,20 @@ describe("match", () => {
       expect(loose).toBe(exact);
     }
     expect(loose !== undefined).toBe(g.nodes.some((n) => names(n).some((x) => x?.toLowerCase() === action.toLowerCase())));
+  });
+
+  test.prop([graph, fc.oneof(nodeName, fc.nat().map(String)), fc.option(nodeName, { nil: undefined })])("PG3.P6 the state tracker takes a declared node the graph has only from a tool the core trusts to declare; otherwise, with no predicates, it finds a node exactly when exact does, preferring a binding", (g, action, declared) => {
+    const tracked = match({ name: action, ...(declared === undefined ? {} : { declared }) }, g, "state-tracker");
+    const trusted = g.nodes.some((n) => n.binding?.kind === "tool" && n.binding.name === action && n.binding.declares === true);
+    if (trusted && declared !== undefined && g.nodes.some((n) => n.id === declared)) {
+      expect(tracked).toBe(declared);
+      return;
+    }
+    const exact = match(action, g, "exact");
+    expect(tracked !== undefined).toBe(exact !== undefined);
+    if (tracked !== undefined) expect(names(g.nodes.find((n) => n.id === tracked)!)).toContain(action);
+    const boundTo = g.nodes.find((n) => n.binding?.name === action);
+    if (boundTo !== undefined) expect(tracked).toBe(boundTo.id);
   });
 });
 

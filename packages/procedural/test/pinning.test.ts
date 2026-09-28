@@ -142,6 +142,21 @@ describe("pinning a session (plan §5.1)", () => {
     expect(await pin({ repinOnDream: "never" })).toMatchObject({ core: orphan.id });
   });
 
+  it("PX1.46 a head that returns to an earlier head is a revert: it re-pins under 'never', whatever its record's origin", async () => {
+    const { store, seed, pin } = await world();
+    const b = revision(1, [seed.id]);
+    const c = revision(2, [b.id]);
+    await commit(store, b);
+    await commit(store, c);
+    await store.pins.set("s1", { graph: GRAPH, core: seed.id, overlay: 0, salt: "s", at: 0 });
+    // Under 'never' the session keeps its older core while dreams move the head on.
+    expect(await pin({ repinOnDream: "never" })).toMatchObject({ core: seed.id });
+    // A revert moves the head back to b, whose record is still the dream's.
+    expect(await revertGraph({ store, graph: GRAPH, to: b.id })).toEqual({ status: "reverted", from: c.id, to: b.id });
+    expect((await store.revisions.get(GRAPH, b.id))?.origin).toBe("dream");
+    expect(await pin({ repinOnDream: "never" })).toMatchObject({ core: b.id });
+  });
+
   it("PX1.43 ancestry stops at a missing record and survives a cycle of parents", async () => {
     const { store, pin } = await world();
     const pinned = revision(10);
@@ -239,7 +254,7 @@ describe("pinning a session (plan §5.1)", () => {
     clock.advance(1);
     expect(await pinSession({ store: reopened, ...request })).toEqual(first);
     expect(entropy.draws).toEqual([SALT_BYTES]);
-    expect(await revertGraph({ store: reopened, graph: GRAPH, clock })).toMatchObject({ status: "reverted", to: imported.revision });
+    expect(await revertGraph({ store: reopened, graph: GRAPH })).toMatchObject({ status: "reverted", to: imported.revision });
     expect(await pinSession({ store: reopened, ...request })).toEqual({ ...first, core: imported.revision, overlay: 3, at: 51 });
   });
 });

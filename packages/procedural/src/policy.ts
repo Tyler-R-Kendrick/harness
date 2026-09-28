@@ -11,7 +11,7 @@ import { matches, WhenSchema } from "./resolver.ts";
 import type { ResolveContext } from "./resolver.ts";
 
 /** The operations a policy can allow or deny. */
-export const ACTIONS = ["read", "write", "dream", "revert", "import"] as const;
+export const ACTIONS = ["read", "write", "dream", "revert", "import", "approve"] as const;
 export type Action = (typeof ACTIONS)[number];
 
 const PolicyRuleSchema = z.strictObject({

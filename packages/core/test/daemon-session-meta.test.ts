@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { Daemon } from "@harness/core";
+import { describe, expect, it, vi } from "vitest";
+import { Daemon, SessionLog } from "@harness/core";
 import type { DaemonDeps, Identity, WorkerCommand } from "@harness/core";
 import { DaemonDriver, ManualClock, SeededEntropy } from "@harness/testkit";
 
@@ -152,5 +152,75 @@ describe("host-side publish", () => {
     r.connect("p", PLUGIN);
     r.initialize("p");
     expect(poll(r).map((e) => [e["type"], e["source"], e["payload"]])).toEqual([["procedural.reverted", "host", { to: 2 }]]);
+  });
+});
+
+describe("host-side log reads", () => {
+  /** A daemon with two sessions, the first with one ended turn in its log. */
+  function twoSessions() {
+    const daemon = new Daemon(deps());
+    const d = driver(daemon);
+    const first = (newSession(d).result as { sessionId: string }).sessionId;
+    const second = (newSession(d).result as { sessionId: string }).sessionId;
+    endTurn(d, prompt(d, first));
+    return { daemon, d, first, second };
+  }
+
+  const entriesOf = (daemon: Daemon, sessionId: string) => (daemon.snapshot().sessions.find((s) => s.id === sessionId)!.log as { entries: unknown[] }).entries;
+
+  it("DM10.12 readLog returns a session's entries in [from, to), as its log holds them; to defaults to the head", () => {
+    const { daemon, first } = twoSessions();
+    const all = entriesOf(daemon, first);
+    expect(all.length).toBeGreaterThan(2);
+    expect(daemon.readLog(first)).toStrictEqual(all);
+    expect(daemon.readLog(first, 1)).toStrictEqual(all.slice(1));
+    expect(daemon.readLog(first, 1, 2)).toStrictEqual(all.slice(1, 2));
+    expect(daemon.readLog(first, 0, 1_000)).toStrictEqual(all);
+    expect(daemon.readLog(first, all.length)).toStrictEqual([]);
+    expect(daemon.readLog(first, all.length + 5)).toStrictEqual([]);
+    expect(daemon.readLog(first, 2, 1)).toStrictEqual([]);
+    expect(daemon.readLog(first, 2, 2)).toStrictEqual([]);
+  });
+
+  it("DM10.13 readLog of an unknown session is empty, and a negative or fractional bound is a RangeError", () => {
+    const { daemon, first } = twoSessions();
+    expect(daemon.readLog("ses_unknown")).toStrictEqual([]);
+    for (const [from, to] of [[-1, undefined], [0.5, undefined], [Number.NaN, undefined]] as const) {
+      expect(() => daemon.readLog(first, from, to)).toThrow(new RangeError(`from must be a whole number of at least 0, not ${from}`));
+    }
+    for (const to of [-1, 1.5]) expect(() => daemon.readLog(first, 0, to)).toThrow(new RangeError(`to must be a whole number of at least 0, not ${to}`));
+    expect(daemon.readLog(first, 0, 0)).toStrictEqual([]);
+  });
+
+  it("DM10.14 readLog copies no session's log but the one read, and what it returns is the caller's", () => {
+    const { daemon, first } = twoSessions();
+    const toJSON = vi.spyOn(SessionLog.prototype, "toJSON");
+    try {
+      const read = daemon.readLog(first) as unknown[];
+      expect(toJSON).not.toHaveBeenCalled();
+      read.length = 0;
+      expect(daemon.readLog(first).length).toBeGreaterThan(2);
+    } finally {
+      toJSON.mockRestore();
+    }
+  });
+
+  it("DM10.15 entries compacted below a restored log's base are gone: a read starts at the base", () => {
+    const { daemon, first } = twoSessions();
+    const snapshot = JSON.parse(JSON.stringify(daemon.snapshot())) as { sessions: { id: string; log: { base: number; entries: unknown[] } }[] };
+    const log = snapshot.sessions.find((s) => s.id === first)!.log;
+    const kept = log.entries.slice(2);
+    snapshot.sessions.find((s) => s.id === first)!.log = { base: 2, entries: kept };
+    const restored = Daemon.restore(snapshot, deps());
+    expect(restored.readLog(first)).toStrictEqual(kept);
+    expect(restored.readLog(first, 0, 3)).toStrictEqual(kept.slice(0, 1));
+    expect(restored.readLog(first, 0, 2)).toStrictEqual([]);
+  });
+
+  it("DM10.16 sessionIds lists every session the daemon holds, in creation order, restored ones included", () => {
+    const { daemon, first, second } = twoSessions();
+    expect(daemon.sessionIds()).toStrictEqual([first, second]);
+    expect(new Daemon(deps()).sessionIds()).toStrictEqual([]);
+    expect(Daemon.restore(JSON.parse(JSON.stringify(daemon.snapshot())), deps()).sessionIds()).toStrictEqual([first, second]);
   });
 });

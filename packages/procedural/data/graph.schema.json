@@ -59,6 +59,17 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200
+                  },
+                  "arguments": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "declares": {
+                    "type": "boolean",
+                    "const": true
                   }
                 },
                 "required": [

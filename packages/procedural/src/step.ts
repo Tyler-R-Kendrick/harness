@@ -5,7 +5,8 @@
  * neighborhood of the effective graph (or the whole graph), asks the guidance model,
  * delivers the guidance, and reports a step record. Structurally a `StepHook` of
  * `@harness/workers` (`sessionAgent({ step })`); its `turn` variant guides opaque
- * harness workers (`harnessSessions({ step })`) once per turn.
+ * harness workers (`harnessSessions({ step })`) once per turn, and its `end` records each
+ * step's model usage once the step ends (a step record precedes its model call).
  */
 import type { Instructions, LanguageModel, ModelMessage, SystemModelMessage, ToolResultPart } from "ai";
 import { z } from "zod";
@@ -13,17 +14,18 @@ import { HARNESS, Sha256Schema } from "@harness/cognitive";
 import type { ScoredTrajectory } from "./trajectory.ts";
 import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, RevisionIdSchema } from "./graph.ts";
-import type { GraphId } from "./graph.ts";
+import type { GraphId, ProceduralGraph } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
-import { match, neighborhood } from "./locate.ts";
+import { declaredNode, match, neighborhood } from "./locate.ts";
+import type { Neighborhood, ObservedAction } from "./locate.ts";
 import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
 import type { EffectiveEdge, EffectiveGraph, EffectiveNode } from "./overlay-types.ts";
 import { pinSession, readOverlay } from "./pinning.ts";
 import { authorize } from "./policy.ts";
 import type { AccessPolicy } from "./policy.ts";
-import { resolveGraph } from "./resolver.ts";
-import type { ResolveContext, Resolver } from "./resolver.ts";
+import { resolveGraph, routeGraph, routes } from "./resolver.ts";
+import type { GraphRouter, ResolveContext, Resolver, RouteAnswer } from "./resolver.ts";
 import { serializeGraph, serializeNeighborhood, serializeWindow } from "./serialize.ts";
 import { guidancePromptOf, HOPS, presetOf, WINDOW } from "./settings.ts";
 import type { Preset, Settings } from "./settings.ts";
@@ -51,8 +53,23 @@ export const StepRecordSchema = z.strictObject({
   /** The probationary overlay entries the step showed (plan §6.3). */
   exposure: z.array(EntryIdSchema),
   usage: z.strictObject({ inputTokens: z.int().min(0), outputTokens: z.int().min(0) }),
+  /** The only tools the step offered, under successor-only delivery; absent when it offered every tool. */
+  activeTools: z.array(z.string()).exactOptional(),
 });
 export type StepRecord = z.output<typeof StepRecordSchema>;
+
+/** A step's model usage, as `_meta.harness.procedural.usage` on a notice reported once the step ends. */
+export const StepUsageSchema = z.strictObject({ inputTokens: z.int().min(0), outputTokens: z.int().min(0) });
+export type StepUsage = z.output<typeof StepUsageSchema>;
+
+/** The notice a step's usage travels in. */
+export interface StepUsageNotice {
+  readonly sessionUpdate: "notice";
+  readonly severity: "info";
+  readonly title: string;
+  readonly description: string;
+  readonly _meta: { readonly harness: { readonly procedural: { readonly usage: StepUsage } } };
+}
 
 /** The notice a step record travels in: an ACP `notice` session update. */
 export interface StepNotice {
@@ -63,13 +80,19 @@ export interface StepNotice {
   readonly _meta: { readonly harness: { readonly procedural: { readonly step: StepRecord } } };
 }
 
-/** The session and turn a step belongs to (the workers' `TurnScope`). */
-export interface StepScope {
+/** The session and turn a step belongs to (the workers' `TurnScope`), and what it reports. */
+export interface StepScope<N = StepNotice> {
   readonly sessionId: string;
   readonly turnId?: string;
   readonly cwd?: string;
   readonly sessionMeta?: Readonly<Record<string, unknown>>;
-  readonly report: (update: StepNotice) => void;
+  readonly report: (update: N) => void;
+}
+
+/** A step that ended, as the workers' `StepEndContext` gives it: its model usage. */
+export interface StepEndInput extends StepScope<StepUsageNotice> {
+  readonly stepNumber: number;
+  readonly usage: { readonly inputTokens?: number | undefined; readonly outputTokens?: number | undefined };
 }
 
 /** One step, as the workers' `StepContext` gives it. */
@@ -86,13 +109,30 @@ export interface StepInput extends StepScope {
 export interface TurnInput extends StepScope {
   readonly messages: readonly ModelMessage[];
   readonly lastAction: string | undefined;
+  /** The harness's last call with its input and its result's output, when known (what a state tracker reads). */
+  readonly lastCall?: { readonly name: string; readonly input: unknown; readonly output?: unknown };
   readonly tools?: readonly string[];
 }
 
 /** A step hook: structurally the workers' `StepHook`. */
 export interface ProceduralStepHook {
-  prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[] } | undefined>;
+  prepare(input: StepInput): Promise<{ instructions?: Instructions; messages?: ModelMessage[]; activeTools?: string[] } | undefined>;
   turn(input: TurnInput): Promise<string | undefined>;
+  /**
+   * The core revision the session reads this turn, or undefined when it has no graph. It
+   * resolves and pins at a turn boundary as a step does, so the turn's steps read the same
+   * core: a host builds the turn's tools from it (`sessionTools`, plan §7.6). Without a
+   * turn id every call is a boundary. A session whose resolver rule routes is routed by
+   * the first prompt of `messages`, the turn's conversation; without them it has no graph.
+   * Given the conversation, a call for a session evicted meanwhile whose conversation
+   * resumes its turn (a stream restarted after an approval round) reads the pin it had, as
+   * a step does.
+   */
+  core(scope: StepScope & { readonly messages?: readonly ModelMessage[] }): Promise<ProceduralGraph | undefined>;
+  /** Records a step's model usage in the session log, for a session with a graph (the trajectory's input and output tokens). */
+  end(input: StepEndInput): Promise<void>;
+  /** Evicts a session's state (its pinned view and guidance cache), e.g. when it is detached. */
+  forget(sessionId: string): void;
 }
 
 export interface ProceduralStepDeps {
@@ -116,6 +156,8 @@ export interface ProceduralStepDeps {
   readonly preset?: string;
   /** The guidance model; the step's own model when not given. */
   readonly model?: LanguageModel;
+  /** Chooses a graph for a session whose resolver rule routes (`modelGraphRouter`); without one such a session has no graph. */
+  readonly router?: GraphRouter;
 }
 
 /** The tag on the advisory message `trailing-message` delivery adds (under `providerOptions.harness`). */
@@ -142,23 +184,45 @@ function scoped(messages: readonly ModelMessage[], boundary: Preset["turnBoundar
   return own.slice(from);
 }
 
-/** The last action: the last tool call of the last assistant message that has one, with the rest of its batch. */
-function lastCall(messages: readonly ModelMessage[]): { name: string; others: string[] } | undefined {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.role !== "assistant" || typeof m.content === "string") continue;
-    const names = m.content.flatMap((p) => (p.type === "tool-call" ? [p.toolName] : []));
-    if (names.length > 0) return { name: names.at(-1)!, others: names.slice(0, -1) };
-  }
-  return undefined;
-}
 
 const outputText = (output: ToolResultPart["output"]): string => (output.type === "text" || output.type === "error-text" ? output.value : canonicalJson(output.type === "json" || output.type === "error-json" ? output.value : output));
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+/** The node a tool result part declares, in its JSON value. */
+// Stryker disable next-line ConditionalExpression: equivalent; a text result's value is a string, which declares nothing
+const declaredBy = (output: ToolResultPart["output"]): string | undefined => (output.type === "json" || output.type === "error-json" ? declaredNode(output.value) : undefined);
 
-/** Messages as learning's steps, for the trajectory window. */
-function stepsOf(messages: readonly ModelMessage[]): Step[] {
+/** An action observed from a call's name, arguments and the node its result declared. */
+function observe(name: string, args: unknown, declared: string | undefined): ObservedAction {
+  // Stryker disable next-line ConditionalExpression: equivalent; an undefined declared node names no node, as an absent one
+  return { name, arguments: args, ...(declared === undefined ? {} : { declared }) };
+}
+
+/**
+ * The last action: the last tool call of the last assistant message that has one, with
+ * the rest of its batch, its arguments and the node its result (in a later tool message)
+ * declared.
+ */
+function lastCall(messages: readonly ModelMessage[]): { action: ObservedAction; others: string[] } | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]!;
+    // Stryker disable next-line ConditionalExpression: equivalent; user and tool messages hold no tool-call parts
+    if (m.role !== "assistant" || typeof m.content === "string") continue;
+    const calls = m.content.flatMap((p) => (p.type === "tool-call" ? [p] : []));
+    const last = calls.at(-1);
+    if (last === undefined) continue;
+    // Stryker disable next-line ConditionalExpression,ArrayDeclaration: equivalent; only tool messages hold tool-result parts
+    const results = messages.slice(i + 1).flatMap((r) => (r.role === "tool" ? r.content : []));
+    // Stryker disable next-line ConditionalExpression: equivalent; the other part of a tool message (an approval response) has no call id
+    const own = results.find((p) => p.type === "tool-result" && p.toolCallId === last.toolCallId);
+    const action = observe(last.toolName, last.input, own?.type === "tool-result" ? declaredBy(own.output) : undefined);
+    return { action, others: calls.slice(0, -1).map((c) => c.toolName) };
+  }
+  return undefined;
+}
+
+/** Messages as learning's steps (a trajectory's), for the trajectory window and for rollouts. */
+export function trajectorySteps(messages: readonly ModelMessage[]): Step[] {
   return messages.flatMap((m): Step[] => {
     if (m.role === "user") return [{ role: "user", content: textOf(m) }];
     if (m.role === "tool") return m.content.flatMap((p): Step[] => (p.type === "tool-result" ? [{ role: "tool", content: outputText(p.output) }] : []));
@@ -191,9 +255,30 @@ function exposureOf(nodes: readonly EffectiveNode[], edges: readonly EffectiveEd
   return [...ids];
 }
 
+/**
+ * The tools of the active node's successor actions (hop 1 of its neighborhood, so under
+ * action hops the first actions past any reasoning or status nodes), each by the first of
+ * its binding's name and its id the session offers (the first, when the tools are
+ * unknown). Undefined when there are none, so every tool stays offered.
+ */
+function successorTools(view: EffectiveGraph, around: Neighborhood, tools: readonly string[] | undefined): string[] | undefined {
+  const names = new Set<string>();
+  // Hop 1 is always there (HOPS ≥ 1), and every edge of the effective graph ends at one of its nodes (I6).
+  for (const e of around.hops[0]!) {
+    const next = nodeById(view, e.to)!;
+    if (next.type !== "ACTION") continue;
+    const candidates = next.binding === undefined ? [next.id] : [next.binding.name, next.id];
+    const offered = tools === undefined ? candidates[0] : candidates.find((c) => tools.includes(c));
+    if (offered !== undefined) names.add(offered);
+  }
+  return names.size > 0 ? [...names] : undefined;
+}
+
 /** What a session reads until its next turn boundary: one version pair (I3). */
 interface View {
   readonly graph: GraphId;
+  /** The pinned core revision. */
+  readonly core: ProceduralGraph;
   readonly effective: EffectiveGraph;
 }
 
@@ -201,62 +286,145 @@ interface Session {
   readonly turnId: string | undefined;
   readonly view: View | undefined;
   readonly cache: GuidanceCache;
+  /** The router's answers for this session, by request, so a session unrouted at one turn is not asked again for the same prompt. */
+  readonly routed: Map<string, RouteAnswer>;
+  /** The Clock time of the session's last step. */
+  readonly seen: number;
 }
+
+/**
+ * Whether a step continues the turn it is in rather than starting one: a later step of
+ * the stream, or a restarted stream (after an approval round) whose conversation ends
+ * with tool results rather than a new prompt.
+ */
+const continues = (input: StepInput): boolean => input.stepNumber > 0 || resumes(input.messages);
+
+/** Whether a conversation resumes its turn: it ends with something other than a new prompt (advisories and system messages aside). */
+const resumes = (messages: readonly ModelMessage[]): boolean => messages.filter((m) => m.role !== "system" && !isAdvisory(m)).at(-1)?.role !== "user";
 
 /**
  * The procedural step hook (plan §5): resolve, pin, match, neighborhood, serialize,
  * cache, guide, deliver, record. A session re-resolves and re-pins at each turn
  * boundary (a new turn id); an approval round restarts the agent's stream but not the
  * turn, so the node is not reset. A session without a graph is left unguided.
+ *
+ * Per-session state (the pinned view and the guidance cache) is kept for the sessions in
+ * use: `forget` evicts one (the host calls it when a session is detached), a session idle
+ * for longer than the settings' `sessions.idleMs` (by the Clock) is evicted at the next
+ * step of any session, and beyond `sessions.max` the least recently used one is. A step
+ * that continues its turn after its session was evicted reads the stored pin as it is,
+ * so a turn still reads one version pair (I3).
  */
 export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
   const preset = presetOf(deps.settings, deps.preset ?? "harness");
+  const { idleMs, max } = deps.settings.sessions;
+  /** Each session's state, the least recently used first. */
   const sessions = new Map<string, Session>();
 
-  const load = async (scope: StepScope): Promise<View | undefined> => {
+  /** Evict the sessions idle for longer than `idleMs`: the least recently used come first, so the first one in use ends the sweep. */
+  const sweep = (now: number): void => {
+    for (const [id, session] of sessions) {
+      if (now - session.seen <= idleMs) return;
+      sessions.delete(id);
+    }
+  };
+
+  /** Keep a session's state as the most recently used, evicting the least recently used beyond `max`. */
+  const keep = (id: string, session: Session): void => {
+    sessions.delete(id);
+    sessions.set(id, session);
+    for (const old of sessions.keys()) {
+      if (sessions.size <= max) return;
+      sessions.delete(old);
+    }
+  };
+
+  /** A routing session's graph, routed by its first prompt. */
+  const route = async (scope: StepScope<never>, context: ResolveContext, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
+    const first = scoped(messages, "carry").find((m) => m.role === "user");
+    const pin = await deps.store.pins.get(scope.sessionId);
+    const router = deps.router;
+    const ask: GraphRouter | undefined =
+      router &&
+      (async (request) => {
+        const key = canonicalJson(request);
+        const known = routed.get(key) ?? (await router(request));
+        routed.set(key, known);
+        return known;
+      });
+    return routeGraph(deps.resolver, { ...context, ...(first === undefined ? {} : { prompt: textOf(first) }), ...(pin === undefined ? {} : { pinned: pin.graph }) }, ask);
+  };
+
+  /**
+   * The session's graph: resolved, or routed by its first prompt (asking the router once per
+   * request, and not again once pinned), and only when the access policy allows it.
+   */
+  const resolve = async (scope: StepScope<never>, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>): Promise<GraphId | undefined> => {
     // Stryker disable next-line ConditionalExpression: equivalent because the resolver reads an undefined meta, cwd or principal as an absent one
     const context: ResolveContext = { ...(scope.sessionMeta ? { meta: scope.sessionMeta } : {}), ...(scope.cwd === undefined ? {} : { cwd: scope.cwd }), ...(deps.principal === undefined ? {} : { principal: deps.principal }) };
-    const graph = resolveGraph(deps.resolver, context);
-    if (graph === undefined || !authorize(deps.policy, "read", graph, context) || !authorize(deps.policy, "write", graph, context)) return undefined;
+    const graph = routes(deps.resolver, context) ? await route(scope, context, messages, routed) : resolveGraph(deps.resolver, context);
+    // A guided session is pinned and its turns feed the graph's overlay: the policy must allow both.
+    return graph !== undefined && authorize(deps.policy, "read", graph, context) && authorize(deps.policy, "write", graph, context) ? graph : undefined;
+  };
+
+  /** The session's view: pinned for a new turn, or, for a turn it continues, at the pin it has on that graph. */
+  const load = async (scope: StepScope, messages: readonly ModelMessage[], routed: Map<string, RouteAnswer>, continuing: boolean): Promise<View | undefined> => {
+    const graph = await resolve(scope, messages, routed);
+    if (graph === undefined) return undefined;
     // A graph nothing has been imported into yet has nothing to guide by.
     if ((await deps.store.heads.get(graph)) === undefined) return undefined;
-    const pin = await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
-    const record = await deps.store.revisions.get(pin.core);
+    const stored = continuing ? await deps.store.pins.get(scope.sessionId) : undefined;
+    const pin = stored?.graph === graph ? stored : await pinSession({ store: deps.store, session: scope.sessionId, graph, repinOnDream: preset.repinOnDream, overlayRefresh: preset.overlayRefresh, clock: deps.clock, entropy: deps.entropy });
+    const record = await deps.store.revisions.get(graph, pin.core);
     if (record === undefined) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} is missing`);
     const parsed = parseGraph(record.document);
     if (!parsed.ok) throw new Error(`the pinned core revision ${pin.core} of graph ${graph} does not parse: ${parsed.diagnostics.map((d) => d.message).join("; ")}`);
     const live = preset.live;
-    if (!preset.overlay || live === undefined) return { graph, effective: coreView(parsed.graph) };
+    if (!preset.overlay || live === undefined) return { graph, core: parsed.graph, effective: coreView(parsed.graph) };
     const state = await readOverlay(deps.store, pin);
     // A session never pairs a core with an overlay built on another core.
-    return { graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
+    return { graph, core: parsed.graph, effective: effectiveGraph(parsed.graph, state.base === pin.core ? state : emptyOverlay(pin.core), { salt: pin.salt, probationShare: live.probationShare }) };
   };
 
-  /** The session's state for this step, re-resolved and re-pinned unless the step is in the turn it knows. */
-  const enter = async (scope: StepScope, sameTurn: (known: Session) => boolean): Promise<Session> => {
+  /**
+   * The session's state for this step, re-resolved and re-pinned unless the step is in
+   * the turn it knows. `continuing` says the step continues its turn, for a session whose
+   * state was evicted.
+   */
+  const enter = async (scope: StepScope & { readonly messages: readonly ModelMessage[] }, sameTurn: (known: Session) => boolean, continuing: boolean): Promise<Session> => {
+    const now = deps.clock.now();
+    sweep(now);
     const known = sessions.get(scope.sessionId);
-    if (known !== undefined && sameTurn(known)) return known;
-    const session: Session = { turnId: scope.turnId, view: await load(scope), cache: known?.cache ?? new GuidanceCache() };
-    sessions.set(scope.sessionId, session);
+    const routed = known?.routed ?? new Map<string, RouteAnswer>();
+    const session: Session =
+      known !== undefined && sameTurn(known)
+        ? { ...known, seen: now }
+        : { turnId: scope.turnId, view: await load(scope, scope.messages, routed, known === undefined && continuing), cache: known?.cache ?? new GuidanceCache(), routed, seen: now };
+    keep(scope.sessionId, session);
     return session;
   };
 
-  /** Guidance for the step at `action`, reported as a step record; the delivered text is returned. */
-  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, action: string | undefined, others: string[], model: LanguageModel): Promise<string> => {
+  /**
+   * Guidance for the step at `action`, reported as a step record; the delivered text is
+   * returned, with the tools the step may offer when `limit` asks for them.
+   */
+  const advise = async (scope: StepInput | TurnInput, session: Session & { view: View }, observed: ObservedAction | undefined, others: string[], model: LanguageModel, limit: boolean): Promise<{ block: string; activeTools: string[] | undefined }> => {
     const { messages, tools } = scope;
     const view = session.view.effective;
-    const node = match(action, view, preset.match);
+    const action = observed?.name;
+    const node = match(observed, view, preset.match);
     const active = node === undefined ? undefined : nodeById(view, node);
     const inert = tools !== undefined && active?.type === "ACTION" && !tools.includes(active.id) && !(active.binding !== undefined && tools.includes(active.binding.name));
-    const around = node === undefined ? undefined : neighborhood(view, node, HOPS);
+    const around = node === undefined ? undefined : neighborhood(view, node, HOPS, preset.hopUnit);
     const shownEdges = around === undefined ? view.edges : around.hops.flat();
     const named = new Set<string>(around === undefined ? view.nodes.map((n) => n.id) : [around.active, ...shownEdges.flatMap((e) => [e.from, e.to])]);
     const words = around === undefined ? deps.settings.graphContext.full : deps.settings.graphContext.local;
+    const activeTools = limit && around !== undefined ? successorTools(view, around, tools) : undefined;
     const own = scoped(messages, "carry");
     const users = own.filter((m) => m.role === "user");
     const task = users.length > 0 ? textOf(users[0]!) : "";
     const query = users.length > 0 ? textOf(users.at(-1)!) : "";
-    const window = serializeWindow(stepsOf(scoped(messages, preset.turnBoundary)), WINDOW);
+    const window = serializeWindow(trajectorySteps(scoped(messages, preset.turnBoundary)), WINDOW);
     const key = session.cache.key({ core: view.core, overlay: view.overlay, node, query, window, model });
     const hit = preset.guidanceCache ? session.cache.get(key) : undefined;
     let text = hit;
@@ -298,28 +466,54 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
         shownEdges,
       ),
       usage,
+      ...(activeTools === undefined ? {} : { activeTools }),
     };
     scope.report({ sessionUpdate: "notice", severity: "info", title: "Procedural step", description: node === undefined ? "No node matched: the whole graph" : `At ${node}`, _meta: { harness: { procedural: { step } } } });
-    return `${GUIDANCE_LABEL}${text}`;
+    return { block: `${GUIDANCE_LABEL}${text}`, activeTools };
   };
 
   return {
     async prepare(input) {
       // A new turn id is a boundary; without one, the first step of a stream is.
-      const session = await enter(input, (known) => (input.turnId === undefined ? input.stepNumber > 0 : known.turnId === input.turnId));
+      const session = await enter(input, (known) => (input.turnId === undefined ? input.stepNumber > 0 : known.turnId === input.turnId), continues(input));
       if (session.view === undefined) return undefined;
       const call = lastCall(scoped(input.messages, preset.turnBoundary));
-      const block = await advise(input, { ...session, view: session.view }, call?.name, call?.others ?? [], deps.model ?? input.model);
-      if (preset.delivery === "system") return { instructions: withGuidance(input.initialInstructions, block) };
+      const { block, activeTools } = await advise(input, { ...session, view: session.view }, call?.action, call?.others ?? [], deps.model ?? input.model, preset.delivery.activeTools === "successors");
+      const tools = activeTools === undefined ? {} : { activeTools };
+      if (preset.delivery.to === "system") return { instructions: withGuidance(input.initialInstructions, block), ...tools };
       const advisory: ModelMessage = { role: "user", content: block, providerOptions: { [HARNESS]: ADVISORY } };
-      return { messages: [...input.messages.filter((m) => !isAdvisory(m)), advisory] };
+      return { messages: [...input.messages.filter((m) => !isAdvisory(m)), advisory], ...tools };
     },
 
     async turn(input) {
-      const session = await enter(input, () => false);
+      // Stryker disable next-line ArrowFunction: equivalent; undefined is as false as false
+      const session = await enter(input, () => false, false);
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");
-      return advise(input, { ...session, view: session.view }, preset.turnBoundary === "start" ? undefined : input.lastAction, [], deps.model);
+      const call = input.lastCall;
+      const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredNode(call.output));
+      const last = preset.turnBoundary === "start" ? undefined : known;
+      // A harness turn cannot limit the harness's tools, so successor-only delivery guides it as usual.
+      return (await advise(input, { ...session, view: session.view }, last, [], deps.model, false)).block;
+    },
+
+    async core(scope) {
+      // Asked at the turn's start, before its steps: a boundary unless the turn is the one the session knows,
+      // or, for a session evicted meanwhile, a restarted stream whose conversation resumes its turn.
+      const continuing = scope.messages !== undefined && resumes(scope.messages);
+      const session = await enter({ ...scope, messages: scope.messages ?? [] }, (known) => scope.turnId !== undefined && known.turnId === scope.turnId, continuing);
+      return session.view?.core;
+    },
+
+    forget(sessionId) {
+      sessions.delete(sessionId);
+    },
+
+    async end(input) {
+      // The session's graph, not its state: a step's usage is kept for any session with a graph (a routed one by its pin).
+      if ((await resolve(input, [], new Map())) === undefined) return;
+      const usage: StepUsage = { inputTokens: input.usage.inputTokens ?? 0, outputTokens: input.usage.outputTokens ?? 0 };
+      input.report({ sessionUpdate: "notice", severity: "info", title: "Procedural step usage", description: `${usage.inputTokens} input and ${usage.outputTokens} output tokens`, _meta: { harness: { procedural: { usage } } } });
     },
   };
 }

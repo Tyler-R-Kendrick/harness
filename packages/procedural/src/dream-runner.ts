@@ -11,7 +11,12 @@
  *   re-issued rejection puts the same record again.
  * - **The lease.** A run acquires the graph's lease and renews it before every command
  *   and before appending every event, so a run whose epoch went stale stops before it
- *   writes anything: a stale epoch cannot commit.
+ *   writes anything: a stale epoch cannot commit. A run that throws releases the lease
+ *   (the log keeps what finished, so any holder resumes it).
+ * - **Ports.** The `started` entry records what the dream runs with (an evaluator, an
+ *   approver, an approvals inbox, a composer), because the reducer's commands depend on
+ *   them. A holder with other ports cannot replay the dream's events as its own commands,
+ *   so it starts a new dream instead; a log written before the record replays as it is.
  * - **Commits** put the record, then move the head by compare-and-set. When another
  *   writer moved the head meanwhile, the record is put again as rejected by `head`, and
  *   the dream ends.
@@ -19,6 +24,7 @@
 import type { LanguageModel } from "ai";
 import { z } from "zod";
 import type { ToolSpec, Workflow } from "@harness/workflows";
+import { canonicalJson } from "./canonical.ts";
 import { compilePath, composeCandidate, pathCandidates, recordedRuns } from "./compose.ts";
 import type { CompositionSettings, WorkflowBinding } from "./compose.ts";
 import { DreamEventSchema, dreamStart, dreamStep } from "./dream.ts";
@@ -29,7 +35,7 @@ import { foldAll, rebaseOverlay } from "./overlay.ts";
 import { refine } from "./refine.ts";
 import type { RefineResult } from "./refine.ts";
 import type { Preset, Settings } from "./settings.ts";
-import type { ProceduralStore } from "./store.ts";
+import type { Lease, ProceduralStore } from "./store.ts";
 import type { ScoredTrajectory } from "./trajectory.ts";
 
 /** Scores a graph on a replayable task set (plan §10): the paper's Rollout and Evaluate. */
@@ -47,6 +53,16 @@ export interface Refiner {
 export interface Approver {
   /** Accept or decline a candidate (the daemon's permission flow, bound to the candidate's id). */
   approve(request: { graph: GraphId; candidate: RevisionRecord; tools: readonly string[] }): Promise<boolean>;
+}
+
+/**
+ * Where candidates that need approval wait when there is no approver to ask during the
+ * dream (the daemon, where the permission flow belongs to a session's turn): the runner
+ * stores each as `pending-approval`, the approvals inbox, and tells the inbox, which
+ * announces it (a hook event on the daemon). Deciding happens later, outside the dream.
+ */
+export interface ApprovalInbox {
+  pending(request: { graph: GraphId; candidate: RevisionRecord; tools: readonly string[] }): Promise<void>;
 }
 
 /** Recorded trajectories under a revision, from the session log's projections. */
@@ -71,6 +87,8 @@ export interface DreamPorts {
   refiner: Refiner;
   evaluator?: Evaluator;
   approver?: Approver;
+  /** Without an approver, candidates that need approval wait here instead of being rejected. */
+  inbox?: ApprovalInbox;
   /** With one, and `compose` in the dream settings, a dream ends with a composition round. */
   composer?: Composer;
   trajectories: TrajectorySource;
@@ -114,9 +132,15 @@ const StartedSchema = z.strictObject({
   rejections: z.array(RevisionIdSchema),
   train: z.array(z.string()),
   stride: z.int().positive(),
+  /** The Clock's time the dream started (absent in logs written before the schedule read it). */
+  at: z.int().min(0).exactOptional(),
+  /** What the dream runs with (absent in logs written before replay checked it). */
+  ports: z.strictObject({ evaluator: z.boolean(), approver: z.boolean(), inbox: z.boolean(), compose: z.boolean() }).exactOptional(),
 });
 type Started = z.output<typeof StartedSchema>;
-const EntrySchema = z.discriminatedUnion("kind", [StartedSchema, z.strictObject({ kind: z.literal("event"), dream: DreamIdSchema, event: DreamEventSchema })]);
+/** An entry of a graph's dream log: a dream's `started` entry, or one of its events. */
+export const DreamLogEntrySchema = z.discriminatedUnion("kind", [StartedSchema, z.strictObject({ kind: z.literal("event"), dream: DreamIdSchema, event: DreamEventSchema })]);
+export type DreamLogEntry = z.output<typeof DreamLogEntrySchema>;
 
 const isRejection = (r: RevisionRecord): boolean => r.decision.kind === "rejected-structure" || r.decision.kind === "rejected-gate";
 
@@ -142,19 +166,35 @@ type Body = DreamEvent extends infer E ? (E extends DreamEvent ? Omit<E, "comman
 
 /** Run (or resume) a dream on a graph to its end. */
 export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
-  const { store, graph, settings, ports } = options;
+  const { store, graph } = options;
   const holder = options.holder ?? "dream";
   const lease = await store.lease.acquire(graph, holder);
   if (lease === undefined) return { status: "busy", graph };
+  try {
+    return await leased(options, holder, lease);
+  } catch (e) {
+    // The log holds every finished command, so any holder resumes the dream; a stale epoch releases nothing.
+    await store.lease.release(graph, holder, lease.epoch);
+    throw e;
+  }
+}
+
+/** The dream under a lease just acquired: replay or start, then drive the reducer to its end. */
+async function leased(options: RunDreamOptions, holder: string, lease: Lease): Promise<DreamResult> {
+  const { store, graph, settings, ports } = options;
   const holds = (): Promise<boolean> => store.lease.renew(graph, holder, lease.epoch);
   const log = store.dreams(graph);
   const overlayLog = store.overlay(graph);
+  /** What this run has, as the started entry records it. */
+  const mode = { evaluator: ports.evaluator !== undefined, approver: ports.approver !== undefined, inbox: ports.inbox !== undefined, compose: settings.dream.compose === true && ports.composer !== undefined };
+  /** Whether this run can replay a dream: one started with the same ports, or before they were recorded. */
+  const replayable = (started: Started): boolean => started.ports === undefined || canonicalJson(started.ports) === canonicalJson(mode);
 
   async function inputOf(started: Started): Promise<DreamInput> {
-    const record = await store.revisions.get(started.head);
+    const record = await store.revisions.get(graph, started.head);
     const parsed = parseGraph(record?.document);
     if (!parsed.ok) throw new Error(`the dream's starting revision ${started.head} is missing or does not parse`);
-    const rejections = (await Promise.all(started.rejections.map((id) => store.revisions.get(id)))).filter((r) => r !== undefined);
+    const rejections = (await Promise.all(started.rejections.map((id) => store.revisions.get(graph, id)))).filter((r) => r !== undefined);
     // Stryker disable next-line ConditionalExpression: equivalent; reading no entries from offset 0 is the empty list
     const events = started.overlay === 0 ? [] : (await overlayLog.read(0, started.overlay)).map((e) => e.event);
     return {
@@ -162,8 +202,9 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       graph,
       head: parsed.graph,
       settings: settings.dream,
-      evaluator: ports.evaluator !== undefined,
-      approver: ports.approver !== undefined,
+      evaluator: mode.evaluator,
+      approver: mode.approver,
+      inbox: mode.inbox,
       train: started.train,
       stride: started.stride,
       task: options.task ?? "",
@@ -172,7 +213,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,
-      compose: settings.dream.compose === true && ports.composer !== undefined,
+      compose: mode.compose,
       ...(options.tokenizer && { tokenizer: options.tokenizer }),
       ...(settings.overlay && settings.live && { overlay: { state: foldAll(started.head, events), live: settings.live } }),
     };
@@ -216,10 +257,22 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
     return { none: reasons.join("; ") };
   }
 
-  /** Put a rejection, unless the id already holds a record that is not one (an older head, an import proposal): ids are content, and put replaces. */
+  /** Put a rejection, unless the graph already holds a record of the id that is not one (an older head, an import proposal): ids are content, and put replaces. */
   async function putRejection(record: RevisionRecord): Promise<void> {
-    const existing = await store.revisions.get(record.id);
+    const existing = await store.revisions.get(graph, record.id);
     if (existing === undefined || isRejection(existing)) await store.revisions.put(record);
+  }
+
+  /**
+   * Store a candidate as waiting for approval and announce it, unless its id already holds
+   * a record that is not a rejection: one already waiting (a replay, a later round, an
+   * import) is not announced again, and a head's record stays.
+   */
+  async function propose(record: RevisionRecord, tools: readonly string[]): Promise<void> {
+    const existing = await store.revisions.get(graph, record.id);
+    if (existing !== undefined && !isRejection(existing)) return;
+    await store.revisions.put(record);
+    await ports.inbox!.pending({ graph, candidate: record, tools });
   }
 
   async function begin(): Promise<Started | undefined> {
@@ -235,6 +288,8 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       rejections,
       train,
       stride: options.stride ?? settings.dream.stride ?? (ports.evaluator === undefined ? DEFAULT_SELECT : Math.max(1, Math.ceil(train.length / settings.dream.rounds))),
+      at: ports.clock.now(),
+      ports: mode,
     };
     await log.append([started]);
     return started;
@@ -257,7 +312,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       case "commit": {
         const { record, expected } = command;
         // An id is its content: a candidate equal to an older revision replaces that record while it is the head.
-        const earlier = await store.revisions.get(record.id);
+        const earlier = await store.revisions.get(graph, record.id);
         await store.revisions.put(record);
         // Stryker disable next-line OptionalChaining: equivalent; a head that a compare-and-set just saw is never removed
         const ok = (await store.heads.set(graph, expected, record.id)) || (await store.heads.get(graph))?.revision === record.id;
@@ -267,6 +322,9 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       case "reject":
         await putRejection(command.record);
         return { kind: "recorded" };
+      case "propose":
+        await propose(command.record, command.tools);
+        return { kind: "proposed" };
       case "compose":
         return { kind: "composed", result: await compose(command) };
       case "rebase": {
@@ -283,14 +341,15 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
     }
   }
 
-  const entries = (await log.read(0)).map((e) => EntrySchema.parse(e.event));
+  const entries = (await log.read(0)).map((e) => DreamLogEntrySchema.parse(e.event));
   const lastStart = entries.map((e) => e.kind).lastIndexOf("started");
   let started = lastStart < 0 ? undefined : StartedSchema.parse(entries[lastStart]);
   let state: DreamState | undefined;
-  if (started !== undefined) {
+  // A dream started with other ports is left as it is: this run starts a new one.
+  if (started !== undefined && replayable(started)) {
     const dream = started.dream;
     // Every entry after the last `started` one is an event.
-    const events = entries.slice(lastStart + 1) as Extract<z.output<typeof EntrySchema>, { kind: "event" }>[];
+    const events = entries.slice(lastStart + 1) as Extract<DreamLogEntry, { kind: "event" }>[];
     state = events.reduce((s, e) => (e.dream === dream ? dreamStep(s, e.event).state : s), dreamStart(await inputOf(started)));
   }
   // Stryker disable next-line OptionalChaining: equivalent; a dream always has a pending command
