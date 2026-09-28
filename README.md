@@ -251,7 +251,7 @@ const agentTools = await workflowTools(workflows); // the library's workflows, f
 To try it by hand, build the browser playground: one HTML file with the daemon, a
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
-claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0012); anywhere, `/ask $ <command>` runs the whole
+claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0014); anywhere, `/ask $ <command>` runs the whole
 tool-call path on a deterministic model. Sessions, conversations, files and the timeline
 are kept in the browser across reloads (`/reset` forgets them).
 
