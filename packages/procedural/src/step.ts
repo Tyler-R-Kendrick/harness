@@ -15,7 +15,7 @@ import { canonicalJson, sha256Hex } from "./canonical.ts";
 import { EntryIdSchema, GraphIdSchema, nodeById, NodeNameSchema, parseGraph, RevisionIdSchema } from "./graph.ts";
 import type { GraphId } from "./graph.ts";
 import { guide, GuidanceCache } from "./guide.ts";
-import { match, neighborhood } from "./locate.ts";
+import { declaredNode, match, neighborhood } from "./locate.ts";
 import type { ObservedAction } from "./locate.ts";
 import { effectiveGraph, emptyOverlay, entryId } from "./overlay.ts";
 import { coreView } from "./overlay-types.ts";
@@ -141,16 +141,8 @@ function scoped(messages: readonly ModelMessage[], boundary: Preset["turnBoundar
 const outputText = (output: ToolResultPart["output"]): string => (output.type === "text" || output.type === "error-text" ? output.value : canonicalJson(output.type === "json" || output.type === "error-json" ? output.value : output));
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const field = (v: unknown, key: string): unknown => (isRecord(v) ? v[key] : undefined);
-
-/** The node a tool's result declares active: `_meta.harness.procedural.node`, a string. */
-function declaredIn(value: unknown): string | undefined {
-  const node = field(field(field(field(value, "_meta"), "harness"), "procedural"), "node");
-  return typeof node === "string" ? node : undefined;
-}
-
 /** The node a tool result part declares, in its JSON value. */
-const declaredBy = (output: ToolResultPart["output"]): string | undefined => (output.type === "json" || output.type === "error-json" ? declaredIn(output.value) : undefined);
+const declaredBy = (output: ToolResultPart["output"]): string | undefined => (output.type === "json" || output.type === "error-json" ? declaredNode(output.value) : undefined);
 
 /** An action observed from a call's name, arguments and the node its result declared. */
 function observe(name: string, args: unknown, declared: string | undefined): ObservedAction {
@@ -338,7 +330,7 @@ export function proceduralStep(deps: ProceduralStepDeps): ProceduralStepHook {
       if (session.view === undefined) return undefined;
       if (deps.model === undefined) throw new Error("turn-level guidance needs a guidance model");
       const call = input.lastCall;
-      const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredIn(call.output));
+      const known = call === undefined ? (input.lastAction === undefined ? undefined : { name: input.lastAction }) : observe(call.name, call.input, declaredNode(call.output));
       const last = preset.turnBoundary === "start" ? undefined : known;
       return advise(input, { ...session, view: session.view }, last, [], deps.model);
     },

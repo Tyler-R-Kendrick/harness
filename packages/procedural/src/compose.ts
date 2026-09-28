@@ -141,16 +141,17 @@ export interface RecordedCall {
 }
 
 /**
- * The runs of a path in recorded turns: each window of consecutive tool calls whose
- * names match (under the preset's match mode, by node id or binding name) the path's
- * nodes in order.
+ * The runs of a path in recorded turns: each window of consecutive tool calls that
+ * match the path's nodes in order, under the preset's match mode (by node id or binding
+ * name, and under a state tracker by the calls' arguments too; recorded steps keep a
+ * tool's result as text, so a node it declared is not read here).
  */
 export function recordedRuns(core: ProceduralGraph, trajectories: readonly ScoredTrajectory[], path: readonly NodeName[], mode: MatchMode): RecordedCall[][] {
   const view = coreView(core);
   const runs: RecordedCall[][] = [];
   for (const t of trajectories) {
     const calls = t.steps.flatMap((s) => (s.call ? [{ name: s.call.name, arguments: s.call.arguments }] : []));
-    const nodes = calls.map((c) => match(c.name, view, mode));
+    const nodes = calls.map((c) => match(c, view, mode));
     // A window running past the last call matches nothing: there, every node is undefined.
     nodes.forEach((_, i) => {
       if (path.every((n, k) => nodes[i + k] === n)) runs.push(calls.slice(i, i + path.length));

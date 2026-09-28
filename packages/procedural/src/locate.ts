@@ -25,6 +25,15 @@ export interface ObservedAction {
   readonly declared?: string;
 }
 
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const field = (v: unknown, key: string): unknown => (isRecord(v) ? v[key] : undefined);
+
+/** The node a tool's result declares active: its `_meta.harness.procedural.node`, when that is a string. */
+export function declaredNode(result: unknown): string | undefined {
+  const node = field(field(field(field(result, "_meta"), "harness"), "procedural"), "node");
+  return typeof node === "string" ? node : undefined;
+}
+
 /** The active node and the transitions ahead of it: `hops[0]` is hop 1. */
 export interface Neighborhood {
   active: NodeName;

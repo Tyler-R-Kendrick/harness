@@ -1112,6 +1112,17 @@ As built. These are additions; the paper preset keeps the paper's mechanism exac
   `TurnInput.lastCall` is the same; the turn variant observes `{name, arguments: input,
   declared: _meta.harness.procedural.node of output}`, and falls back to `lastAction`
   alone without it.
+- **Learning and composition locate as guidance did.** `declaredNode(result)` (in
+  `locate.ts`) is the one reader of `_meta.harness.procedural.node`. `ProjectionContext.locate`
+  takes an `ObservedAction`: each `tool_call` is `{name: title, arguments: rawInput}`, and a
+  `completed` or `failed` `tool_call_update` with the same `toolCallId` adds the node its
+  `rawOutput` declared (results may arrive in any order; one of no call in view declares
+  nothing). `unmatched` still lists names. The live learner locates with the preset's
+  mode over these, so a state tracker's paths are the ones guidance saw. `recordedRuns`
+  matches each recorded call with its arguments; recorded steps keep a tool's result as
+  text, so a declared node is not read there (a path through a declared node that its
+  calls' names and arguments do not reach has no recorded run, and composition reports
+  it as not composable).
 
 ## Open issues
 
