@@ -51,6 +51,14 @@ describe("the paper's selection rule (Algorithm 2), as published", () => {
     expect(paperDecision(cand("out", 0.0041, 0, 0, 0.3), WORKSPACE, ctx).admissible).toBe(false);
   });
 
+  it("RS8.10 the caps in that comparison are exact: the reference code's rule admits a 0.019 gain up to +231.8% tokens and a 0.021 gain only up to +66.2%; 0.0039 up to +36.8% and 0.0041 only up to +24.5%", () => {
+    const at = (rule: Calibrated, gain: number, dC: number) => paperDecision(cand("x", gain, 0, 0, dC), rule, ctx).admissible;
+    // Engineering: 244 * 0.019 / 2 = 2.318 inside delta; 0.15 + 24.4 * 0.021 = 0.6624 outside.
+    expect([at(ENGINEERING, 0.019, 2.317), at(ENGINEERING, 0.019, 2.319), at(ENGINEERING, 0.021, 0.662), at(ENGINEERING, 0.021, 0.663)]).toEqual([true, false, true, false]);
+    // Workspace: 1414 * 0.0039 / 15 = 0.36764 inside delta; 0.10 + 35.4 * 0.0041 = 0.24514 outside.
+    expect([at(WORKSPACE, 0.0039, 0.367), at(WORKSPACE, 0.0039, 0.368), at(WORKSPACE, 0.0041, 0.245), at(WORKSPACE, 0.0041, 0.246)]).toEqual([true, false, true, false]);
+  });
+
   it("RS8.3 inside the band it admits any positive point gain at no added cost, and a new structural component slightly worse than the incumbent", () => {
     expect(paperDecision(cand("noise", 0.0001, 0, 0, 0), WORKSPACE, ctx).admissible).toBe(true);
     expect(paperDecision(cand("noise", 0.0001, 0, 0, 0), ENGINEERING, ctx).admissible).toBe(true);

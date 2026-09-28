@@ -164,8 +164,8 @@ gain only when a paired randomization test bounds its gain above zero at a run-w
 rate (spent uniformly or front-loaded), cost is paid for by that lower bound, clearly bad
 candidates are abandoned after a prefix of the tasks, accepted mechanisms are pruned by
 ablation, and a holdout confirms gains through Thresholdout. With no candidate that
-helps, the paper's rule accepts noise in 33 of 40 seeded runs of its workspace instance;
-this one in 2. The paper's rule is kept (`select.rule: "paper"`) to compare against. A run
+helps, the paper's rule accepts noise in 33 of 40 seeded runs of a simulated null world
+(the workspace instance's weights, 60 tasks, 10 rounds); this one in 2. The paper's rule is kept (`select.rule: "paper"`) to compare against. A run
 needs enough groups of tasks for its error level (it says so before spending anything).
 
 ```sh

@@ -32,54 +32,66 @@ at most one. Regularization acts on the search, not on what the harness may cont
 | Novelty bonus nu | `components.py: novelty` | paper's rule only |
 
 The loop, the ledger, the budget and the exploration directive are good ideas and are
-kept. The selection side is where the paper's claims live ("a noise-adjusted floor blocks
-gains within evaluation variance", "removes changes that are too small, too expensive, or
-no longer useful"), and it does not do what it says. Each point below is checked by a test
-or by arithmetic on the paper's own numbers.
+kept. The selection side is where the paper's claims live ("removes changes that are too
+small, too expensive, or no longer useful", abstract; and, in the reference README, "a
+noise-adjusted floor blocks gains within evaluation variance"), and it does not do what it
+says. Each point below is checked by a test, by arithmetic on the paper's own numbers, or
+by reading the paper and its reference code (file names are the reference code's).
 
 ## Critique
 
 ### The noise band measures the wrong noise
 
-delta is z = 2 standard deviations of the score difference between two evaluations of the
-*same harness on the same tasks* (`calibrate.py`; the bootstrap resamples trials within
-each task, tasks fixed). That is re-measurement noise. The paper's claim is transfer, and
-the noise that decides transfer is which tasks were sampled. With the task set fixed, a
-+1 on two tasks and a +0.1 on twenty tasks are the same 0.02 gain against the same delta
-(RS2.2, RS2.9): the first is exactly the "fit to the evolve set" the paper sets out to
-prevent, and its own rule cannot tell it from a mechanism (RS9.11: accepted under the
-coding instance's delta, refused here). Tasks are also clustered (Harvey LAB's 120 evolve
-tasks span 25 practice areas); a gain in one area is evidence about one area (RS2.3).
+In the reference code delta is z = 2 standard deviations of the score difference between
+two evaluations of the *same harness on the same tasks* (`calibrate.py`: repeated base
+evaluations, or a bootstrap that resamples trials within each task, tasks fixed). The
+paper says only that delta is estimated from repeated evaluations of the unchanged base
+harness; its published values (0.017, 0.004, 0.020) are fixed constants in `rrsi.json`.
+That is re-measurement noise. The paper's claim is transfer, and the noise that decides
+transfer is which tasks were sampled. With the task set fixed, a +1 on two tasks and a
++0.1 on twenty tasks (of 100) are the same 0.02 gain against the same delta (RS2.2,
+RS2.9): the first is exactly the "fit to the evolve set" the paper sets out to prevent,
+and its own rule cannot tell it from a mechanism (RS9.11: accepted under the coding
+instance's delta, refused here). Tasks are also clustered (Harvey LAB spans 25 practice
+areas, and its split is proportional per area, `split_workspace.py`); a gain in one area
+is evidence about one area (RS2.3).
 
 ### Inside the band, the rule admits noise, and its acceptance region is not monotone
 
 For a candidate whose gain is within delta, Algorithm 2 applies
 `w_s ΔS − w_c ΔC + w_n ν > 0`. With the workspace instance's weights (w_s = 1414,
-w_c = 15), any positive point gain at unchanged cost is admitted, however small: that is
+w_c = 15, from the reference code's `rrsi.json`; the paper says the weights are in its
+Table 5, which lists none), any positive point gain at unchanged cost is admitted, however small: that is
 admission *by* the within-band fluctuation the section says it guards against (RS8.3). The
 two branches also disagree at the boundary. Engineering (delta 0.020, w_s = 244,
 w_c = 2): a gain of 0.019 may add up to 232% more tokens, while a gain of 0.021 is capped at
 66%; workspace: 0.0039 may add 37%, 0.0041 is capped at 24.5% (RS8.2). A smaller gain buys
-a larger cost allowance. The coding instance (w_s = 0) admits a slightly *worse*
-candidate, up to delta below S*, for touching a structural component type never
-accepted before (RS8.3): a complexity bonus inside the rule meant to charge for
-complexity.
+a larger cost allowance (inside the band the allowance rises with the gain, and drops
+at delta; it is the boundary that is not monotone). The coding instance (w_s = 0) admits
+a candidate up to delta below S* for any token saving, or for touching a structural
+component type never accepted before (RS8.3): a complexity bonus inside the rule meant
+to charge for complexity. The arithmetic (231.8%, 66.2%, 36.8%, 24.5%) is pinned by
+RS8.2.
 
-### The incumbent's score is the luckiest draw of its round
+### The incumbent's score is the measurement it won on
 
-When a candidate wins, its selection-round evaluation becomes the incumbent's score
+When a candidate wins (the admissible one with the highest S', `selection.py`), its
+selection-round evaluation becomes the incumbent's score
 (`loop.py`: the frontier's incumbent `job` is the winner's; `incumbent_eval` loads it next
-round), and S* is the running max of those. The winner of m noisy measurements is biased
-upward (the winner's curse), so every later Delta S is taken against an inflated
-reference and the floor ratchets on luck.
+round), and S* is the running max of those. The winner of several noisy measurements
+is biased upward (the winner's curse), so every later Delta S is taken against an
+inflated reference, and the floor rises with the best draw seen so far.
 
 ### No error control across the run
 
-Each acceptance is a one-sided z = 2 test (about 2.3% false gains), repeated for m = 2
-candidates over T = 20 rounds: 40 tests, with no correction (1 − 0.977^40 ≈ 60% chance of
-at least one false out-of-band gain, before the within-band branch adds its own). We ran the
-paper's rule through whole runs where no candidate has any effect (RS10.2; 40 seeded runs
-of 10 rounds, 60 tasks, delta calibrated as the paper does):
+Each out-of-band acceptance is a one-sided z = 2 test (about 2.3% false gains, if delta
+is two standard deviations of the null difference, as in the reference code), repeated
+for m = 2 candidates over T = 20 rounds (coding and workspace; engineering has T = 40, so
+80 tests): 40 tests with no correction (1 − 0.977^40 ≈ 60% for independent tests, before
+the within-band branch adds its own). We ran the paper's rule through whole runs of a
+simulated world where no candidate has any effect (RS10.2; 40 seeded runs of 10 rounds,
+60 tasks, a fifth of them coin flips, delta calibrated from two base evaluations at z = 2
+as the reference code does):
 
 | Rule | Runs that accept a change | Incumbent's recorded score minus its true score |
 |---|---|---|
@@ -87,30 +99,38 @@ of 10 rounds, 60 tasks, delta calibrated as the paper does):
 | Paper, coding weights | 10 / 40 | +1.6 points |
 | Calibrated (below), alpha = 0.1 | 2 / 40 | +0.02 points |
 
-The workspace instance's inflation under the null (+3.4 points) is three times the whole
-evolve-set gain the paper reports for that instance (+1.1 on Harvey LAB).
+In that world delta averages 5.9 points (0.4 in the paper's workspace instance), so the
+size of the inflation does not carry over to the paper's numbers; the mechanism does:
+whatever delta is, the incumbent's recorded score rises with the noise that got it
+accepted (RS10.2).
 
 ### Adaptivity is cited, not handled
 
 The paper names the problem correctly: the evolve set is reused adaptively (Dwork et al.
 2015), and the proposer reads the evolve set's trajectories. Dwork et al.'s remedy is a
 holdout queried through a mechanism (Thresholdout) that keeps it valid under adaptive
-reuse. The search uses neither; the only in-search defense against fitting is the
-critic, which can catch copied names and values but not a rule tuned to the suite's habits
-that copies no words.
+reuse. The search uses neither; the in-search defense aimed at the suite's content is the
+critic, which is least able to catch a rule tuned to the suite's habits that copies no
+words.
 
 ### Credit and pruning are assigned to the wrong things
 
 - Bundled edits all inherit their candidate's Delta S (`history.py`), so a harmful edit
-  bundled with a strong one early (b_t up to 4) carries positive credit.
+  bundled with a strong one early (b_t up to 4) carries positive credit. The paper says so,
+  and argues that attribution improves as b_t anneals; but b_t never reaches b_min inside
+  a run (t stops at T − 1 and the ceiling rounds anything above 1 up to 2: for T = 20,
+  b_max = 4 the budget ends at 2), against Table 5's "final-round edit budget" of 1.
 - g_t(l) is the *max* Delta S over a window: the more often the proposer tried a component,
   the higher its max by chance, so a component is less likely to be pruned for being tried
   more.
-- B_t = {l : g_t(l) <= 0} uses 0, not the noise band that governs every other decision.
-- Most importantly, B_t prunes a component *type* because recent *new* edits of that type
-  failed, and tells the proposer to delete the *accepted* machinery of that type
-  (`propose.py`: "remove the accepted machinery listed"). Whether new prompt edits help says
-  nothing about whether the prompt text already accepted still earns its place. That is a
+- B_t = {l : g_t(l) <= 0} uses 0, not the noise band that governs the floor, the cost
+  rule and the stall flag.
+- Most importantly, B_t marks a component *type* when none of its edits gained more than 0
+  in the last n_prune rounds, including when none was tried in them (g_t = −∞: a stable
+  accepted mechanism in a type the proposer has stopped editing is flagged), and tells the
+  proposer to delete the *accepted* machinery of that type (`propose.py`: "remove the
+  accepted machinery listed"). Whether new prompt edits help says nothing about whether
+  the prompt text already accepted still earns its place. That is a
   question about each accepted mechanism's marginal contribution now, which only removing
   it and measuring answers (ablation).
 - The history stores point gains and tells the proposer "a rejected mechanism is negative
@@ -121,46 +141,57 @@ that copies no words.
 
 - The L0 budget counts the edits the proposer *declares*; whether they are independent is
   left to the LLM critic, and one declared edit can be any size.
-- The cost rule is relative to the incumbent, so allowances compound round after round;
-  the final harness uses 55% more tokens than H_0 (2.42M vs 1.56M per trial, Table 2).
+- The cost rule is relative to the incumbent, so allowances can compound round after
+  round; the final harness uses 55% more tokens than H_0 on the workspace instance
+  (2.42M vs 1.56M per trial, Table 2). The paper does not say how much of that is
+  compounded allowance.
 - The regularization analogies are inconsistent: Figure 2 labels complexity-aware
   acceptance "L1-style" and pruning "L0-style"; Section 3.1 calls them Ridge/L2 and
   Lasso/L1; the code calls the cost rule the "L1 cost rule" (`config.py`). A linear hurdle
   on cost is a budget constraint (an incremental cost-effectiveness threshold), not a norm
   penalty.
-- "Entropy regularization" for exploration: U_t = K \ T_t empties for good once each of
-  the nine component types has one measured edit. That is coverage, not entropy.
-- The proposer, analyst and critic are the same model; a critic that shares the
-  proposer's blind spots screens little.
+- The paper likens exploration to "diversity or entropy regularization"; U_t = K \ T_t
+  empties for good once each of the nine component types has one measured edit. That is
+  coverage, not entropy.
+- The proposer, analyst and critic are the same model (and so is the policy, outside the
+  Gemini run); a critic that shares the proposer's blind spots may screen less than an
+  independent one. The paper does not test this.
 
 ### The evaluation cannot carry its claims
 
-Every arm is one run; the variance of the search itself, across seeds, is never measured,
-and no result has an interval. Against sampling error alone, the out-of-distribution gains
-are about one standard error: SWE-bench Verified +1.8 on 500 tasks (unpaired SE of a
-difference about 2.4 points), GDPval +3.5 on 185 tasks (about 5.2), APEX-Agents +3.7 on
-480 (about 3.1). Paired analyses would be tighter, but none is reported. The ablation's
-out-of-distribution differences (1.6 to 2.6 points) have no intervals, and "no held-out
-split regresses anywhere" is not evidence at these sizes. The abstract's "up to 14.1
-points" is the Gemini 3.5 Flash coding run; the headline experiments (Opus 4.8) gain at
-most 6.0.
+The paper reports one run per arm: no repeats, seeds or intervals appear in it, so the
+variance of the search itself is never measured. Against sampling error alone, the
+out-of-distribution gains are between 0.7 and 1.2 standard errors: SWE-bench Verified
++1.8 on 500 tasks (the benchmark's size; unpaired SE of a difference 2.4 points), GDPval
++3.5 on 185 tasks (5.2; the appendix's 204 comparisons per judge would give 4.9),
+APEX-Agents +3.7 on 480 (3.1); JobBench's and Frontier-Eng's sizes are not stated. Paired
+analyses would be tighter, but none is reported. The ablation's out-of-distribution
+differences (1.7 and 2.6 points for the two ablations of RRSI, 3.3 for unregularized
+evolution, Table 2) have no intervals, and "no held-out split regresses anywhere" is not
+evidence at these sizes. The abstract's "up to 14.1 points" is the Gemini 3.5 Flash coding
+run on the split it evolves against; the headline experiments (Opus 4.8) gain at most 6.0
+there.
 
 There is also a power floor the paper never meets. We measured what a correctly
-calibrated rule can certify in one 20-round run at family-wise alpha = 0.1 (60 tests), 20
-seeded runs per cell (RS10.3 pins the last row):
+calibrated rule can certify for a real gain proposed in one round of a 20-round run at
+family-wise alpha = 0.1 (60 tests), 20 seeded runs per cell, in a simulated world (RS10.3
+and RS17.1–RS17.3 pin the rows, with slack; the fourth row is 40 / 100 in RS14.62's 100
+runs):
 
 | Evolve tasks (k = 2) | True gain | Spread | Accepted |
 |---|---|---|---|
 | 60 | +20 points | +1 on 20% of tasks | 10 / 20 |
 | 60 | +10 points | +0.25 on 40% | 4 / 20 |
 | 240 | +10 points | +1 on 10% | 19 / 20 |
-| 240 | +5 points | +0.125 on 40% | 12 / 20 |
+| 240 | +5 points | +0.125 on 40% | 40 / 100 |
 | 240 | +10 points | +0.25 on 40% | 19 / 20 |
 
-At the paper's evolve-set sizes (61 to 120 tasks), per-edit gains of 1 to 4 points, which is
-what it accepts (Table 6: +3.93, and 6 passes of 244), are below what the data can certify
-under any controlled error rate. Its rule accepts them because it controls no error
-rate.
+At the paper's evolve-set sizes (61 to 120 tasks) the per-candidate gains it shows are 1
+to 4 points (Table 6: +3.93, a two-part bundle, and 122 to 128 passes of 244, +2.5
+points; the whole 20-round evolve gain on Harvey LAB is +1.1). In our simulated worlds a
+gain that size at that many tasks is rarely certified at a run-wide error rate of 0.1;
+whether the paper's own gains would be depends on their per-task spread, which it does
+not report. Its rule accepts them without a run-wide error rate.
 
 ## Decision
 
@@ -203,9 +234,12 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   is `uniform` (equal shares) or `geometric` (round t gets alpha ratio^t / sum ratio^s,
   split among the round's tests). Both are functions of (round, rounds, tests) alone and
   add up to alpha, so the union bound holds (RS14.1–RS14.9, and as a property RS14.20–22).
-  Geometric moves power from late rounds to early ones: measured at n = 240 and a +0.05
-  gain, a gain proposed in round 0 is certified 48.5% of the time against 38% uniform, and
-  one proposed in round 15 30% against 38% (RS14.70–RS14.71). It is deliberately not
+  Geometric moves power from late rounds to early ones. RS14.71 asserts the direction (a
+  gain proposed in round 0, n = 240, +0.05: at least five more of 100 runs certify it
+  under geometric than under uniform spending), and RS14.70 that the null stays inside
+  alpha. Larger exploratory studies, recorded in the comments of
+  `spending.simulation.test.ts` and not asserted, gave 48.5% against 38% for round 0
+  and 30% against 38% for round 15. It is deliberately not
   alpha-investing, which lets a test's level depend on earlier outcomes and controls the
   marginal false discovery rate, not the chance of any false acceptance; a wrongly accepted
   change is built on by every later round, so the family-wise rate is what is promised.
@@ -220,12 +254,15 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   it can be neither a supported gain nor a non-inferior saving, and is abandoned with the
   reason recorded. Survivors are evaluated on the rest and the acceptance test runs on
   all tasks at its unchanged level, so staging can only remove acceptances, never add
-  them. Measured on the study world: 0 null acceptances in 40 runs with it (2 without,
-  RS14.60); bad candidates (harm 0.2) abandoned 331 of 400 times with 18.8% fewer tasks
-  evaluated overall, about a third fewer counting only candidates (RS14.61); a real +0.05
-  gain abandoned in 0 of 300 runs (RS14.62). Ablations are never staged. What is not
-  claimed: a paired power comparison, since staging changes which random trials each
-  candidate gets.
+  them. On the study world the tests pin: no more null acceptances than the budget
+  allows in 40 runs, with it and without (RS14.60); bad candidates (harm 0.2) abandoned
+  in most runs with about a fifth fewer evolve tasks evaluated overall, about a third
+  fewer counting only candidates (RS14.61, observed 331 of 400 abandoned and 18.8%
+  fewer); and a real broad gain never abandoned in 140 runs and found about as often as
+  without staging (RS14.62). Exploratory runs recorded in the comments of
+  `futility.simulation.test.ts` (0 of 300 real +0.05 gains abandoned) are not asserted.
+  Ablations are never staged. What is not claimed: a paired power comparison, since
+  staging changes which random trials each candidate gets.
 - **Gains, savings and removals are different claims.** A change is a gain only when its
   lower bound is above zero, and its added cost must be paid for by that lower bound, not
   the point estimate (RS8.4). Anything else, a saving of at least `saving` or a removal, is
