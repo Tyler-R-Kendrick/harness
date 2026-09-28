@@ -122,7 +122,7 @@ describe("the terminal's harness commands", () => {
     expect(await t.run("harness use")).toMatchObject({ exitCode: 1, stderr: "no session starts with \n" });
   });
 
-  it("TM2.3 trace prints the newest events, one per line, and can be piped", async () => {
+  it("TM2.3 trace prints the newest events, one per line, and can be piped; a count that is not a positive whole number is refused", async () => {
     const t = await terminal();
     t.settings.worker = "echo";
     await t.run("ask hi");
@@ -132,6 +132,7 @@ describe("the terminal's harness commands", () => {
     expect((await t.run("harness trace 50 | grep -c acp")).stdout.trim()).not.toBe("0");
     await t.run("ask again");
     expect((await t.run("harness trace")).stdout.trim().split("\n")).toHaveLength(20);
+    for (const bad of ["0", "abc", "-5", "1.5"]) expect(await t.run(`harness trace ${bad}`)).toMatchObject({ exitCode: 2, stderr: "usage: harness trace [n], n a positive whole number\n" });
   });
 
   it("TM2.4 status summarizes the daemon; help lists the commands; an unknown one is refused", async () => {

@@ -138,10 +138,22 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
         options.onText?.({ text, delta: text });
         return { text, truncated: false, modelTierApplied: "default" };
       };
-      Object.assign(globalThis, { claude: { use: async (name: string) => (name === "sample" ? sample : null) }, sampled: asked });
+      // Claude becomes reachable while the scripted first turn runs (the race that turn must not lose).
+      const duringDemo = () =>
+        new Promise((resolve) => {
+          const wait = setInterval(() => {
+            if (document.documentElement.dataset["demo"] === "running") {
+              clearInterval(wait);
+              resolve(sample);
+            }
+          }, 1);
+        });
+      Object.assign(globalThis, { claude: { use: async (name: string) => (name === "sample" ? duringDemo() : null) }, sampled: asked });
     });
     await page.waitForFunction(() => document.getElementById("claude-pill")?.textContent === "Claude: ready");
     expect(await page.locator("#worker button[data-worker=claude]").getAttribute("aria-pressed")).toBe("true");
+    // The scripted first turn ran on the shell worker: Claude was not asked anything.
+    expect(await page.evaluate(() => (globalThis as unknown as { sampled: unknown[] }).sampled.length)).toBe(0);
     await type(page, "ask write a note");
     await page.waitForFunction(() => document.getElementById("terminal")?.innerText.includes("Allow writeFile"));
     await page.keyboard.press("y");

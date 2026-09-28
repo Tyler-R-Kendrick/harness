@@ -19,8 +19,10 @@ no scripts from other hosts, no network.
   harness adds `ask` and `harness …` commands to that shell, so turns, sessions, workers,
   approvals and traces are driven from the terminal. Tool approvals are asked in the
   terminal and answered with one key.
-- **The agent's tools use the terminal's own just-bash instance**, so the person and the
-  agent share one filesystem. They are `bash`, `readFile` and `writeFile`, named and shaped
+- **The agent's tools run in a just-bash shell of their own over the terminal's
+  filesystem**, so the person and the agent share one filesystem, but the terminal's
+  harness commands (`ask`, `harness`) are not the agent's: a tool call cannot start a
+  turn, switch sessions, change approvals or reset the page. They are `bash`, `readFile` and `writeFile`, named and shaped
   as Vercel's `bash-tool`; we do not use `bash-tool` itself because it imports `node:fs`,
   `node:path` and fast-glob at module load and so does not bundle for a page.
 - **Claude through the artifact's `sample` capability, as an AI SDK `LanguageModelV4`.**
