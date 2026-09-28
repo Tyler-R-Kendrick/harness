@@ -22,7 +22,7 @@ import { z } from "zod";
 import { match } from "./locate.ts";
 import { editFilter } from "./filter.ts";
 import { effectiveGraph, emptyOverlay, entryId, exposed, foldOverlay } from "./overlay.ts";
-import { proposals, statusChanges } from "./overlay-policy.ts";
+import { proposals, statusChanges, structure } from "./overlay-policy.ts";
 import { coreView, OverlayEventSchema } from "./overlay-types.ts";
 import type { EffectiveGraph, OverlayEntry, OverlayEvent, OverlayState } from "./overlay-types.ts";
 import { EntryIdSchema, parseGraph, ScoreSchema } from "./graph.ts";
@@ -72,7 +72,7 @@ type Reflectable = Extract<OverlayEntry, { kind: "note" | "edge" }>;
 const reflectable = (e: OverlayEntry): e is Reflectable => e.kind === "note" || e.kind === "edge";
 
 /** The text an entry would put in front of later sessions. */
-const entryTexts = (e: Reflectable): string[] => (e.kind === "edge" ? [e.condition ?? "", e.guidance, e.pitfalls] : [e.text]);
+const entryTexts = (e: Reflectable): string[] => (e.kind === "edge" ? [e.condition, e.guidance, e.pitfalls].filter((t) => t !== null) : [e.text]);
 
 /** The nodes an entry names, which must exist for it to be anchored (I6). */
 const anchorsOf = (e: Reflectable): string[] => (e.kind === "edge" ? [e.from, e.to] : [e.on.from, e.on.to]);
@@ -234,6 +234,7 @@ export class LiveLearner {
       return [];
     }
     this.#batches.delete(graph);
+    // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string is no note or edge, so it is dropped with the rest
     const entries = await reflector({ graphContext: serializeGraph(view), trajectory: batch.map(reflectionText).join("\n\n") }).catch((): readonly OverlayEntry[] => []);
     // Turns projected from the log carry tool results as `tool` steps (never `observation` ones).
     const observations = batch.flatMap((t) => t.steps.filter((s) => s.role === "tool").map((s) => s.content));
@@ -272,8 +273,7 @@ export class LiveLearner {
       let folded = foldOverlay(state, event);
       const proposed = proposals(folded, policyCore, live);
       folded = proposed.reduce(foldOverlay, folded);
-      const nodes = new Set<string>(policyCore.nodes.map((n) => n.id));
-      for (const r of Object.values(folded.entries)) if (r.status !== "retired" && r.entry.kind === "node") nodes.add(r.entry.id);
+      const { nodes } = structure(folded, policyCore);
       const fresh = reflected.filter(({ entry }) => folded.entries[entryId(entry)] === undefined && anchorsOf(entry).every((n) => nodes.has(n)));
       const byReflection = fresh.map(({ entry, sessions }): OverlayEvent => ({ kind: "proposed", entry, source: { sessions: [...sessions], by: "reflection" } }));
       folded = byReflection.reduce(foldOverlay, folded);

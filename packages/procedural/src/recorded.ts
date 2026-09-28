@@ -19,12 +19,12 @@ export interface SessionLog {
 }
 
 /** The turns a log holds whole, by their `turn.ended` events, in log order. */
-function endedTurns(entries: readonly LogEntryLike[]): string[] {
-  const turns: string[] = [];
+function endedTurns(entries: readonly LogEntryLike[]): Set<string> {
+  const turns = new Set<string>();
   for (const { payload } of entries) {
     const p = payload as { event?: unknown; data?: { turnId?: unknown } } | null;
     const turnId = p?.event === "turn.ended" ? p.data?.turnId : undefined;
-    if (typeof turnId === "string" && !turns.includes(turnId)) turns.push(turnId);
+    if (typeof turnId === "string") turns.add(turnId);
   }
   return turns;
 }
@@ -51,7 +51,11 @@ export function logTrajectories(options: { readonly store: ProceduralStore; read
   return {
     async select({ graph, revision, limit }) {
       const scores = new Map<string, { score: Score | null; feedback: boolean }>();
-      for (const { event } of await store.overlay(graph).read(0)) if (event.kind === "observed") scores.set(event.turnKey, { score: event.score, feedback: event.rescore !== undefined });
+      for (const { event } of await store.overlay(graph).read(0)) {
+        // Stryker disable next-line ConditionalExpression: equivalent; other kinds have no turn key, and no turn is keyed undefined
+        if (event.kind !== "observed") continue;
+        scores.set(event.turnKey, { score: event.score, feedback: event.rescore !== undefined });
+      }
       const found: ScoredTrajectory[] = [];
       for (const session of await options.sessions()) {
         const pin = await store.pins.get(session.id);

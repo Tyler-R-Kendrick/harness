@@ -26,7 +26,6 @@ import type { DreamCommand, DreamComposition, DreamEvent, DreamInput, DreamOutco
 import { DreamIdSchema, parseGraph, revisionId, RevisionIdSchema } from "./graph.ts";
 import type { DreamId, GraphId, ProceduralGraph, RevisionId, RevisionRecord } from "./graph.ts";
 import { foldAll, rebaseOverlay } from "./overlay.ts";
-import type { OverlayEvent } from "./overlay-types.ts";
 import { refine } from "./refine.ts";
 import type { RefineResult } from "./refine.ts";
 import type { Preset, Settings } from "./settings.ts";
@@ -169,6 +168,7 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       stride: started.stride,
       task: options.task ?? "",
       tools: options.tools ?? [],
+      // Stryker disable next-line ArrayDeclaration: equivalent; a placeholder string names no tool a candidate routes into
       sideEffectFree: options.sideEffectFree ?? [],
       rejections,
       compose: settings.dream.compose === true && ports.composer !== undefined,
@@ -271,7 +271,9 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
       case "rebase": {
         const core = revisionId(command.core);
         const events = (await overlayLog.read(0)).map((e) => e.event);
-        const done = events.filter((e): e is Extract<OverlayEvent, { kind: "rebased" }> => e.kind === "rebased" && e.core === core)[0];
+        // Stryker disable next-line ConditionalExpression: equivalent; only `rebased` events have a core, which the next line compares
+        const rebases = events.flatMap((e) => (e.kind === "rebased" ? [e] : []));
+        const done = rebases.find((e) => e.core === core);
         if (done !== undefined) return { kind: "rebased", event: done };
         const { event } = rebaseOverlay(foldAll(started.head, events), command.core, command.absorbed);
         await overlayLog.append([event]);
@@ -286,7 +288,9 @@ export async function runDream(options: RunDreamOptions): Promise<DreamResult> {
   let state: DreamState | undefined;
   if (started !== undefined) {
     const dream = started.dream;
-    state = entries.slice(lastStart + 1).reduce((s, e) => (e.kind === "event" && e.dream === dream ? dreamStep(s, e.event).state : s), dreamStart(await inputOf(started)));
+    // Every entry after the last `started` one is an event.
+    const events = entries.slice(lastStart + 1) as Extract<z.output<typeof EntrySchema>, { kind: "event" }>[];
+    state = events.reduce((s, e) => (e.dream === dream ? dreamStep(s, e.event).state : s), dreamStart(await inputOf(started)));
   }
   // Stryker disable next-line OptionalChaining: equivalent; a dream always has a pending command
   if (state === undefined || state.pending[0]?.kind === "done") {

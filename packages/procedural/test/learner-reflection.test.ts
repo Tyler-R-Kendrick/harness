@@ -4,7 +4,7 @@ import { usage } from "@harness/cognitive";
 import { entryId, modelReflector, OverlayEntrySchema, parseSettings } from "@harness/procedural";
 import type { OverlayEntry, OverlayEvent } from "@harness/procedural";
 import { readFileSync } from "node:fs";
-import { call, ended, GRAPH, result, started, user } from "./learner-fixtures.ts";
+import { call, ended, GRAPH, record, result, started, user } from "./learner-fixtures.ts";
 import { preset, setup, turnEnded, turnOf } from "./learner-setup.ts";
 import { idOf, proposed } from "./overlay-fixtures.ts";
 
@@ -107,6 +107,42 @@ describe("live reflection (plan §6.2.4)", () => {
     await t.learner.onHookEvent(turnEnded("s1", "t1"));
     expect(r.asked[0]!.trajectory).toBe("Score: 0.80\nQuery: Just asking.");
     expect(reflections(t.store.events())).toEqual([proposed(edgeEntry("Scan_Index", "Verify", "Check it."), ["s1"], "reflection")]);
+  });
+
+  it("PL1.68 the filter reads an edge's condition, guidance and pitfalls against tool results only; the user's own words may be kept", async () => {
+    const question = "which film did the director of the famous heist movie make before it";
+    const r = reflector([
+      edgeEntry("Scan_Index", "End", `Mind what was asked: ${question}.`),
+      OverlayEntrySchema.parse({ kind: "edge", from: "Scan_Index", relation: "LEADS_TO", to: "Bridge_Extract", condition: "see www.evil.example/x", guidance: "g", pitfalls: "" }),
+      OverlayEntrySchema.parse({ kind: "edge", from: "Start", relation: "LEADS_TO", to: "Scan_Index", condition: null, guidance: "g", pitfalls: "C:\\secrets\\token" }),
+    ]);
+    const t = setup({ preset: preset({ reflection: "turn" }), score: scored(0.8), reflect: r.reflect });
+    t.pin("s1");
+    t.add("s1", [started("t1"), user(question), call("c1", "first_hop_retrieve", { q: "film" }), result("c1", "ok"), ended("t1")]);
+    await t.learner.onHookEvent(turnEnded("s1", "t1"));
+    expect(reflections(t.store.events())).toEqual([proposed(edgeEntry("Scan_Index", "End", `Mind what was asked: ${question}.`), ["s1"], "reflection")]);
+  });
+
+  it("PL1.69 reflection needs a reflector and the graph the turn saw; under `turn` a batch size is ignored", async () => {
+    const none = setup({ preset: preset({ reflection: "turn" }), score: scored(0.8) });
+    none.pin("s1");
+    none.add("s1", turnOf("t1", ["first_hop_retrieve"]));
+    expect(await none.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed", appended: [{ kind: "observed" }] });
+
+    const r = reflector([note("Retrieve before reasoning.")]);
+    const unseen = setup({ preset: preset({ reflection: "turn" }), score: scored(0.8), reflect: r.reflect });
+    unseen.pin("s1");
+    unseen.add("s1", [started("t1"), user("q"), record({ core: "c".repeat(64) }), call("c1", "first_hop_retrieve"), result("c1", "ok"), ended("t1")]);
+    expect(await unseen.learner.onHookEvent(turnEnded("s1", "t1"))).toMatchObject({ kind: "observed", appended: [{ kind: "observed" }] });
+    expect(r.asked).toEqual([]);
+
+    const each = setup({ preset: preset({ reflection: "turn", reflectionBatch: 5 }), score: scored(0.8), reflect: r.reflect });
+    for (const s of ["s1", "s2"]) {
+      each.pin(s);
+      each.add(s, turnOf("t1", ["first_hop_retrieve"]));
+      await each.learner.onHookEvent(turnEnded(s, "t1"));
+    }
+    expect(r.asked).toHaveLength(2);
   });
 
   it("PL1.66 modelReflector asks the reflection prompt under its constraint, with the refiner's decoding", async () => {

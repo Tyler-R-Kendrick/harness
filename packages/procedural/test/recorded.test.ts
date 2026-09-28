@@ -52,8 +52,18 @@ describe("recorded trajectories for dream (logTrajectories)", () => {
   it("PD2.29 a turn with no step record takes the session's pin; one with neither, or an unfinished turn, is left out", async () => {
     const store = new MemoryProceduralStore();
     await store.pins.set("pinned", { graph: G, core: CORE, overlay: 0, salt: "s", at: 1 });
+    await store.pins.set("open", { graph: G, core: CORE, overlay: 0, salt: "s", at: 1 });
     const bare = (id: string, withEnd: boolean): SessionLog => ({ id, entries: logOf([started("t"), user("q"), call("c", "search"), result("c", "a"), ...(withEnd ? [ended("t")] : [])]) });
     const source = logTrajectories({ store, sessions: async () => [bare("pinned", true), bare("loose", true), bare("open", false)] });
     expect((await source.select({ graph: G, revision: CORE, limit: 10 })).map((t) => t.id)).toEqual(["pinned/t"]);
+  });
+
+  it("PD2.31 only ended turns count, once each, named by a string; entries of other shapes are skipped", async () => {
+    const store = new MemoryProceduralStore();
+    await store.pins.set("s", { graph: G, core: CORE, overlay: 0, salt: "s", at: 1 });
+    const odd = [null, "text", { event: "turn.ended" }, { event: "turn.ended", data: { turnId: 7 } }, { event: "turn.started", data: { turnId: "open" } }];
+    const entries = logOf([started("t"), user("q"), ended("t"), ended("t"), ...odd]);
+    const picked = await logTrajectories({ store, sessions: async () => [{ id: "s", entries }] }).select({ graph: G, revision: CORE, limit: 10 });
+    expect(picked.map((t) => t.id)).toEqual(["s/t"]);
   });
 });

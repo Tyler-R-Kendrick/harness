@@ -380,7 +380,7 @@ export function absorbedEntries(overlay: OverlayState, base: CandidateDocument, 
       case "node":
         return candidate.nodes.some((n) => n.id === e.id);
       case "note":
-        return candidate.edges.some((c) => c.from === e.on.from && c.to === e.on.to && [c.condition ?? "", c.guidance, c.pitfalls].some((t) => t.includes(e.text)));
+        return candidate.edges.some((c) => c.from === e.on.from && c.to === e.on.to && [c.condition, c.guidance, c.pitfalls].some((t) => t !== null && t.includes(e.text)));
       case "caution": {
         const key = edgeKey(e.on.from, e.on.to);
         return before.has(key) && !after.has(key);
@@ -523,9 +523,9 @@ function record(state: DreamState, decision: Decision, at: number): RevisionReco
   };
 }
 
-/** Never store a rejection over a revision this dream holds as a head (G₀, the retained graph, or a commit). */
+/** Never store a rejection over a revision this dream holds as a head: G₀ or one of its commits (the retained graph is always one of them). */
 function storable(state: DreamState, id: RevisionId): boolean {
-  return id !== state.retained.revision && id !== revisionId(state.input.head) && !state.committed.includes(id);
+  return id !== revisionId(state.input.head) && !state.committed.includes(id);
 }
 
 function reject(state: DreamState, decision: RejectedDecision, at: number): DreamStep {
@@ -555,11 +555,11 @@ function refined(state: DreamState, result: Extract<DreamEvent, { kind: "refined
   return candidate({ ...state, work: { ...state.work, edits: result.edits, prepared } }, at);
 }
 
-function prepareOptions(state: DreamState, extraTools: readonly string[] = []): PrepareOptions {
+function prepareOptions(state: DreamState, extraTools?: readonly string[]): PrepareOptions {
   const { input } = state;
   return {
     cycles: input.settings.cycles,
-    ...(input.settings.enforceToolCatalog && { tools: [...input.tools, ...extraTools] }),
+    ...(input.settings.enforceToolCatalog && { tools: extraTools === undefined ? input.tools : [...input.tools, ...extraTools] }),
     ...(input.settings.editFilter && { filter: { observations: state.work.observations } }),
   };
 }

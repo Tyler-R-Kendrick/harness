@@ -491,6 +491,10 @@ describe("gates beyond the paper", () => {
     const { consolidation } = pending(t, "refine").request;
     expect(consolidation?.cautionedEdges).toBe("- Bridge_Extract → End: 2 traversals, 2 scored, mean 0.40, 2 sessions; caution: This edge preceded failures.");
     expect(consolidation?.overlayEntries).toContain("unexposed 2 turns, mean 0.40");
+    // Several cautions on one edge are all listed, each after its own separator.
+    const two = foldAll(G0_ID, [proposed(cautionOnCore, ["a"]), proposed({ ...cautionOnCore, text: "Also slow." }, ["b"])]);
+    const u = answer(dreamStart(harness({ overlay: { state: two, live: harnessLive } })), selected(1)).state;
+    expect(pending(u, "refine").request.consolidation?.cautionedEdges).toBe("- Bridge_Extract → End: no traversals, 0 sessions; caution: This edge preceded failures.; caution: Also slow.");
   });
 
   it("PD1.68 a gate rejection without a score shows only its gate and reason; a stored structural rejection is remembered", () => {
@@ -591,6 +595,9 @@ describe("composition in dream (plan §7.6)", () => {
     expect(s.round).toBe(2);
     // Without `compose` (every preset the runner gives no composer) the dream ends after its rounds.
     expect(pending(toCompose({ compose: false }), "done").result.rounds).toHaveLength(1);
+    // An unparsed answer is remembered without an id, so it is no known candidate.
+    const unparsed = answer(answer(dreamStart(composing()), { kind: "selected", trajectories: [] }).state, { kind: "refined", result: { error: "not JSON", raw: "?" } }).state;
+    expect(pending(unparsed, "compose").known).toEqual([]);
   });
 
   it("PD1.75 a composition is gated as any candidate: its path's support is its evidence, approval covers the workflow it routes into, and the commit binds it", () => {
@@ -609,6 +616,9 @@ describe("composition in dream (plan §7.6)", () => {
       evidence: { round: 2, composition: { path: [...PATH], node: workflow.name, support: 3 }, gates: [{ gate: "evidence", pass: true }, { gate: "approval-for-side-effects", pass: true }] },
     });
     s = answer(s, { kind: "committed", ok: true }).state;
+    // The retained graph, which the overlay rebases onto, is the bound document.
+    expect(pending(s, "rebase").core).toEqual(composition().document);
+    expect(s.retained.graph.nodes.find((n) => n.id === workflow.name)?.binding).toEqual(composition().binding);
     s = answer(s, { kind: "rebased", event: { kind: "rebased", core: commit.record.id, absorbed: [], dropped: [], frozenAt: 0 } }).state;
     expect(pending(s, "done").result).toMatchObject({ head: commit.record.id, rounds: [{ round: 1, outcome: "unchanged" }, { round: 2, outcome: "committed", revision: commit.record.id }] });
   });
@@ -644,6 +654,9 @@ describe("composition in dream (plan §7.6)", () => {
     expect(tailTokens("one two three", 5, chars)).toBe("three");
     expect(tailTokens("one two three", 13, chars)).toBe("one two three");
     expect(tailTokens("one two three", 2)).toBe("two three");
+    // A text within the limit is kept as it is, never decoded again.
+    const lossy = { ...chars, decode: (ids: readonly number[]) => `~${String.fromCodePoint(...ids)}` };
+    expect([tailTokens("one two three", 13, lossy), tailTokens("one two three", 14, lossy), tailTokens("one two three", 5, lossy)]).toEqual(["one two three", "one two three", "~three"]);
     const s = answer(dreamStart(input({ settings: { ...paperDream, contextTokens: 6 }, tokenizer: chars })), validation([0.5])).state;
     const refining = answer(s, rolled([1])).state;
     expect(pending(refining, "refine").request.attempts).toBe("rved 0");
