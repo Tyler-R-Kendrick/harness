@@ -24,6 +24,7 @@ export const PLACEHOLDERS = {
   dream: [...REFINER_SLOTS, "overlay_entries_block", "cautioned_edges_block", "rejection_reasons_block"],
   reflection: ["graph_context", "trajectory"],
   route: ["graphs"],
+  planTask: ["task", "guidance", "inputs"],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Gates dream can apply (plan §7.4). An evaluator gate with a trailing `?` applies only when the graph has an evaluator. */
@@ -185,6 +186,8 @@ const PromptsSchema = z
     reflection: text,
     /** The graph router's tool description: choose a candidate graph for the session's first prompt (a resolver's route rule). */
     route: text,
+    /** A plan task's prompt (`modelTask`): the task, its guidance from the plan's graph, and its inputs (the results of the tasks it takes input from). */
+    planTask: text,
     /** The question a task suite's `judge` scorer asks about an answer (the state holds the task, the expected answer and the answer). */
     taskJudge: text.exactOptional(),
   })
@@ -215,6 +218,8 @@ export const SettingsSchema = z.strictObject({
   sessions: z.strictObject({ idleMs: z.int().positive(), max: z.int().positive() }),
   /** The guidance prompt's context slots for a neighborhood (`local`) and for the full-graph fallback (`full`, App. B.5). */
   graphContext: z.strictObject({ local: ContextWordsSchema, full: ContextWordsSchema }),
+  /** Running plans (`runPlan`): at most `concurrency` tasks run at once. */
+  plans: z.strictObject({ concurrency: z.int().positive() }),
   prompts: PromptsSchema,
 });
 export type Settings = z.output<typeof SettingsSchema>;

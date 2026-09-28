@@ -242,4 +242,15 @@ describe("procedural settings (data/settings.json)", () => {
     expect(prompts.route).toMatch(/call nothing/i);
     expect(edit(["prompts", "route"], "Choose a graph.")).toThrow(/missing placeholders \{graphs\}\n.*at prompts\.route$/);
   });
+
+  it("PGR1.58 running plans is data: how many tasks run at once, and the prompt each task is asked with, which fills the task, its guidance and its inputs", () => {
+    const s = settings();
+    expect(s.plans).toEqual({ concurrency: 4 });
+    expect(PLACEHOLDERS.planTask).toEqual(["task", "guidance", "inputs"]);
+    for (const slot of ["{task}", "{guidance}", "{inputs}"]) expect(s.prompts.planTask).toContain(slot);
+    expect(edit(["plans", "concurrency"], 0)).toThrow(/plans\.concurrency/);
+    expect(edit(["plans", "concurrency"], 1.5)).toThrow(/plans\.concurrency/);
+    expect(edit(["plans"], undefined)).toThrow(/plans/);
+    expect(edit(["prompts", "planTask"], "Do the step.")).toThrow(/missing placeholders \{task\}, \{guidance\}, \{inputs\}\n.*at prompts\.planTask$/);
+  });
 });
