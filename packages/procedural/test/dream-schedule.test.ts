@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ManualClock, MemoryStorage, SeededEntropy } from "@harness/testkit";
-import { DreamSchedule, exclusiveDream, GraphIdSchema, MemoryProceduralStore, presetOf, revisionId, RevisionIdSchema, RevisionRecordSchema, runDream, sha256Hex, SnapshotProceduralStore } from "@harness/procedural";
+import { DreamSchedule, DurationSchema, exclusiveDream, GraphIdSchema, MemoryProceduralStore, OverlayEventSchema, presetOf, revisionId, RevisionIdSchema, RevisionRecordSchema, runDream, sha256Hex, SnapshotProceduralStore } from "@harness/procedural";
 import type { DreamResult, DreamRun, GraphId, OverlayEvent, Preset, ProceduralStore } from "@harness/procedural";
 import { core, GRAPH, settings } from "./dream-fixtures.ts";
 import { observed, proposed } from "./overlay-fixtures.ts";
@@ -11,9 +11,9 @@ const G0_ID = revisionId(G0);
 const OTHER = GraphIdSchema.parse("team/other");
 const harness = presetOf(settings, "harness");
 /** A schedule of its own, over the harness preset (one round per dream, to keep logs short). */
-const scheduled = (dream: Partial<Preset["dream"]>): Preset => {
+const scheduled = (schedule: { every?: number; afterTurns?: number }): Preset => {
   const { every: _every, afterTurns: _turns, ...rest } = harness.dream;
-  return { ...harness, dream: { ...rest, rounds: 1, ...dream } };
+  return { ...harness, dream: { ...rest, rounds: 1, ...(schedule.every === undefined ? {} : { every: DurationSchema.parse(schedule.every) }), ...(schedule.afterTurns === undefined ? {} : { afterTurns: schedule.afterTurns }) } };
 };
 
 async function seed(store: ProceduralStore, graph: GraphId = GRAPH, at = 0): Promise<void> {
@@ -38,9 +38,9 @@ function runner(store: ProceduralStore, preset: Preset, clock: ManualClock): Dre
 }
 
 const turns = (n: number, from = 0): OverlayEvent[] => Array.from({ length: n }, (_, i) => observed(`s${from + i}/t`, ["Start"], 1));
-const rescore = (turnKey: string): OverlayEvent => ({ kind: "observed", turnKey, path: [], unmatched: [], score: 1, exposure: [], rescore: { seq: 1, previous: null, observedAt: 1 } });
+const rescore = (turnKey: string): OverlayEvent => OverlayEventSchema.parse({ kind: "observed", turnKey, path: [], unmatched: [], score: 1, exposure: [], rescore: { seq: 1, previous: null, observedAt: 1 } });
 
-async function setup(dream: Partial<Preset["dream"]>, clock = new ManualClock(0)) {
+async function setup(dream: { every?: number; afterTurns?: number }, clock = new ManualClock(0)) {
   const store = new MemoryProceduralStore();
   await seed(store);
   const preset = scheduled(dream);
