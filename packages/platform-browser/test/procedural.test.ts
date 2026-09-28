@@ -8,8 +8,8 @@ import type { ModelDescriptor } from "@harness/cognitive";
 import { parseWorkflow } from "@harness/workflows";
 import { scriptedModel } from "@harness/testkit";
 import { FORMAT, GraphIdSchema, parseCompositionSettings, parseGraph, parseSettings, revisionId, seedGraph, sha256Hex } from "@harness/procedural";
-import type { ApprovalNotice } from "@harness/procedural";
-import { browserComposition, browserProcedural, IndexedDbStorage, IndexedDbWorkflows } from "@harness/platform-browser";
+import type { ApprovalNotice, PlanNotice, PlanRunner } from "@harness/procedural";
+import { browserComposition, browserPlanRunner, browserProcedural, IndexedDbStorage, IndexedDbWorkflows } from "@harness/platform-browser";
 
 const require = createRequire(import.meta.url);
 const settings = parseSettings(JSON.parse(readFileSync(require.resolve("@harness/procedural/data/settings.json"), "utf8")));
@@ -102,5 +102,43 @@ describe("procedural graphs in the browser host", () => {
     expect(await invokeCognitive(ensemble, "procedural.approve", { graph: "g", candidate: revision })).toMatchObject({ status: "committed", revision });
     expect(notices.map((n) => n.type)).toEqual(["procedural.approval.requested", "procedural.approval.decided"]);
     expect((await store.heads.get(GraphIdSchema.parse("g")))?.revision).toBe(revision);
+  });
+
+  it("PX2.132 a page runs plans: procedural.run with its runner, each task on the ensemble's chat model, the run kept in IndexedDB until it ends and resumed by a later page", async () => {
+    const factory = new IDBFactory();
+    const ensemble = new Ensemble({ platform: "browser" });
+    const asked: string[] = [];
+    const generator = scriptedModel((o) => (asked.push(JSON.stringify(o.prompt)), "an answer"));
+    ensemble.register({ id: "g", name: "g", publisher: "t", tasks: ["chat"], ports: ["generator"], locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["browser"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] } as ModelDescriptor, async () => ({ generator }));
+    const runs = () => new IndexedDbStorage({ factory, key: "procedural-plan-runs" });
+    const notices: PlanNotice[] = [];
+    const page: { plans?: PlanRunner } = {};
+    const store = browserProcedural(ensemble, { storage: new IndexedDbStorage({ factory, key: "procedural" }), settings, plans: { run: (g, plan) => page.plans!.run(g, plan) } });
+    page.plans = browserPlanRunner(ensemble, { store, storage: runs(), settings, notify: (n) => void notices.push(n) });
+    const document = {
+      format: FORMAT,
+      nodeTypes: ["ACTION", "REASONING", "STATUS"],
+      relations: ["LEADS_TO"],
+      nodes: [
+        { id: "Start", type: "STATUS", description: "The task begins." },
+        { id: "answer", type: "ACTION", description: "Answer the question." },
+        { id: "End", type: "STATUS", description: "Done." },
+      ],
+      edges: [
+        { from: "Start", relation: "LEADS_TO", to: "answer", condition: null, guidance: "Answer plainly.", pitfalls: "" },
+        { from: "answer", relation: "LEADS_TO", to: "End", condition: null, guidance: "Finish.", pitfalls: "" },
+      ],
+    };
+    await invokeCognitive(ensemble, "procedural.import", { graph: "g", document });
+    const outcome = await invokeCognitive(ensemble, "procedural.run", { graph: "g", from: "Start", to: "End" });
+    expect(outcome).toMatchObject({ graph: "g", status: "succeeded", tasks: [{ id: "answer", status: "succeeded", output: "an answer" }] });
+    expect(asked).toEqual([expect.stringContaining("Answer plainly.")]);
+    expect(notices).toEqual([{ type: "procedural.plan.completed", payload: outcome }]);
+    // A run a page left in IndexedDB is resumed by the next page's runner.
+    const { plan } = (await invokeCognitive(ensemble, "procedural.plan", { graph: "g", from: "Start", to: "End" })) as { plan: unknown };
+    await runs().save({ runs: [{ id: "00000000000000b1", graph: "g", state: { plan, outcomes: {} } }] });
+    const later = browserPlanRunner(ensemble, { store, storage: runs(), settings, tools: {}, model: generator });
+    expect(await later.resume()).toMatchObject([{ run: "00000000000000b1", status: "succeeded", tasks: [{ id: "answer", output: "an answer" }] }]);
+    expect(await runs().load()).toEqual({ runs: [] });
   });
 });

@@ -1,10 +1,10 @@
 import type { SnapshotStorage } from "@harness/core";
 import type { Ensemble } from "@harness/cognitive";
-import { composition, proceduralExtension, SnapshotProceduralStore, staging } from "@harness/procedural";
-import type { CompositionSettings, HostComposition, ProceduralExtensionOptions, ProceduralStepHook, ProceduralStore, Settings } from "@harness/procedural";
+import { composition, modelTasks, planRunner, proceduralExtension, SnapshotPlanRuns, SnapshotProceduralStore, staging } from "@harness/procedural";
+import type { CompositionSettings, HostComposition, PlanNotice, PlanRunner, PlanTaskContext, ProceduralExtensionOptions, ProceduralStepHook, ProceduralStore, Settings } from "@harness/procedural";
 import { askModel, quickjsCodeMode } from "@harness/workflows";
 import type { CodeMode } from "@harness/workflows";
-import type { ToolSet } from "ai";
+import type { LanguageModel, ToolSet } from "ai";
 import { IndexedDbWorkflows } from "./workflows.ts";
 
 /**
@@ -13,16 +13,48 @@ import { IndexedDbWorkflows } from "./workflows.ts";
  * The settings come from the page, which bundles procedural's data file and parses it
  * (`parseSettings`). Returns the store, to share with anything else that reads graphs: one
  * owner per storage. `notify` hears the approvals inbox's notices (a page publishes them
- * where it likes, such as its runtime's hook bus).
+ * where it likes, such as its runtime's hook bus). `plans` runs `procedural.run`'s plans:
+ * `browserPlanRunner` over the store this returns.
  */
 export function browserProcedural(
   ensemble: Ensemble,
-  options: { readonly storage: SnapshotStorage; readonly settings: Settings } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback" | "notify">,
+  options: { readonly storage: SnapshotStorage; readonly settings: Settings } & Pick<ProceduralExtensionOptions, "preset" | "authorize" | "dream" | "feedback" | "notify" | "plans">,
 ): ProceduralStore {
   const { storage, ...rest } = options;
   const store = new SnapshotProceduralStore(storage);
   ensemble.install(proceduralExtension({ store, clock: { now: () => Date.now() }, ...rest }));
   return store;
+}
+
+/**
+ * Plans in the browser (`procedural.run`), as the native host runs them: `planRunner` over
+ * the page's procedural store, each task `modelTask` on `model` (the ensemble's chat model
+ * by default) with the page's `tools` for the run's graph (`browserComposition`'s
+ * `planTools`: its session tools plus the workflows the graph's head binds; none when not
+ * given). Runs under way are kept in `storage` (an `IndexedDbStorage` under its own key)
+ * until they end, so a later page resumes one a closed page left (`resume`). Each end goes
+ * to `notify`.
+ */
+export function browserPlanRunner(
+  ensemble: Ensemble,
+  options: {
+    readonly store: ProceduralStore;
+    readonly storage: SnapshotStorage;
+    readonly settings: Settings;
+    readonly model?: LanguageModel;
+    readonly tools?: ToolSet | ((context: PlanTaskContext) => ToolSet | Promise<ToolSet>);
+    readonly notify?: (notice: PlanNotice) => void | Promise<void>;
+  },
+): PlanRunner {
+  const { store, storage, settings, model = ensemble.languageModel("chat"), tools = {}, notify } = options;
+  return planRunner({
+    store,
+    runs: new SnapshotPlanRuns(storage),
+    settings,
+    entropy: { bytes: (n) => crypto.getRandomValues(new Uint8Array(n)) },
+    task: modelTasks({ model, tools, settings }),
+    ...(notify === undefined ? {} : { notify }),
+  });
 }
 
 /** The IndexedDB database dream stages its workflows in, unless the page names another. */
