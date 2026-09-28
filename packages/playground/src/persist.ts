@@ -122,6 +122,26 @@ export function resilient(storage: SnapshotStorage | (() => SnapshotStorage), re
   };
 }
 
+/**
+ * Storage whose failures are reported and passed on, for a reader with a fallback of its
+ * own (the agent worker keeps a conversation it could not load in memory, and does not
+ * overwrite it); storage that cannot be opened fails every call.
+ */
+export function reported(storage: SnapshotStorage | (() => SnapshotStorage), report: (error: string) => void): SnapshotStorage {
+  let inner: SnapshotStorage;
+  try {
+    inner = typeof storage === "function" ? storage() : storage;
+  } catch (e) {
+    report(`storage unavailable: ${message(e)}`);
+    inner = { load: () => Promise.reject(e), save: () => Promise.reject(e) };
+  }
+  const passOn = (what: string) => (e: unknown) => {
+    report(`${what} failed: ${message(e)}`);
+    throw e;
+  };
+  return { load: () => inner.load().catch(passOn("load")), save: (value) => inner.save(value).catch(passOn("save")) };
+}
+
 /** One save at a time: requests while one runs become a single save after it, which sees the latest state. */
 export class Coalesced {
   readonly #save: () => Promise<void>;

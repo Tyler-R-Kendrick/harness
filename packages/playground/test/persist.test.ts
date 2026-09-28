@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Bash } from "just-bash";
-import { Coalesced, parsePageState, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
+import { Coalesced, parsePageState, reported, parseVfsSnapshot, resilient, restoreVfs, snapshotVfs } from "../src/persist.ts";
 import { HOME, walk } from "../src/vfs.ts";
 
 /** A walk's entries without their times (a restore writes files anew). */
@@ -90,6 +90,27 @@ describe("storage that may not work (a private window, a blocked site)", () => {
     expect(await none.load()).toBeUndefined();
     await none.save(1);
     expect(errors).toEqual(["storage unavailable: indexedDB is not defined"]);
+  });
+});
+
+describe("storage whose reader has its own fallback (the agent worker's conversations)", () => {
+  it("PS4.4 failures are reported and passed on, not turned into no state; storage that cannot be opened fails each call", async () => {
+    const errors: string[] = [];
+    const flaky = reported({ load: () => Promise.reject(new Error("busy")), save: () => Promise.reject(new Error("quota")) }, (e) => errors.push(e));
+    await expect(flaky.load()).rejects.toThrow("busy");
+    await expect(flaky.save(1)).rejects.toThrow("quota");
+    let opened = 0;
+    const none = reported(() => {
+      opened++;
+      throw new Error("indexedDB is not defined");
+    }, (e) => errors.push(e));
+    await expect(none.load()).rejects.toThrow("indexedDB is not defined");
+    await expect(none.save(1)).rejects.toThrow("indexedDB is not defined");
+    expect(opened).toBe(1);
+    const fine = reported({ load: async () => "kept", save: async () => {} }, (e) => errors.push(e));
+    expect(await fine.load()).toBe("kept");
+    await fine.save(2);
+    expect(errors).toEqual(["load failed: busy", "save failed: quota", "storage unavailable: indexedDB is not defined", "load failed: indexedDB is not defined", "save failed: indexedDB is not defined"]);
   });
 });
 
