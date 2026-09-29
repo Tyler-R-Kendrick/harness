@@ -11,7 +11,7 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
   const tokenizer = Object.assign(
     (texts: unknown, o: unknown) => {
       log.push({ name: "tokenizer", args: [texts, o] });
-      return Array.isArray(texts) ? { ids: texts.length } : { input_ids: { tolist: () => [[101, 102]] } };
+      return Array.isArray(texts) ? { ids: texts.length } : { input_ids: { tolist: () => [[101, 102]], dims: [1, opts.promptLength ?? 5] } };
     },
     {
       tokenize: (text: string) => text.split(" "),
@@ -78,6 +78,8 @@ export function fakeTransformers(opts: { generated?: string[]; promptLength?: nu
       },
     },
     AutoProcessor: { from_pretrained: async () => processor },
+    // A text-only causal LM: the same generation as the vision model's.
+    AutoModelForCausalLM: { from_pretrained: async (repo: string, o: unknown) => (log.push({ name: "causal.load", args: [repo, o] }), visionModel) },
     Tensor: class {
       type: string;
       data: BigInt64Array;

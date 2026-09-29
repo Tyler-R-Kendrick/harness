@@ -23,7 +23,7 @@ describe("transformers.js image processor defaults", () => {
 
 // ---- the backends against a fake transformers.js module --------------------------------------
 
-import { loadFeatureExtractionBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "@harness/models";
+import { loadFeatureExtractionBackend, loadTextChatBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "@harness/models";
 import { fakeTransformers } from "./fake-transformers.ts";
 
 describe("transformers.js backends", () => {
@@ -116,6 +116,55 @@ describe("transformers.js backends", () => {
     const [x, y] = await Promise.all([b.generate(req, () => {}, () => false), b.generate(req, () => {}, () => false)]);
     expect(x).toEqual({ hitLimit: true });
     expect(y).toEqual({ hitLimit: true });
+  });
+});
+
+describe("transformers.js text chat backend (a causal LM with its tokenizer, no processor)", () => {
+  it("TB3.1 loads the tokenizer and the causal LM at the pinned revision, renders the messages' text through the chat template, tokenizes it as-is and streams the reply", async () => {
+    const { module, log } = fakeTransformers();
+    const b = await loadTextChatBackend({ repo: "r/small", revision: "abc", module, device: "wasm", dtype: "q8", templateOptions: { enable_thinking: false } });
+    expect(log.find((l) => l.name === "tokenizer.load")!.args).toEqual(["r/small", { revision: "abc" }]);
+    expect(log.find((l) => l.name === "causal.load")!.args).toEqual(["r/small", { revision: "abc", dtype: "q8", device: "wasm" }]);
+    let text = "";
+    const r = await b.generate(
+      { messages: [{ role: "user", content: [{ type: "text", text: "Hi " }, { type: "text", text: "there" }] }], images: [], tools: [{ name: "t", description: "d", parameters: {} }], maxTokens: 10 },
+      (d) => (text += d),
+      () => false,
+    );
+    expect([text, r]).toEqual(["Hello", { hitLimit: false }]);
+    expect(log.find((l) => l.name === "chat-template")!.args).toEqual([
+      [{ role: "user", content: "Hi there" }],
+      { tokenize: false, add_generation_prompt: true, tools: [{ type: "function", function: { name: "t", description: "d", parameters: {} } }], enable_thinking: false },
+    ]);
+    expect(log.find((l) => l.name === "tokenizer")!.args).toEqual(["PROMPT", { add_special_tokens: false }]);
+  });
+
+  it("TB3.2 it is text only: a request with an image is refused before anything is generated", async () => {
+    const { module, log } = fakeTransformers();
+    const b = await loadTextChatBackend({ repo: "r/small", revision: "abc", module, dtype: "q8" });
+    await expect(b.generate({ messages: [{ role: "user", content: [{ type: "image" }] }], images: [{ mediaType: "image/png", data: new Uint8Array([1]) }], tools: [], maxTokens: 5 }, () => {}, () => false)).rejects.toThrow(/text only/);
+    expect(log.filter((l) => l.name === "step")).toEqual([]);
+  });
+
+  it("TB3.4 images sent alongside text-only messages are refused too", async () => {
+    const { module, log } = fakeTransformers();
+    const b = await loadTextChatBackend({ repo: "r/small", revision: "abc", module, dtype: "q8" });
+    await expect(b.generate({ messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }], images: [{ mediaType: "image/png", data: new Uint8Array([1]) }], tools: [], maxTokens: 5 }, () => {}, () => false)).rejects.toThrow(/text only/);
+    expect(log.filter((l) => l.name === "step")).toEqual([]);
+  });
+
+  it("TB3.3 a constrained request masks each step; the vocabulary is the tokenizer's, the stop tokens the model's end of sequence", async () => {
+    const { module, log } = fakeTransformers({ generated: ["a", "b", "!"] });
+    const vocabularies: { tokens: string[]; stopTokens: number[] }[] = [];
+    const accepted: number[] = [];
+    const constrainer = async (v: { tokens: readonly string[]; stopTokens: readonly number[] }) => (
+      vocabularies.push({ tokens: [...v.tokens], stopTokens: [...v.stopTokens] }),
+      async () => ({ mask: (l: Float32Array) => l.forEach((_, i) => (l[i] = i === [1, 2, 0][accepted.length] ? 1 : -Infinity)), accept: (id: number) => (accepted.push(id), true), forced: () => "", done: false, dispose: () => {} })
+    );
+    const b = await loadTextChatBackend({ repo: "r/small", revision: "abc", module, dtype: "q8", constrainer });
+    expect(vocabularies.map((v) => [v.tokens.length, v.tokens[10], v.stopTokens])).toEqual([[16, "<|im_end|>", [0]]]);
+    await b.generate({ messages: [], images: [], tools: [], maxTokens: 5, constraint: { type: "regex", pattern: "ab" } }, () => {}, () => false);
+    expect(log.filter((l) => l.name === "step").map((l) => l.args[1])).toEqual([1, 2, 0]);
   });
 });
 

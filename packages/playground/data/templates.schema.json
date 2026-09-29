@@ -10,8 +10,8 @@
       "properties": {
         "accept": {
           "type": "number",
-          "exclusiveMinimum": 0,
-          "exclusiveMaximum": 1
+          "minimum": 0,
+          "maximum": 1
         },
         "maxOptions": {
           "type": "integer",
@@ -25,19 +25,28 @@
         "none": {
           "type": "string",
           "minLength": 1
+        },
+        "rotate": {
+          "type": "boolean"
         }
       },
       "required": [
         "accept",
         "maxOptions",
         "question",
-        "none"
+        "none",
+        "rotate"
       ],
       "additionalProperties": false
     },
     "lexical": {
       "type": "object",
       "properties": {
+        "accept": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "none": {
           "type": "number",
           "minimum": 0,
@@ -56,9 +65,29 @@
         }
       },
       "required": [
+        "accept",
         "none",
         "temperature",
         "stopwords"
+      ],
+      "additionalProperties": false
+    },
+    "choice": {
+      "type": "object",
+      "properties": {
+        "gpuBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "headroom": {
+          "type": "number",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "gpuBytes",
+        "headroom"
       ],
       "additionalProperties": false
     },
@@ -90,12 +119,76 @@
         "refine": {
           "type": "string",
           "minLength": 1
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answerTokens": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 9007199254740991
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 9007199254740991
+        },
+        "trialMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 9007199254740991
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 8,
+              "maximum": 9007199254740991
+            },
+            "text": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 9007199254740991
+            },
+            "body": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 9007199254740991
+            },
+            "examples": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "body",
+            "examples"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "write",
         "fill",
-        "refine"
+        "refine",
+        "answer",
+        "answerTokens",
+        "maxTokens",
+        "trialMs",
+        "examples",
+        "limits"
       ],
       "additionalProperties": false
     }
@@ -103,6 +196,7 @@
   "required": [
     "decision",
     "lexical",
+    "choice",
     "curation",
     "generation"
   ],

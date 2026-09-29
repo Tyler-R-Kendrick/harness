@@ -51,6 +51,7 @@ The shipped catalog currently lists:
 | Needle 3 (Cactus) | tool router | Cactus WASM |
 | LLMLingua-2 | compressor | transformers.js |
 | Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
+| SmolLM2 135M | text generator; the smallest browser LLM, on WebAssembly with no WebGPU | transformers.js |
 | LightOnOCR-2 1B | document parser | transformers.js |
 | Ornith 1.5 9B | generator (coding, reasoning, tools); the judge of last resort | llama.cpp-server |
 | OvisOCR2 | document parser | llama.cpp-server |
@@ -252,7 +253,13 @@ const agentTools = await workflowTools(workflows); // the library's workflows, f
 To try it by hand, build the browser playground: one HTML file with the daemon, a
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
-claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0014); anywhere, `/ask $ <command>` runs the whole
+claude.ai artifact, `/ask` answers from templates first, and only what no template answers goes to local inference (ADR 0014). A
+decision model picks the template, chosen for the browser (`/decide auto`, local first: Julia 1
+where there is WebGPU and room for its 614 MB, once) or named by its slug (`/decide <id>`), with
+the lexical judge until it is ready or where none fits. Local inference is mandatory and never asked
+about: `/writer auto` loads a local model in every browser (Qwen3.5 0.8B where there is WebGPU and
+room, SmolLM2 135M on WebAssembly everywhere else), which writes a template (tried before it is
+kept) or answers the request itself. Claude writes only when named (`/writer claude`). Anywhere, `/ask $ <command>` runs the whole
 tool-call path on a deterministic model. Sessions, conversations, files and the timeline
 are kept in the browser across reloads (`/reset` forgets them).
 

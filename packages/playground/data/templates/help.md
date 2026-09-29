@@ -1,9 +1,10 @@
 ---
-description: Explains what this harness can do and how to ask it things
+description: What this assistant can do
 examples:
   - help
   - what can you do?
   - how does this work
+match: '^\s*(help|\?)\s*[.!?]?\s*$'
 holes:
   templates:
     description: the templates, one per line

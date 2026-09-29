@@ -1,5 +1,5 @@
 ---
-description: Shows the contents of a file
+description: To see the contents of a file
 examples:
   - show me README.md
   - print the file notes/todo.md

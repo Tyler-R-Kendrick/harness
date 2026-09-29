@@ -1,5 +1,5 @@
 ---
-description: Says today's date
+description: Today's date
 examples:
   - what is the date today?
   - what day is it
