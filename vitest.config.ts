@@ -6,12 +6,15 @@ import { defineConfig } from "vitest/config";
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
 // Subpath entries resolve before their package (aliases match by prefix, in order).
 const SUBPATHS = { "@harness/workflows/node": new URL("./packages/workflows/src/node.ts", import.meta.url).pathname };
-const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "procedural"];
+const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "evolution", "procedural"];
 
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
 //   *.property.test.ts     property/fuzz tests (fast-check); seeds are reported on failure
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
+//   *.simulation.test.ts   studies of whole runs over seeded simulated worlds (error rates,
+//                          power, savings); counts measured once and pinned, too slow to
+//                          run per mutant, so not in the mutation suite
 //   *.integration.test.ts  real processes/transports (e.g. ACP SDK client over stdio)
 //   *.model.test.ts        real model weights (downloads); run by `npm run test:models`
 //                          (vitest.models.config.ts) and the CI "models" job, not here
@@ -28,7 +31,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts"],
-      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/playground/src/app.ts"],
+      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/platform-native/src/evolution-cli.ts", "packages/playground/src/app.ts"],
       reporter: ["text-summary", "json-summary", "html"],
       thresholds: { lines: 95, branches: 90, functions: 95, statements: 95 },
     },

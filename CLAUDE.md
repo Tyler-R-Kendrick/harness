@@ -21,6 +21,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
 | `packages/dialogue` | scripted dialogue: scripts (fixed text, slots, tool values, generated holes) answer turns without inference; IVR-style forms; flows (durable workflows that talk) and imported documents; scripts induced and drafted from the model's answers, verified in shadow before they answer | pure |
 | `packages/dialogue-standards` | dialogue authoring standards: VoiceXML 2.1 with SRGS 1.0 (XML and ABNF) and SISR, and AIML 2.0, run a turn at a time by interpreters inside durable flows; `importDialogue` | pure |
+| `packages/evolution` | regularized self-improvement of the harness's data and code (RRSI, ADR 0018): JSON Patch and text edits under an annealed budget, a leakage screen, acceptance by a paired randomization test at a run-wide error rate (uniform or front-loaded), futility staging, pruning by ablation, a reusable holdout (Thresholdout); the paper's rule kept for comparison; driven by `harness-evolution` in `platform-native` | pure |
 | `packages/procedural` | procedural graphs (arXiv:2609.09153): a static core changed only by dream, a live overlay learned from traffic, step-level guidance, gates, stores and resolver | pure |
 | `packages/workflows` | durable workflows as code: a code mode port (AI SDK code mode natively from `/node`, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension, workflows as AI SDK tools | portable (`/node`: Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
@@ -76,6 +77,10 @@ Test kinds (filename suffix decides the kind):
 - `*.test.ts`: atomic unit tests, one behavior each.
 - `*.property.test.ts`: fast-check properties/fuzzing. Model-based tests for state machines.
 - `*.contract.test.ts`: a suite from `@harness/testkit` run against every implementation of a port.
+- `*.simulation.test.ts`: studies of whole runs over seeded simulated worlds (error rates
+  under the null, power, evaluations saved). Their counts were measured once and are
+  pinned with slack; they are excluded from mutation testing (too slow per mutant), so
+  the atomic tests must kill mutants on their own.
 - `*.integration.test.ts`: real processes and transports (e.g. the official ACP SDK client
   talking to the native host over stdio, or the browser host bundled and run in Chromium
   through `playwright-core`; install its browser with `npx playwright-core install chromium`).

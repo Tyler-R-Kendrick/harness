@@ -154,6 +154,33 @@ node packages/platform-native/src/dialogue-cli.ts import ./alice --book ~/.harne
 node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.harness/memory.json --dialogue ~/.harness/dialogue.json
 ```
 
+### Regularized self-improvement
+
+`@harness/evolution` evolves the harness's own data (prompts, thresholds, procedures, and
+source files as text) against a task suite, after RRSI (Xia et al., 2026): each round a
+proposer model drafts candidates as edits within an annealed edit budget, a leakage screen
+and a critic refuse task-specific ones before any evaluation, and at most one candidate is
+accepted. Acceptance is where this differs from the paper (ADR 0018, which critiques it):
+candidates are measured with the incumbent in the same window, a change is accepted as a
+gain only when a paired randomization test bounds its gain above zero at a run-wide error
+rate (spent uniformly or front-loaded), cost is paid for by that lower bound, clearly bad
+candidates are abandoned after a prefix of the tasks, accepted mechanisms are pruned by
+ablation, and a budgeted holdout confirms winners on tasks the proposer never saw. With no candidate that
+helps, the paper's rule accepts noise in 33 of 40 seeded runs of a simulated null world
+(the workspace instance's weights, 60 tasks, 10 rounds); this one in 2. The paper's rule is kept (`select.rule: "paper"`) to compare against. A run
+needs enough groups of tasks for its error level (it says so before spending anything).
+
+```sh
+node packages/platform-native/src/evolution-cli.ts start --config evolution.json
+node packages/platform-native/src/evolution-cli.ts run --config evolution.json --model <gateway id>
+node packages/platform-native/src/evolution-cli.ts documents --config evolution.json --write
+```
+
+The config names the documents, the tasks (with a holdout) and an evaluator command that
+runs the harness; see `packages/platform-native/data/evolution.example.json`. The run is
+saved after every round and resumes; documents are written back only on request.
+Settings are in `packages/evolution/data/settings.json`.
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
@@ -349,5 +376,6 @@ reported as `blocked`, never as a pass.
 | `packages/memory` | Memory extension: embedding models, vector recall, session memory (pure) |
 | `packages/learning` | Learning extension on memory: lessons from sessions, capability ladder, plugin contracts (pure) |
 | `packages/dialogue` | Scripted dialogue: scripts answer turns without inference, IVR-style forms, scripts induced and drafted from the model's answers and verified in shadow (pure) |
+| `packages/evolution` | Regularized self-improvement of the harness's data: RRSI's loop with calibrated acceptance, pruning by ablation, a reusable holdout (pure) |
 | `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |

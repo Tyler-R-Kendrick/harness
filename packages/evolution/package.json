@@ -1,0 +1,23 @@
+{
+  "name": "@harness/evolution",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Regularized self-improvement of the harness's data (RRSI's proposal and selection regularizers, with acceptance by paired randomization tests, a run-wide error rate, cost claims with bounds, pruning by ablation and a budgeted holdout). Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "4.0.18",
+    "@harness/cognitive": "0.0.0",
+    "@harness/core": "0.0.0",
+    "ai": "7.0.114",
+    "fast-json-patch": "3.1.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@harness/testkit": "0.0.0"
+  }
+}

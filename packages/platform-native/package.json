@@ -6,7 +6,8 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./data/*": "./data/*"
   },
   "dependencies": {
     "@ai-sdk/gateway": "4.0.92",
@@ -21,6 +22,7 @@
     "@harness/core": "0.0.0",
     "@harness/dialogue": "0.0.0",
     "@harness/dialogue-standards": "0.0.0",
+    "@harness/evolution": "0.0.0",
     "@harness/learning": "0.0.0",
     "@harness/learning-plugins": "0.0.0",
     "@harness/memory": "0.0.0",
@@ -34,7 +36,8 @@
     "ai": "7.0.114",
     "onnxruntime-node": "1.30.0",
     "write-file-atomic": "8.0.0",
-    "ws": "8.22.0"
+    "ws": "8.22.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.5.0",
@@ -47,6 +50,7 @@
     "harness": "./src/main.ts",
     "harness-procedural": "./src/procedural-cli.ts",
     "harness-workflow": "./src/workflow-cli.ts",
-    "harness-dialogue": "./src/dialogue-cli.ts"
+    "harness-dialogue": "./src/dialogue-cli.ts",
+    "harness-evolution": "./src/evolution-cli.ts"
   }
 }

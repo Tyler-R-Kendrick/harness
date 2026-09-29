@@ -61,6 +61,9 @@
       "path": "../dialogue-standards"
     },
     {
+      "path": "../evolution"
+    },
+    {
       "path": "../procedural"
     }
   ]

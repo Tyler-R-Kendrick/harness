@@ -1,0 +1,376 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "rounds": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "trials": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "candidates": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 25
+    },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "min": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "max": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "min",
+        "max"
+      ],
+      "additionalProperties": false
+    },
+    "explore": {
+      "type": "object",
+      "properties": {
+        "window": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "reserved": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "window",
+        "reserved"
+      ],
+      "additionalProperties": false
+    },
+    "select": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "rule": {
+              "type": "string",
+              "const": "calibrated"
+            },
+            "alpha": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "resamples": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "margin": {
+              "type": "number",
+              "minimum": 0
+            },
+            "saving": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "beta0": {
+              "type": "number",
+              "minimum": 0
+            },
+            "beta1": {
+              "type": "number",
+              "minimum": 0
+            },
+            "spending": {
+              "default": {
+                "kind": "uniform"
+              },
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "uniform"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "geometric"
+                    },
+                    "ratio": {
+                      "type": "number",
+                      "exclusiveMinimum": 0,
+                      "exclusiveMaximum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "ratio"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "futility": {
+              "type": "object",
+              "properties": {
+                "fraction": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 1
+                },
+                "alpha": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "exclusiveMaximum": 0.5
+                }
+              },
+              "required": [
+                "fraction",
+                "alpha"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "rule",
+            "alpha",
+            "resamples",
+            "margin",
+            "saving",
+            "beta0",
+            "beta1"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rule": {
+              "type": "string",
+              "const": "paper"
+            },
+            "delta": {
+              "type": "number",
+              "minimum": 0
+            },
+            "z": {
+              "default": 2,
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "beta0": {
+              "type": "number",
+              "minimum": 0
+            },
+            "beta1": {
+              "type": "number",
+              "minimum": 0
+            },
+            "ws": {
+              "type": "number",
+              "minimum": 0
+            },
+            "wc": {
+              "type": "number",
+              "minimum": 0
+            },
+            "wn": {
+              "type": "number",
+              "minimum": 0
+            },
+            "prune": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "rule",
+            "beta0",
+            "beta1",
+            "ws",
+            "wc",
+            "wn",
+            "prune"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "prune": {
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "every": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "after",
+        "every"
+      ],
+      "additionalProperties": false
+    },
+    "holdout": {
+      "type": "object",
+      "properties": {
+        "alpha": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "budget": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "alpha",
+        "budget"
+      ],
+      "additionalProperties": false
+    },
+    "leakage": {
+      "type": "object",
+      "properties": {
+        "ngram": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "ngram"
+      ],
+      "additionalProperties": false
+    },
+    "repair": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "invalid": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "failures": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "successes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "history": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "failures",
+        "successes",
+        "history"
+      ],
+      "additionalProperties": false
+    },
+    "proposer": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "system",
+        "maxTokens"
+      ],
+      "additionalProperties": false
+    },
+    "critic": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "examples": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "question",
+        "threshold",
+        "examples"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "rounds",
+    "trials",
+    "candidates",
+    "budget",
+    "explore",
+    "select",
+    "prune",
+    "holdout",
+    "leakage",
+    "repair",
+    "invalid",
+    "analysis",
+    "proposer",
+    "critic"
+  ],
+  "additionalProperties": false
+}

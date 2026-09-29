@@ -2,7 +2,7 @@
 // score drops below the floor; raise it as suites mature, never lower it.
 import { globSync, readFileSync } from "node:fs";
 
-const SOURCES = "packages/{core,runtime,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins,constrained,dialogue,dialogue-standards,procedural}/src/**/*.ts";
+const SOURCES = "packages/{core,runtime,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins,constrained,dialogue,dialogue-standards,evolution,procedural}/src/**/*.ts";
 const MUTATE = [SOURCES, "!packages/*/src/index.ts"];
 
 /**
