@@ -276,7 +276,7 @@ Every native local model the host runs is tested on real weights by `catalog.mod
 |---|---|---|
 | Deterministic core (injected clock/entropy); trace parity | built | DM8.1 |
 | Fault-injection properties | built | EF5.1 (effects), HK5.1 (plugin crashes), SL4, TG4.1 |
-| Mutation testing with a break threshold | built | Stryker over core, protocol, cognitive and the other pure packages (dialogue among them) |
+| Mutation testing with a break threshold | built | Stryker over core, protocol, cognitive and the other pure packages (dialogue and evolution among them); evolution's whole-run studies are `*.simulation.test.ts` and excluded, as the integration tests are, so its atomic tests must kill the mutants on their own |
 | Model tests on real weights (`*.model.test.ts`) | built | `npm run test:models`, CI `models` job; found and fixed: unnormalized images when a processor config omits do_normalize, Pixtral argument order, generation not stopped on early exit |
 | TLA+ model; combinatorial conformance; provenance (SLSA/in-toto/TUF); retention | not started | |
 
