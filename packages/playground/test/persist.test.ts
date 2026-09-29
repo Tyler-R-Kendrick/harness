@@ -61,12 +61,17 @@ describe("the page's own state across reloads", () => {
   const report = { stopReason: "end_turn", diff: { added: [], modified: ["/home/user/a"], removed: [] }, toolCalls: 1, modelCalls: 2, ms: 30 };
 
   it("PS2.1 the current session, the settings and the turns are parsed back; anything else is no state", () => {
-    const state = { version: 1, sessionId: "ses_1", settings: { worker: "shell", tier: "quick", approval: "auto", generate: "off" }, turns: [{ prompt: "hi", report }] };
+    const state = { version: 1, sessionId: "ses_1", settings: { worker: "shell", tier: "quick", approval: "auto", generate: "off", decide: "lexical" }, turns: [{ prompt: "hi", report }] };
     expect(parsePageState(state)).toEqual(state);
     // A page kept before generation had a setting asks first.
-    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings.generate).toBe("ask");
+    // Settings saved before a setting existed take its default.
+    expect(parsePageState({ ...state, settings: { worker: "shell", tier: "quick", approval: "auto" } })?.settings).toMatchObject({ generate: "ask", decide: "auto" });
+    // The decision model is a slug: auto, lexical, or a catalog id (one no longer in the catalog decides lexically).
+    expect(parsePageState({ ...state, settings: { ...state.settings, decide: "org/decider" } })?.settings.decide).toBe("org/decider");
+    // A page kept when the choice was "model" or "lexical": the model is now auto's pick.
+    expect(parsePageState({ ...state, settings: { ...state.settings, decide: "model" } })?.settings.decide).toBe("auto");
     expect(parsePageState({ ...state, sessionId: undefined })).toEqual({ ...state, sessionId: undefined });
-    for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, settings: { ...state.settings, generate: "always" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
+    for (const bad of [undefined, { ...state, version: 0 }, { ...state, settings: { ...state.settings, tier: "huge" } }, { ...state, settings: { ...state.settings, approval: "maybe" } }, { ...state, settings: { ...state.settings, generate: "always" } }, { ...state, settings: { ...state.settings, decide: "" } }, { ...state, turns: [{ prompt: 1, report }] }]) expect(parsePageState(bad)).toBeUndefined();
   });
 });
 

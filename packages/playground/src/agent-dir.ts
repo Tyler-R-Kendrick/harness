@@ -176,7 +176,7 @@ function templatesSkill(state: HarnessState): string {
     "or a bash script (kind: script) with `{{hole}}` markers (snake_case; never two holes next to each other).",
     "",
     "```yaml",
-    "description: which requests it answers",
+    "description: what a request it answers asks for, as the asker would put it (\"Today's date\", \"To see the contents of a file\")",
     "examples: [requests it answers]",
     "kind: reply | script",
     "match: an optional regular expression; a request it matches is this template's without a decision",
@@ -193,6 +193,10 @@ function templatesSkill(state: HarnessState): string {
     "`/rate good` or `/rate bad <why>` after an answer counts it in the template's file; a reason has the template",
     "rewritten the next time it is chosen (the old version kept under `.history/`), and one rated harmful by the",
     "margin retires to `retired/`.",
+    "",
+    "The decision model reads each template's description alone and asks which intent the message expresses, so a",
+    "description is an intent in the asker's words, not what the template does, and not so general it fits anything;",
+    "the lexical judge also reads the examples. `/decide` says which decides.",
     "",
   ].join("\n");
 }

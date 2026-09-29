@@ -17,7 +17,7 @@ afterEach(async () => {
 async function terminal(answer?: (key: Prompter) => void) {
   const tracer = new Tracer(() => Date.now());
   const bash = new Bash({ cwd: HOME, files: { [`${HOME}/README.md`]: "hi\n" } });
-  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask" };
+  const settings: Settings = { worker: "shell", tier: "default", approval: "ask", generate: "ask", decide: "auto" };
   const playground = await Playground.start({ bash, tracer, models: { shell: shellModel() }, worker: () => settings.worker, approval: () => settings.approval });
   open.push(playground);
   let out = "";
@@ -70,7 +70,7 @@ describe("the terminal's slash commands", () => {
     ] as const) {
       const bash = new Bash({ cwd: HOME });
       const stub = { prompt: () => Promise.reject(thrown), cancel: async () => {} } as unknown as Playground;
-      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
+      withSlashCommands(bash, new SlashCommands({ playground: stub, tracer: new Tracer(() => 0), settings: { worker: "echo", tier: "default", approval: "ask", generate: "ask", decide: "auto" }, prompter: new Prompter(() => {}), write: () => {}, workers: ["echo"] }));
       expect(await bash.exec("/ask hi", { cwd: HOME })).toMatchObject({ exitCode: 1, stderr: `${said}\n` });
     }
   });
@@ -101,7 +101,7 @@ describe("the terminal's slash commands", () => {
     expect(await t.run("/tier huge")).toMatchObject({ exitCode: 2 });
     expect((await t.run("/approve")).stdout).toBe("ask (one of ask, auto)\n");
     expect((await t.run("/approve auto")).stdout).toBe("approve: auto\n");
-    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask" });
+    expect(t.settings).toEqual({ worker: "echo", tier: "quick", approval: "auto", generate: "ask", decide: "auto" });
     expect(await t.run("/approve maybe")).toMatchObject({ exitCode: 2 });
   });
 
@@ -209,7 +209,7 @@ describe("slash commands: parsed before bash, with a command-line parser", () =>
   it("TM5.5 the parser's commands are the ones help lists, each with a description", async () => {
     const t = await terminal();
     const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
-    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/decide", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
     const commands = new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: [] }).list();
     expect(commands.map((c) => `/${c.name.split(" ")[0]}`)).toEqual(listed);
     expect(commands[0]).toEqual({ name: "ask [...prompt]", description: expect.stringContaining("Run a turn") });
@@ -221,7 +221,7 @@ describe("the template engine's commands", () => {
     const t = await terminal();
     const { TemplateStore, TEMPLATES } = await import("../src/templates.ts");
     const { TemplateEngine } = await import("../src/engine.ts");
-    const { lexicalJudge } = await import("../src/decide.ts");
+    const { lexicalDecider } = await import("../src/decide.ts");
     const { parseEngineSettings } = await import("../src/engine-settings.ts");
     const { readFileSync } = await import("node:fs");
     const settings = parseEngineSettings(JSON.parse(readFileSync(new URL("../data/templates.json", import.meta.url), "utf8")));
@@ -229,14 +229,16 @@ describe("the template engine's commands", () => {
     await t.bash.fs.writeFile(`${TEMPLATES}/list-files.md`, readFileSync(new URL("../data/templates/list-files.md", import.meta.url), "utf8"));
     await t.bash.fs.writeFile(`${TEMPLATES}/broken.md`, "not a template");
     const store = new TemplateStore(t.bash.fs, { retireMargin: 2 });
-    const engine = new TemplateEngine({ store, settings, facts: {}, judge: () => lexicalJudge(settings.lexical), generators: () => [], generation: () => t.settings.generate });
+    const engine = new TemplateEngine({ store, settings, facts: {}, deciders: () => [lexicalDecider(settings.lexical)], generators: () => [], generation: () => t.settings.generate });
     const bash = new Bash({ fs: t.bash.fs, cwd: HOME });
-    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store }));
+    const decider = { state: "Julia 1: loading (614 MB)" };
+    const slugs = ["auto", "lexical", "org/decider"];
+    withSlashCommands(bash, new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: ["templates"], engine, store, decider: { slugs: () => slugs, status: (slug) => (slug === "lexical" ? "the lexical judge alone" : decider.state) } }));
     const run = async (line: string) => {
       const r = await bash.exec(line, { cwd: HOME });
       return { ...r, stdout: plain(r.stdout) };
     };
-    return { ...t, run, engine, store };
+    return { ...t, run, engine, store, decider };
   }
 
   it("TM6.1 /generate shows and sets whether generating asks first, runs on auto, or is off", async () => {
@@ -247,10 +249,23 @@ describe("the template engine's commands", () => {
     expect(await t.run("/generate always")).toMatchObject({ exitCode: 2 });
   });
 
+  it("TM6.5 /decide shows and sets which decision model decides by slug: auto (picked for this browser), lexical, or a catalog id; how it is doing shows in /decide and /status", async () => {
+    const t = await withEngine();
+    t.settings.decide = "auto";
+    expect((await t.run("/decide")).stdout).toBe("auto (one of auto, lexical, org/decider)\ndecision model: Julia 1: loading (614 MB)\n");
+    t.decider.state = "Julia 1: ready";
+    expect((await t.run("/status")).stdout).toMatch(/^decide\s+auto: Julia 1: ready$/m);
+    expect((await t.run("/decide org/decider")).stdout).toBe("decide: org/decider\n");
+    expect(t.settings.decide).toBe("org/decider");
+    expect((await t.run("/decide lexical")).stdout).toBe("decide: lexical\n");
+    expect((await t.run("/status")).stdout).toMatch(/^decide\s+lexical: the lexical judge alone$/m);
+    expect(await t.run("/decide julia")).toMatchObject({ exitCode: 2, stderr: "unknown decide julia (one of auto, lexical, org/decider)\n" });
+  });
+
   it("TM6.2 /templates lists the templates with their feedback, and the files that are not templates", async () => {
     const t = await withEngine();
     const out = (await t.run("/templates")).stdout;
-    expect(out).toMatch(/^list-files\s+reply\s+\+0 -0\s+Lists the files in the working directory$/m);
+    expect(out).toMatch(/^list-files\s+reply\s+\+0 -0\s+A list of the files in the working directory$/m);
     expect(out).toContain("~/agent/templates/broken.md is not a template:");
   });
 

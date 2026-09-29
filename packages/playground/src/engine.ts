@@ -9,7 +9,6 @@
  * filesystem, so the next similar request costs no inference.
  */
 import type {
-  Experimental_EvaluationModelV4 as EvaluationModelV4,
   JSONValue,
   LanguageModelV4,
   LanguageModelV4Prompt,
@@ -21,6 +20,7 @@ import type { ToolApprovalStatus, ToolSet } from "ai";
 import { z } from "zod";
 import { collectParts, fillTemplate, finishReason, usage } from "@harness/cognitive";
 import { chooseTemplate, holeOf, resolveHoles } from "./decide.ts";
+import type { Decider } from "./decide.ts";
 import type { Facts } from "./decide.ts";
 import type { EngineSettings } from "./engine-settings.ts";
 import { report } from "./shell-model.ts";
@@ -41,8 +41,8 @@ export interface EngineOptions {
   readonly settings: EngineSettings;
   /** What the harness knows, for fact holes. */
   readonly facts: Facts;
-  /** The decision model now (the lexical one until a better one is loaded). */
-  readonly judge: () => EvaluationModelV4;
+  /** The decision models now, in the order they are asked (the lexical one last, and alone until a model has loaded). */
+  readonly deciders: () => readonly Decider[];
   /** Models that can write templates, cheapest first; the first is asked. */
   readonly generators: () => readonly LanguageModelV4[];
   readonly generation: () => Generation;
@@ -51,7 +51,7 @@ export interface EngineOptions {
 /** A template as a generator writes it: the template, and the values of its text holes for the request. */
 const WrittenSchema = z.object({
   id: z.string().describe("kebab-case"),
-  description: z.string(),
+  description: z.string().describe("what a request it answers asks for, as the asker would put it, e.g. \"Today's date\" or \"To see the contents of a file\": a decision model picks templates by it"),
   examples: z.array(z.string()),
   kind: z.enum(TEMPLATE_KINDS),
   body: z.string(),
@@ -77,6 +77,8 @@ export class TemplateEngine {
   readonly #id = createIdGenerator({ prefix: "tpl" });
   /** The template that answered last, for feedback. */
   last: { readonly templateId: string; readonly request: string } | undefined;
+  /** What the decision models failed with in the last decision (and its holes), when a later one decided. */
+  lastProblems: readonly string[] = [];
 
   constructor(options: EngineOptions) {
     this.#options = options;
@@ -142,9 +144,10 @@ export class TemplateEngine {
   }
 
   async #decide(request: string): Promise<Reply> {
-    const { store, settings, judge } = this.#options;
-    const decision = await chooseTemplate(judge(), request, (await store.list()).templates, settings);
-    const meta = { template: decision.template?.id ?? null, by: decision.by, probability: decision.probability };
+    const { store, settings, deciders } = this.#options;
+    const decision = await chooseTemplate(deciders(), request, (await store.list()).templates, settings);
+    this.lastProblems = decision.problems ?? [];
+    const meta = { template: decision.template?.id ?? null, by: decision.by, probability: decision.probability, ...(decision.problems ? { problems: [...decision.problems] } : {}) };
     const generation = this.#options.generation();
     const template = decision.template;
     if (!template) {
@@ -157,11 +160,13 @@ export class TemplateEngine {
 
   /** Fill what needs no generator; generate the rest (or say why not); then reply or run the script. */
   async #render(template: Template, request: string, written: Readonly<Record<string, string>>, meta: Record<string, JSONValue>): Promise<Reply> {
-    const { facts, judge, settings } = this.#options;
-    const resolved = await resolveHoles(template, request, facts, judge(), settings);
+    const { facts, deciders, settings } = this.#options;
+    const resolved = await resolveHoles(template, request, facts, deciders(), settings);
     const values = { ...resolved.values, ...written };
     const missing = resolved.missing.filter((h) => values[h] === undefined);
-    const holes = { ...meta, holes: Object.fromEntries(Object.keys(values).map((h) => [h, written[h] === undefined ? holeOf(template, h, facts).source : "generated"])) };
+    const problems = [...((meta["problems"] as string[] | undefined) ?? []), ...resolved.problems];
+    this.lastProblems = problems;
+    const holes = { ...meta, ...(problems.length > 0 ? { problems } : {}), holes: Object.fromEntries(Object.keys(values).map((h) => [h, written[h] === undefined ? holeOf(template, h, facts).source : "generated"])) };
     if (missing.length > 0) {
       if (Object.keys(written).length > 0 || this.#options.generation() === "off") return { text: `Template ${template.id} needs text for ${missing.join(", ")}, and generation is off or did not write it: /generate ask lets a generator fill it.`, meta: holes };
       return { call: { toolName: "fill_template", input: { id: template.id, request, holes: missing } }, meta: holes };

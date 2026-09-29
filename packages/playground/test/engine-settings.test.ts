@@ -12,7 +12,8 @@ describe("template engine settings (data/templates.json)", () => {
   });
 
   it("TS1.2 settings out of range are refused", () => {
-    expect(() => parseEngineSettings({ ...file, decision: { ...(file["decision"] as object), accept: 1 } })).toThrow();
+    expect(() => parseEngineSettings({ ...file, decision: { ...(file["decision"] as object), accept: 1.2 } })).toThrow();
+    expect(() => parseEngineSettings({ ...file, lexical: { ...(file["lexical"] as object), accept: -0.1 } })).toThrow();
     expect(() => parseEngineSettings({ ...file, extra: true })).toThrow();
   });
 });

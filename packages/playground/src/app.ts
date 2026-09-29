@@ -7,7 +7,10 @@ import wtermCss from "@wterm/dom/css?inline";
 import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
-import { IndexedDbStorage } from "@harness/platform-browser";
+import { parseCatalog } from "@harness/cognitive";
+import { buildBrowserEnsemble, IndexedDbStorage } from "@harness/platform-browser";
+import benchmarksFile from "@harness/cognitive/data/benchmarks.json?raw";
+import catalogFile from "@harness/cognitive/data/catalog.json?raw";
 import { storedConversations } from "@harness/workers";
 import settingsFile from "../data/templates.json?raw";
 import helpSeed from "../data/templates/help.md?raw";
@@ -17,7 +20,9 @@ import showFileSeed from "../data/templates/show-file.md?raw";
 import todaySeed from "../data/templates/today.md?raw";
 import { AGENT, syncAgentDir } from "./agent-dir.ts";
 import type { HarnessState } from "./agent-dir.ts";
-import { lexicalJudge } from "./decide.ts";
+import { lexicalDecider } from "./decide.ts";
+import { AUTO, DecisionModels, LEXICAL, rankDecisionModels } from "./decision-model.ts";
+import type { Capabilities, Past } from "./model-choice.ts";
 import { TemplateEngine } from "./engine.ts";
 import { parseEngineSettings } from "./engine-settings.ts";
 import { TEMPLATES, TemplateStore } from "./templates.ts";
@@ -61,6 +66,13 @@ const store = {
       // storage is a convenience here
     }
   },
+  remove: (key: string) => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // storage is a convenience here
+    }
+  },
 };
 
 const SAMPLE_FILES: Record<string, string> = {
@@ -87,11 +99,13 @@ const GREETING = [
   "  \x1b[36m/ask\x1b[0m <prompt>         answered from a template (~/agent/templates) before any inference",
   "  \x1b[36m/ask\x1b[0m $ <command>      runs a command through the agent's bash tool and its approval",
   "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether writing one asks first",
+  "  \x1b[36m/decide\x1b[0m [slug]        which decision model picks templates: auto (for this browser), lexical, or a model id",
   "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
-const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask" };
+// The decision model is picked for this browser (/decide auto): the best-ranked one it can run, local first; /decide <id> names one.
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: AUTO };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -124,6 +138,73 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   void resyncHarness?.().then(refreshFiles);
 });
 
+// ---- the decision models: the catalog's local ones for a browser (Julia 1), picked for this browser -----
+
+/** What became of a model's files on an earlier visit: kept, or why not. */
+const pastKey = (id: string) => `harness-playground.decision-model.${id}`;
+const KEPT = "kept";
+const pastOf = (id: string): Past | undefined => {
+  const v = store.get(pastKey(id));
+  return v === undefined ? undefined : v === KEPT ? { kept: true } : { kept: false, reason: v };
+};
+const decisionModels = new DecisionModels({
+  ranked: rankDecisionModels(parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile))),
+  settings: engineSettings.choice,
+  past: pastOf,
+  ensemble: (model) => ({
+    resolve: async (task, kind) => {
+      // onnxruntime-web comes with the page (WebGPU when the browser has it, else WebAssembly); its WebAssembly from its CDN.
+      const ort = await import("onnxruntime-web/webgpu");
+      const ensemble = buildBrowserEnsemble({
+        catalog: { models: [model], preferences: {} },
+        allowHosted: false,
+        onnxruntime: ort,
+        onnxWasm: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`,
+        onCacheProblem: (key, e) => {
+          decisionModels.current(model.id)?.cacheProblem(e instanceof Error ? e.message : String(e));
+          tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
+        },
+      });
+      // A member that fails to load says why; the ensemble only says none is available.
+      return ensemble.resolve(task, kind).catch((e: unknown) => {
+        throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
+      });
+    },
+  }),
+  onChange: (model) => {
+    // A visit whose download the browser would not keep does not start the next one on its own.
+    if (model.phase() === "ready") store.set(pastKey(model.id), model.unkept ?? KEPT);
+    tracer.record({ kind: "host", name: "decision model", detail: `${model.id}: ${model.status()}` });
+    // Auto moves on to the next model that fits when its pick could not load.
+    if (model.phase() === "failed" && settings.decide === AUTO) decisionModels.want(AUTO, false);
+    sync();
+    // Which model decides is part of the harness's state (~/AGENTS.md).
+    void resyncHarness?.().then(refreshFiles);
+  },
+});
+
+/** What this browser offers a local model: a WebGPU adapter, room in its storage, and whether it asks to save data. */
+async function detectCapabilities(): Promise<Capabilities> {
+  const nav = navigator as { gpu?: { requestAdapter(): Promise<unknown> }; connection?: { saveData?: boolean }; storage?: { estimate(): Promise<{ quota?: number; usage?: number }> } };
+  const webgpu = Boolean(await nav.gpu?.requestAdapter().catch(() => null));
+  const estimate = await nav.storage?.estimate().catch(() => undefined);
+  const freeBytes = estimate?.quota === undefined ? undefined : estimate.quota - (estimate.usage ?? 0);
+  return { webgpu, freeBytes, saveData: nav.connection?.saveData === true };
+}
+const detected = detectCapabilities()
+  .catch((): Capabilities => ({ webgpu: false, freeBytes: undefined, saveData: false }))
+  .then((c) => {
+    decisionModels.detected(c);
+    tracer.record({ kind: "host", name: "browser capabilities", detail: c });
+  });
+/** Load the decision model the slug wants, once the browser's capabilities are known: auto's pick on its own, a named one when asked or kept. */
+const wantDecisionModel = (asked: boolean) =>
+  void detected.then(() => {
+    decisionModels.want(settings.decide, asked);
+    sync();
+    void resyncHarness?.().then(refreshFiles);
+  });
+
 // ---- controls ---------------------------------------------------------------------------
 
 function sync() {
@@ -141,6 +222,12 @@ function sync() {
   const pill = $("claude-pill");
   pill.dataset["state"] = claudeState;
   pill.textContent = claudeState === "ready" ? "Claude: ready" : claudeState === "off" ? "Claude: not reachable here" : "Claude: checking";
+  const decides = $("decide-pill");
+  const phase = decisionModels.phase(settings.decide);
+  const label = decisionModels.current(settings.decide)?.label ?? "model";
+  decides.dataset["state"] = phase === "ready" ? "ready" : phase === "loading" || phase === "idle" || phase === "checking" ? "checking" : "off";
+  decides.textContent = `Decides: ${phase === "ready" ? label : phase === "loading" ? `loading ${label}` : "lexical"}`;
+  decides.title = `/decide ${settings.decide}: ${decisionModels.status(settings.decide)}`;
   $("session-line").textContent = playground?.sessionId ? `session ${short(playground.sessionId)}` : "no session yet";
 }
 
@@ -573,7 +660,7 @@ async function boot() {
   if (savedVfs) await restoreVfs(bash.fs, HOME, savedVfs);
 
   const templateStore = new TemplateStore(bash.fs, { retireMargin: engineSettings.curation.retireMargin });
-  const judge = lexicalJudge(engineSettings.lexical);
+  const lexical = lexicalDecider(engineSettings.lexical);
   const facts = {
     cwd: () => HOME,
     files: () => [...files.keys()].filter((f) => !f.startsWith(`${HOME}/agent/`)).map((f) => f.slice(HOME.length + 1)).join("\n"),
@@ -586,7 +673,7 @@ async function boot() {
     store: templateStore,
     settings: engineSettings,
     facts,
-    judge: () => judge,
+    deciders: () => decisionModels.deciders(settings.decide, lexical),
     generators: () => (claudeState === "ready" ? [claude] : []),
     generation: () => settings.generate,
   });
@@ -609,7 +696,10 @@ async function boot() {
     tools: { ...vfsTools(bash), ...engine.tools() },
     approval: approvalOf,
     settings,
-    decisionModel: `${judge.provider}/${judge.modelId}`,
+    decisionModel:
+      settings.decide === LEXICAL
+        ? "the lexical judge (harness.lexical/tf-idf) alone (/decide lexical)"
+        : `${decisionModels.name(settings.decide) ?? "no model"} (/decide ${settings.decide}): ${decisionModels.status(settings.decide)}; the lexical judge (harness.lexical/tf-idf) behind it`,
     generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
     templates: (await templateStore.list()).templates,
     facts: Object.keys(facts),
@@ -623,7 +713,12 @@ async function boot() {
     bash,
     tracer,
     instructions: async () => (await bash.fs.readFile(`${AGENT}/instructions.md`).catch(() => INSTRUCTIONS)).trim() || INSTRUCTIONS,
-    afterTurn: syncHarness,
+    afterTurn: () => {
+      // A decision the model left to the lexical judge shows in the pill.
+      decisionModels.current(settings.decide)?.fellBack(engine.lastProblems);
+      sync();
+      return syncHarness();
+    },
     models: { templates: engine.model(), shell: shellModel(), claude },
     tools: engine.tools(),
     toolApproval: (name) => engine.approval(name),
@@ -645,7 +740,9 @@ async function boot() {
     workers: ["templates", "echo", "shell", "claude"],
     engine,
     store: templateStore,
+    decider: decisionModels,
     onChange: () => {
+      wantDecisionModel(true);
       sync();
       pageSaver?.request();
       void syncHarness().then(refreshFiles);
@@ -683,6 +780,7 @@ async function boot() {
     write(promptFor(shell.cwd));
     sync();
     term.focus();
+    wantDecisionModel(false);
     document.documentElement.dataset["booted"] = "restored";
     await claudeReady;
     return;
@@ -700,6 +798,7 @@ async function boot() {
   sync();
   saveAll();
   term.focus();
+  wantDecisionModel(false);
   document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }

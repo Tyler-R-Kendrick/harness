@@ -3,6 +3,7 @@
  * is generated from this parser): when a decision is taken, how the lexical decision
  * model scores, when a template retires, and what generators are asked.
  */
+import { BytesSchema, ProbabilitySchema } from "@harness/cognitive";
 import { z } from "zod";
 
 const Prompt = z.string().min(1);
@@ -10,20 +11,31 @@ const Prompt = z.string().min(1);
 const EngineSettingsSchema = z.strictObject({
   $schema: z.string().optional(),
   decision: z.strictObject({
-    /** The probability the chosen template needs before it answers. */
-    accept: z.number().gt(0).lt(1),
+    /** The probability a decision model's choice needs before its template answers. */
+    accept: ProbabilitySchema,
     /** Options per question the decision model takes (none included); more templates are narrowed lexically first. */
     maxOptions: z.number().int().min(2),
     question: Prompt,
     /** The option that says no template answers. */
     none: Prompt,
+    /** Ask a model with the options in every rotation at once and average its answers, so an option's position does not decide it. */
+    rotate: z.boolean(),
   }),
   lexical: z.strictObject({
+    /** The probability the lexical decision model's choice needs before its template answers. */
+    accept: ProbabilitySchema,
     /** The similarity the `none` option scores, so a request unlike every template is none. */
     none: z.number().min(0).max(1),
     /** Softmax temperature over similarities. */
     temperature: z.number().gt(0),
     stopwords: z.array(z.string().min(1)),
+  }),
+  /** Which local model the page picks when the person has not: large ones need WebGPU, and every download room to spare. */
+  choice: z.strictObject({
+    /** Local models larger than this run only with a WebGPU adapter. */
+    gpuBytes: BytesSchema,
+    /** The storage a download needs, as a multiple of its size. */
+    headroom: z.number().min(1),
   }),
   curation: z.strictObject({
     /** Harmful minus helpful votes that retire a template. */
