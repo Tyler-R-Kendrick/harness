@@ -42,4 +42,13 @@ describe("choosing a model for what this browser can run (local first)", () => {
     expect(unfit(big, { ...GPU, saveData: true, freeBytes: 0 }, FIT, kept)).toBeUndefined();
     expect(unfit(big, { ...GPU, webgpu: false }, FIT, kept)).toBe("no WebGPU adapter for a 600 MB model");
   });
+
+  it("MC1.5 when a model is mandatory and none fits, the smallest one this browser can run at all is chosen anyway, and says why it would have been skipped; one that needs WebGPU it lacks never is", () => {
+    const cramped = { ...GPU, webgpu: false, saveData: true, freeBytes: 1 };
+    expect(chooseModel([big, small], cramped, FIT, () => undefined)).toEqual({ skipped: [{ id: "org/big", reason: "no WebGPU adapter for a 600 MB model" }, { id: "org/small", reason: "this browser asks to save data" }] });
+    expect(chooseModel([big, small], cramped, FIT, () => undefined, undefined, true)).toEqual({ model: small, skipped: [{ id: "org/big", reason: "no WebGPU adapter for a 600 MB model" }], forced: "this browser asks to save data" });
+    expect(chooseModel([big], cramped, FIT, () => undefined, undefined, true)).toEqual({ skipped: [{ id: "org/big", reason: "no WebGPU adapter for a 600 MB model" }] });
+    // A model that failed to load (a veto) is never forced.
+    expect(chooseModel([small], cramped, FIT, () => undefined, () => "could not load: x", true)).toEqual({ skipped: [{ id: "org/small", reason: "could not load: x" }] });
+  });
 });

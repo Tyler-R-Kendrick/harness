@@ -112,6 +112,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: sudo mkdir -p "$HARNESS_MODEL_CACHE" && sudo chown "$USER" "$HARNESS_MODEL_CACHE"
+      # The playground's local model answers in Chromium on real weights.
+      - run: npx playwright-core install --with-deps chromium
       # Weights are pinned by revision and sha256 in the catalog, so the cache key follows it.
       - uses: actions/cache@v4
         with:

@@ -326,6 +326,40 @@
       ]
     },
     {
+      "id": "HuggingFaceTB/SmolLM2-135M-Instruct",
+      "name": "SmolLM2 135M",
+      "publisher": "Hugging Face",
+      "tasks": [
+        "chat"
+      ],
+      "ports": [
+        "generator"
+      ],
+      "locality": "local",
+      "runtime": "transformers.js",
+      "run": {
+        "dtype": "q8"
+      },
+      "platforms": [
+        "native",
+        "browser"
+      ],
+      "license": "Apache-2.0",
+      "downloadBytes": 137147981,
+      "notes": "The smallest browser LLM: text only, int8 on WebAssembly with no WebGPU (137 MB), so every browser can run it. It answers short questions; under a JSON Schema it loops (digits without end), so it enforces no constraints here.",
+      "artifact": {
+        "repo": "HuggingFaceTB/SmolLM2-135M-Instruct",
+        "revision": "12fd25f77366fa6b3b4b768ec3050bf629380bac",
+        "files": [
+          {
+            "path": "onnx/model_quantized.onnx",
+            "bytes": 137147981,
+            "sha256": "ecc1a19eece6494e2963cf74f78ace35916e8d0b803168ddd41db00979f18e39"
+          }
+        ]
+      }
+    },
+    {
       "id": "ornith-ai/Ornith-1.5-9B",
       "name": "Ornith 1.5 9B",
       "publisher": "DeepReinforce AI",
@@ -567,7 +601,8 @@
     ],
     "chat": [
       "ornith-ai/Ornith-1.5-9B",
-      "Qwen/Qwen3.5-0.8B"
+      "Qwen/Qwen3.5-0.8B",
+      "HuggingFaceTB/SmolLM2-135M-Instruct"
     ],
     "reasoning": [
       "ornith-ai/Ornith-1.5-9B",

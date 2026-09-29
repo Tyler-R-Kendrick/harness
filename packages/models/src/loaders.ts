@@ -4,7 +4,7 @@ import type { ArtifactStore } from "./artifacts.ts";
 import { CactusWasmEngine } from "./cactus-wasm.ts";
 import type { CactusModule } from "./cactus-wasm.ts";
 import { gatewayEvaluationModel, serviceAvailable, typesafeApiEvaluationModel } from "./judge.ts";
-import { loadFeatureExtractionBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "./transformers-backends.ts";
+import { loadFeatureExtractionBackend, loadTextChatBackend, loadTokenClassificationBackend, loadVisionChatBackend } from "./transformers-backends.ts";
 
 type Of<R extends Runtime> = Extract<ModelDescriptor, { runtime: R }>;
 /** A loader per runtime: it loads a catalog model on that runtime into the ports it serves. */
@@ -71,6 +71,7 @@ export function portableLoaders(host: LoaderHost): Pick<RuntimeLoaders, "ai-gate
     "transformers.js": async (m) => {
       const at = { ...pinned(m), dtype: m.run.dtype };
       const constrainer = host.constrainer?.(m);
+      // A model class is an image-text-to-text model and its processor; a generator without one is a text-only causal LM.
       const chat = m.run.modelClass
         ? await loadVisionChatBackend({
             ...at,
@@ -79,7 +80,9 @@ export function portableLoaders(host: LoaderHost): Pick<RuntimeLoaders, "ai-gate
             ...(m.run.imagesFirst ? { imagesFirst: true } : {}),
             ...(constrainer ? { constrainer } : {}),
           })
-        : undefined;
+        : serves(m, "generator")
+          ? await loadTextChatBackend({ ...at, ...(m.run.template ? { templateOptions: m.run.template } : {}), ...(constrainer ? { constrainer } : {}) })
+          : undefined;
       const model = chat && visionChatModel(chat, { modelId: m.id });
       return {
         ...(m.embedding ? { embedder: promptedEmbeddingModel(await loadFeatureExtractionBackend(at), m.embedding, { modelId: m.id }) } : {}),

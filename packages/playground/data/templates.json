@@ -80,7 +80,7 @@
     ]
   },
   "choice": {
-    "gpuBytes": 100000000,
+    "gpuBytes": 200000000,
     "headroom": 1.5
   },
   "curation": {
@@ -89,6 +89,20 @@
   "generation": {
     "write": "You write reusable reply templates for a harness that answers requests from templates so it can avoid generating text. Given a request, write a template that answers it and similar requests, and the values of its holes for this request. The body is the answer's fixed text with {{hole}} markers (snake_case names; never two holes next to each other). Make as much of the answer fixed text as is true for similar requests; a hole's value comes, cheapest first, from a fact (the harness fills it: name the fact), a pattern (a regular expression whose first group, found in the request, is the value), a choice among options (a decision model picks one), or text (written for each request). Prefer facts, patterns and choices over text. kind is reply for an answer, or script for a bash script (its body) that the harness runs to answer. id is a short kebab-case name; description says which requests it answers; examples are 1 to 5 requests it answers. values has a value for every hole whose source is text.",
     "fill": "Fill the text holes of a reply template for this request. Answer with the value of each hole named, as text that fits where the hole sits in the template.",
-    "refine": "Rewrite this reply template so it answers requests like this one better, following the feedback. Keep its id; keep what works; the same rules as writing one apply. Give the values of its text holes for this request."
+    "refine": "Rewrite this reply template so it answers requests like this one better, following the feedback. Keep its id; keep what works; the same rules as writing one apply. Give the values of its text holes for this request.",
+    "answer": "Answer the request briefly and directly, in one or two sentences.",
+    "answerTokens": 160,
+    "maxTokens": 768,
+    "examples": [
+      "today",
+      "show-file"
+    ],
+    "limits": {
+      "id": 40,
+      "text": 120,
+      "body": 1200,
+      "examples": 3
+    },
+    "trialMs": 5000
   }
 }

@@ -119,12 +119,76 @@
         "refine": {
           "type": "string",
           "minLength": 1
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "answerTokens": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 9007199254740991
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 9007199254740991
+        },
+        "trialMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 9007199254740991
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 8,
+              "maximum": 9007199254740991
+            },
+            "text": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 9007199254740991
+            },
+            "body": {
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 9007199254740991
+            },
+            "examples": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "id",
+            "text",
+            "body",
+            "examples"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "write",
         "fill",
-        "refine"
+        "refine",
+        "answer",
+        "answerTokens",
+        "maxTokens",
+        "trialMs",
+        "examples",
+        "limits"
       ],
       "additionalProperties": false
     }

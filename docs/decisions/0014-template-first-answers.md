@@ -70,7 +70,7 @@ model at all. Only the parts nobody can decide need a generator.
     alone and `none` as "something else: a question none of these answers", averaged over
     rotations, taking a template at 0.6 (`decision.accept`), and with the lexical judge
     behind it: 20 of 26, one wrong answer ("what is the capital of France?" listed the
-    files), five requests left without a template (they go to generation, with consent).
+    files), five requests left without a template (they go to local inference).
     The lexical judge alone (`lexical.accept`, 0.6): 18 of 26, three wrong answers ("run
     the tests" ran a command, "delete all my files" listed them, "summarize README.md"
     showed it).
@@ -85,11 +85,53 @@ model at all. Only the parts nobody can decide need a generator.
   holes) and `refine_template` (a template rated harmful with a reason, rewritten the
   next time it is chosen; the old version kept under `.history`). A written template is
   a file, so the next similar request costs no inference.
-- **Generating needs consent.** The generation tools ask for approval ("Spend inference to
-  …?") unless `/generate auto`; `/generate off` turns them off, and the engine then says
-  which holes or request it could not answer. Generators are tried cheapest first; in
-  the page the only one is Claude through `sample`, used only this way or when a person
-  picks the `claude` worker. Claude is never picked for them.
+- **Local inference is mandatory, and never asked about.** Asking before every generation
+  ("Spend inference to …?") put a question in front of each request no template answered;
+  there is no such question now. `/generate auto` (the default) runs generation, and
+  `/generate off` turns it off (the engine then says which holes or request it could not
+  answer). A page kept when it asked first runs on auto.
+- **A local model runs in every browser.** Which model writes and answers is a slug
+  (`/writer [slug]`), chosen as decision models are: `auto` ranks the catalog's local
+  generators for a browser (Qwen3.5 0.8B, then SmolLM2 135M) and loads the first that fits
+  on its own. The fit rules are the decision model's, with one difference: a generator is
+  mandatory, so when none fits, auto loads the smallest this browser can run at all
+  (room, data and past visits aside; a model larger than `choice.gpuBytes`, 200 MB, still
+  needs WebGPU), and the status says why it would have been skipped. SmolLM2 135M is 137 MB
+  as int8 and runs on onnxruntime-web's WebAssembly with no WebGPU, so every browser has
+  one. A request waits for the local model to load. A catalog id names a model; `claude`
+  makes Claude through `sample` write and answer alone. Claude is otherwise used only when
+  a person picks the `claude` worker, and never picked for them.
+- **A model that enforces a JSON Schema writes templates; any local model answers.** When
+  no template answers, the local model writes one when it enforces a JSON Schema (a
+  template is written as one); when it does not, or its template fails the trial, it
+  answers the request itself (`generation.answer`, at most `generation.answerTokens`), and
+  nothing is kept. Writers are asked in order and the next is asked when one fails: it
+  throws, its answer is not a template, or its template fails the trial. The trial: every
+  hole of the template has a value for this request, it does not repeat a template already
+  kept (same kind and body), and a script runs cleanly (exit 0) on a throwaway copy of the
+  files within `generation.trialMs`. The turn's metadata, the header's pill and
+  `~/AGENTS.md` say who wrote or answered and why the ones before did not. A writer writes
+  to a schema bounded by the settings (a kebab-case id, 1 to 3 short examples, a capped
+  body, `generation.maxTokens`) and is shown seed templates as worked examples
+  (`generation.examples`).
+- **SmolLM2 135M was measured before it went in.** Natively on CPU it answers short
+  questions in 0.4 to 4.5 s ("The capital of France is Paris.", Hamlet's author, `ls -l`
+  for listing files; 17 × 23 it gets wrong). Under a JSON Schema it loops: asked for a
+  population it writes digits without end (`1242232323…`) until the token budget, so the
+  catalog claims no constraints for it and it never writes templates. In Chromium with no
+  WebGPU, the built page loads it on its own and answers "What is the capital of France?"
+  in a 6 s turn, asking nothing (PAM1.1, on real weights).
+- **Qwen3.5 0.8B was measured as a template writer.** It wrote templates
+  natively (CPU, 10 to 150 s each) for 8 requests no seed answers:
+  - Asked with the unbounded schema, 2 of 8 answers were cut off before the JSON closed,
+    ids were "1", and every template was a script (prose run as one, for a joke).
+  - With the bounded schema and worked examples, all 8 were templates with fitting ids,
+    descriptions and examples, but their bodies were mostly wrong: the trial refuses 6
+    (a script that does not parse, twice; a hole left without a value, three times; prose
+    run as a command), and keeps 2 that are wrong in what they say (`ls -la | wc -l`
+    counts three lines too many; "what time is it?" copied the `today` example, which the
+    repeat check now refuses). So in the page the local generator saves Claude a call
+    only for simple scripts, and a template it gets wrong is caught by `/rate bad`.
 - **Feedback refines and retires.** `/rate good|bad [why]` counts the last answer's
   template helpful or harmful in its file; a reason makes it rewritten when next chosen,
   and a template harmful by the settings' margin retires to `retired/`.
@@ -103,8 +145,7 @@ model at all. Only the parts nobody can decide need a generator.
   request, runs with no inference; the timeline's model spans carry the decision
   (template, decision model, probability, where each hole came from).
 - The lexical decision model is weak with paraphrases that share no words with a
-  template's description or examples; a request it cannot place goes to generation (with
-  consent), which adds a template that then matches such requests. Julia 1 places them
+  template's description or examples; a request it cannot place goes to local inference (`/generate auto`), which adds a template that then matches such requests. Julia 1 places them
   (it picks the file "open the readme" means, which shares no word with README.md's name
   beyond itself), and without any inference.
 - A model's catch-all option is weak (ADR 0016): a request no template answers can still
@@ -112,14 +153,23 @@ model at all. Only the parts nobody can decide need a generator.
   `/rate bad` rewrites a template given a request it should not answer.
 - The claude.ai artifact may not be allowed to fetch the model or onnxruntime-web's
   WebAssembly: the pill then says it could not load, and the lexical judge decides.
-- No local generator runs in the page yet: the browser ensemble's generator
-  (Qwen3.5-0.8B on transformers.js) would be the first generator tried, before Claude.
+- Every browser downloads a local model on its first visit without being asked: 137 MB
+  (SmolLM2 135M) where there is no WebGPU or room for more, 716 MB (Qwen3.5 0.8B) where
+  there is. A script is run on a copy of the files before a person approves the real run;
+  the copy has no network and is thrown away.
+- SmolLM2 135M's answers are short and often right on common knowledge, and wrong on
+  arithmetic and anything it does not know; they are not kept, so the same question costs
+  inference again.
+- A written template that runs but says the wrong thing is kept; `/rate bad <why>`
+  rewrites it (the local model; Claude only under `/writer claude`).
 
 ## Revisit when
 
 - A decision model is measured to place requests without the lexical judge's help, or
   without averaging over orders: drop them (one question instead of one per option).
-- A local generator loads in the page: try it before Claude, and keep Claude for what
-  it cannot write.
+- A local generator for a browser is measured to write templates whose bodies are right
+  (not only well-formed), or a model that small enforces a JSON Schema without looping:
+  let it write templates, and keep its answers as templates, so a question asked again
+  costs no inference.
 - Templates grow past what a 20-option question and lexical narrowing handle: narrow
   with embeddings (the memory extension's recall) instead.

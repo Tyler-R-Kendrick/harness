@@ -18,6 +18,8 @@
     "@harness/core": "0.0.0",
     "@harness/platform-browser": "0.0.0",
     "@harness/workers": "0.0.0",
+    "@huggingface/transformers": "4.3.0",
+    "@mlc-ai/web-xgrammar": "0.1.27",
     "@wterm/dom": "0.5.1",
     "@wterm/just-bash": "0.5.1",
     "ai": "7.0.114",

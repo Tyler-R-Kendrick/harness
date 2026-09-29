@@ -6,7 +6,9 @@ import type { Platform, TaskCategory } from "@harness/cognitive";
 const data = (file: string) => JSON.parse(readFileSync(new URL(`../data/${file}`, import.meta.url), "utf8")) as Record<string, unknown> & { models: Record<string, unknown>[]; rows: unknown[][] };
 const catalogFile = data("catalog.json");
 const benchmarksFile = data("benchmarks.json");
-const { models: MODEL_CATALOG, preferences: TASK_PREFERENCES } = parseCatalog(catalogFile, benchmarksFile);
+// Parsed inside the tests that read it, so a rule that refuses the shipped data fails a test rather than the file's load.
+let parsed: ReturnType<typeof parseCatalog> | undefined;
+const shipped = () => (parsed ??= parseCatalog(catalogFile, benchmarksFile));
 
 /** The shipped catalog with one change; parsing it must fail and say why. */
 const refused = (edit: (catalog: typeof catalogFile, benchmarks: typeof benchmarksFile) => void) => {
@@ -23,11 +25,11 @@ const esc = (id: string) => id.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 
 describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
   it("CT1.1 the shipped data parses: every model's tasks are served by its ports, and benchmarks attach to their models", () => {
-    expect(MODEL_CATALOG).toHaveLength(catalogFile.models.length);
-    for (const m of MODEL_CATALOG) for (const t of m.tasks) expect(TASK_PORTS[t].some((p) => m.ports.includes(p)), `${m.id} ${t}`).toBe(true);
-    expect(MODEL_CATALOG.flatMap((m) => m.benchmarks)).toHaveLength(benchmarksFile.rows.length);
+    expect(shipped().models).toHaveLength(catalogFile.models.length);
+    for (const m of shipped().models) for (const t of m.tasks) expect(TASK_PORTS[t].some((p) => m.ports.includes(p)), `${m.id} ${t}`).toBe(true);
+    expect(shipped().models.flatMap((m) => m.benchmarks)).toHaveLength(benchmarksFile.rows.length);
     for (const [id, task, benchmark, metric, score, better, setting] of benchmarksFile.rows as [string, TaskCategory, string, string, number, string, string?][]) {
-      expect(MODEL_CATALOG.find((m) => m.id === id)!.benchmarks).toContainEqual({ benchmark, task, metric, score, higherIsBetter: better === "higher", ...(setting ? { setting } : {}) });
+      expect(shipped().models.find((m) => m.id === id)!.benchmarks).toContainEqual({ benchmark, task, metric, score, higherIsBetter: better === "higher", ...(setting ? { setting } : {}) });
     }
   });
 
@@ -49,7 +51,7 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => (byRuntime(c, "llama.cpp-server")["constraints"] = ["json-schema", "regex"])).toThrow(/enforces only JSON Schema/);
     refused((c) => (byRuntime(c, "ai-gateway")["constraints"] = ["json-schema"])).toThrow(/only a generator enforces constraints[\s\S]*ai-gateway models cannot enforce constraints/);
     refused((c) => (tokenLevel(c)["constraints"] = ["telepathy"])).toThrow(/constraints/);
-    expect(MODEL_CATALOG.filter((m) => m.constraints).every((m) => m.ports.includes("generator"))).toBe(true);
+    expect(shipped().models.filter((m) => m.constraints).every((m) => m.ports.includes("generator"))).toBe(true);
   });
 
   it("CT1.8 run settings belong to the runtime, name files of the artifact, and category settings come exactly with their port", () => {
@@ -61,8 +63,17 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => (byRuntime(c, "cactus-wasm")["compression"] = { window: 8, subwords: "wordpiece", keepLabel: 1 })).toThrow(/a compressor, and only a compressor/);
     refused((c) => (byRuntime(c, "cactus-wasm")["embedding"] = { query: "{text}", document: "{text}", dimensions: [8] })).toThrow(/an embedder, and only an embedder/);
     const vision = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "transformers.js" && (m["ports"] as string[]).includes("generator"))!;
-    refused((c) => delete (vision(c)["run"] as Record<string, unknown>)["modelClass"]).toThrow(/names its model class/);
-    refused((c) => ((compressor(c)["run"] as Record<string, unknown>)["modelClass"] = "X")).toThrow(/names its model class/);
+    refused((c) => delete (vision(c)["run"] as Record<string, unknown>)["modelClass"]).toThrow(/names its model class\s*→ at models\[\d+\]\.run\.modelClass/);
+    refused((c) => ((compressor(c)["run"] as Record<string, unknown>)["modelClass"] = "X")).toThrow(/only a generator or document parser names a model class\s*→ at models\[\d+\]\.run\.modelClass/);
+    // A generator that reads no images is a text-only causal LM: it names no class.
+    const textOnly = (c: typeof catalogFile) => c.models.find((m) => m["runtime"] === "transformers.js" && (m["ports"] as string[]).includes("generator") && !(m["run"] as Record<string, unknown>)["modelClass"]);
+    expect(textOnly(catalogFile)).toBeDefined();
+    for (const task of ["vision-qa", "ocr", "document-parsing", "chart-understanding"]) refused((c) => ((textOnly(c)!["tasks"] as string[]).push(task))).toThrow(/reads images names its model class\s*→ at models\[\d+\]\.run\.modelClass/);
+    // A document parser reads images whatever its tasks say.
+    refused((c) => {
+      const m = textOnly(c)!;
+      (m["ports"] as string[]).push("document-parser");
+    }).toThrow(/reads images names its model class\s*→ at models\[\d+\]\.run\.modelClass/);
   });
 
   it("CT1.3 preferences and benchmark rows must name catalog models that serve the task", () => {
@@ -83,27 +94,27 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
   });
 
   it("CT1.4 natively every task but text embedding has a model (memory brings that); the browser also lacks coding and steered chat", () => {
-    const uncovered = (platform: Platform) => TASK_CATEGORIES.filter((t) => rankForTask(t, MODEL_CATALOG, { platform }).length === 0);
+    const uncovered = (platform: Platform) => TASK_CATEGORIES.filter((t) => rankForTask(t, shipped().models, { platform }).length === 0);
     expect(uncovered("native")).toEqual(["text-embedding"]);
     expect(uncovered("browser")).toEqual(["text-embedding", "coding", "steered-chat"]);
   });
 
   it("CT1.5 judging works without keys: every hosted judge has a local fallback, which takes over when hosted models are off", () => {
-    const judges = MODEL_CATALOG.filter((m) => m.tasks.includes("judgment"));
+    const judges = shipped().models.filter((m) => m.tasks.includes("judgment"));
     expect(judges.some((m) => m.locality === "hosted")).toBe(true);
-    const fallback = rankForTask("judgment", MODEL_CATALOG, { platform: "native", allowHosted: false, prefer: TASK_PREFERENCES["judgment"] ?? [] })[0];
+    const fallback = rankForTask("judgment", shipped().models, { platform: "native", allowHosted: false, prefer: shipped().preferences["judgment"] ?? [] })[0];
     expect(fallback?.descriptor.locality).toBe("local");
   });
 
   it("CT1.6 browser models run on browser runtimes; server and patched-ONNX runtimes stay native", () => {
-    for (const m of MODEL_CATALOG.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "cactus-wasm", "onnxruntime-decision"], m.id).toContain(m.runtime);
-    for (const m of MODEL_CATALOG.filter((x) => x.runtime === "llama.cpp-server" || x.runtime === "onnxruntime")) expect(m.platforms, m.id).toEqual(["native"]);
+    for (const m of shipped().models.filter((x) => x.platforms.includes("browser") && x.locality === "local")) expect(["transformers.js", "cactus-wasm", "onnxruntime-decision"], m.id).toContain(m.runtime);
+    for (const m of shipped().models.filter((x) => x.runtime === "llama.cpp-server" || x.runtime === "onnxruntime")) expect(m.platforms, m.id).toEqual(["native"]);
   });
 
   it("CT1.7 every task preference names models in the order selection breaks ties by", () => {
-    for (const [task, ids] of Object.entries(TASK_PREFERENCES) as [TaskCategory, readonly string[]][]) {
-      const ranked = rankForTask(task, MODEL_CATALOG, { platform: "native", prefer: ids }).map((r) => r.id);
-      const tied = ids.filter((id) => ranked.includes(id) && MODEL_CATALOG.find((m) => m.id === id)!.benchmarks.every((b) => b.task !== task));
+    for (const [task, ids] of Object.entries(shipped().preferences) as [TaskCategory, readonly string[]][]) {
+      const ranked = rankForTask(task, shipped().models, { platform: "native", prefer: ids }).map((r) => r.id);
+      const tied = ids.filter((id) => ranked.includes(id) && shipped().models.find((m) => m.id === id)!.benchmarks.every((b) => b.task !== task));
       expect(ranked.filter((id) => tied.includes(id)), task).toEqual(tied);
     }
   });
@@ -124,13 +135,13 @@ describe("model catalog (data/catalog.json, data/benchmarks.json)", () => {
     refused((c) => ((run(c) as Record<string, unknown>)["option"] = "an option")).toThrow(/option names \{option\}/);
     refused((c) => ((run(c) as Record<string, unknown>)["data"] = "onnx/weights.data")).toThrow(/a decision model's model and weights sit at the artifact's root/);
     refused((c) => ((run(c) as Record<string, unknown>)["batchTokens"] = 0)).toThrow(/batchTokens/);
-    refused((c) => (decision(c)["ports"] = ["router"])).toThrow(/a decision model serves the judge port, and only it/);
-    refused((c) => (decision(c)["ports"] = ["judge", "router"])).toThrow(/a decision model serves the judge port, and only it/);
+    refused((c) => (decision(c)["ports"] = ["router"])).toThrow(/a decision model serves the judge port, and only it\s*→ at models\[\d+\]\.ports/);
+    refused((c) => (decision(c)["ports"] = ["judge", "router"])).toThrow(/a decision model serves the judge port, and only it\s*→ at models\[\d+\]\.ports/);
     refused((c) => ((run(c)["limits"] as Record<string, unknown>)["cut"] = { head: 0, budget: 16, option: 4 })).toThrow(/cut/);
   });
 
   it("CT1.9 steered chat is served only by local models on the steerable ONNX runtime", () => {
-    const steered = MODEL_CATALOG.filter((m) => m.tasks.includes("steered-chat"));
+    const steered = shipped().models.filter((m) => m.tasks.includes("steered-chat"));
     expect(steered.length).toBeGreaterThan(0);
     for (const m of steered) expect([m.locality, m.runtime]).toEqual(["local", "onnxruntime"]);
     expect(TASK_PORTS["steered-chat"]).toEqual(["generator"]);

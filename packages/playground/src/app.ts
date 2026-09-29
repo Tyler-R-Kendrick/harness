@@ -6,9 +6,14 @@
 import wtermCss from "@wterm/dom/css?inline";
 import { WTerm } from "@wterm/dom";
 import { BashShell } from "@wterm/just-bash";
+import { Bash } from "just-bash";
 import type { DaemonSnapshot, SnapshotStorage } from "@harness/core";
+import type { Experimental_EvaluationModelV4 as EvaluationModelV4, LanguageModelV4 } from "@ai-sdk/provider";
+import xgrammarSource from "@mlc-ai/web-xgrammar?raw";
+import { wrapLanguageModel } from "ai";
 import { parseCatalog } from "@harness/cognitive";
-import { buildBrowserEnsemble, IndexedDbStorage } from "@harness/platform-browser";
+import type { ModelDescriptor, PortMap, TaskCategory } from "@harness/cognitive";
+import { buildBrowserEnsemble, IndexedDbStorage, xgrammarFromSource } from "@harness/platform-browser";
 import benchmarksFile from "@harness/cognitive/data/benchmarks.json?raw";
 import catalogFile from "@harness/cognitive/data/catalog.json?raw";
 import { storedConversations } from "@harness/workers";
@@ -21,7 +26,10 @@ import todaySeed from "../data/templates/today.md?raw";
 import { AGENT, syncAgentDir } from "./agent-dir.ts";
 import type { HarnessState } from "./agent-dir.ts";
 import { lexicalDecider } from "./decide.ts";
-import { AUTO, DecisionModels, LEXICAL, rankDecisionModels } from "./decision-model.ts";
+import { deciders, DECIDING, LEXICAL, rankDecisionModels } from "./decision-model.ts";
+import { answerers, CLAUDE, enforcesJson, rankGenerators, WRITING, writers } from "./generator-model.ts";
+import { AUTO, LocalModels } from "./local-models.ts";
+import type { LocalModel } from "./local-models.ts";
 import type { Capabilities, Past } from "./model-choice.ts";
 import { TemplateEngine } from "./engine.ts";
 import { parseEngineSettings } from "./engine-settings.ts";
@@ -34,9 +42,9 @@ import type { ModelTier, Sample } from "./sample-model.ts";
 import { Prompter, SlashCommands, TurnRenderer, withSlashCommands } from "./shell.ts";
 import type { Settings } from "./shell.ts";
 import { shellModel } from "./shell-model.ts";
-import { Tracer } from "./trace.ts";
+import { Tracer, tracingMiddleware } from "./trace.ts";
 import type { TraceEvent, TraceKind } from "./trace.ts";
-import { HOME, vfsTools, walk } from "./vfs.ts";
+import { HOME, SHELL_ENV, vfsTools, walk } from "./vfs.ts";
 import type { FileEntry, VfsDiff } from "./vfs.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -83,7 +91,7 @@ const SAMPLE_FILES: Record<string, string> = {
     "filesystem, so whatever a turn changes shows up here and in the Files tab.",
     "",
   ].join("\n"),
-  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] /ask what files are here? (a template answers: no inference)", "- [ ] /ask $ ls -la with approvals on, and answer n", "- [ ] /ask write a haiku about the sea (no template fits: a generator may write one, asking first)", "- [ ] /templates, then /rate good or /rate bad <why>", "- [ ] /trace 30 | grep model", ""].join("\n"),
+  [`${HOME}/notes/todo.md`]: ["# Things to try", "", "- [ ] /ask what files are here? (a template answers: no inference)", "- [ ] /ask $ ls -la with approvals on, and answer n", "- [ ] /ask what is the capital of France? (no template fits: the local model answers, in this browser)", "- [ ] /templates, then /rate good or /rate bad <why>", "- [ ] /trace 30 | grep model", ""].join("\n"),
   [`${HOME}/src/greet.sh`]: ['name="${1:-world}"', 'echo "hello, $name"', ""].join("\n"),
   // The templates /ask starts with; the ones generators write join them here.
   [`${TEMPLATES}/help.md`]: helpSeed,
@@ -98,14 +106,16 @@ const GREETING = [
   "\x1b[1mharness playground\x1b[0m \x1b[2m· the daemon runs in this page; this shell shares its files with the agent\x1b[0m",
   "  \x1b[36m/ask\x1b[0m <prompt>         answered from a template (~/agent/templates) before any inference",
   "  \x1b[36m/ask\x1b[0m $ <command>      runs a command through the agent's bash tool and its approval",
-  "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether writing one asks first",
+  "  \x1b[36m/templates\x1b[0m /rate /generate  the templates, their feedback, and whether the local model generates",
   "  \x1b[36m/decide\x1b[0m [slug]        which decision model picks templates: auto (for this browser), lexical, or a model id",
+  "  \x1b[36m/writer\x1b[0m [slug]        which local model writes and answers: auto (for this browser), claude, or a model id",
   "  \x1b[36m/help\x1b[0m                 sessions, workers, tier, approvals, traces; any command takes --help",
   "",
 ];
 
-// The decision model is picked for this browser (/decide auto): the best-ranked one it can run, local first; /decide <id> names one.
-const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "ask", decide: AUTO };
+// The decision model and the local model are picked for this browser (/decide auto, /writer auto): the best-ranked it can run.
+// Local inference is mandatory and never asked about; Claude writes and answers only when named (/writer claude).
+const settings: Settings = { worker: "templates", tier: "default", approval: "ask", generate: "auto", decide: AUTO, writer: AUTO };
 const tracer = new Tracer(() => Date.now());
 /** A trace time as this viewer's wall clock, to the millisecond (events from before a reload keep theirs). */
 const clock = (at: number) => {
@@ -130,7 +140,7 @@ const runtime = (globalThis as { claude?: { use(name: string): Promise<unknown> 
 const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise.resolve(null)).then((s) => {
   sample = typeof s === "function" ? (s as Sample) : undefined;
   claudeState = sample ? "ready" : "off";
-  // Claude is never picked for you: inference is the last resort (it writes templates, asking first, or runs when chosen).
+  // Claude is never picked for you: it runs only when chosen (the claude worker, or /writer claude).
   // A worker restored from a visit where Claude was reachable, on a page where it is not.
   if (!sample && settings.worker === "claude") settings.worker = "templates";
   sync();
@@ -138,49 +148,76 @@ const claudeReady = (runtime ? runtime.use("sample").catch(() => null) : Promise
   void resyncHarness?.().then(refreshFiles);
 });
 
-// ---- the decision models: the catalog's local ones for a browser (Julia 1), picked for this browser -----
+// ---- local models: decision models (Julia 1) and generators (Qwen3.5 0.8B), picked for this browser -----
 
 /** What became of a model's files on an earlier visit: kept, or why not. */
-const pastKey = (id: string) => `harness-playground.decision-model.${id}`;
+const pastKey = (id: string) => `harness-playground.model.${id}`;
 const KEPT = "kept";
 const pastOf = (id: string): Past | undefined => {
   const v = store.get(pastKey(id));
   return v === undefined ? undefined : v === KEPT ? { kept: true } : { kept: false, reason: v };
 };
-const decisionModels = new DecisionModels({
-  ranked: rankDecisionModels(parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile))),
-  settings: engineSettings.choice,
-  past: pastOf,
-  ensemble: (model) => ({
-    resolve: async (task, kind) => {
-      // onnxruntime-web comes with the page (WebGPU when the browser has it, else WebAssembly); its WebAssembly from its CDN.
-      const ort = await import("onnxruntime-web/webgpu");
-      const ensemble = buildBrowserEnsemble({
-        catalog: { models: [model], preferences: {} },
-        allowHosted: false,
-        onnxruntime: ort,
-        onnxWasm: `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`,
-        onCacheProblem: (key, e) => {
-          decisionModels.current(model.id)?.cacheProblem(e instanceof Error ? e.message : String(e));
-          tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
-        },
-      });
-      // A member that fails to load says why; the ensemble only says none is available.
-      return ensemble.resolve(task, kind).catch((e: unknown) => {
-        throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
-      });
+const catalog = parseCatalog(JSON.parse(catalogFile), JSON.parse(benchmarksFile));
+/** What this browser offers, once asked (a generator runs on WebGPU when there is an adapter). */
+let capabilities: Capabilities | undefined;
+
+/** One catalog model loaded through the browser host's ensemble: its port for the task. */
+async function loadLocal<K extends "judge" | "generator">(model: ModelDescriptor, task: TaskCategory, kind: K, cacheProblem: (reason: string) => void): Promise<PortMap[K]> {
+  // onnxruntime-web comes with the page (WebGPU when the browser has it, else WebAssembly); its WebAssembly from its CDN.
+  const ort = await import("onnxruntime-web/webgpu");
+  const onnxWasm = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web ?? ort.env.versions.common}/dist/`;
+  // A generator runs on transformers.js (over the same onnxruntime-web), its JSON held to the schema by XGrammar.
+  const transformers = kind === "generator" ? await import("@huggingface/transformers") : undefined;
+  const onnx = transformers?.env.backends.onnx as { wasm?: { wasmPaths?: unknown } } | undefined;
+  if (onnx?.wasm) onnx.wasm.wasmPaths = onnxWasm;
+  const ensemble = buildBrowserEnsemble({
+    catalog: { models: [model], preferences: {} },
+    allowHosted: false,
+    onnxruntime: ort,
+    onnxWasm,
+    ...(transformers ? { transformers, xgrammar: xgrammarFromSource(xgrammarSource), device: capabilities?.webgpu ? ("webgpu" as const) : ("wasm" as const) } : {}),
+    onCacheProblem: (key, e) => {
+      cacheProblem(e instanceof Error ? e.message : String(e));
+      tracer.record({ kind: "host", name: "model not kept", detail: `${key}: ${String(e)}` });
     },
-  }),
-  onChange: (model) => {
+  });
+  // A member that fails to load says why; the ensemble only says none is available.
+  const { port } = await ensemble.resolve(task, kind).catch((e: unknown) => {
+    throw new Error(ensemble.members().find((m) => m.reason)?.reason ?? String(e));
+  });
+  return port;
+}
+
+/** A local model started loading, is ready, or failed: keep whether its files were kept, and move auto on past a failure. */
+function localChanged<P>(models: LocalModels<P, ModelDescriptor>, slug: () => string, what: string) {
+  return (model: LocalModel<P>) => {
     // A visit whose download the browser would not keep does not start the next one on its own.
     if (model.phase() === "ready") store.set(pastKey(model.id), model.unkept ?? KEPT);
-    tracer.record({ kind: "host", name: "decision model", detail: `${model.id}: ${model.status()}` });
+    tracer.record({ kind: "host", name: what, detail: `${model.id}: ${model.status()}` });
     // Auto moves on to the next model that fits when its pick could not load.
-    if (model.phase() === "failed" && settings.decide === AUTO) decisionModels.want(AUTO, false);
+    if (model.phase() === "failed" && slug() === AUTO) models.want(AUTO, false);
     sync();
-    // Which model decides is part of the harness's state (~/AGENTS.md).
+    // Which models decide and write is part of the harness's state (~/AGENTS.md).
     void resyncHarness?.().then(refreshFiles);
-  },
+  };
+}
+
+const decisionModels: LocalModels<EvaluationModelV4, ModelDescriptor> = new LocalModels({
+  ranked: rankDecisionModels(catalog),
+  settings: engineSettings.choice,
+  past: pastOf,
+  load: (model) => loadLocal(model, "classification", "judge", (reason) => decisionModels.current(model.id)?.cacheProblem(reason)),
+  onChange: (model) => localChanged(decisionModels, () => settings.decide, "decision model")(model),
+  role: DECIDING,
+});
+const localGenerators: LocalModels<LanguageModelV4, ModelDescriptor> = new LocalModels({
+  ranked: rankGenerators(catalog),
+  settings: engineSettings.choice,
+  past: pastOf,
+  // The generator's calls show in the timeline, as the worker's do.
+  load: async (model) => wrapLanguageModel({ model: await loadLocal(model, "chat", "generator", (reason) => localGenerators.current(model.id)?.cacheProblem(reason)), middleware: tracingMiddleware(tracer) }),
+  onChange: (model) => localChanged(localGenerators, () => settings.writer, "generator")(model),
+  role: WRITING,
 });
 
 /** What this browser offers a local model: a WebGPU adapter, room in its storage, and whether it asks to save data. */
@@ -194,13 +231,33 @@ async function detectCapabilities(): Promise<Capabilities> {
 const detected = detectCapabilities()
   .catch((): Capabilities => ({ webgpu: false, freeBytes: undefined, saveData: false }))
   .then((c) => {
+    capabilities = c;
     decisionModels.detected(c);
+    // The generator's room is what is left after auto's decision model downloads (unless the browser kept it).
+    const deciding = settings.decide === AUTO ? decisionModels.pick() : undefined;
+    const reserved = deciding && pastOf(deciding.id)?.kept !== true ? deciding.downloadBytes * engineSettings.choice.headroom : 0;
+    localGenerators.detected({ ...c, freeBytes: c.freeBytes === undefined ? undefined : c.freeBytes - reserved });
     tracer.record({ kind: "host", name: "browser capabilities", detail: c });
   });
-/** Load the decision model the slug wants, once the browser's capabilities are known: auto's pick on its own, a named one when asked or kept. */
-const wantDecisionModel = (asked: boolean) =>
+/** The writer slug's local model once it has loaded (local inference is mandatory: a question waits for it), or none for claude. */
+async function localModel(): Promise<{ id: string; port: LanguageModelV4 } | undefined> {
+  const slug = settings.writer;
+  if (slug === CLAUDE) return undefined;
+  await detected;
+  const port = await localGenerators.ready(slug);
+  const id = localGenerators.current(slug)?.id;
+  return port && id ? { id, port } : undefined;
+}
+/** Load the local models the slugs want, once the browser's capabilities are known: auto's picks on their own, named ones when asked or kept. */
+let wantedSlugs = "";
+const wantLocalModels = (changed: boolean) =>
   void detected.then(() => {
+    const slugs = `${settings.decide} ${settings.writer}`;
+    // Only a slug just typed is asked for: every turn also calls this, and must not download a named model again or retry a failed one.
+    const asked = changed && slugs !== wantedSlugs;
+    wantedSlugs = slugs;
     decisionModels.want(settings.decide, asked);
+    localGenerators.want(settings.writer, asked);
     sync();
     void resyncHarness?.().then(refreshFiles);
   });
@@ -228,6 +285,12 @@ function sync() {
   decides.dataset["state"] = phase === "ready" ? "ready" : phase === "loading" || phase === "idle" || phase === "checking" ? "checking" : "off";
   decides.textContent = `Decides: ${phase === "ready" ? label : phase === "loading" ? `loading ${label}` : "lexical"}`;
   decides.title = `/decide ${settings.decide}: ${decisionModels.status(settings.decide)}`;
+  const writes = $("writer-pill");
+  const writing = localGenerators.phase(settings.writer);
+  const writerLabel = localGenerators.current(settings.writer)?.label ?? "model";
+  writes.dataset["state"] = writing === "ready" ? "ready" : writing === "loading" || writing === "idle" || writing === "checking" ? "checking" : "off";
+  writes.textContent = `Writes: ${writing === "ready" ? writerLabel : writing === "loading" || writing === "idle" ? `loading ${writerLabel}` : writing === "alone" ? "Claude" : writing === "checking" ? "checking" : "none"}`;
+  writes.title = `/writer ${settings.writer}: ${localGenerators.status(settings.writer)}`;
   $("session-line").textContent = playground?.sessionId ? `session ${short(playground.sessionId)}` : "no session yet";
 }
 
@@ -608,6 +671,7 @@ async function reset() {
   await Promise.all([vfsSaver?.flush(), pageSaver?.flush(), traceSaver.flush()]);
   const sessions = playground?.snapshot().sessions.map((s) => s.id) ?? [];
   await Promise.all([...Object.values(stores), ...sessions.map(conversationRecord)].map((s) => s.clear()));
+  for (const m of catalog.models) store.remove(pastKey(m.id));
   location.reload();
 }
 
@@ -653,7 +717,7 @@ async function boot() {
     renderTurns();
   }
   const promptFor = (cwd: string) => `\x1b[36mharness\x1b[0m:\x1b[34m${cwd.replace(HOME, "~") || "/"}\x1b[0m$ `;
-  const shell = (late.shell = new BashShell({ files: savedVfs ? {} : SAMPLE_FILES, cwd: HOME, greeting: GREETING, prompt: promptFor }));
+  const shell = (late.shell = new BashShell({ files: savedVfs ? {} : SAMPLE_FILES, cwd: HOME, env: { ...SHELL_ENV }, greeting: GREETING, prompt: promptFor }));
   await shell.attach(write);
   const bash = shell.bash!;
   bashRef = bash;
@@ -673,21 +737,29 @@ async function boot() {
     store: templateStore,
     settings: engineSettings,
     facts,
-    deciders: () => decisionModels.deciders(settings.decide, lexical),
-    generators: () => (claudeState === "ready" ? [claude] : []),
+    deciders: () => deciders(decisionModels, settings.decide, lexical),
+    // The local model writes (when it enforces a JSON Schema) and answers what no template does; a question waits for it to load.
+    generators: async () => writers(settings.writer, await localModel(), claudeState === "ready" ? claude : undefined, enforcesJson(catalog)),
+    answerers: async () => answerers(settings.writer, await localModel(), claudeState === "ready" ? claude : undefined),
     generation: () => settings.generate,
+    // A written script is tried on a throwaway copy of the files (no network here) before it is kept.
+    trial: async (script) => {
+      const copy = new Bash({ cwd: HOME });
+      await restoreVfs(copy.fs, HOME, await snapshotVfs(bash.fs, HOME));
+      return copy.exec(script, { cwd: HOME, env: { ...SHELL_ENV }, signal: AbortSignal.timeout(engineSettings.generation.trialMs) });
+    },
   });
   // The harness as an Eve agent in its own filesystem (~/AGENTS.md, ~/agent/), kept in sync with its state.
   const commands: { slash?: SlashCommands } = {};
   const WORKERS = [
-    { name: "templates", description: "Answers from the templates in ~/agent/templates; generates only what cannot be decided, asking first", model: "harness.templates/templates", instructions: "Answer each request from a template: a decision model picks it, and its holes are filled from facts, the request and choices. Write, fill or rewrite a template only when nothing else answers, and only with consent." },
+    { name: "templates", description: "Answers from the templates in ~/agent/templates; the local model writes or answers only what no template does", model: "harness.templates/templates", instructions: "Answer each request from a template: a decision model picks it, and its holes are filled from facts, the request and choices. When nothing else answers, the local model writes, fills or rewrites a template, or answers the request itself." },
     { name: "echo", description: "Echoes the prompt: no model, no tools" },
     { name: "shell", description: "Runs `$ <command>` through the bash tool, deterministically", model: "harness.playground/shell" },
     { name: "claude", description: "Claude through this artifact's sample capability: inference on every turn, only when picked", model: "claude.sample/sample", instructions: INSTRUCTIONS },
   ];
   const approvalOf = (name: string) => {
     const generation = engine.approval(name);
-    if (generation !== undefined) return generation === "user-approval" ? "asks first (/generate ask)" : generation === "denied" ? "off (/generate off)" : "runs on its own (/generate auto)";
+    if (generation !== undefined) return generation === "denied" ? "off (/generate off)" : "runs on its own, never asking (/generate auto)";
     return name === "readFile" ? "never asks" : settings.approval === "ask" ? "asks first (/approve ask)" : "runs on its own (/approve auto)";
   };
   const harnessState = async (): Promise<HarnessState> => ({
@@ -700,7 +772,11 @@ async function boot() {
       settings.decide === LEXICAL
         ? "the lexical judge (harness.lexical/tf-idf) alone (/decide lexical)"
         : `${decisionModels.name(settings.decide) ?? "no model"} (/decide ${settings.decide}): ${decisionModels.status(settings.decide)}; the lexical judge (harness.lexical/tf-idf) behind it`,
-    generators: claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : [],
+    generators: [
+      ...(settings.writer === CLAUDE ? [] : [`${localGenerators.name(settings.writer) ?? "no local model"}: ${localGenerators.status(settings.writer)}`]),
+      // Claude writes only when named.
+      ...(settings.writer === CLAUDE && claudeState === "ready" ? [`${claude.provider}/${claude.modelId}`] : []),
+    ],
     templates: (await templateStore.list()).templates,
     facts: Object.keys(facts),
     commands: commands.slash?.list() ?? [],
@@ -716,6 +792,10 @@ async function boot() {
     afterTurn: () => {
       // A decision the model left to the lexical judge shows in the pill.
       decisionModels.current(settings.decide)?.fellBack(engine.lastProblems);
+      // So does a template the local generator's writing was refused for (its own problems, not Claude's).
+      const writer = localGenerators.current(settings.writer);
+      const own = writer?.port && `${writer.port.provider}/${writer.port.modelId}: `;
+      writer?.fellBack(own ? engine.lastWriteProblems.filter((p) => p.startsWith(own)) : []);
       sync();
       return syncHarness();
     },
@@ -741,8 +821,9 @@ async function boot() {
     engine,
     store: templateStore,
     decider: decisionModels,
+    writer: localGenerators,
     onChange: () => {
-      wantDecisionModel(true);
+      wantLocalModels(true);
       sync();
       pageSaver?.request();
       void syncHarness().then(refreshFiles);
@@ -780,7 +861,7 @@ async function boot() {
     write(promptFor(shell.cwd));
     sync();
     term.focus();
-    wantDecisionModel(false);
+    wantLocalModels(false);
     document.documentElement.dataset["booted"] = "restored";
     await claudeReady;
     return;
@@ -798,7 +879,7 @@ async function boot() {
   sync();
   saveAll();
   term.focus();
-  wantDecisionModel(false);
+  wantLocalModels(false);
   document.documentElement.dataset["booted"] = "fresh";
   await claudeReady;
 }

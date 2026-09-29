@@ -12,6 +12,8 @@ import type { ToolApprovalStatus, ToolSet } from "ai";
 import type { Bash, IFileSystem } from "just-bash";
 
 export const HOME = "/home/user";
+/** The environment every shell here runs with: `~` is home, and so is the working directory. */
+export const SHELL_ENV: Readonly<Record<string, string>> = { HOME, PWD: HOME };
 
 /** Whether commands and writes wait for the person (`ask`) or run at once (`auto`). */
 export type ApprovalPolicy = "ask" | "auto";
@@ -46,7 +48,7 @@ export function vfsTools(bash: Bash, options: { readonly maxOutput?: number } = 
       description: `Run a bash command in a sandboxed shell with a virtual filesystem (the working directory is ${HOME}). Returns stdout, stderr and the exit code. Common Unix tools are available; there is no network.`,
       inputSchema: jsonSchema<{ command: string }>({ type: "object", properties: { command: { type: "string", description: "The command line to run" } }, required: ["command"] }),
       execute: async ({ command }, { abortSignal }) => {
-        const r = await bash.exec(command, { cwd: HOME, env: { PWD: HOME }, ...(abortSignal ? { signal: abortSignal } : {}) });
+        const r = await bash.exec(command, { cwd: HOME, env: { ...SHELL_ENV }, ...(abortSignal ? { signal: abortSignal } : {}) });
         return { stdout: cut(r.stdout, max), stderr: cut(r.stderr, max), exitCode: r.exitCode };
       },
     }),
