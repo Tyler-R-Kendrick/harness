@@ -14,20 +14,29 @@ else throw new Error(`unknown ci command ${JSON.stringify(command)}`);
 
 function writePull() {
   const event = process.env.EVENT_NAME;
-  let flags;
-  if (event === "pull_request") {
-    const base = process.env.BASE_SHA ?? "";
-    if (base === "") throw new Error("pull request is missing its base sha");
-    execFileSync("git", ["fetch", "--no-tags", "origin", base], { stdio: "inherit" });
-    flags = classify(names(base, "HEAD"));
-  } else {
-    const before = process.env.BEFORE_SHA ?? "";
-    // The first push of a repository has no parent. Run the full pull-request suite.
-    flags = before === "" || /^0+$/.test(before) ? { code: true, browser: true, host: true } : classify(names(before, "HEAD"));
-  }
+  const flags = event === "pull_request" ? pullRequestFlags() : pushFlags(process.env.BEFORE_SHA ?? "");
   setOutput("code", String(flags.code));
   setOutput("browser", String(flags.browser));
   setOutput("host", String(flags.host));
+}
+
+function pullRequestFlags() {
+  const base = process.env.BASE_SHA ?? "";
+  if (base === "") throw new Error("pull request is missing its base sha");
+  execFileSync("git", ["fetch", "--no-tags", "origin", base], { stdio: "inherit" });
+  return classify(names(base, "HEAD"));
+}
+
+function pushFlags(before) {
+  // A new repository has no parent. A force-pushed parent that the remote no longer
+  // serves cannot be diffed; run the full suite instead of failing before any test.
+  if (before === "" || /^0+$/.test(before)) return { code: true, browser: true, host: true };
+  try {
+    fetchRef(before);
+    return classify(names(before, "HEAD"));
+  } catch {
+    return { code: true, browser: true, host: true };
+  }
 }
 
 function writePromote() {

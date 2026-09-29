@@ -25,7 +25,7 @@ permissions:
   deployments: write
 
 concurrency:
-  group: release-${{ inputs.ref }}
+  group: release
   cancel-in-progress: false
 
 env:
@@ -35,6 +35,7 @@ jobs:
   scope:
     runs-on: ubuntu-latest
     outputs:
+      sha: ${{ steps.pin.outputs.sha }}
       mutate: ${{ steps.plan.outputs.mutate }}
       shards: ${{ steps.plan.outputs.shards }}
       files: ${{ steps.plan.outputs.files }}
@@ -45,9 +46,12 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+      - id: pin
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - id: plan
         env:
           BASELINE: ${{ inputs.baseline }}
+          PROMOTE_SHA: ${{ steps.pin.outputs.sha }}
           GH_TOKEN: ${{ github.token }}
         run: node tools/ci/github.mjs promote
 
@@ -66,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -77,7 +81,7 @@ jobs:
         run: npm ci
       - if: steps.decision.outputs.decision == 'run'
         run: npm run test:mutation
-      - if: steps.decision.outputs.decision == 'run'
+      - if: always() && steps.decision.outputs.decision == 'run'
         uses: actions/upload-artifact@v4
         with:
           name: mutation-report-${{ strategy.job-index }}
@@ -94,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -148,7 +152,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ needs.scope.outputs.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -206,9 +210,15 @@ jobs:
       (needs.models.result == 'success' || needs.models.result == 'skipped') &&
       (needs.evals.result == 'success' || needs.evals.result == 'skipped')
     runs-on: ubuntu-latest
-    environment: release
+    # `environment:` would record github.sha, the workflow file, not the ref the gates checked out.
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref }}
-      - run: echo "Released $(git rev-parse HEAD). The gates this promotion ran have passed."
+      - name: Record the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROMOTED_SHA: ${{ needs.scope.outputs.sha }}
+        run: |
+          id="$(jq -n --arg sha "$PROMOTED_SHA" '{ref:$sha,environment:"release",auto_merge:false,required_contexts:[],production_environment:true,description:("Promote "+$sha)}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments" --input - --jq .id)"
+          jq -n '{state:"success",environment:"release",description:"The gates this promotion ran have passed."}' \
+            | gh api --method POST "repos/${GITHUB_REPOSITORY}/deployments/${id}/statuses" --input -
+          echo "Released ${PROMOTED_SHA}. The gates this promotion ran have passed."
