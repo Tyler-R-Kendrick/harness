@@ -1,7 +1,7 @@
 import { experimental_evaluate, generateText, jsonSchema, NoObjectGeneratedError, NoOutputGeneratedError, Output } from "ai";
 import type { Experimental_EvaluationModel as EvaluationModel, LanguageModel } from "ai";
 import { ax, AxGenerateError, AxMockAIService, f, optimize } from "@ax-llm/ax";
-import type { AxChatRequest } from "@ax-llm/ax";
+import type { AxChatRequest, AxChatResponse } from "@ax-llm/ax";
 import { ProbabilitySchema } from "@harness/cognitive";
 import type { CriticRequest, CriticVerdict, ProposalRequest } from "./evolution.ts";
 import type { Settings } from "./schemas.ts";
@@ -19,7 +19,8 @@ function languageModelService(model: LanguageModel, maxTokens: number): AxMockAI
   return new AxMockAIService({
     name: "ai-sdk",
     features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ["native"] },
-    chatResponse: async (req: AxChatRequest) => {
+    chatResponse: async (req?: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
+      if (req === undefined) throw new Error("Ax chat request is required");
       const declared = req.responseFormat?.type === "json_schema" ? (req.responseFormat.schema?.schema ?? req.responseFormat.schema) : undefined;
       const { instructions, messages } = promptOf(req.chatPrompt);
       const { text } = await generateText({
