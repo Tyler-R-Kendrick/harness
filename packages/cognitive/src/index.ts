@@ -19,6 +19,8 @@ export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE, route, toolSet, valida
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
 export { frontierSearch } from "./frontier.ts";
 export type { FrontierDomain, FrontierJudge, FrontierLimits, FrontierResult } from "./frontier.ts";
+export { listedFrontier, openFrontier } from "./frontier-adapter.ts";
+export type { FrontierSetup } from "./frontier-adapter.ts";
 export { BenchmarksFileSchema, CatalogFileSchema, catalogJsonSchemas, parseCatalog } from "./catalog.ts";
 export type { Catalog, CompressionConfig, EmbeddingConfig, ModelEntry } from "./catalog.ts";
 export { invokeCognitive, mirrorCapabilities } from "./service.ts";
