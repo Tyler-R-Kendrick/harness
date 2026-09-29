@@ -11,11 +11,11 @@ The harness already improves itself in small ways: learning distils lessons from
 (`@harness/learning`), and the dialogue induces scripts from the model's answers and
 promotes them after shadow checks (`@harness/dialogue`). Neither changes the harness's own
 configuration: its prompts, thresholds and procedures, all of which are data here
-(`packages/*/data/*.json`). Xia et al., "RRSI: Regularized Recursive Self-Improvement of
-Agent Harnesses" (arXiv:2609.24972, September 2026; code at google-research/rrsi) evolves
-a harness against a task suite and argues that the search must be *regularized*, or it
-memorizes the suite. Should the harness evolve its data this way, and if so, is the
-paper's method sound enough to adopt as published?
+(`packages/*/data/*.json`), and its source files. Xia et al., "RRSI: Regularized Recursive
+Self-Improvement of Agent Harnesses" (arXiv:2609.24972, September 2026; code at
+google-research/rrsi) evolves a harness against a task suite and argues that the search
+must be *regularized*, or it memorizes the suite. Should the harness evolve its data and
+code this way, and if so, is the paper's method sound enough to adopt as published?
 
 ## What the paper does
 
@@ -373,8 +373,13 @@ change between resumes.
 
 ## Limits, and what was decided against
 
-None of these is scheduled work; each is either outside what a library over an evaluator
-port can do, or a decision.
+None of these is scheduled work; each is either outside what a search over an evaluator
+port can do, or a decision. A host drives the search (`harness-evolution`; see above), and
+the surface is documents, JSON and text, so code surfaces are evolvable too: a text
+document is edited by replacing one occurrence of a span, and the host checks it with its
+own `check` command before the candidate is measured. What a text surface cannot promise
+is that the harness is still type-correct or tested afterwards, only that the host's check
+passed.
 
 - **Early acceptance.** Stopping an evaluation as soon as a candidate is clearly good needs
   an anytime-valid test (e-values, a confidence sequence) whose error is charged across
