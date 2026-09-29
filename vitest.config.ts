@@ -11,6 +11,7 @@ const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native",
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
 //   *.property.test.ts     property/fuzz tests (fast-check); seeds are reported on failure
+//   *.chaos.test.ts        chaos tests: dropped connections, replays, duplicate ids, cursor regression
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
 //   *.simulation.test.ts   studies of whole runs over seeded simulated worlds (error rates,
 //                          power, savings); counts measured once and pinned, too slow to
