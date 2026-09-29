@@ -18,8 +18,8 @@ export interface HarnessLog {
   /** Sessions ended by detaching (the runtime left running) or by stopping (the runtime stopped); both park them. */
   readonly detached: string[];
   readonly stopped: string[];
-  /** Each turn's prompt, instructions and the names of the host-executed tools it offered. */
-  readonly turns: { readonly sessionId: string; readonly prompt: unknown; readonly instructions: string | undefined; readonly tools: readonly string[] }[];
+  /** Each turn's prompt, instructions, skill names, and the names of the host-executed tools it offered. */
+  readonly turns: { readonly sessionId: string; readonly prompt: unknown; readonly instructions: string | undefined; readonly tools: readonly string[]; readonly skills: readonly string[] }[];
 }
 
 const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } };
@@ -53,7 +53,7 @@ export function scriptedHarness(reply: (prompt: string) => ScriptedTurn | string
         sessionId,
         isResume: resumeFrom !== undefined,
         async doPromptTurn(options) {
-          log.turns.push({ sessionId, prompt: options.prompt, instructions: options.instructions, tools: options.tools.map((t) => t.name) });
+          log.turns.push({ sessionId, prompt: options.prompt, instructions: options.instructions, tools: options.tools.map((t) => t.name), skills: options.skills.map((skill) => skill.name) });
           const turn = reply(promptOf(options.prompt));
           const { text, tool } = typeof turn === "string" ? { text: turn, tool: undefined } : turn;
           // A continued turn attaches to the same run, so events go to whoever is listening now.

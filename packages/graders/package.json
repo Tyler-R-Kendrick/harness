@@ -1,0 +1,23 @@
+{
+  "name": "@harness/graders",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic graders, Promptfoo assertions, and openevals judges. Scorers, not a store.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.68",
+    "@ai-sdk/openai": "4.0.81",
+    "@harness/adapters": "0.0.0",
+    "@harness/ir": "0.0.0",
+    "@langchain/core": "1.2.13",
+    "agentevals": "0.0.7",
+    "ai": "7.0.114",
+    "openevals": "0.2.2",
+    "promptfoo": "0.123.1",
+    "zod": "4.6.5"
+  }
+}

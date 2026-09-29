@@ -16,9 +16,12 @@ import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-h
 import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
+import { instructionsWithSkills } from "@harness/core";
+import type { HarnessHome } from "@harness/core";
 import { documentImporter } from "@harness/dialogue-standards";
 import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
+import { loadDiscoveredHarnessHome } from "./home.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
 import {
@@ -93,6 +96,15 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "               [--dialogue <file> [--dialogue-flows <dir>] [--dialogue-grace <ms>]]\n",
   );
   process.exit(2);
+}
+
+// ~/.harness and the nearest ancestor .harness below the user home (ADR 0025).
+let defined: HarnessHome;
+try {
+  defined = loadDiscoveredHarnessHome({ userRoot: join(homedir(), ".harness"), start: process.cwd(), stop: homedir() });
+} catch (e) {
+  process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(1);
 }
 
 if ((values.behavior === undefined) !== (values["sae-rows"] === undefined)) {
@@ -255,7 +267,8 @@ if (procedural && cognitive) {
     notify,
   });
 }
-const instructions = values.system === undefined ? {} : { instructions: values.system };
+const system = instructionsWithSkills(values.system, defined);
+const instructions = system === undefined ? {} : { instructions: system };
 // Agent workers keep each session's conversation (a file each) beside the daemon's state, so
 // a restarted daemon's sessions continue where they stopped (`--conversations` puts them elsewhere).
 const conversationsPath = conversationsDir(values);
@@ -312,6 +325,7 @@ const harness =
         }),
         stateFile: values["harness-state"] ?? join(homedir(), ".cache", "harness", "harness-sessions.json"),
         ...instructions,
+        ...(defined.skills.length === 0 ? {} : { skills: defined.skills }),
         ...(step ? { step } : {}),
         ...(composition ? { tools: composition.tools } : cognitive?.workflowHost ? { tools: () => workflowTools(cognitive.workflowHost!) } : {}),
       });

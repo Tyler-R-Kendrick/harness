@@ -11,10 +11,12 @@ const s = parseSettings(JSON.parse(readFileSync(new URL("../data/settings.json",
 const request = { round: 0, candidate: "A", budget: 1, components: ["prompt"], documents: {}, analysis: { score: 0, failures: [], successes: [] }, history: [], mechanisms: [] } satisfies ProposalRequest;
 const edit: AppliedEdit = { id: "e1", hypothesis: "h", targets: "t", predicted: [], components: ["prompt"], footprint: 1, changes: [{ document: "d", wrote: [{ op: "replace", path: "/x", value: "y" }], inverse: [] }] };
 
+const untuned = { ...s.proposer, optimize: { maxMetricCalls: 0, seed: 0 } };
+
 describe("the proposer and the critic on AI SDK models", () => {
   it("RS12.1 the proposer asks for a Proposal constrained to its JSON Schema and answers it parsed", async () => {
     const model = scriptedModel(() => JSON.stringify(toggle("verify")));
-    const answer = await modelProposer(model, s.proposer)(request);
+    const answer = await modelProposer(model, untuned)(request);
     expect(answer).toMatchObject({ summary: "enable verify", edits: [{ id: "e1", predicted: [], ops: [{ op: "add", document: "policy", path: "/rules/verify", value: true }] }] });
     const call = model.doGenerateCalls[0]!;
     expect(call.responseFormat).toMatchObject({ type: "json", schema: expect.objectContaining({ type: "object" }) });
@@ -23,9 +25,24 @@ describe("the proposer and the critic on AI SDK models", () => {
   });
 
   it("RS12.2 an answer that is not a proposal comes back as the reason; other failures are thrown", async () => {
-    expect(await modelProposer(scriptedModel(() => "not json"), s.proposer)(request)).toMatch(/could not parse|No object generated/i);
+    expect(await modelProposer(scriptedModel(() => "not json"), untuned)(request)).toMatch(/could not parse|No object generated/i);
     const broken = new MockLanguageModelV4({ doGenerate: async () => { throw new Error("gateway down"); } });
-    await expect(modelProposer(broken, s.proposer)(request)).rejects.toThrow(/gateway down/);
+    await expect(modelProposer(broken, untuned)(request)).rejects.toThrow(/gateway down/);
+  });
+
+  it("RS12.4 the proposer renders an Ax signature and tunes that prompt once under the metric-call cap", async () => {
+    const model = scriptedModel(() => JSON.stringify(toggle("verify")));
+    const propose = modelProposer(model, { ...s.proposer, optimize: { maxMetricCalls: 4, seed: 1 } });
+    const answer = await propose(request);
+    expect(answer).toMatchObject({ summary: "enable verify", edits: [{ id: "e1", ops: [{ op: "add", document: "policy", path: "/rules/verify", value: true }] }] });
+    const tuned = model.doGenerateCalls.length;
+    expect(tuned).toBeGreaterThan(1);
+    expect(tuned).toBeLessThanOrEqual(5);
+    const rendered = JSON.stringify(model.doGenerateCalls.map((call) => call.prompt));
+    expect(rendered).toContain("Round Request:");
+    expect(rendered).toContain(s.proposer.system.slice(0, 40));
+    await propose(request);
+    expect(model.doGenerateCalls.length).toBe(tuned + 1);
   });
 
   it("RS12.3 the critic refuses edits the judge finds specific to the evolve tasks, and refuses when it cannot judge", async () => {

@@ -1,0 +1,56 @@
+{
+  "$schema": "./testing-subagents.schema.json",
+  "fuzzMinTrials": 100,
+  "mutationBreak": 90,
+  "maxCrap": 30,
+  "agents": [
+    {
+      "name": "fuzz",
+      "title": "Fuzz",
+      "instructions": "Generate inputs from a seed and keep a counterexample.",
+      "applies": "always"
+    },
+    {
+      "name": "mutation",
+      "title": "Mutation",
+      "instructions": "Refuse a score under the threshold, and a threshold under the floor.",
+      "applies": "always"
+    },
+    {
+      "name": "crap",
+      "title": "CRAP",
+      "instructions": "Score each unit and refuse one over the bound.",
+      "applies": "always"
+    },
+    {
+      "name": "contract",
+      "title": "Contract",
+      "instructions": "Every named contract's cases pass, including each integration boundary.",
+      "applies": "always"
+    },
+    {
+      "name": "atomic",
+      "title": "Atomic",
+      "instructions": "Each assertion id covers one behavior.",
+      "applies": "always"
+    },
+    {
+      "name": "evals",
+      "title": "Evals",
+      "instructions": "Judge a frozen one-patch climb. Impermissible and over-refusal stay separate. Pass@k must be 1. Spend no model budget.",
+      "applies": "always"
+    },
+    {
+      "name": "bdd",
+      "title": "BDD",
+      "instructions": "Each boundary has a scenario that cites a passing contract case.",
+      "applies": "boundary"
+    },
+    {
+      "name": "ux",
+      "title": "UX",
+      "instructions": "Exercise a user-facing surface, including both viewports when the layout changed.",
+      "applies": "ui"
+    }
+  ]
+}

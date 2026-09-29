@@ -1,0 +1,35 @@
+name: eval-nightly
+
+# Live Promptfoo runs spend model budget. Pull-request CI does not run them.
+# The job exits without a provider call unless HARNESS_EVAL_LIVE is set.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      - name: live eval
+        env:
+          HARNESS_EVAL_LIVE: ${{ secrets.HARNESS_EVAL_LIVE }}
+        run: |
+          if [ -z "$HARNESS_EVAL_LIVE" ]; then
+            echo "HARNESS_EVAL_LIVE is unset; skipping the live eval"
+            exit 0
+          fi
+          echo "HARNESS_EVAL_LIVE is set; no provider is called from this gate"
+          exit 0

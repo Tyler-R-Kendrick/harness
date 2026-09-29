@@ -1,0 +1,149 @@
+# Git delivery. The executor and the delivery actions stay fixed; this file is the
+# sequence a runtime can replace. Each task is one linked worktree. Commits stack,
+# pull requests stack, and a finished branch is verified, comment-reviewed, resolved,
+# and squash-merged before its worktree is removed.
+kind: Workflow
+name: git-delivery
+description: Land a stack of task branches through linked worktrees and squash merges.
+inputs:
+  trunk:
+    type: string
+    description: Branch the stack lands on.
+  tasks:
+    type: array
+    description: Task branches in stack order. Each item has id, branch, and paths.
+trigger:
+  kind: OnConversationStart
+  id: git_delivery
+  actions:
+    - kind: SetVariable
+      id: init_commits
+      variable: Local.commits
+      value: []
+
+    - kind: SetVariable
+      id: init_merges
+      variable: Local.merges
+      value: []
+
+    - kind: InvokeFunctionTool
+      id: baseline
+      functionName: measure
+      arguments:
+        phase: baseline
+
+    - kind: InvokeFunctionTool
+      id: link
+      functionName: link-worktrees
+
+    - kind: Foreach
+      id: commit_tasks
+      source: =Workflow.Inputs.tasks
+      itemName: task
+      indexName: index
+      actions:
+        - kind: InvokeFunctionTool
+          id: gates
+          functionName: gates
+          arguments:
+            branch: =task.branch
+
+        - kind: InvokeFunctionTool
+          id: commit
+          functionName: commit
+          arguments:
+            branch: =task.branch
+            parent: =If(index = 0, Blank(), Last(Local.commits))
+          output:
+            result: Local.commit
+
+        - kind: AppendValue
+          id: remember_commit
+          variable: Local.commits
+          value: =Local.commit.sha
+
+        - kind: InvokeFunctionTool
+          id: clean
+          functionName: clean-artifacts
+
+        - kind: InvokeFunctionTool
+          id: after_commit
+          functionName: measure
+          arguments:
+            phase: after-commit
+
+    - kind: Foreach
+      id: open_pulls
+      source: =Workflow.Inputs.tasks
+      itemName: task
+      indexName: index
+      actions:
+        - kind: InvokeFunctionTool
+          id: open
+          functionName: open-pr
+          arguments:
+            branch: =task.branch
+            base: =If(index = 0, Workflow.Inputs.trunk, Index(Workflow.Inputs.tasks, index - 1).branch)
+
+    - kind: Foreach
+      id: land_tasks
+      source: =Workflow.Inputs.tasks
+      itemName: task
+      indexName: index
+      actions:
+        - kind: InvokeFunctionTool
+          id: verify
+          functionName: verify
+          arguments:
+            branch: =task.branch
+
+        - kind: InvokeFunctionTool
+          id: review
+          functionName: review
+          arguments:
+            branch: =task.branch
+
+        - kind: InvokeFunctionTool
+          id: resolve
+          functionName: resolve
+          arguments:
+            branch: =task.branch
+
+        - kind: InvokeFunctionTool
+          id: squash
+          functionName: squash-merge
+          arguments:
+            branch: =task.branch
+          output:
+            result: Local.merge
+
+        - kind: AppendValue
+          id: remember_merge
+          variable: Local.merges
+          value: =Local.merge.sha
+
+        - kind: If
+          id: retarget_next
+          condition: =index + 1 < Count(Workflow.Inputs.tasks)
+          then:
+            - kind: InvokeFunctionTool
+              id: retarget
+              functionName: retarget
+              arguments:
+                branch: =Index(Workflow.Inputs.tasks, index + 1).branch
+                onto: =Last(Local.merges)
+
+        - kind: InvokeFunctionTool
+          id: remove
+          functionName: remove-worktree
+          arguments:
+            branch: =task.branch
+
+        - kind: InvokeFunctionTool
+          id: reclaim
+          functionName: measure-reclaim
+          arguments:
+            branch: =task.branch
+
+    - kind: EndWorkflow
+      id: done

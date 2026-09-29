@@ -65,7 +65,7 @@ export const SETTINGS = {
   repair: 1,
   invalid: 0.15,
   analysis: { failures: 3, successes: 2, history: 20 },
-  proposer: { system: "Propose.", maxTokens: 512 },
+  proposer: { system: "Propose.", maxTokens: 512, optimize: { maxMetricCalls: 0, seed: 0 } },
   critic: { question: "Specific?", threshold: 0.5, examples: 2 },
 };
 

@@ -1,0 +1,23 @@
+{
+  "name": "@harness/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "harness-eval: eval, build-eval, and hillclimb.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "harness-eval": "./src/main.ts"
+  },
+  "dependencies": {
+    "@harness/climb": "0.0.0",
+    "@harness/generate": "0.0.0",
+    "@harness/graders": "0.0.0",
+    "@harness/ir": "0.0.0",
+    "@harness/report": "0.0.0",
+    "@harness/runner": "0.0.0",
+    "citty": "0.2.2"
+  }
+}

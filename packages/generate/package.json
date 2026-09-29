@@ -1,0 +1,15 @@
+{
+  "name": "@harness/generate",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cases from OpenInference traces, and argv for Harbor, ASSERT, and Promptfoo redteam.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/ir": "0.0.0",
+    "execa": "10.0.1"
+  }
+}

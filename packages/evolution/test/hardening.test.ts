@@ -328,7 +328,7 @@ describe("a run keeps the error-control settings it was made with", () => {
   it("RS19.72 settings that only trade power or cost may change between resumes: resamples, futility, trials, the prompts", async () => {
     const w = world({ n: 40, base: () => 0.5 });
     const saved = JSON.parse(JSON.stringify((await start(w)).save()));
-    const changed = settings({ select: { ...CAL, resamples: 800, futility: { fraction: 0.5, alpha: 0.05 } }, trials: 3, proposer: { system: "Other.", maxTokens: 64 }, prune: { after: 2, every: 3 } });
+    const changed = settings({ select: { ...CAL, resamples: 800, futility: { fraction: 0.5, alpha: 0.05 } }, trials: 3, proposer: { system: "Other.", maxTokens: 64, optimize: { maxMetricCalls: 0, seed: 0 } }, prune: { after: 2, every: 3 } });
     expect(restore(w, saved, changed)).not.toThrow();
   });
 

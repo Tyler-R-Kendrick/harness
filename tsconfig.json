@@ -66,6 +66,30 @@
     },
     {
       "path": "packages/playground"
+    },
+    {
+      "path": "packages/ir"
+    },
+    {
+      "path": "packages/adapters"
+    },
+    {
+      "path": "packages/climb"
+    },
+    {
+      "path": "packages/report"
+    },
+    {
+      "path": "packages/runner"
+    },
+    {
+      "path": "packages/graders"
+    },
+    {
+      "path": "packages/generate"
+    },
+    {
+      "path": "packages/cli"
     }
   ]
 }
