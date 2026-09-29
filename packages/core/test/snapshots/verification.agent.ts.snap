@@ -1,0 +1,7 @@
+// Generated eve subagent. Identity is the agent/subagents path, not a field on defineAgent.
+import { defineAgent } from "eve";
+
+export default defineAgent({
+  description: "verification for the release notes name the button",
+  model: "harness/delivery",
+});
