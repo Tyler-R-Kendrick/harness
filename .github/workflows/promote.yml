@@ -1,0 +1,214 @@
+name: promote
+
+# Release gate. Run it by hand on the ref to promote. Mutation, real-weight model
+# tests, and evals run only when this promotion's diff touches them (against the
+# baseline input, or the last successful release when that input is empty, or every
+# gate when nothing has been released). The release environment is deployed only
+# after the gates that ran have passed. Pushing to main does not promote.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref to promote
+        required: false
+        default: main
+        type: string
+      baseline:
+        description: Sha or ref to diff against. Empty uses the last successful release, or every gate when there has not been one.
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: release-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
+jobs:
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      mutate: ${{ steps.plan.outputs.mutate }}
+      shards: ${{ steps.plan.outputs.shards }}
+      files: ${{ steps.plan.outputs.files }}
+      models: ${{ steps.plan.outputs.models }}
+      evals: ${{ steps.plan.outputs.evals }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - id: plan
+        env:
+          BASELINE: ${{ inputs.baseline }}
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/ci/github.mjs promote
+
+  # Each shard meets the mutation `break` on its own. An empty shard exits before Stryker.
+  mutation:
+    needs: scope
+    if: needs.scope.outputs.mutate == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJson(needs.scope.outputs.shards) }}
+    env:
+      MUTATION_SHARD: ${{ matrix.shard }}
+      MUTATION_FILES: ${{ needs.scope.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - id: decision
+        run: echo "decision=$(node tools/ci/github.mjs mutation-shard)" >> "$GITHUB_OUTPUT"
+      - if: steps.decision.outputs.decision == 'run'
+        run: npm ci
+      - if: steps.decision.outputs.decision == 'run'
+        run: npm run test:mutation
+      - if: steps.decision.outputs.decision == 'run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report-${{ strategy.job-index }}
+          path: reports/mutation
+          if-no-files-found: ignore
+
+  evals:
+    needs: scope
+    if: needs.scope.outputs.evals == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      HARNESS_MODEL_CACHE: /mnt/harness-models
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: sudo mkdir -p "$HARNESS_MODEL_CACHE" && sudo chown "$USER" "$HARNESS_MODEL_CACHE"
+      # The models job's cache of pinned weights, restored only: this job loads just the
+      # judge, so saving here could store a partial cache under the models job's key.
+      - uses: actions/cache/restore@v4
+        with:
+          path: /mnt/harness-models
+          key: models-${{ hashFiles('packages/*/data/catalog.json') }}
+      - name: Download llama.cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh api 'repos/ggml-org/llama.cpp/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not) | select(any(.assets[]; .name | test("bin-ubuntu-x64\\.(zip|tar\\.gz)$")))][0].tag_name')"
+          test -n "$tag" && test "$tag" != null || { echo "no recent llama.cpp release has an Ubuntu x64 build"; exit 1; }
+          gh release download "$tag" --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama
+          for f in /tmp/llama/*; do
+            case "$f" in
+              *.zip) unzip -q "$f" -d /tmp/llama ;;
+              *.tar.gz) tar -xzf "$f" -C /tmp/llama ;;
+            esac
+          done
+          server="$(find /tmp/llama -name llama-server -type f | head -1)"
+          test -n "$server" || { echo "no llama-server in the release archive"; exit 1; }
+          chmod +x "$server"
+          echo "LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(dirname "$server")" >> "$GITHUB_ENV"
+      # The judge is the catalog's best reachable one: Jev with a gateway credential, else
+      # CLM when its server answers, else a local generator judging (llama-server here).
+      # With none reachable the runner records every case as `blocked`; never a pass.
+      - run: npm run eval -- --out eval-results/results.json
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-results
+          path: eval-results
+
+  models:
+    needs: scope
+    if: needs.scope.outputs.models == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      HARNESS_MODEL_CACHE: /mnt/harness-models
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: sudo mkdir -p "$HARNESS_MODEL_CACHE" && sudo chown "$USER" "$HARNESS_MODEL_CACHE"
+      # The playground's local model answers in Chromium on real weights.
+      - run: npx playwright-core install --with-deps chromium
+      # Weights are pinned by revision and sha256 in the catalog, so the cache key follows it.
+      - uses: actions/cache@v4
+        with:
+          path: /mnt/harness-models
+          key: models-${{ hashFiles('packages/*/data/catalog.json') }}
+      # llama-server serves the catalog's llama.cpp-server models.
+      - name: Download llama.cpp
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # "Latest" can be a nightly marker with no binaries, so take the newest release that
+        # has an Ubuntu x64 build. It has shipped as .zip and as .tar.gz; take either.
+        run: |
+          tag="$(gh api 'repos/ggml-org/llama.cpp/releases?per_page=30' \
+            --jq '[.[] | select(.draft | not) | select(any(.assets[]; .name | test("bin-ubuntu-x64\\.(zip|tar\\.gz)$")))][0].tag_name')"
+          test -n "$tag" && test "$tag" != null || { echo "no recent llama.cpp release has an Ubuntu x64 build"; exit 1; }
+          echo "llama.cpp $tag"
+          gh release download "$tag" --repo ggml-org/llama.cpp --pattern '*bin-ubuntu-x64.zip' --pattern '*bin-ubuntu-x64.tar.gz' --dir /tmp/llama
+          for f in /tmp/llama/*; do
+            case "$f" in
+              *.zip) unzip -q "$f" -d /tmp/llama ;;
+              *.tar.gz) tar -xzf "$f" -C /tmp/llama ;;
+            esac
+          done
+          server="$(find /tmp/llama -name llama-server -type f | head -1)"
+          test -n "$server" || { echo "no llama-server in the release archive"; find /tmp/llama -maxdepth 3; exit 1; }
+          chmod +x "$server"
+          echo "LLAMA_SERVER=$server" >> "$GITHUB_ENV"
+          # Its shared libraries ship next to it.
+          echo "LD_LIBRARY_PATH=$(dirname "$server")" >> "$GITHUB_ENV"
+      - run: npm run test:models
+      # The cognitive core, judged, on real local models.
+      - run: npm run eval -- --suite cognitive --out eval-results/cognitive.json
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cognitive-eval-results
+          path: eval-results
+
+  release:
+    needs: [scope, mutation, models, evals]
+    if: >-
+      always() &&
+      needs.scope.result == 'success' &&
+      (needs.mutation.result == 'success' || needs.mutation.result == 'skipped') &&
+      (needs.models.result == 'success' || needs.models.result == 'skipped') &&
+      (needs.evals.result == 'success' || needs.evals.result == 'skipped')
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - run: echo "Released $(git rev-parse HEAD). The gates this promotion ran have passed."

@@ -86,7 +86,7 @@ Test kinds (filename suffix decides the kind):
   through `playwright-core`; install its browser with `npx playwright-core install chromium`).
   The Docker sandbox's tests need a running Docker daemon.
 - `*.model.test.ts`: real model weights (pinned, sha256-verified, cached under
-  `HARNESS_MODEL_CACHE`). Run with `npm run test:models`; CI runs them in the `models` job.
+  `HARNESS_MODEL_CACHE`). Run with `npm run test:models`; the promote workflow's models gate runs them.
   Required when you change a model adapter or the catalog. Install with
   `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` to avoid onnxruntime's CUDA download.
 - Evals (`packages/evals`): LLM-as-judge with the catalog's best reachable judge. Results
@@ -102,6 +102,8 @@ npm run test:coverage   # coverage thresholds in vitest.config.ts
 npm run test:mutation   # Stryker; `break` threshold in stryker.config.mjs
 npm run test:models     # when touching packages/models or the catalog
 ```
+
+Pull-request CI runs typecheck, lint, and unit coverage, plus host or browser integration when the diff reaches those hosts. Mutation, model tests, and evals gate the `promote` workflow's `release` environment instead of every pull request.
 
 Anything we tune by hand is data, never code: a JSON file with a `$schema` pointing at a
 JSON Schema generated from the zod schema that parses it (a test fails if they drift),

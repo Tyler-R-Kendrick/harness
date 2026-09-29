@@ -24,7 +24,7 @@ export default defineConfig({
     alias: { ...SUBPATHS, ...Object.fromEntries(PACKAGES.map((name) => [`@harness/${name}`, pkg(name)])) },
   },
   test: {
-    include: ["packages/*/test/**/*.test.ts"],
+    include: ["packages/*/test/**/*.test.ts", "tools/ci/**/*.test.mjs"],
     exclude: ["**/*.model.test.ts", "**/node_modules/**"],
     environment: "node",
     testTimeout: 20_000,
