@@ -66,8 +66,10 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 |---|---|---|
 | Typed nodes and edges; all/any/quorum joins; sealed fan-out; an opaque payload per node; JSON serialization (`toJSON`/`fromJSON`, rebuilt through the graph's own checks, refusing statuses no execution reaches) | built (library) | TG1–TG4, TG5.1–TG5.7 (TG4.2: a graph restored at any point of an execution behaves as the original); not yet driven by the daemon |
 | Resource-aware scheduler; exclusion edges; cancellation is not rollback | built (library) | TG3.1–TG3.6, TG4.1 |
+| Atomic implementation tasks: independent tasks are ready together, a dependent stays pending until they succeed, and a cycle is refused | built (library) | WG1.1–WG1.2 |
 | Work queue: an item keeps the outcome description it was added with, and a later check accepts a result that meets that description and rejects one that contradicts it | built (library) | WQ1.1–WQ1.4 |
 | Filtered durable source inbox: an optional filter keeps matching events, a dropped connection resumes without duplicating a delivered event, and a snapshot restores the cursor and delivered ids. An event id that is already a work item is not delivered again | built (library) | WQ2.1–WQ2.7, WQ3.1–WQ3.7, WQ4.1–WQ4.3 |
+| Branch-scoped elicitation: an unanswered decision blocks only that task, a sibling branch runs to completion while it is unanswered, and supplying the answer unblocks only the waiting branch | built (library) | EL1.1–EL1.7 |
 | Every invocation as a durable task | not started | |
 | Task system of record (local, GitHub, Linear, Jira) | not started | |
 | Compiler (known workflows) and planner (novel parts) | not started | |
