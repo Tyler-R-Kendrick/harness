@@ -1,0 +1,24 @@
+{
+  "items": [
+    {
+      "id": "manual",
+      "outcome": "keep the manual outcome"
+    },
+    {
+      "id": "e1",
+      "outcome": "keep the release notes"
+    }
+  ],
+  "inbox": [
+    "e1"
+  ],
+  "sources": [
+    {
+      "id": "issues",
+      "cursor": "2",
+      "delivered": [
+        "e1"
+      ]
+    }
+  ]
+}

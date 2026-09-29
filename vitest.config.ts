@@ -13,6 +13,7 @@ const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native",
 //   *.property.test.ts     property/fuzz tests (fast-check); seeds are reported on failure
 //   *.chaos.test.ts        chaos tests: dropped connections, replays, duplicate ids, cursor regression
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
+//   *.snapshot.test.ts     characterization files via toMatchFileSnapshot (Verify's approval-file pattern)
 //   *.simulation.test.ts   studies of whole runs over seeded simulated worlds (error rates,
 //                          power, savings); counts measured once and pinned, too slow to
 //                          run per mutant, so not in the mutation suite

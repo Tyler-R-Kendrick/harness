@@ -1,0 +1,33 @@
+{
+  "nodes": [
+    {
+      "id": "implement",
+      "join": {
+        "kind": "all"
+      },
+      "resources": [],
+      "awaits": [],
+      "status": "succeeded",
+      "sealed": false
+    },
+    {
+      "id": "ship",
+      "join": {
+        "kind": "all"
+      },
+      "resources": [],
+      "awaits": [],
+      "status": "pending",
+      "sealed": false,
+      "decision": "Ship the button?",
+      "answer": "yes"
+    }
+  ],
+  "edges": [
+    {
+      "from": "implement",
+      "to": "ship",
+      "kind": "data"
+    }
+  ]
+}
