@@ -62,7 +62,7 @@ afterAll(async () => {
 });
 
 describe(`the page answers with local inference in any browser (${tiny.name}, WebAssembly)`, () => {
-  it("LA1.1 with no WebGPU, auto loads the smallest local model on its own, and a question no template answers gets its answer, with nothing asked", async () => {
+  it("PAM1.1 with no WebGPU, auto loads the smallest local model on its own, and a question no template answers gets its answer, with nothing asked", async () => {
     const page = await browser.newPage();
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(e.message));

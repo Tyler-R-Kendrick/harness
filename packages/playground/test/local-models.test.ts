@@ -28,7 +28,7 @@ function harness(past: (id: string) => Past | undefined = () => undefined) {
 }
 
 describe("a role's local models", () => {
-  it("LM1.1 ready() during loading waits for the load and answers its port; ready() again answers it at once", async () => {
+  it("PLM1.1 ready() during loading waits for the load and answers its port; ready() again answers it at once", async () => {
     const { models, loads } = harness();
     const waiting = models.ready("first");
     expect(loads.map((l) => l.id)).toEqual(["first"]);
@@ -39,7 +39,7 @@ describe("a role's local models", () => {
     expect(loads).toHaveLength(1);
   });
 
-  it("LM1.2 ready() after a failed load answers nothing without loading it again, and says why", async () => {
+  it("PLM1.2 ready() after a failed load answers nothing without loading it again, and says why", async () => {
     const { models, loads } = harness();
     const waiting = models.ready("first");
     loads[0]!.fail("no memory");
@@ -49,7 +49,7 @@ describe("a role's local models", () => {
     expect(models.status("first")).toContain("could not load (no memory)");
   });
 
-  it("LM1.3 auto moves past the model that failed to load to the next that fits, and answers that one's port", async () => {
+  it("PLM1.3 auto moves past the model that failed to load to the next that fits, and answers that one's port", async () => {
     const { models, loads } = harness();
     const waiting = models.ready("auto");
     expect(loads.map((l) => l.id)).toEqual(["first"]);
@@ -62,7 +62,7 @@ describe("a role's local models", () => {
     expect(models.current("auto")?.id).toBe("second");
   });
 
-  it("LM1.4 a named slug that fails answers nothing rather than moving on to another model", async () => {
+  it("PLM1.4 a named slug that fails answers nothing rather than moving on to another model", async () => {
     const { models, loads } = harness();
     const waiting = models.ready("first");
     loads[0]!.fail("boom");
@@ -70,7 +70,7 @@ describe("a role's local models", () => {
     expect(loads.map((l) => l.id)).toEqual(["first"]);
   });
 
-  it("LM1.5 want() loads auto's pick on its own; a named model only when asked, or when the browser did not refuse to keep it", () => {
+  it("PLM1.5 want() loads auto's pick on its own; a named model only when asked, or when the browser did not refuse to keep it", () => {
     const named = harness();
     named.models.want("first", false);
     expect(named.loads.map((l) => l.id)).toEqual(["first"]);
@@ -84,7 +84,7 @@ describe("a role's local models", () => {
     expect(auto.loads.map((l) => l.id)).toEqual(["first"]);
   });
 
-  it("LM1.6 every load, ready and failure is announced with the model it happened to", async () => {
+  it("PLM1.6 every load, ready and failure is announced with the model it happened to", async () => {
     const { models, loads, changes } = harness();
     const waiting = models.ready("first");
     loads[0]!.ok("port");
