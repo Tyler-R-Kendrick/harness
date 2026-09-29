@@ -23,5 +23,7 @@ export { TaskGraph } from "./task-graph.ts";
 export type { DependencyKind, EdgeKind, GraphError, Join, NodeSpec, NodeStatus, TaskEdgeData, TaskGraphData, TaskNodeData } from "./task-graph.ts";
 export { WorkQueue } from "./work-queue.ts";
 export type { OutcomeVerifier, QueueError, SourceConnection, SourceEvent, SourcePage, WorkItem, WorkQueueData } from "./work-queue.ts";
+export { DELIVERY_STEPS, existingEveAgents, eveAgentSource, finishTaskWorkflow, taskWorkflow } from "./task-workflow.ts";
+export type { AgentOrigin, DeliveryStep, EveAssignment, FinishedStep, FinishedWorkflow, TaskWorkflow, WorkflowError } from "./task-workflow.ts";
 export { COGNITIVE_OPS, Daemon } from "./daemon.ts";
 export type { AgentInfo, BehaviorChange, CognitiveOp, CognitiveResult, CognitiveWork, DaemonDeps, DaemonSnapshot, Identity, Output, PermissionOptionSpec, SessionMeta, StopReason, WorkerCommand, WorkerEvent } from "./daemon.ts";
