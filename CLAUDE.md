@@ -76,6 +76,7 @@ Test kinds (filename suffix decides the kind):
 
 - `*.test.ts`: atomic unit tests, one behavior each.
 - `*.property.test.ts`: fast-check properties/fuzzing. Model-based tests for state machines.
+- `*.chaos.test.ts`: fault injection (dropped connections, replays, duplicate ids, cursor regression) with a seeded generator.
 - `*.contract.test.ts`: a suite from `@harness/testkit` run against every implementation of a port.
 - `*.simulation.test.ts`: studies of whole runs over seeded simulated worlds (error rates
   under the null, power, evaluations saved). Their counts were measured once and are
