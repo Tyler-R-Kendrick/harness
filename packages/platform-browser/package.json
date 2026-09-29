@@ -22,7 +22,8 @@
     "@harness/runtime": "0.0.0",
     "@harness/workers": "0.0.0",
     "@harness/workflows": "0.0.0",
-    "ai": "7.0.114"
+    "ai": "7.0.114",
+    "onnxruntime-web": "1.30.0"
   },
   "devDependencies": {
     "@harness/testkit": "0.0.0",

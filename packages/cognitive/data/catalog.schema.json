@@ -1679,6 +1679,455 @@
               "run"
             ],
             "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "publisher": {
+                "type": "string",
+                "minLength": 1
+              },
+              "tasks": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "judgment",
+                    "classification",
+                    "tool-calling",
+                    "structured-extraction",
+                    "text-embedding",
+                    "prompt-compression",
+                    "chat",
+                    "reasoning",
+                    "coding",
+                    "vision-qa",
+                    "ocr",
+                    "document-parsing",
+                    "table-extraction",
+                    "chart-understanding",
+                    "steered-chat"
+                  ]
+                }
+              },
+              "ports": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "judge",
+                    "router",
+                    "embedder",
+                    "compressor",
+                    "generator",
+                    "document-parser"
+                  ]
+                }
+              },
+              "locality": {
+                "type": "string",
+                "enum": [
+                  "local",
+                  "hosted"
+                ]
+              },
+              "platforms": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "native",
+                    "browser"
+                  ]
+                }
+              },
+              "license": {
+                "type": "string",
+                "minLength": 1
+              },
+              "downloadBytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "notes": {
+                "type": "string"
+              },
+              "artifact": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "revision": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "files": {
+                    "readOnly": true,
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "bytes": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "bytes",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "repo",
+                  "revision",
+                  "files"
+                ],
+                "additionalProperties": false
+              },
+              "embedding": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "document": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "defaults": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "dimensions": {
+                    "readOnly": true,
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                "required": [
+                  "query",
+                  "document",
+                  "dimensions"
+                ],
+                "additionalProperties": false
+              },
+              "compression": {
+                "type": "object",
+                "properties": {
+                  "window": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "subwords": {
+                    "type": "string",
+                    "enum": [
+                      "wordpiece",
+                      "sentencepiece"
+                    ]
+                  },
+                  "keepLabel": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "window",
+                  "subwords",
+                  "keepLabel"
+                ],
+                "additionalProperties": false
+              },
+              "constraints": {
+                "readOnly": true,
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "json-schema",
+                    "grammar",
+                    "regex",
+                    "template"
+                  ]
+                }
+              },
+              "runtime": {
+                "type": "string",
+                "const": "onnxruntime-decision"
+              },
+              "run": {
+                "type": "object",
+                "properties": {
+                  "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "data": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tokenizer": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tokenizerConfig": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "head": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "option": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "types": {
+                    "type": "object",
+                    "properties": {
+                      "choice": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "score": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "boolean": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "choice",
+                      "score",
+                      "boolean"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "json": {
+                    "type": "object",
+                    "properties": {
+                      "item": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "item",
+                      "key"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "limits": {
+                    "type": "object",
+                    "properties": {
+                      "tokens": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "head": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "option": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "options": {
+                        "type": "object",
+                        "properties": {
+                          "min": {
+                            "type": "integer",
+                            "minimum": 2,
+                            "maximum": 9007199254740991
+                          },
+                          "max": {
+                            "type": "integer",
+                            "minimum": 2,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "min",
+                          "max"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "cut": {
+                        "type": "object",
+                        "properties": {
+                          "head": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "budget": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "option": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "head",
+                          "budget",
+                          "option"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "tokens",
+                      "head",
+                      "option",
+                      "options",
+                      "cut"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "strict": {
+                    "type": "boolean"
+                  },
+                  "padTo": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "batchTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "model",
+                  "tokenizer",
+                  "tokenizerConfig",
+                  "head",
+                  "option",
+                  "types",
+                  "json",
+                  "limits",
+                  "strict",
+                  "padTo",
+                  "batchTokens"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "publisher",
+              "tasks",
+              "ports",
+              "locality",
+              "platforms",
+              "license",
+              "downloadBytes",
+              "runtime",
+              "run"
+            ],
+            "additionalProperties": false
           }
         ]
       }

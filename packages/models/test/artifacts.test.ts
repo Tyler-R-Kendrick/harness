@@ -52,6 +52,18 @@ describe("ArtifactStore", () => {
     expect(urls).toHaveLength(1);
   });
 
+  it("AR1.6 a cache that cannot keep or read a file does not fail the load: the verified bytes are used, and the problem is reported", async () => {
+    const problems: string[] = [];
+    const broken = { get: async () => Promise.reject(new Error("unreadable")), put: async () => Promise.reject(new Error("quota exceeded")) };
+    const { f, urls } = fakeFetch(bytes);
+    const store = new ArtifactStore({ fetch: f, cache: broken, onCacheProblem: (key, error) => problems.push(`${key}: ${String(error)}`) });
+    expect(await store.file(artifact, "w.bin")).toEqual(bytes);
+    expect(urls).toHaveLength(1);
+    expect(problems).toEqual([`org/model@${"a".repeat(40)}/w.bin: Error: unreadable`, `org/model@${"a".repeat(40)}/w.bin: Error: quota exceeded`]);
+    // With no one to tell, it still loads.
+    expect(await new ArtifactStore({ fetch: f, cache: broken }).file(artifact, "w.bin")).toEqual(bytes);
+  });
+
   it("AR1.5 HTTP failures and unknown files are errors", async () => {
     const store = new ArtifactStore({ fetch: fakeFetch(bytes, 404).f, cache: new MemoryByteCache() });
     await expect(store.file(artifact, "w.bin")).rejects.toThrow(/404/);

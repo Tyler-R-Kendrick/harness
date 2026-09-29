@@ -11,6 +11,7 @@ import {
   generatorJudge,
   llamaServer,
   loadChatTokenizer,
+  loadDecisionModel,
   OnnxSteerableSession,
   pageInstruction,
   portableLoaders,
@@ -55,7 +56,7 @@ export interface NativeEnsembleOptions {
   readonly catalog?: Catalog;
   /** transformers.js module override (tests). */
   readonly transformers?: unknown;
-  /** onnxruntime module override for the steerable kernel (tests). */
+  /** onnxruntime module override for the steerable kernel and decision models (tests). */
   readonly onnxruntime?: unknown;
   /** Behavior pack the steerable kernel runs; without one it generates unsteered. */
   readonly behavior?: BehaviorPack;
@@ -198,6 +199,14 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
       return {
         generator: steeredModel({ modelId: m.id, session, tokenizer, ...(behavior ? { hook: behavior.hookFor } : {}), ...(constrain ? { constrain } : {}) }),
       };
+    },
+    // A decision model opens from disk, where onnxruntime finds its weights file beside it.
+    "onnxruntime-decision": async (m) => {
+      const { run } = m;
+      const [model] = await Promise.all([files.path(m.artifact!, run.model), ...(run.data ? [files.path(m.artifact!, run.data)] : [])]);
+      const [tokenizer, tokenizerConfig] = await Promise.all([run.tokenizer, run.tokenizerConfig].map((file) => artifacts.file(m.artifact!, file)));
+      const runtime = (options.onnxruntime as OrtLike | undefined) ?? ((await import("onnxruntime-node")) as unknown as OrtLike);
+      return { judge: await loadDecisionModel(m, { model: model!, tokenizer: tokenizer!, tokenizerConfig: tokenizerConfig! }, { runtime }) };
     },
   };
   const loaderFor = (m: ModelDescriptor) => loaders[m.runtime] as ((m: ModelDescriptor) => Promise<Ports>) | undefined;

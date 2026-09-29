@@ -34,7 +34,7 @@ no scripts from other hosts, no network.
   as Vercel's `bash-tool`; we do not use `bash-tool` itself because it imports `node:fs`,
   `node:path` and fast-glob at module load and so does not bundle for a page.
 - **Claude through the artifact's `sample` capability, as an AI SDK `LanguageModelV4`.**
-  Since ADR 0012 it is not the default: the default worker answers from templates, and
+  Since ADR 0014 it is not the default: the default worker answers from templates, and
   Claude writes a template (asking first) or runs as the worker when a person picks it.
   The capability takes plain turns and returns text; the call's instructions, tools and
   conversation are rendered as turns, and the reply's shape is fixed as one JSON object
