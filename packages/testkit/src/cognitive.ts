@@ -263,6 +263,14 @@ export function compressorContract(label: string, make: () => Compressor | Promi
   });
 }
 
+type CallStop = { abort(): void; readonly signal: NonNullable<Parameters<typeof streamText>[0]["abortSignal"]> };
+
+/** `AbortController` is a host global; this package's lib is ES2022 and does not name it. */
+function callStop(): CallStop {
+  const Controller = (globalThis as unknown as { AbortController: new () => CallStop }).AbortController;
+  return new Controller();
+}
+
 export function generatorContract(label: string, make: () => LanguageModelV4 | Promise<LanguageModelV4>): void {
   describe(`Generator contract: ${label}`, () => {
     it("GC1 a simple prompt streams text and finishes", async () => {
@@ -279,8 +287,12 @@ export function generatorContract(label: string, make: () => LanguageModelV4 | P
 
     it("GC3 stopping early is clean and the model keeps working", async () => {
       const model = await make();
-      const first = streamText({ model, prompt: "Count from one to fifty.", maxOutputTokens: 64, maxRetries: 0 });
-      for await (const _ of first.textStream) break;
+      // Breaking this text stream cancels a tee through two pipes, and this Node
+      // rejects that cancel with `undefined`. Abort the call instead, and let the
+      // iterator finish, so stopping early does not leave that rejection behind.
+      const stop = callStop();
+      const first = streamText({ model, prompt: "Count from one to fifty.", maxOutputTokens: 64, maxRetries: 0, abortSignal: stop.signal });
+      for await (const _ of first.textStream) stop.abort();
       const second = streamText({ model, prompt: "Say OK.", maxOutputTokens: 8, maxRetries: 0 });
       expect(await second.finishReason).toBeDefined();
     });

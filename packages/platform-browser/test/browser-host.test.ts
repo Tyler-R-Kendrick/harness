@@ -16,13 +16,15 @@ afterEach(async () => {
 });
 
 async function host(options: Partial<Parameters<typeof BrowserHost.start>[0]> = {}) {
-  const h = await BrowserHost.start({ worker: new EchoWorker(), identity: ME, log: () => {}, ...options });
+  // Locks are named per test: a host left to the context's own would have a different lock
+  // manager than a client given `profile.locks`, and would read that client as already dead.
+  const h = await BrowserHost.start({ worker: new EchoWorker(), identity: ME, log: () => {}, locks: undefined, ...options });
   hosts.push(h);
   return h;
 }
 
 /** An ACP client in a "tab": the official SDK's client connection over its end of a channel. */
-function client(port: MessagePort, options: Parameters<typeof portStream>[1] = {}) {
+function client(port: MessagePort, options: Parameters<typeof portStream>[1] = { locks: undefined }) {
   const updates: SessionNotification[] = [];
   const stream = portStream(port, options);
   const acp = new ClientSideConnection(
@@ -168,7 +170,7 @@ describe("BrowserHost", () => {
         connect: () => {
           const { port1, port2 } = new MessageChannel();
           h.accept(port2);
-          return daemonPort(port1);
+          return daemonPort(port1, { locks: undefined });
         },
       }),
     });
@@ -185,7 +187,7 @@ describe("BrowserHost", () => {
     let asked = 0;
     const acp = new ClientSideConnection(
       () => ({ sessionUpdate: async () => {}, requestPermission: () => (asked++, new Promise(() => {})) }),
-      portStream(port1),
+      portStream(port1, { locks: undefined }),
     );
     await acp.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     const { sessionId } = await acp.newSession({ cwd: "/", mcpServers: [] });
