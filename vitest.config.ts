@@ -14,6 +14,8 @@ const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native",
 //   *.chaos.test.ts        chaos tests: dropped connections, replays, duplicate ids, cursor regression
 //   *.contract.test.ts     contract suites run against every implementation of a port/protocol
 //   *.snapshot.test.ts     characterization files via toMatchFileSnapshot (Verify's approval-file pattern)
+//   *.bdd.test.ts          behavior scenarios written as given / when / then
+//   *.crap.test.ts         Change Risk Anti-Patterns: cyclomatic complexity weighed at the branch-coverage floor
 //   *.simulation.test.ts   studies of whole runs over seeded simulated worlds (error rates,
 //                          power, savings); counts measured once and pinned, too slow to
 //                          run per mutant, so not in the mutation suite
