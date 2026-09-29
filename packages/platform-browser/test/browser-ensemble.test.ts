@@ -88,6 +88,17 @@ describe("the browser host's cognitive core", () => {
     expect(JSON.stringify(log)).toContain('"device":"webgpu"');
   });
 
+  it("BE1.15 a transformers.js generator with no model class runs as a text-only causal LM through its tokenizer", async () => {
+    const { module, log } = fakeTransformers({ generated: ["Paris"] });
+    const vision = catalog.models.find((m) => m.runtime === "transformers.js" && m.ports.includes("generator") && m.platforms.includes("browser")) as Extract<ModelDescriptor, { runtime: "transformers.js" }>;
+    const { modelClass: _class, ...run } = vision.run;
+    const text = { ...vision, id: "org/text-only", tasks: ["chat" as const], run } as ModelDescriptor;
+    const ensemble = buildBrowserEnsemble({ catalog: { models: [text], preferences: {} }, cache: new MemoryByteCache(), allowHosted: false, transformers: module, device: "wasm" });
+    expect(await streamText({ model: ensemble.languageModel("chat", "generator"), prompt: "capital?", maxRetries: 0 }).text).toBe("Paris");
+    expect(log.map((l) => l.name)).toEqual(expect.arrayContaining(["tokenizer.load", "causal.load"]));
+    expect(log.find((l) => l.name === "causal.load")!.args[1]).toMatchObject({ device: "wasm" });
+  });
+
   it("BE1.3 a Cactus WASM model loads from verified files kept in the byte cache, and routes; the next host finds them there", async () => {
     const cache = new MemoryByteCache();
     const first = hub();

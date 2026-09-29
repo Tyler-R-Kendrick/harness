@@ -62,6 +62,9 @@
     },
     {
       "path": "../evolution"
+    },
+    {
+      "path": "../procedural"
     }
   ]
 }

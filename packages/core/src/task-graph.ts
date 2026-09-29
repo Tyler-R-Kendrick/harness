@@ -6,12 +6,14 @@ export type EdgeKind = "contains" | DependencyKind | "exclusion";
 export type Join = { readonly kind: "all" } | { readonly kind: "any" } | { readonly kind: "quorum"; readonly count: number };
 export type NodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
 
-export interface NodeSpec {
+export interface NodeSpec<P = unknown> {
   readonly join?: Join;
   /** Exclusive resources (ports, databases, browser profiles, devices, files...). */
   readonly resources?: readonly string[];
   /** Fan-out groups that must be sealed before this node can become ready. */
   readonly awaits?: readonly string[];
+  /** What the node stands for, opaque to the graph (a task, a tool call, a plan step). */
+  readonly payload?: P;
 }
 
 export type GraphError =
@@ -27,8 +29,32 @@ export type GraphError =
   | "not_running"
   | "already_terminal";
 
-interface GraphNode {
+/** A node as `toJSON` gives it: its spec, where execution has it, and its payload when it has one. */
+export interface TaskNodeData<P = unknown> {
+  readonly id: string;
+  readonly join: Join;
+  readonly resources: readonly string[];
+  readonly awaits: readonly string[];
+  readonly status: NodeStatus;
+  readonly sealed: boolean;
+  readonly payload?: P;
+}
+
+export interface TaskEdgeData {
+  readonly from: string;
+  readonly to: string;
+  readonly kind: EdgeKind;
+}
+
+/** A task graph as JSON: nodes and edges in the order they were added. */
+export interface TaskGraphData<P = unknown> {
+  readonly nodes: readonly TaskNodeData<P>[];
+  readonly edges: readonly TaskEdgeData[];
+}
+
+interface GraphNode<P> {
   id: string;
+  payload: P | undefined;
   join: Join;
   resources: readonly string[];
   awaits: readonly string[];
@@ -42,6 +68,10 @@ interface GraphNode {
 }
 
 const TERMINAL: ReadonlySet<NodeStatus> = new Set(["succeeded", "failed", "cancelled", "skipped"]);
+const STATUSES: ReadonlySet<unknown> = new Set(["pending", "running", ...TERMINAL]);
+/** Statuses only a node that was ready can reach. */
+const STARTED: ReadonlySet<NodeStatus> = new Set(["running", "succeeded", "failed"]);
+const EDGE_KINDS: ReadonlySet<unknown> = new Set(["contains", "data", "control", "assurance", "exclusion"]);
 
 /**
  * Typed partial-order task graph. Containment records structure without blocking;
@@ -49,16 +79,17 @@ const TERMINAL: ReadonlySet<NodeStatus> = new Set(["succeeded", "failed", "cance
  * groups must be sealed before joins that await them; exclusive resources and
  * exclusion edges keep conflicting nodes from running at the same time.
  */
-export class TaskGraph {
-  #nodes = new Map<string, GraphNode>();
-  #edges = new Set<string>();
+export class TaskGraph<P = unknown> {
+  #nodes = new Map<string, GraphNode<P>>();
+  /** Edges by `kind:from->to`, in the order added. */
+  #edges = new Map<string, TaskEdgeData>();
   #revision = 0;
 
   revision(): number {
     return this.#revision;
   }
 
-  addNode(id: string, spec: NodeSpec = {}): Result<void, GraphError> {
+  addNode(id: string, spec: NodeSpec<P> = {}): Result<void, GraphError> {
     if (this.#nodes.has(id)) return err("duplicate_node", `node ${id} exists`);
     const missing = spec.awaits?.find((g) => !this.#nodes.has(g));
     if (missing !== undefined) return err("unknown_node", `awaited group ${missing} does not exist`);
@@ -66,6 +97,7 @@ export class TaskGraph {
     if (join.kind === "quorum" && !(Number.isInteger(join.count) && join.count >= 1)) throw new Error("quorum count must be a positive integer");
     this.#nodes.set(id, {
       id,
+      payload: spec.payload,
       join,
       resources: spec.resources ?? [],
       awaits: spec.awaits ?? [],
@@ -74,6 +106,7 @@ export class TaskGraph {
       children: [],
       preds: [],
       succs: [],
+      // Stryker disable next-line ArrayDeclaration: equivalent; an exclusion names a node id, and no node is added with a placeholder's id
       exclusive: [],
     });
     this.#revision++;
@@ -102,7 +135,7 @@ export class TaskGraph {
       a.succs.push(to);
       b.preds.push(from);
     }
-    this.#edges.add(key);
+    this.#edges.set(key, { from, to, kind });
     this.#revision++;
     return ok(undefined);
   }
@@ -125,6 +158,11 @@ export class TaskGraph {
     return this.#nodes.get(id)?.status;
   }
 
+  /** The payload the node was added with, if any. */
+  payload(id: string): P | undefined {
+    return this.#nodes.get(id)?.payload;
+  }
+
   parent(id: string): string | undefined {
     return this.#nodes.get(id)?.parent;
   }
@@ -141,7 +179,7 @@ export class TaskGraph {
   /** A conflict-free subset of ready nodes, in order, up to `limit`. */
   schedule(limit: number): string[] {
     const busy = [...this.#nodes.values()].filter((n) => n.status === "running");
-    const chosen: GraphNode[] = [];
+    const chosen: GraphNode<P>[] = [];
     for (const id of this.ready()) {
       if (chosen.length >= limit) break;
       const n = this.#nodes.get(id)!;
@@ -176,16 +214,63 @@ export class TaskGraph {
     return ok(this.#settle());
   }
 
-  #isReady(n: GraphNode): boolean {
+  /** The graph as JSON, for `fromJSON`: payloads are kept as given, so they should be JSON too. */
+  toJSON(): TaskGraphData<P> {
+    return {
+      nodes: [...this.#nodes.values()].map((n) => ({
+        id: n.id,
+        join: n.join,
+        resources: [...n.resources],
+        awaits: [...n.awaits],
+        status: n.status,
+        sealed: n.sealed,
+        ...(n.payload === undefined ? {} : { payload: n.payload }),
+      })),
+      edges: [...this.#edges.values()],
+    };
+  }
+
+  /**
+   * A graph from `toJSON`'s data. Structure is rebuilt through `addNode`, `addEdge` and
+   * `seal`, so it keeps every rule they enforce; statuses must be ones an execution
+   * reaches (a started node was ready, a skipped node can no longer be satisfied).
+   * `payload` checks each payload; without it payloads are kept as given. Throws on
+   * anything else.
+   */
+  static fromJSON<P = unknown>(data: unknown, payload: (raw: unknown) => P = (raw) => raw as P): TaskGraph<P> {
+    const { nodes, edges } = readData(data);
+    const g = new TaskGraph<P>();
+    for (const n of nodes) {
+      must(g.addNode(n.id, { join: n.join, resources: n.resources, awaits: n.awaits }));
+      try {
+        g.#nodes.get(n.id)!.payload = n.payload === undefined ? undefined : payload(n.payload);
+      } catch (e) {
+        invalid(`node ${n.id} has an invalid payload: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    for (const e of edges) must(g.addEdge(e.from, e.to, e.kind));
+    for (const n of nodes) if (n.sealed) g.seal(n.id);
+    for (const n of nodes) g.#nodes.get(n.id)!.status = n.status;
+    for (const n of g.#nodes.values()) {
+      const satisfaction = g.#satisfaction(n);
+      const ready = satisfaction === "satisfied" && n.awaits.every((a) => g.#nodes.get(a)!.sealed);
+      if (STARTED.has(n.status) && !ready) invalid(`node ${n.id} is ${n.status} but was never ready`);
+      if (n.status === "skipped" && satisfaction !== "impossible") invalid(`node ${n.id} is skipped but can still run`);
+    }
+    return g;
+  }
+
+  #isReady(n: GraphNode<P>): boolean {
     return n.status === "pending" && this.#satisfaction(n) === "satisfied" && n.awaits.every((g) => this.#nodes.get(g)!.sealed);
   }
 
-  #satisfaction(n: GraphNode): "satisfied" | "waiting" | "impossible" {
+  #satisfaction(n: GraphNode<P>): "satisfied" | "waiting" | "impossible" {
     const statuses = n.preds.map((p) => this.#nodes.get(p)!.status);
     const succeeded = statuses.filter((s) => s === "succeeded").length;
     const open = statuses.filter((s) => !TERMINAL.has(s)).length;
     const need = n.join.kind === "all" ? statuses.length : n.join.kind === "any" ? Math.min(1, statuses.length) : n.join.count;
     if (succeeded >= need) return "satisfied";
+    // Stryker disable next-line StringLiteral: equivalent; callers only ask whether it is satisfied or impossible
     return succeeded + open < need ? "impossible" : "waiting";
   }
 
@@ -211,7 +296,9 @@ export class TaskGraph {
     while (stack.length > 0) {
       const id = stack.pop()!;
       if (id === target) return true;
+      // Stryker disable next-line ConditionalExpression,BlockStatement,CallExpression: equivalent; dependency edges form a DAG, so the walk ends without the seen set, which only saves revisits
       if (seen.has(id)) continue;
+      // Stryker disable next-line CallExpression: equivalent, as above
       seen.add(id);
       stack.push(...this.#nodes.get(id)!.succs);
     }
@@ -224,6 +311,53 @@ export class TaskGraph {
   }
 }
 
-function conflicts(a: GraphNode, b: GraphNode): boolean {
+function invalid(message: string): never {
+  throw new Error(`invalid task graph data: ${message}`);
+}
+
+function must(result: Result<void, GraphError>): void {
+  if (!result.ok) invalid(`${result.error.code}: ${result.error.message}`);
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
+
+function readJoin(v: unknown): Join | undefined {
+  if (!isRecord(v)) return undefined;
+  if (v["kind"] === "all" || v["kind"] === "any") return { kind: v["kind"] };
+  const count = v["count"];
+  return v["kind"] === "quorum" && Number.isInteger(count) && Number(count) >= 1 ? { kind: "quorum", count: Number(count) } : undefined;
+}
+
+/** A node as read, before its payload is checked. */
+type ReadNode = Omit<TaskNodeData, "payload"> & { readonly payload: unknown };
+
+/** The shape of `toJSON`'s data, checked field by field. */
+function readData(data: unknown): { nodes: ReadNode[]; edges: TaskEdgeData[] } {
+  if (!isRecord(data)) return invalid("not an object");
+  if (!Array.isArray(data["nodes"])) return invalid("nodes is not a list");
+  if (!Array.isArray(data["edges"])) return invalid("edges is not a list");
+  const nodes = data["nodes"].map((n: unknown, i): ReadNode => {
+    if (!isRecord(n)) return invalid(`node ${i} is not an object`);
+    const id = n["id"];
+    if (typeof id !== "string") return invalid(`node ${i} has no id`);
+    const join = readJoin(n["join"]);
+    if (join === undefined) return invalid(`node ${id} has an invalid join`);
+    if (!isStrings(n["resources"])) return invalid(`node ${id} has invalid resources`);
+    if (!isStrings(n["awaits"])) return invalid(`node ${id} has invalid awaits`);
+    if (!STATUSES.has(n["status"])) return invalid(`node ${id} has an invalid status`);
+    if (typeof n["sealed"] !== "boolean") return invalid(`node ${id} has an invalid sealed flag`);
+    return { id, join, resources: n["resources"], awaits: n["awaits"], status: n["status"] as NodeStatus, sealed: n["sealed"], payload: n["payload"] };
+  });
+  const edges = data["edges"].map((e: unknown, i): TaskEdgeData => {
+    if (!isRecord(e)) return invalid(`edge ${i} is not an object`);
+    if (typeof e["from"] !== "string" || typeof e["to"] !== "string") return invalid(`edge ${i} has no endpoints`);
+    if (!EDGE_KINDS.has(e["kind"])) return invalid(`edge ${i} has an invalid kind`);
+    return { from: e["from"], to: e["to"], kind: e["kind"] as EdgeKind };
+  });
+  return { nodes, edges };
+}
+
+function conflicts(a: GraphNode<unknown>, b: GraphNode<unknown>): boolean {
   return a.exclusive.includes(b.id) || a.resources.some((r) => b.resources.includes(r));
 }

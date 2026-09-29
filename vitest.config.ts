@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
 // Subpath entries resolve before their package (aliases match by prefix, in order).
 const SUBPATHS = { "@harness/workflows/node": new URL("./packages/workflows/src/node.ts", import.meta.url).pathname };
-const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "evolution"];
+const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "evolution", "procedural"];
 
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID

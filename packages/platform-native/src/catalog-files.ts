@@ -11,6 +11,8 @@ import { parseSettings } from "@harness/learning";
 import { parsePluginSettings } from "@harness/learning-plugins";
 import type { PluginSettings } from "@harness/learning-plugins";
 import type { Settings } from "@harness/learning";
+import { parseCompositionSettings, parsePolicy, parseResolver, parseSettings as parseProceduralSettings, parseTaskSuite, parseToolDeclarations } from "@harness/procedural";
+import type { AccessPolicy, CompositionSettings, Resolver, Settings as ProceduralSettings, TaskSuite, ToolDeclarations } from "@harness/procedural";
 
 const require = createRequire(import.meta.url);
 
@@ -42,4 +44,34 @@ export function loadDialogueSettings(file: string = require.resolve("@harness/di
 /** Read and parse the evolution settings (rounds, selection rule, the proposer's prompt): its own data file by default, or a tweaked copy. */
 export function loadEvolutionSettings(file: string = require.resolve("@harness/evolution/data/settings.json")): EvolutionSettings {
   return parseEvolutionSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse procedural graphs' settings (presets, decoding, prompts) at startup: its own data file by default, or a tweaked copy. */
+export function loadProceduralSettings(file: string = require.resolve("@harness/procedural/data/settings.json")): ProceduralSettings {
+  return parseProceduralSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse the procedural resolver (which graph a session uses) at startup: procedural's own data file by default, or a deployment's. */
+export function loadProceduralResolver(file: string = require.resolve("@harness/procedural/data/resolver.json")): Resolver {
+  return parseResolver(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse dream's composition settings (which paths compile into workflows) at startup: procedural's own data file by default, or a deployment's. */
+export function loadProceduralComposition(file: string = require.resolve("@harness/procedural/data/composition.json")): CompositionSettings {
+  return parseCompositionSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse what a deployment declares about its session tools (which are free of side effects) at startup: procedural's own data file (none) by default, or a deployment's. */
+export function loadProceduralTools(file: string = require.resolve("@harness/procedural/data/tools.json")): ToolDeclarations {
+  return parseToolDeclarations(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse a procedural access policy (who may read, write, dream, revert or import which graph). */
+export function loadProceduralPolicy(file: string): AccessPolicy {
+  return parsePolicy(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** Read and parse a user's task suite (tasks, scorer, tools; see procedural's data/task-suite.schema.json), dream's evaluator. */
+export function loadTaskSuite(file: string): TaskSuite {
+  return parseTaskSuite(JSON.parse(readFileSync(file, "utf8")));
 }

@@ -29,6 +29,9 @@
       "path": "packages/evolution"
     },
     {
+      "path": "packages/procedural"
+    },
+    {
       "path": "packages/workflows"
     },
     {

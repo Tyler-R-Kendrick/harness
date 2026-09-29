@@ -22,6 +22,8 @@
     ["microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank","prompt-compression","MeetingBank QA","exact match",85.82,"higher","3.0x, GPT-3.5-Turbo target"],
     ["microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank","prompt-compression","LongBench (avg)","score",38.2,"higher","2k-token budget (5x), GPT-3.5-Turbo target"],
     ["microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank","prompt-compression","LongBench (avg)","score",41.9,"higher","3k-token budget (3x), GPT-3.5-Turbo target"],
+    ["HuggingFaceTB/SmolLM2-135M-Instruct","chat","IFEval","accuracy",29.9,"higher","instruct"],
+    ["HuggingFaceTB/SmolLM2-135M-Instruct","chat","MT-Bench","score",19.8,"higher","instruct"],
     ["Qwen/Qwen3.5-0.8B","chat","MMLU-Pro","accuracy",29.7,"higher","non-thinking"],
     ["Qwen/Qwen3.5-0.8B","chat","MMLU-Pro","accuracy",42.3,"higher","thinking"],
     ["Qwen/Qwen3.5-0.8B","chat","MMLU-Redux","accuracy",48.5,"higher","non-thinking"],

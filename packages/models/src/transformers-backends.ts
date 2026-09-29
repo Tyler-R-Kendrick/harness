@@ -126,8 +126,80 @@ export async function loadVisionChatBackend(
     | undefined;
   if (!ModelClass) throw new Error(`transformers.js has no model class ${options.modelClass}`);
   const model = await ModelClass.from_pretrained(options.repo, { ...from, dtype: options.dtype, ...(options.device ? { device: options.device } : {}) });
+  return chatBackend(t, {
+    model,
+    tokenizer: processor.tokenizer!,
+    ...(options.constrainer ? { constrainer: options.constrainer } : {}),
+    inputs: async (request) => {
+      const text = processor.apply_chat_template(request.messages as never, {
+        add_generation_prompt: true,
+        ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function", function: tool })) } : {}),
+        ...options.templateOptions,
+      } as never) as string;
+      const images = await Promise.all(request.images.map((i) => t.RawImage.fromBlob(new Blob([i.data as Uint8Array<ArrayBuffer>], { type: i.mediaType }))));
+      const imageArg = images.length === 1 ? images[0] : images;
+      const call = processor as unknown as (a: unknown, b?: unknown) => Promise<{ input_ids: { dims: number[] } }>;
+      return images.length === 0 ? call(text) : options.imagesFirst ? call(imageArg, text) : call(text, imageArg);
+    },
+  });
+}
+
+type CausalModel = { generate(o: object): Promise<{ dims: number[] }>; generation_config?: { eos_token_id?: number | number[] } };
+
+/**
+ * A text-only generator: a causal LM (transformers.js `AutoModelForCausalLM`) and its
+ * tokenizer, no processor. The chat template renders each message's text; the prompt is
+ * then tokenized as-is (the template already placed the special tokens).
+ */
+export async function loadTextChatBackend(
+  options: TransformersOptions & {
+    readonly dtype: Dtype;
+    readonly templateOptions?: Readonly<Record<string, unknown>>;
+    /** Constrained decoding: a constrained request's logits are masked at every step. */
+    readonly constrainer?: Constrainer;
+  },
+): Promise<ChatBackend> {
+  const t = await runtime(options);
+  const from = { revision: options.revision };
+  const tokenizer = await t.AutoTokenizer.from_pretrained(options.repo, from);
+  const model = (await t.AutoModelForCausalLM.from_pretrained(options.repo, { ...from, dtype: options.dtype, ...(options.device ? { device: options.device } : {}) } as never)) as unknown as CausalModel;
+  const text = (m: TemplateMessage): Record<string, unknown> => {
+    if (m.content.some((p) => p.type !== "text")) throw new Error("this generator is text only; send images to a vision model");
+    return { ...m, content: m.content.map((p) => (p.type === "text" ? p.text : "")).join("") };
+  };
+  return chatBackend(t, {
+    model,
+    tokenizer,
+    ...(options.constrainer ? { constrainer: options.constrainer } : {}),
+    inputs: async (request) => {
+      const messages = (request.messages as readonly TemplateMessage[]).map(text);
+      if (request.images.length > 0) throw new Error("this generator is text only; send images to a vision model");
+      const prompt = tokenizer.apply_chat_template(messages as never, {
+        tokenize: false,
+        add_generation_prompt: true,
+        ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function", function: tool })) } : {}),
+        ...options.templateOptions,
+      } as never) as unknown as string;
+      const call = tokenizer as unknown as (text: string, o: object) => { input_ids: { dims: number[] } };
+      return call(prompt, { add_special_tokens: false });
+    },
+  });
+}
+
+/** Streaming generation shared by the chat backends: greedy, one call at a time, stoppable, and masked step by step under a constraint. */
+async function chatBackend(
+  t: Transformers,
+  parts: {
+    readonly model: CausalModel;
+    readonly tokenizer: unknown;
+    readonly constrainer?: Constrainer;
+    /** The model's inputs for a request (its prompt, and any images). */
+    readonly inputs: (request: ChatBackendRequest) => Promise<{ input_ids: { dims: number[] } }>;
+  },
+): Promise<ChatBackend> {
+  const { model } = parts;
   const eos = model.generation_config?.eos_token_id ?? [];
-  const constrain = options.constrainer && (await options.constrainer({ tokens: vocabularyOf(processor.tokenizer as never), stopTokens: Array.isArray(eos) ? eos : [eos] }));
+  const constrain = parts.constrainer && (await parts.constrainer({ tokens: vocabularyOf(parts.tokenizer as never), stopTokens: Array.isArray(eos) ? eos : [eos] }));
   /** Masks each step's logits by the constraint, accepting the tokens generated since the last step. */
   const processorFor = (constraint: TokenConstraint) => {
     let seen: number | undefined;
@@ -148,17 +220,9 @@ export async function loadVisionChatBackend(
   return {
     generate: (request: ChatBackendRequest, onText, shouldStop) =>
       queue(async () => {
-        const text = processor.apply_chat_template(request.messages as never, {
-          add_generation_prompt: true,
-          ...(request.tools.length ? { tools: request.tools.map((tool) => ({ type: "function", function: tool })) } : {}),
-          ...options.templateOptions,
-        } as never) as string;
-        const images = await Promise.all(request.images.map((i) => t.RawImage.fromBlob(new Blob([i.data as Uint8Array<ArrayBuffer>], { type: i.mediaType }))));
-        const imageArg = images.length === 1 ? images[0] : images;
-        const call = processor as unknown as (a: unknown, b?: unknown) => Promise<{ input_ids: { dims: number[] } }>;
-        const inputs = await (images.length === 0 ? call(text) : options.imagesFirst ? call(imageArg, text) : call(text, imageArg));
+        const inputs = await parts.inputs(request);
         const stopper = new t.InterruptableStoppingCriteria();
-        const streamer = new t.TextStreamer(processor.tokenizer!, {
+        const streamer = new t.TextStreamer(parts.tokenizer as never, {
           skip_prompt: true,
           skip_special_tokens: false,
           callback_function: (delta: string) => {
