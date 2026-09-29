@@ -14,6 +14,8 @@ export interface NodeSpec<P = unknown> {
   readonly awaits?: readonly string[];
   /** What the node stands for, opaque to the graph (a task, a tool call, a plan step). */
   readonly payload?: P;
+  /** A question the user must answer before this node, and only this node, can become ready. */
+  readonly decision?: string;
 }
 
 export type GraphError =
@@ -27,7 +29,9 @@ export type GraphError =
   | "target_started"
   | "not_ready"
   | "not_running"
-  | "already_terminal";
+  | "already_terminal"
+  | "no_decision"
+  | "already_answered";
 
 /** A node as `toJSON` gives it: its spec, where execution has it, and its payload when it has one. */
 export interface TaskNodeData<P = unknown> {
@@ -38,6 +42,8 @@ export interface TaskNodeData<P = unknown> {
   readonly status: NodeStatus;
   readonly sealed: boolean;
   readonly payload?: P;
+  readonly decision?: string;
+  readonly answer?: string;
 }
 
 export interface TaskEdgeData {
@@ -65,6 +71,8 @@ interface GraphNode<P> {
   preds: string[];
   succs: string[];
   exclusive: string[];
+  decision?: string;
+  answer?: string;
 }
 
 const TERMINAL: ReadonlySet<NodeStatus> = new Set(["succeeded", "failed", "cancelled", "skipped"]);
@@ -108,6 +116,7 @@ export class TaskGraph<P = unknown> {
       succs: [],
       // Stryker disable next-line ArrayDeclaration: equivalent; an exclusion names a node id, and no node is added with a placeholder's id
       exclusive: [],
+      ...(spec.decision === undefined ? {} : { decision: spec.decision }),
     });
     this.#revision++;
     return ok(undefined);
@@ -171,9 +180,24 @@ export class TaskGraph<P = unknown> {
     return [...(this.#nodes.get(id)?.children ?? [])];
   }
 
-  /** Pending nodes whose dependencies are satisfied and whose awaited groups are sealed. */
+  /** Pending nodes whose dependencies are satisfied, whose awaited groups are sealed, and whose decision, if any, is answered. */
   ready(): string[] {
     return [...this.#nodes.values()].filter((n) => this.#isReady(n)).map((n) => n.id);
+  }
+
+  /** Pending nodes that would be ready except that their required decision is still unanswered. */
+  blocked(): string[] {
+    return [...this.#nodes.values()].filter((n) => this.#isBlocked(n)).map((n) => n.id);
+  }
+
+  /** Records the user's answer and unblocks only this node. */
+  answer(id: string, value: string): Result<void, GraphError> {
+    const n = this.#nodes.get(id);
+    if (!n) return err("unknown_node", `no node ${id}`);
+    if (n.decision === undefined) return err("no_decision", `${id} does not require a decision`);
+    if (n.answer !== undefined) return err("already_answered", `${id} already has a decision`);
+    n.answer = value;
+    return ok(undefined);
   }
 
   /** A conflict-free subset of ready nodes, in order, up to `limit`. */
@@ -225,6 +249,8 @@ export class TaskGraph<P = unknown> {
         status: n.status,
         sealed: n.sealed,
         ...(n.payload === undefined ? {} : { payload: n.payload }),
+        ...(n.decision === undefined ? {} : { decision: n.decision }),
+        ...(n.answer === undefined ? {} : { answer: n.answer }),
       })),
       edges: [...this.#edges.values()],
     };
@@ -241,7 +267,12 @@ export class TaskGraph<P = unknown> {
     const { nodes, edges } = readData(data);
     const g = new TaskGraph<P>();
     for (const n of nodes) {
-      must(g.addNode(n.id, { join: n.join, resources: n.resources, awaits: n.awaits }));
+      must(g.addNode(n.id, {
+        join: n.join,
+        resources: n.resources,
+        awaits: n.awaits,
+        ...(n.decision === undefined ? {} : { decision: n.decision }),
+      }));
       try {
         g.#nodes.get(n.id)!.payload = n.payload === undefined ? undefined : payload(n.payload);
       } catch (e) {
@@ -250,10 +281,12 @@ export class TaskGraph<P = unknown> {
     }
     for (const e of edges) must(g.addEdge(e.from, e.to, e.kind));
     for (const n of nodes) if (n.sealed) g.seal(n.id);
+    for (const n of nodes) if (n.answer !== undefined) must(g.answer(n.id, n.answer));
     for (const n of nodes) g.#nodes.get(n.id)!.status = n.status;
     for (const n of g.#nodes.values()) {
       const satisfaction = g.#satisfaction(n);
-      const ready = satisfaction === "satisfied" && n.awaits.every((a) => g.#nodes.get(a)!.sealed);
+      const unanswered = n.decision !== undefined && n.answer === undefined;
+      const ready = satisfaction === "satisfied" && n.awaits.every((a) => g.#nodes.get(a)!.sealed) && !unanswered;
       if (STARTED.has(n.status) && !ready) invalid(`node ${n.id} is ${n.status} but was never ready`);
       if (n.status === "skipped" && satisfaction !== "impossible") invalid(`node ${n.id} is skipped but can still run`);
     }
@@ -261,7 +294,18 @@ export class TaskGraph<P = unknown> {
   }
 
   #isReady(n: GraphNode<P>): boolean {
-    return n.status === "pending" && this.#satisfaction(n) === "satisfied" && n.awaits.every((g) => this.#nodes.get(g)!.sealed);
+    return n.status === "pending"
+      && (n.decision === undefined || n.answer !== undefined)
+      && this.#satisfaction(n) === "satisfied"
+      && n.awaits.every((g) => this.#nodes.get(g)!.sealed);
+  }
+
+  #isBlocked(n: GraphNode<P>): boolean {
+    return n.status === "pending"
+      && n.decision !== undefined
+      && n.answer === undefined
+      && this.#satisfaction(n) === "satisfied"
+      && n.awaits.every((g) => this.#nodes.get(g)!.sealed);
   }
 
   #satisfaction(n: GraphNode<P>): "satisfied" | "waiting" | "impossible" {
@@ -347,7 +391,21 @@ function readData(data: unknown): { nodes: ReadNode[]; edges: TaskEdgeData[] } {
     if (!isStrings(n["awaits"])) return invalid(`node ${id} has invalid awaits`);
     if (!STATUSES.has(n["status"])) return invalid(`node ${id} has an invalid status`);
     if (typeof n["sealed"] !== "boolean") return invalid(`node ${id} has an invalid sealed flag`);
-    return { id, join, resources: n["resources"], awaits: n["awaits"], status: n["status"] as NodeStatus, sealed: n["sealed"], payload: n["payload"] };
+    const decision = n["decision"];
+    if (decision !== undefined && typeof decision !== "string") return invalid(`node ${id} has an invalid decision`);
+    const answer = n["answer"];
+    if (answer !== undefined && (typeof answer !== "string" || typeof decision !== "string")) return invalid(`node ${id} has an invalid answer`);
+    return {
+      id,
+      join,
+      resources: n["resources"],
+      awaits: n["awaits"],
+      status: n["status"] as NodeStatus,
+      sealed: n["sealed"],
+      payload: n["payload"],
+      ...(decision === undefined ? {} : { decision }),
+      ...(answer === undefined ? {} : { answer }),
+    };
   });
   const edges = data["edges"].map((e: unknown, i): TaskEdgeData => {
     if (!isRecord(e)) return invalid(`edge ${i} is not an object`);
