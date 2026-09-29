@@ -31,24 +31,28 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
 /**
  * Fetches model files at the catalog's pinned revision and refuses any file whose
  * size or sha256 differs from the catalog. Verified files are cached; a cached copy
- * that no longer verifies is downloaded again.
+ * that no longer verifies is downloaded again. The cache only saves downloads: one that
+ * cannot be read is a miss, and one that cannot keep a file (a browser's storage quota)
+ * leaves the verified bytes in use; either is reported to `onCacheProblem`.
  */
 export class ArtifactStore {
   readonly #fetch: typeof fetch;
   readonly #cache: ByteCache;
   readonly #baseUrl: string;
+  readonly #onCacheProblem: (key: string, error: unknown) => void;
 
-  constructor(options: { fetch: typeof fetch; cache: ByteCache; baseUrl?: string }) {
+  constructor(options: { fetch: typeof fetch; cache: ByteCache; baseUrl?: string; onCacheProblem?: (key: string, error: unknown) => void }) {
     this.#fetch = options.fetch;
     this.#cache = options.cache;
     this.#baseUrl = options.baseUrl ?? "https://huggingface.co";
+    this.#onCacheProblem = options.onCacheProblem ?? (() => undefined);
   }
 
   async file(artifact: Artifact, path: string): Promise<Uint8Array> {
     const spec = artifact.files.find((f) => f.path === path);
     if (!spec) throw new Error(`${path} is not part of ${artifact.repo}@${artifact.revision}`);
     const key = `${artifact.repo}@${artifact.revision}/${path}`;
-    const cached = await this.#cache.get(key);
+    const cached = await this.#cache.get(key).catch((e: unknown) => void this.#onCacheProblem(key, e));
     if (cached && (await this.#problem(cached, spec)) === undefined) return cached;
     const url = `${this.#baseUrl}/${artifact.repo}/resolve/${artifact.revision}/${path}`;
     const response = await this.#fetch(url);
@@ -56,7 +60,7 @@ export class ArtifactStore {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const problem = await this.#problem(bytes, spec);
     if (problem) throw new ArtifactIntegrityError(`${key}: ${problem}`);
-    await this.#cache.put(key, bytes);
+    await this.#cache.put(key, bytes).catch((e: unknown) => this.#onCacheProblem(key, e));
     return bytes;
   }
 

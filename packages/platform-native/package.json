@@ -33,6 +33,7 @@
     "@harness/workflows": "0.0.0",
     "@mlc-ai/web-xgrammar": "0.1.27",
     "ai": "7.0.114",
+    "onnxruntime-node": "1.30.0",
     "write-file-atomic": "8.0.0",
     "ws": "8.22.0",
     "zod": "4.6.5"

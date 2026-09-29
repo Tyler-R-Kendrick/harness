@@ -1,4 +1,6 @@
-# 0013: The harness in its own filesystem, as an Eve agent directory
+# 0015: The harness in its own filesystem, as an Eve agent directory
+
+First merged as 0013, alongside the dialogue standards' ADR 0013 from a parallel change; renumbered 0015.
 
 ## Context
 
@@ -18,7 +20,7 @@ Vercel's Eve describes an agent as a directory of files: `agent.ts` (runtime set
   generation, tier, decision model, generators), `tools/<name>.ts` (each tool the agents
   have: description, input schema, how its calls are approved), `skills/` (using the
   terminal; writing templates, with the facts a hole can use), `subagents/<worker>/`
-  (each worker as a subagent: description, model, instructions), `templates/` (ADR 0012)
+  (each worker as a subagent: description, model, instructions), `templates/` (ADR 0014)
   and `workflows/<id>.sh` (each script template as a script that fills its holes from
   variables of their names and runs, as `/ask` would).
 - **It is kept in sync:** at boot, after every turn (before the turn's effect on the

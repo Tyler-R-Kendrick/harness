@@ -47,6 +47,7 @@ The shipped catalog currently lists:
 |---|---|---|
 | Jev (TypeSafe) | judge | hosted, AI Gateway |
 | CLM 8B (Contrastive-LM) | judge (the local fallback without a key or budget) | TypeSafe-API server (clm-serve) |
+| Julia 1 (Supersonic Labs) | decision model: classification and routing, never grading | onnxruntime (WebGPU in a page), its publisher's ONNX export |
 | Needle 3 (Cactus) | tool router | Cactus WASM |
 | LLMLingua-2 | compressor | transformers.js |
 | Qwen3.5 0.8B | generator with vision; the browser LLM | transformers.js |
@@ -278,7 +279,7 @@ const agentTools = await workflowTools(workflows); // the library's workflows, f
 To try it by hand, build the browser playground: one HTML file with the daemon, a
 terminal (Vercel's wterm running just-bash) whose files the agent shares, and a timeline
 of every ACP message, worker event, model call, tool run and hook event. Opened as a
-claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0012); anywhere, `/ask $ <command>` runs the whole
+claude.ai artifact, `/ask` answers from templates first and asks before Claude writes one (ADR 0014); anywhere, `/ask $ <command>` runs the whole
 tool-call path on a deterministic model. Sessions, conversations, files and the timeline
 are kept in the browser across reloads (`/reset` forgets them).
 
