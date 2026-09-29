@@ -69,7 +69,7 @@ export async function grade(input: { specCase: Case; trial: Trial; sutModel: str
   }
   const asserts = expect?.promptfoo;
   if (asserts !== undefined && asserts.length > 0) {
-    const result = await ports.evaluate(promptfooSuite(input.specCase));
+    const result = await ports.evaluate(promptfooSuite({ ...input.specCase, instruction: input.trial.output }));
     if (!result.passed) return fail(portMark("promptfoo", result));
     scores.push(portMark("promptfoo", result));
   }

@@ -316,7 +316,21 @@ export function unresolvedThreadIds(body: string): string[] {
   return ids;
 }
 
-const THREAD_QUERY = "query($owner:String!,$name:String!,$number:Int!){ repository(owner:$owner, name:$name){ pullRequest(number:$number){ reviewThreads(first:20){ nodes { id isResolved } } } } }";
+/** The next page of a review-thread query. A missing page stops the scan. */
+export function threadPage(body: string): { hasNextPage: boolean; endCursor?: string } {
+  const parsed: unknown = JSON.parse(body);
+  const data = isRecord(parsed) ? field(parsed, "data") : undefined;
+  const repository = isRecord(data) ? field(data, "repository") : undefined;
+  const pullRequest = isRecord(repository) ? field(repository, "pullRequest") : undefined;
+  const threads = isRecord(pullRequest) ? field(pullRequest, "reviewThreads") : undefined;
+  const pageInfo = isRecord(threads) ? field(threads, "pageInfo") : undefined;
+  if (!isRecord(pageInfo) || field(pageInfo, "hasNextPage") !== true) return { hasNextPage: false };
+  const endCursor = field(pageInfo, "endCursor");
+  if (typeof endCursor !== "string" || endCursor.length === 0) return { hasNextPage: false };
+  return { hasNextPage: true, endCursor };
+}
+
+const THREAD_QUERY = "query($owner:String!,$name:String!,$number:Int!,$cursor:String){ repository(owner:$owner, name:$name){ pullRequest(number:$number){ reviewThreads(first:20, after:$cursor){ nodes { id isResolved } pageInfo { hasNextPage endCursor } } } } }";
 const RESOLVE_QUERY = "mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread { isResolved } } }";
 
 /** GitHub pull requests. The review is a comment; an approval is never requested. */
@@ -330,8 +344,19 @@ export function githubPullRemote(options: {
   const run = options.run ?? defaultRunner();
   const gh = (args: readonly string[]): Promise<string> => run("gh", args);
   const threads = async (number: number): Promise<string[]> => {
-    const listed = await gh(["api", "graphql", "-f", `query=${THREAD_QUERY}`, "-f", `owner=${options.owner}`, "-f", `name=${options.name}`, "-F", `number=${number}`]);
-    return unresolvedThreadIds(listed);
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    for (;;) {
+      const args = ["api", "graphql", "-f", `query=${THREAD_QUERY}`, "-f", `owner=${options.owner}`, "-f", `name=${options.name}`, "-F", `number=${number}`];
+      if (cursor !== undefined) args.push("-f", `cursor=${cursor}`);
+      const listed = await gh(args);
+      ids.push(...unresolvedThreadIds(listed));
+      const page = threadPage(listed);
+      if (!page.hasNextPage || page.endCursor === undefined || seen.has(page.endCursor)) return ids;
+      seen.add(page.endCursor);
+      cursor = page.endCursor;
+    }
   };
   return {
     async open(branch, base) {
@@ -351,6 +376,7 @@ export function githubPullRemote(options: {
     async squashMerge(branch) {
       await gh(["pr", "merge", branch, "--repo", `${options.owner}/${options.name}`, "--squash"]);
       const sha = (await gh(["pr", "view", branch, "--repo", `${options.owner}/${options.name}`, "--json", "mergeCommit", "--jq", ".mergeCommit.oid"])).trim();
+      await run("git", ["-C", options.repo, "fetch", "origin", sha]);
       const parents = (await run("git", ["-C", options.repo, "rev-parse", `${sha}^@`])).trim().split(/\s+/).filter((item) => item.length > 0);
       return { sha, parents: parents.length };
     },

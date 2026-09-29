@@ -456,11 +456,32 @@ async function perform(command: DeliveryCommand, effects: DeliveryEffects): Prom
   }
 }
 
+/** Happy path is 12 commands per task plus the baseline and the done. Recovery needs one remove per task. */
+function stepBudget(tasks: number): number {
+  return tasks * 13 + 3;
+}
+
 /** Run the delivery to done or halt. A thrown effect becomes a failure and the worktrees come down. */
-export async function runDelivery(request: DeliveryRequest, effects: DeliveryEffects): Promise<DeliveryReport> {
+export async function runDelivery(request: DeliveryRequest, effects: DeliveryEffects, steps = stepBudget(request.tasks.length)): Promise<DeliveryReport> {
   let delivery = startDelivery(request);
   const commands: DeliveryCommand[] = [];
-  for (let step = 0; step < 64; step++) {
+  const stop = async (): Promise<DeliveryReport> => {
+    if (!delivery.recovering) delivery = apply(delivery, { kind: "failed", reason: "delivery exceeded its step budget" });
+    for (let step = 0; step < request.tasks.length + 1; step++) {
+      const command = pending(delivery);
+      commands.push(command);
+      if (command.kind === "halt") return { status: "halted", reason: command.reason, commands };
+      if (command.kind !== "remove-worktree") return { status: "halted", reason: delivery.reason.length > 0 ? delivery.reason : "delivery exceeded its step budget", commands };
+      try {
+        delivery = apply(delivery, await perform(command, effects));
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        delivery = apply(delivery, { kind: "failed", reason });
+      }
+    }
+    return { status: "halted", reason: delivery.reason.length > 0 ? delivery.reason : "delivery exceeded its step budget", commands };
+  };
+  for (let step = 0; step < steps; step++) {
     const command = pending(delivery);
     commands.push(command);
     if (command.kind === "done") return { status: "done", commands };
@@ -472,5 +493,5 @@ export async function runDelivery(request: DeliveryRequest, effects: DeliveryEff
       delivery = apply(delivery, { kind: "failed", reason });
     }
   }
-  return { status: "halted", reason: "delivery exceeded its step budget", commands };
+  return stop();
 }

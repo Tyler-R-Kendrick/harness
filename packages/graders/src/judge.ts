@@ -39,8 +39,8 @@ export async function llmJudge(client: JudgeClient, rubric: string, output: stri
 export async function loadJudgeModel(provider: "openai" | "anthropic", model: string): Promise<Exclude<LanguageModel, string>> {
   if (provider === "openai") {
     const { createOpenAI } = await import("@ai-sdk/openai");
-    return createOpenAI({ apiKey: "test" })(model);
+    return createOpenAI()(model);
   }
   const { createAnthropic } = await import("@ai-sdk/anthropic");
-  return createAnthropic({ apiKey: "test" })(model);
+  return createAnthropic()(model);
 }

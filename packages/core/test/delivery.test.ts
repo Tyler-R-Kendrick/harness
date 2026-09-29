@@ -255,6 +255,30 @@ describe("delivery workflow", () => {
     expect(pending(delivery).kind).toBe("halt");
   });
 
+  it("DL1.17 a stack of six tasks finishes and does not stop on the step budget", async () => {
+    const many: DeliveryTask[] = Array.from({ length: 6 }, (_, index) => ({
+      id: `t${index}`,
+      branch: `frontier/t${index}`,
+      paths: [`f${index}.txt`],
+    }));
+    const wide = parseResourcePolicy({ ...policy, maxWorktrees: 6 });
+    const effects = fakeEffects();
+    effects.link = async () => ({ commonDir: "/repo/.git", caches: many.map(() => "symlink" as const) });
+    effects.commit = async (branch, parent) => ({ sha: branch, parent });
+    const report = await runDelivery({ trunk: "main", tasks: many, policy: wide }, effects);
+    expect(report.status).toBe("done");
+    expect(report.commands.filter((command) => command.kind === "squash-merge")).toHaveLength(6);
+  });
+
+  it("DL1.18 a step-budget stop removes the live worktrees", async () => {
+    const effects = fakeEffects();
+    const report = await runDelivery({ trunk: "main", tasks: [tasks[0]!], policy }, effects, 3);
+    expect(report.status).toBe("halted");
+    expect(report.reason).toMatch(/step budget/);
+    expect(report.commands.map((command) => command.kind)).toContain("remove-worktree");
+    expect(report.commands.at(-1)?.kind).toBe("halt");
+  });
+
   it("DL1.16 a thrown gate is a failed check, and the runner still removes the worktree", async () => {
     const effects = fakeEffects();
     effects.gates = async () => {

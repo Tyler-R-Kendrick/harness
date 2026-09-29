@@ -49,10 +49,35 @@ describe("github delivery remote", () => {
     const remote = githubPullRemote({ owner: "acme", name: "harness", trunk: "release", repo: "/repo", run });
     expect(await remote.squashMerge("frontier/loop")).toEqual({ sha: "abc", parents: 1 });
     expect(calls.find((call) => call[2] === "merge")).toContain("--squash");
-    expect(calls.some((call) => call[0] === "git" && call.includes("abc^@"))).toBe(true);
+    const git = calls.filter((call) => call[0] === "git");
+    const fetchAt = git.findIndex((call) => call.includes("fetch") && call.includes("abc"));
+    const parseAt = git.findIndex((call) => call.includes("abc^@"));
+    expect(fetchAt).toBeGreaterThanOrEqual(0);
+    expect(parseAt).toBeGreaterThan(fetchAt);
     await remote.noteRetarget("frontier/adapter", "squashsha");
     const edit = calls.find((call) => call[2] === "edit");
     expect(edit?.[edit.indexOf("--base") + 1]).toBe("release");
+  });
+
+  it("DL2.13 resolve walks every review-thread page before it reports what is still open", async () => {
+    const calls: string[][] = [];
+    const run: CommandRunner = async (command, args) => {
+      calls.push([command, ...args]);
+      if (args[1] === "view") return "4\n";
+      const query = args.join(" ");
+      if (query.includes("cursor=C2")) {
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "T2", isResolved: false }], pageInfo: { hasNextPage: false } } } } } });
+      }
+      if (query.includes("reviewThreads")) {
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "T1", isResolved: false }], pageInfo: { hasNextPage: true, endCursor: "C2" } } } } } });
+      }
+      return "";
+    };
+    const remote = githubPullRemote({ owner: "acme", name: "harness", trunk: "release", repo: "/repo", run });
+    expect(await remote.resolve("frontier/loop")).toBe(2);
+    const resolved = calls.filter((call) => call.join(" ").includes("resolveReviewThread")).map((call) => call.find((arg) => arg.startsWith("id=")));
+    expect(resolved).toEqual(["id=T1", "id=T2"]);
+    expect(calls.filter((call) => call.join(" ").includes("cursor=C2"))).toHaveLength(2);
   });
 
   it("DL2.4 the shipped policy keeps a free-disk reserve and denies the gpu", async () => {

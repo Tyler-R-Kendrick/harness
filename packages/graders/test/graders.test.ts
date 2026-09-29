@@ -224,5 +224,44 @@ describe("graders", () => {
     const anthropic = await loadJudgeModel("anthropic", "claude-test");
     expect(openai.modelId).toContain("gpt-test");
     expect(anthropic.modelId).toContain("claude-test");
+    expect(await authorizationOf(openai)).not.toBe("Bearer test");
+    expect(await authorizationOf(anthropic)).not.toBe("Bearer test");
+  });
+
+  it("GR1.4 promptfoo assertions score the trial output", async () => {
+    let instruction = "";
+    const result = await grade({
+      specCase: specCase({ instruction: "say hello", expect: { promptfoo: [{ type: "contains", value: "yes" }] } }),
+      trial: trial({ output: "yes please" }),
+      sutModel: "sut",
+      judgeModel: "judge",
+    }, {
+      async evaluate(suite) {
+        instruction = suite.tests[0]?.vars.instruction ?? "";
+        return { passed: true };
+      },
+      async judge() {
+        return { passed: true };
+      },
+      async foreign() {
+        return { passed: true };
+      },
+    });
+    expect(instruction).toBe("yes please");
+    expect(result.passed).toBe(true);
   });
 });
+
+async function authorizationOf(model: { config?: { headers?: unknown } }): Promise<string | undefined> {
+  try {
+    const headers = model.config?.headers;
+    const value = typeof headers === "function" ? await headers() : headers;
+    if (typeof value !== "object" || value === null) return undefined;
+    const record = value as Record<string, unknown>;
+    const authorization = record["authorization"] ?? record["x-api-key"];
+    return typeof authorization === "string" ? authorization : undefined;
+  } catch (error) {
+    if (error instanceof Error && /api key is missing/i.test(error.message)) return undefined;
+    throw error;
+  }
+}
