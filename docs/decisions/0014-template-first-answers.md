@@ -120,7 +120,7 @@ model at all. Only the parts nobody can decide need a generator.
   population it writes digits without end (`1242232323…`) until the token budget, so the
   catalog claims no constraints for it and it never writes templates. In Chromium with no
   WebGPU, the built page loads it on its own and answers "What is the capital of France?"
-  in a 6 s turn, asking nothing (LA1.1, on real weights).
+  in a 6 s turn, asking nothing (PAM1.1, on real weights).
 - **Qwen3.5 0.8B was measured as a template writer.** It wrote templates
   natively (CPU, 10 to 150 s each) for 8 requests no seed answers:
   - Asked with the unbounded schema, 2 of 8 answers were cut off before the JSON closed,
