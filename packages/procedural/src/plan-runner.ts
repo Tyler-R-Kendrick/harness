@@ -1,5 +1,5 @@
 /**
- * Plan runs on a host (ADR 0016, plan §7.6): what the daemon's `procedural.run` runs a
+ * Plan runs on a host (ADR 0017, plan §7.6): what the daemon's `procedural.run` runs a
  * plan with, and what a restarted daemon resumes. A run is kept in a `PlanRunStore` from
  * before its first task starts until it ends (its state after every change, as
  * `runPlan` saves it), so a host that stops mid-run resumes it from its last state

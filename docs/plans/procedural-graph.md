@@ -1,6 +1,6 @@
 # Plan: procedural graphs in the harness
 
-Decision: ADR 0016. Evidence and critique: `docs/research/procedural-graphs.md`.
+Decision: ADR 0017. Evidence and critique: `docs/research/procedural-graphs.md`.
 Status: done 2026-09-27 (P1–P13 and the cross-phase wiring; the API as built is in
 `docs/plans/procedural-graph-api.md`). Every phase lands test-first, with atomic assertion ids, and passes
 the full gates in `CLAUDE.md` (typecheck, lint, coverage, mutation) before it is pushed.

@@ -1310,7 +1310,7 @@ As built. A resolver rule may route instead of naming a graph (plan §8.1).
 
 ## Plans from subgraphs (`plan.ts`, core `task-graph.ts`)
 
-As built. Plan §7.6's task-graph item and ADR 0016's "the task graph gains payloads".
+As built. Plan §7.6's task-graph item and ADR 0017's "the task graph gains payloads".
 
 - Core's `TaskGraph<P = unknown>`:
   - `NodeSpec<P>` gains `payload?: P`, opaque to the graph; `payload(id): P | undefined`.

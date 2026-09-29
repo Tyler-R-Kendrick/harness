@@ -1,8 +1,11 @@
-# 0016: Procedural graphs: a static core, a live dynamic layer, and dream
+# 0017: Procedural graphs: a static core, a live dynamic layer, and dream
 
 Status: accepted 2026-09-27; implemented. Proposed and revised the same day, after an
 adversarial review and the owner's direction. Research: `docs/research/procedural-graphs.md`.
 Plan: `docs/plans/procedural-graph.md`; the API as built: `docs/plans/procedural-graph-api.md`.
+First merged as 0016, alongside the decision models' ADR 0016 from a later change;
+renumbered 0017. ADR 0016 puts a local decision model on ONNX; this one is procedural
+graphs.
 
 ## Context
 

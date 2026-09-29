@@ -6,7 +6,7 @@ The authors released no code and no graphs. An independent reimplementation
 (`github.com/vikm2o/proceduralgraph`, Apache-2.0) exists. We read its list of departures;
 we do not depend on it.
 
-This note is the input to ADR 0016 and to the plan in `docs/plans/procedural-graph.md`:
+This note is the input to ADR 0017 and to the plan in `docs/plans/procedural-graph.md`:
 
 - Part 1 restates the mechanism exactly. It is the reproduction target.
 - Part 2 reads the evidence adversarially.

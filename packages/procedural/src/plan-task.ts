@@ -1,5 +1,5 @@
 /**
- * A plan task on a model (ADR 0016, plan §7.6): the default `PlanTask` a host runs plans
+ * A plan task on a model (ADR 0017, plan §7.6): the default `PlanTask` a host runs plans
  * with. A bound task is one AI SDK `generateText` step offered only its bound tool, with
  * the tool choice forced to it, so the model spends its answer on the tool's arguments
  * alone (the tool's input schema is the constraint). A workflow binding is a tool like

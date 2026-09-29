@@ -1,5 +1,5 @@
 /**
- * Running plans (ADR 0016, plan §7.6). `runPlan` executes a plan's task graph with the
+ * Running plans (ADR 0017, plan §7.6). `runPlan` executes a plan's task graph with the
  * task graph's own scheduler: the ready tasks, in order, within its joins and exclusions,
  * at most the settings' `plans.concurrency` at once. Each task runs through a port
  * (`PlanTask`) and is given the outputs of its data predecessors; one that fails (or

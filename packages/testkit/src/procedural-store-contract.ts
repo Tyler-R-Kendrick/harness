@@ -54,7 +54,7 @@ const observed = (turn: number): OverlayEvent =>
 const pin = (graph: GraphId, overlay: number, salt = "salt"): Pin => ({ graph, core: revisionId(seedGraph()), overlay, salt, at: 7 });
 
 /**
- * The ProceduralStore contract (plan §4, ADR 0016). Every implementation runs this same
+ * The ProceduralStore contract (plan §4, ADR 0017). Every implementation runs this same
  * suite: revisions and compare-and-set heads, dense append logs per graph, pins, guidance
  * texts, leases with epochs, redaction, and durability across a reopen.
  */

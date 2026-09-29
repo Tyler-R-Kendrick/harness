@@ -1,5 +1,5 @@
 /**
- * Plans from subgraphs (ADR 0016, plan §7.6): a procedural graph is the prior plans come
+ * Plans from subgraphs (ADR 0017, plan §7.6): a procedural graph is the prior plans come
  * from, and a plan is one execution of part of it. `planFromSubgraph` turns the
  * subgraph between two nodes into core's `TaskGraph`: each ACTION node becomes a task
  * whose payload holds the node and its binding, and the graph's relations become the

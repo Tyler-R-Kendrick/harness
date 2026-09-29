@@ -1,4 +1,4 @@
-// @harness/procedural: see docs/decisions/0016-procedural-graph.md and docs/plans/procedural-graph.md.
+// @harness/procedural: see docs/decisions/0017-procedural-graph.md and docs/plans/procedural-graph.md.
 export { approvalInbox, approveCandidate, declineCandidate, decidedNotice, listApprovals, requestedNotice, type ApprovalList, type ApprovalNotice, type ApprovalResult, type ApprovalSummary } from "./approvals.ts";
 export { canonicalJson, sha256Hex } from "./canonical.ts";
 export { composer, composition, sessionTools, staging, toolSpecs, type HostComposition, type Staging, type StagingFiles, type ToolsNotice, type ToolsScope } from "./compose-host.ts";
