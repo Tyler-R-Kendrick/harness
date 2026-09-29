@@ -77,4 +77,16 @@ describe("harness sessions on the native host", () => {
     expect(created).toEqual(["s1"]);
     await worker.close();
   });
+
+  it("HD3.1 skills given to the worker are the skills of the turn", async () => {
+    const harness = scriptedHarness((p) => `got ${p}`);
+    const worker = harnessWorker({
+      harness,
+      sandboxRoot: join(dir(), "sandboxes"),
+      skills: [{ name: "ship-it", description: "Ship the branch.", content: "Run it.\n", files: [] }],
+    });
+    expect(await turn(worker.worker, "one")).toBe("got one");
+    expect(harness.log.turns[0]?.skills).toEqual(["ship-it"]);
+    await worker.close();
+  });
 });

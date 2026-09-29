@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.18",
+    "@ax-llm/ax": "24.0.24",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
     "ai": "7.0.114",

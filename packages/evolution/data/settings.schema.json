@@ -322,11 +322,32 @@
           "type": "integer",
           "exclusiveMinimum": 0,
           "maximum": 9007199254740991
+        },
+        "optimize": {
+          "type": "object",
+          "properties": {
+            "maxMetricCalls": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "seed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "maxMetricCalls",
+            "seed"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "system",
-        "maxTokens"
+        "maxTokens",
+        "optimize"
       ],
       "additionalProperties": false
     },

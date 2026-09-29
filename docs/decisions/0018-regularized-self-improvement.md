@@ -334,8 +334,19 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   request, and never over files that changed since the run started (EH1.1–EH12.6, and end
   to end with a real child-process evaluator and a holdout, EH10.1). The proposer and the
   critic are gateway models, or the critic is the ensemble's judge.
-- **Models are AI SDK models.** The proposer is `generateText` constrained to the proposal's
-  JSON Schema; the critic is `experimental_evaluate` (RS12.1–RS12.3). Settings, prompts
+- **Models are AI SDK models, and the proposer is an Ax program.** The critic is
+  `experimental_evaluate` (RS12.3). The proposer is an `@ax-llm/ax` signature: Ax
+  compiles the prompt from that signature and the system text, and constrains the
+  answer to the proposal schema (RS12.1–RS12.2). Once per proposer, when
+  `proposer.optimize.maxMetricCalls` is above zero, Ax's `optimize` (GEPA) tunes that
+  prompt. The metric is deterministic and is not a second selection test: the answer
+  parses and stays within the round's edit budget. The cap and the seed are data
+  (RS12.4). The run stores no labeled proposals, so the search is GEPA alone, not a
+  bootstrap of gold demos. The student is the same AI SDK language model the host
+  already resolved. Ax ships no adapter that takes an AI SDK model — its AI SDK
+  package wraps Ax the other way — so the model's chat function is injected as an Ax
+  service. A cap of zero leaves the compiled signature prompt untuned. Selection, the
+  ledger, the leakage screen and the holdout are unchanged. Settings, prompts
   included, are data with a generated schema (`packages/evolution/data/settings.json`,
   RS11.1–RS11.2).
 
@@ -370,6 +381,9 @@ change between resumes.
 - Each evaluation is a child process the host spawns; the harness under test runs with
   the host's authority. Evolving code that runs code is the operator's sandbox decision,
   as it is for any harness session.
+- The first proposal a proposer handles spends up to `proposer.optimize.maxMetricCalls`
+  extra model calls tuning its prompt. Later proposals on that proposer use the tuned
+  program. The cap is the bound; zero skips the tune.
 
 ## Limits, and what was decided against
 

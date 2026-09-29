@@ -3,6 +3,7 @@ import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { createACP } from "@ai-sdk/harness-acp";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { createCodex } from "@ai-sdk/harness-codex";
+import type { HarnessSkill } from "@harness/core";
 import { AgentWorker, harnessSessions, harnessTurnTools } from "@harness/workers";
 import type { HarnessStore, StepHook, ToolContext } from "@harness/workers";
 import type { ToolSet } from "ai";
@@ -110,12 +111,13 @@ export function harnessWorker(
     readonly harness: AnyHarness;
     readonly stateFile?: string;
     readonly instructions?: string;
+    readonly skills?: readonly HarnessSkill[];
     readonly step?: StepHook;
     readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
   } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
 ): { worker: AgentWorker; close(): Promise<void> } {
   const sandbox = "sandbox" in options ? options.sandbox : hostSandbox({ root: options.sandboxRoot });
-  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }) });
+  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...(options.skills === undefined ? {} : { skills: options.skills }) });
   // With a step hook (procedural graphs), each turn's prompt is prepended with its guidance.
   const sessions = harnessSessions(agent, {
     ...(options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) }),

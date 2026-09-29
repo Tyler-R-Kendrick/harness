@@ -40,7 +40,16 @@ export const SettingsSchema = z
     invalid: ProbabilitySchema,
     /** What the proposer is shown: the worst and best tasks of the incumbent, and the last records of the ledger. */
     analysis: z.strictObject({ failures: z.int().min(0), successes: z.int().min(0), history: z.int().positive() }),
-    proposer: z.strictObject({ system: text, maxTokens: z.int().positive() }),
+    proposer: z.strictObject({
+      system: text,
+      maxTokens: z.int().positive(),
+      /**
+       * Ax GEPA (`optimize`) for the proposer's signature. `maxMetricCalls` is the
+       * spend cap for one proposer; zero leaves the compiled signature prompt untuned.
+       * `seed` fixes the optimizer's sampling.
+       */
+      optimize: z.strictObject({ maxMetricCalls: z.int().min(0), seed: z.int().min(0) }),
+    }),
     critic: z.strictObject({ question: text, threshold: ProbabilitySchema, examples: z.int().min(0) }),
   })
   .refine((s) => s.budget.min <= s.budget.max, { message: "budget.min must not exceed budget.max", path: ["budget"] })

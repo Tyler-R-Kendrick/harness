@@ -1,0 +1,14 @@
+{
+  "name": "@harness/report",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local JSONL and HTML reports for an eval round. Pure.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@harness/ir": "0.0.0"
+  }
+}

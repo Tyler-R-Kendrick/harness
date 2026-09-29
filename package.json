@@ -7,7 +7,7 @@
   "type": "module",
   "packageManager": "npm@10.9.7",
   "engines": {
-    "node": ">=22.18"
+    "node": ">=22.22"
   },
   "workspaces": [
     "packages/*"
@@ -20,6 +20,7 @@
     "test:coverage": "vitest run --coverage",
     "test:mutation": "stryker run",
     "eval": "node packages/evals/src/cli.ts",
+    "cli": "node packages/platform-native/src/main.ts",
     "check": "npm run typecheck && npm run lint && npm run test:coverage",
     "test:models": "vitest run --config vitest.models.config.ts"
   },

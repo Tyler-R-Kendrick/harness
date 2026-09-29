@@ -1,0 +1,10 @@
+{
+  "$schema": "./delivery-policy.schema.json",
+  "maxExtraDiskBytes": 1073741824,
+  "minFreeDiskBytes": 2147483648,
+  "maxMemoryBytes": 2147483648,
+  "maxTokens": 200000,
+  "gpu": "deny",
+  "timeoutMs": 900000,
+  "maxWorktrees": 4
+}
