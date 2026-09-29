@@ -2,7 +2,7 @@
 import { evolutionCommand } from "./evolution-command.ts";
 
 // harness-evolution <start|round|run|status|documents> --config <evolution.json> [options]
-// Regularized self-improvement of the harness's data (ADR 0014) on this machine: the
+// Regularized self-improvement of the harness's data (ADR 0018) on this machine: the
 // configuration names the documents (JSON, or raw text), the tasks and the evaluator command;
 // the proposer is an AI Gateway model, the optional critic an AI Gateway model or the native
 // host's ensemble judge (--critic ensemble). See evolution-command.ts.

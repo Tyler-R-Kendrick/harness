@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { campaign, toggle } from "./world.ts";
 
 /**
- * The power table of ADR 0014: what the calibrated rule can certify, for a real gain
+ * The power table of ADR 0018: what the calibrated rule can certify, for a real gain
  * proposed in the first round of a 20-round run (so its test level is that of the whole run,
  * alpha 0.1 over 60 tests), 20 seeded runs per row, in the simulated world of RS10.1: a
  * fifth of the tasks always fail, two fifths always pass, a fifth are coin flips. The other

@@ -159,7 +159,7 @@ node packages/platform-native/src/main.ts --stdio --worker ensemble --memory ~/.
 source files as text) against a task suite, after RRSI (Xia et al., 2026): each round a
 proposer model drafts candidates as edits within an annealed edit budget, a leakage screen
 and a critic refuse task-specific ones before any evaluation, and at most one candidate is
-accepted. Acceptance is where this differs from the paper (ADR 0014, which critiques it):
+accepted. Acceptance is where this differs from the paper (ADR 0018, which critiques it):
 candidates are measured with the incumbent in the same window, a change is accepted as a
 gain only when a paired randomization test bounds its gain above zero at a run-wide error
 rate (spent uniformly or front-loaded), cost is paid for by that lower bound, clearly bad

@@ -110,7 +110,7 @@ function line(r: LedgerRecord): string {
 }
 
 /**
- * `harness-evolution`: drives `@harness/evolution` on the native host (ADR 0014). Answers
+ * `harness-evolution`: drives `@harness/evolution` on the native host (ADR 0018). Answers
  * the exit code: 0 done, 1 failed (a failed round leaves the state file as it was; run
  * the command again to resume), 2 misused.
  */

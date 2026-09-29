@@ -1,4 +1,7 @@
-# 0014: Regularized self-improvement of the harness (RRSI, critiqued and calibrated)
+# 0018: Regularized self-improvement of the harness (RRSI, critiqued and calibrated)
+
+First merged as 0014, alongside the playground's template-first-answers ADR 0014 from a
+parallel change; renumbered 0018.
 
 Status: decided, 2026-09-28.
 
