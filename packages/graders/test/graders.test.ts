@@ -252,13 +252,15 @@ describe("graders", () => {
   });
 });
 
-async function authorizationOf(model: { config?: { headers?: unknown } }): Promise<string | undefined> {
+async function authorizationOf(model: unknown): Promise<string | undefined> {
   try {
-    const headers = model.config?.headers;
+    if (typeof model !== "object" || model === null || !("config" in model)) return undefined;
+    const config = model.config;
+    if (typeof config !== "object" || config === null || !("headers" in config)) return undefined;
+    const headers = config.headers;
     const value = typeof headers === "function" ? await headers() : headers;
     if (typeof value !== "object" || value === null) return undefined;
-    const record = value as Record<string, unknown>;
-    const authorization = record["authorization"] ?? record["x-api-key"];
+    const authorization = "authorization" in value ? value.authorization : "x-api-key" in value ? value["x-api-key"] : undefined;
     return typeof authorization === "string" ? authorization : undefined;
   } catch (error) {
     if (error instanceof Error && /api key is missing/i.test(error.message)) return undefined;
