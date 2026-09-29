@@ -79,6 +79,8 @@ Test kinds (filename suffix decides the kind):
 - `*.chaos.test.ts`: fault injection (dropped connections, replays, duplicate ids, cursor regression) with a seeded generator.
 - `*.contract.test.ts`: a suite from `@harness/testkit` run against every implementation of a port.
 - `*.snapshot.test.ts`: characterization files checked with vitest `toMatchFileSnapshot`, the approval-file equivalent of Verify. A missing file is written on the first run; later runs reuse it.
+- `*.bdd.test.ts`: behavior scenarios in given/when/then form. One scenario may compose several units.
+- `*.crap.test.ts`: Change Risk Anti-Patterns. CRAP is `CC² × (1 − coverage)³ + CC`, scored at the repo's branch-coverage floor, and a function over 30 fails. Excluded from mutation testing: instrumentation rewrites the source the score reads.
 - `*.simulation.test.ts`: studies of whole runs over seeded simulated worlds (error rates
   under the null, power, evaluations saved). Their counts were measured once and are
   pinned with slack; they are excluded from mutation testing (too slow per mutant), so
