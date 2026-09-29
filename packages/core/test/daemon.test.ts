@@ -565,6 +565,14 @@ describe("Daemon: capabilities and hooks", () => {
     expect(() => daemon.publish({ type: "Bad Type", payload: {} })).toThrow("an event type is dotted lower-case names");
     expect(() => daemon.publish({ type: "single", payload: {} })).toThrow("an event type is dotted lower-case names");
   });
+
+  it("DM7.5 a host event type is dotted lower-case names from its first character to its last", () => {
+    const { daemon } = setup();
+    for (const type of ["Area.thing", "area.thing!", "area.thing Happened", "-area.thing"]) {
+      expect(() => daemon.publish({ type, payload: {} })).toThrow(`an event type is dotted lower-case names, not ${JSON.stringify(type)}`);
+    }
+    expect(daemon.publish({ type: "area-1.thing-2.happened", payload: {} }).ok).toBe(true);
+  });
 });
 
 describe("Daemon: restart (MX5)", () => {

@@ -21,6 +21,7 @@ Architecture decisions and when to revisit them: `docs/decisions/`.
 | `packages/learning` | learning extension on memory: lessons from sessions, capability ladder, plugin contracts | pure |
 | `packages/dialogue` | scripted dialogue: scripts (fixed text, slots, tool values, generated holes) answer turns without inference; IVR-style forms; flows (durable workflows that talk) and imported documents; scripts induced and drafted from the model's answers, verified in shadow before they answer | pure |
 | `packages/dialogue-standards` | dialogue authoring standards: VoiceXML 2.1 with SRGS 1.0 (XML and ABNF) and SISR, and AIML 2.0, run a turn at a time by interpreters inside durable flows; `importDialogue` | pure |
+| `packages/procedural` | procedural graphs (arXiv:2609.09153): a static core changed only by dream, a live overlay learned from traffic, step-level guidance, gates, stores and resolver | pure |
 | `packages/workflows` | durable workflows as code: a code mode port (AI SDK code mode natively from `/node`, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension, workflows as AI SDK tools | portable (`/node`: Node) |
 | `packages/learning-plugins` | workflow, skill and tool builders (all run durable workflows), recording teacher | portable |
 | `packages/constrained` | constrained decoding on XGrammar(-2): token masks, templates, jump-forward | portable |

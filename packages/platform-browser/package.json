@@ -18,6 +18,7 @@
     "@harness/dialogue": "0.0.0",
     "@harness/dialogue-standards": "0.0.0",
     "@harness/models": "0.0.0",
+    "@harness/procedural": "0.0.0",
     "@harness/runtime": "0.0.0",
     "@harness/workers": "0.0.0",
     "@harness/workflows": "0.0.0",

@@ -27,11 +27,13 @@ import { CapabilityRegistry } from "./capabilities.ts";
 import type { CapabilityOffer, Trust } from "./capabilities.ts";
 import { FlowController } from "./flow.ts";
 import { HookBus } from "./hooks.ts";
+import type { HookError, HookEvent, HostPublishInput } from "./hooks.ts";
 import { newId } from "./ids.ts";
 import { InputLease } from "./input-lease.ts";
 import type { Clock, Entropy } from "./ports.ts";
 import { CallbackRouter } from "./routing.ts";
 import type { CallbackOption, CallbackOutcome } from "./routing.ts";
+import type { Result } from "./result.ts";
 import { SessionLog } from "./session-log.ts";
 import type { LogEntry } from "./session-log.ts";
 import { SubagentTree } from "./subagents.ts";
@@ -66,9 +68,20 @@ export type StopReason = AcpStopReason;
 /** A choice offered with a permission request, as ACP defines it. */
 export type PermissionOptionSpec = PermissionOption;
 
+/** An opaque record a client gives `session/new` in `_meta.harness.session`; core never interprets it. */
+export type SessionMeta = Readonly<Record<string, unknown>>;
+
 /** Instructions for the host to carry out against the session's worker. */
 export type WorkerCommand =
-  | { readonly type: "prompt"; readonly sessionId: string; readonly turnId: string; readonly prompt: readonly unknown[]; readonly cwd: string }
+  | {
+      readonly type: "prompt";
+      readonly sessionId: string;
+      readonly turnId: string;
+      readonly prompt: readonly unknown[];
+      readonly cwd: string;
+      /** The session's `_meta.harness.session`, when `session/new` carried one. */
+      readonly sessionMeta?: SessionMeta;
+    }
   | { readonly type: "cancel"; readonly sessionId: string; readonly turnId: string }
   | { readonly type: "permission"; readonly sessionId: string; readonly turnId: string; readonly requestId: string; readonly outcome: CallbackOutcome }
   /** A host event for the session's behavior (see `_harness/behavior/event`). */
@@ -155,6 +168,7 @@ interface Session {
   readonly id: string;
   readonly cwd: string;
   readonly owner: string;
+  readonly meta: SessionMeta | undefined;
   readonly log: SessionLog<LogPayload>;
   readonly tree: SubagentTree;
   readonly router: CallbackRouter;
@@ -169,6 +183,8 @@ interface SessionSnapshot {
   readonly id: string;
   readonly cwd: string;
   readonly owner: string;
+  /** Absent in snapshots from before session meta, and for sessions made without it. */
+  readonly sessionMeta?: SessionMeta;
   readonly log: unknown;
   readonly tree: unknown;
   readonly turnId?: string;
@@ -209,8 +225,21 @@ function behaviorChange(update: SessionUpdate): BehaviorChange | undefined {
   return { state: c["state"], ...(from === undefined ? {} : { from }), ...(cause === undefined ? {} : { cause }) };
 }
 
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 function record(v: unknown): Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  return isObject(v) ? v : {};
+}
+
+/** The opaque `_meta.harness.session` of a `session/new`, if it has one; it must be an object. */
+function sessionMeta(params: Record<string, unknown>): SessionMeta | undefined {
+  const harness = record(record(params["_meta"])["harness"]);
+  if (!("session" in harness)) return undefined;
+  const meta = harness["session"];
+  if (!isObject(meta)) throw invalidParams("_meta.harness.session must be a JSON object");
+  return meta;
 }
 
 function str(v: unknown, name: string): string {
@@ -341,6 +370,7 @@ export class Daemon {
         id: s.id,
         cwd: s.cwd,
         owner: s.owner,
+        ...(s.meta === undefined ? {} : { sessionMeta: s.meta }),
         log: s.log.toJSON(),
         tree: s.tree.toJSON(),
         ...(s.turn ? { turnId: s.turn.turnId } : {}),
@@ -358,7 +388,8 @@ export class Daemon {
     for (const s of snap.sessions) {
       const tree = SubagentTree.fromJSON(s.tree);
       for (const node of tree.toJSON().nodes) if (node.id.startsWith("conn:") && node.state === "active") tree.detach(node.id);
-      const session = daemon.#newSession(s.id, s.cwd, s.owner, tree, SessionLog.fromJSON<LogPayload>(s.log));
+      const meta = isObject(s.sessionMeta) ? s.sessionMeta : undefined;
+      const session = daemon.#newSession(s.id, s.cwd, s.owner, meta, tree, SessionLog.fromJSON<LogPayload>(s.log));
       if (s.turnId !== undefined) {
         daemon.#append(session, "event", { event: "turn.interrupted", data: { turnId: s.turnId } });
         daemon.#append(session, "update", { update: { sessionUpdate: "notice", severity: "warning", title: "Turn interrupted by daemon restart" } });
@@ -366,6 +397,38 @@ export class Daemon {
     }
     daemon.#out = [];
     return daemon;
+  }
+
+  /**
+   * Publish a hook event on the host's behalf, e.g. a host extension announcing its own
+   * work or a dialogue's script promoted. The host names the source (`host` unless it says
+   * otherwise); peers have no way to publish or to choose one. Its type is dotted
+   * lower-case names (`area.thing.happened`).
+   */
+  publish(input: HostPublishInput): Result<HookEvent, HookError> {
+    if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(input.type)) throw new Error(`an event type is dotted lower-case names, not ${JSON.stringify(input.type)}`);
+    return this.#hooks.publish({ ...input, source: input.source ?? "host" }, this.#now());
+  }
+
+  /** The id of every session the daemon holds, in creation order, for host-side reads such as `readLog`. */
+  sessionIds(): string[] {
+    return [...this.#sessions.keys()];
+  }
+
+  /**
+   * A session's log entries in `[from, to)` (`to` defaults to the head), read on the host's
+   * behalf without copying any other session's log, as `snapshot()` would. Entries compacted
+   * below the log's base are gone, so a read starts there; an unknown session has none.
+   */
+  readLog(sessionId: string, from = 0, to = Number.POSITIVE_INFINITY): readonly LogEntry<unknown>[] {
+    if (!Number.isSafeInteger(from) || from < 0) throw new RangeError(`from must be a whole number of at least 0, not ${from}`);
+    if (to !== Number.POSITIVE_INFINITY && (!Number.isSafeInteger(to) || to < 0)) throw new RangeError(`to must be a whole number of at least 0, not ${to}`);
+    const log = this.#sessions.get(sessionId)?.log;
+    if (log === undefined) return [];
+    const start = Math.max(from, log.base());
+    const read = log.read(start, Math.max(to - start, 0));
+    // Past the head the log answers out-of-range: there is nothing to read there.
+    return read.kind === "entries" ? read.entries : [];
   }
 
   // ---- request handling -----------------------------------------------------------
@@ -472,10 +535,11 @@ export class Daemon {
 
   #sessionNew(conn: Connection, params: Record<string, unknown>): unknown {
     const cwd = str(params["cwd"], "cwd");
+    const meta = sessionMeta(params);
     const tree = new SubagentTree();
     tree.createRoot(DAEMON_NODE, "agent", ["observe", "control", "approve", "cancel", "spawn"]);
     tree.spawn(DAEMON_NODE, WORKER_NODE, "agent", ["observe"]);
-    const session = this.#newSession(newId("session", this.#deps.entropy), cwd, conn.identity.principal, tree, new SessionLog());
+    const session = this.#newSession(newId("session", this.#deps.entropy), cwd, conn.identity.principal, meta, tree, new SessionLog());
     this.#append(session, "event", { event: "session.created", data: { cwd, owner: conn.identity.principal } });
     this.#publish("session.created", session.id, { cwd });
     this.#attach(conn, session, OWNER_GRANTS, session.log.head(), false);
@@ -515,7 +579,8 @@ export class Daemon {
     this.#append(session, "event", { event: "turn.started", data: { turnId, by: sub.nodeId } });
     for (const block of prompt) this.#append(session, "update", { update: { sessionUpdate: "user_message_chunk", content: block }, origin: conn.id });
     this.#publish("turn.started", session.id, { turnId });
-    this.#out.push({ kind: "worker", command: { type: "prompt", sessionId, turnId, prompt, cwd: session.cwd } });
+    const meta = session.meta === undefined ? {} : { sessionMeta: session.meta };
+    this.#out.push({ kind: "worker", command: { type: "prompt", sessionId, turnId, prompt, cwd: session.cwd, ...meta } });
     return DEFER;
   }
 
@@ -587,11 +652,12 @@ export class Daemon {
 
   // ---- sessions, attachment, delivery --------------------------------------------
 
-  #newSession(id: string, cwd: string, owner: string, tree: SubagentTree, log: SessionLog<LogPayload>): Session {
+  #newSession(id: string, cwd: string, owner: string, meta: SessionMeta | undefined, tree: SubagentTree, log: SessionLog<LogPayload>): Session {
     const session: Session = {
       id,
       cwd,
       owner,
+      meta,
       log,
       tree,
       router: new CallbackRouter(tree, { exclude: [DAEMON_NODE] }),
@@ -739,15 +805,6 @@ export class Daemon {
   #plugin(conn: Connection): string {
     if (conn.identity.kind !== "plugin") throw new RpcError(ERROR_CODES.forbidden, "only plugins use the hook bus");
     return conn.identity.principal;
-  }
-
-  /**
-   * Publish an event of the host's own (a dialogue's script promoted, say) to plugins on
-   * the hook bus, as source `host`. Its type is dotted lower-case names (`area.thing.happened`).
-   */
-  publish(event: { readonly type: string; readonly payload: Record<string, unknown>; readonly sessionId?: string }): void {
-    if (!/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/.test(event.type)) throw new Error(`an event type is dotted lower-case names, not ${JSON.stringify(event.type)}`);
-    this.#hooks.publish({ type: event.type, source: "host", payload: event.payload, ...(event.sessionId === undefined ? {} : { sessionId: event.sessionId }) }, this.#now());
   }
 
   #publish(type: string, sessionId: string, payload: Record<string, unknown>): void {

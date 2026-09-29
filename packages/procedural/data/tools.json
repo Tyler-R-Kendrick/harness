@@ -1,0 +1,4 @@
+{
+  "$schema": "./tools.schema.json",
+  "sideEffectFree": []
+}

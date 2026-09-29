@@ -24,6 +24,9 @@ export interface PublishInput {
   readonly correlationId?: string;
 }
 
+/** What the host publishes (see Daemon.publish): its source is `host` unless it names another. */
+export type HostPublishInput = Omit<PublishInput, "source"> & { readonly source?: string };
+
 export interface Filter {
   /** Exact types, `prefix.*` wildcards, or `*`. */
   readonly types: readonly string[];
