@@ -17,6 +17,8 @@ export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compr
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./compression.ts";
 export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE, route, toolSet, validatedSchema } from "./cascade.ts";
 export type { CascadePolicy, CascadeStep, ToolDecision } from "./cascade.ts";
+export { frontierSearch } from "./frontier.ts";
+export type { FrontierDomain, FrontierJudge, FrontierLimits, FrontierResult } from "./frontier.ts";
 export { BenchmarksFileSchema, CatalogFileSchema, catalogJsonSchemas, parseCatalog } from "./catalog.ts";
 export type { Catalog, CompressionConfig, EmbeddingConfig, ModelEntry } from "./catalog.ts";
 export { invokeCognitive, mirrorCapabilities } from "./service.ts";
