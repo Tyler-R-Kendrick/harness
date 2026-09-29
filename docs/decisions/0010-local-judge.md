@@ -14,7 +14,7 @@ of 7 conclusive cases pass. The model card says as much: its published numbers a
 fine-tuned verifier heads. Wiring it into CI would trade `blocked` for failures that
 describe the judge, not the harness.
 
-CI's models job already runs a general-purpose generator (Ornith 1.5 9B on llama-server).
+The promote workflow's models gate already runs a general-purpose generator (Ornith 1.5 9B on llama-server).
 Asked for a letter straight away, it judges the calibration cases backwards: "42" is
 false with P 0.96 and "43" is true with P 0.94, whatever the prompt's wording. Its first
 token is a reflex ("No." to "is 17 + 25 equal to 42?"), which the rest of its answer then
@@ -41,8 +41,8 @@ models (`EvaluationModelV4`) but nothing that makes one of a language model.
   `judgment` task**, ranked after Jev and CLM, so it judges only when neither is
   reachable. Ornith is that entry; no judgment benchmark is published for it, which its
   notes say.
-- **CI's evals job runs llama-server**, restoring the models job's cached weights when
-  there are some (right after a catalog change the models job has not saved them yet,
+- **The promote workflow's evals gate runs llama-server**, restoring the models gate's cached weights when
+  there are some (right after a catalog change the models gate has not saved them yet,
   so that run downloads the judge's weights itself), so the evals are judged: by Jev if a gateway credential is ever set, else by the generator.
   The real-weights tests hold a generator judge to the judge contract and to calibrated
   answers on real weights.

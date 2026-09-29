@@ -210,8 +210,11 @@ Requires Node 22.18+ (TypeScript runs directly, no build step).
 ```sh
 npm ci
 npm run check            # typecheck, lint, tests with coverage thresholds
-npm run test:mutation    # Stryker mutation testing
+npm run test:mutation    # Stryker mutation testing; also a release gate
 ```
+
+A pull request runs the unit half of that check, and host or browser integration when the diff reaches those hosts. Mutation, real-weight model tests, and evals gate a release: dispatch the `promote` workflow, and the `release` environment is deployed only after the gates that diff touches have passed.
+
 
 Run the daemon as a background service on a user-private socket:
 

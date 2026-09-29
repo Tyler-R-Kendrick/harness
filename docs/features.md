@@ -166,8 +166,8 @@ Every native local model the host runs is tested on real weights by `catalog.mod
 | Qwen3.5 0.8B | chat, reasoning, tools, extraction, vision QA, OCR, documents, charts | transformers.js, native + browser (the browser LLM) | RW4.1–RW4.3 + generator contract |
 | SmolLM2 135M | chat (text only; no constraints: under a JSON Schema it loops) | transformers.js as a causal LM (`loadTextChatBackend`: no model class, its tokenizer's chat template), native + browser on WebAssembly with no WebGPU (137 MB) | RW4.1 + generator contract, TB3.1–TB3.3, BE1.15, CT1.8 (only a model that reads images names a model class), PAM1.1 |
 | LightOnOCR-2 1B | OCR, document parsing, tables | transformers.js, native + browser | RW5.1 + document-parser contract |
-| Ornith 1.5 9B | chat, reasoning, coding, tools; judgment as the judge of last resort | llama.cpp-server, native only | RW4.1, RW4.2, RW4.4 + generator contract, RW6.1 + judge contract; CI `models` job, and run in the dev sandbox on a llama-server built from llama.cpp's source (its releases are not reachable there) |
-| OvisOCR2 | OCR, document parsing, tables | llama.cpp-server, native only | RW5.1 + document-parser contract; CI `models` job, and in the dev sandbox as above |
+| Ornith 1.5 9B | chat, reasoning, coding, tools; judgment as the judge of last resort | llama.cpp-server, native only | RW4.1, RW4.2, RW4.4 + generator contract, RW6.1 + judge contract; the promote workflow's models gate, and run in the dev sandbox on a llama-server built from llama.cpp's source (its releases are not reachable there) |
+| OvisOCR2 | OCR, document parsing, tables | llama.cpp-server, native only | RW5.1 + document-parser contract; the promote workflow's models gate, and in the dev sandbox as above |
 | Qwen3 1.7B (steerable kernel) | steered chat | onnxruntime, native only; patched at layer 14 on first use | KS1.1–KS1.4 + generator contract |
 
 ## H. Knowledge modeling
@@ -284,7 +284,7 @@ Every native local model the host runs is tested on real weights by `catalog.mod
 | Deterministic core (injected clock/entropy); trace parity | built | DM8.1 |
 | Fault-injection properties | built | EF5.1 (effects), HK5.1 (plugin crashes), SL4, TG4.1 |
 | Mutation testing with a break threshold | built | Stryker over core, protocol, cognitive and the other pure packages (dialogue and evolution among them); evolution's whole-run studies are `*.simulation.test.ts` and excluded, as the integration tests are, so its atomic tests must kill the mutants on their own |
-| Model tests on real weights (`*.model.test.ts`) | built | `npm run test:models`, CI `models` job; found and fixed: unnormalized images when a processor config omits do_normalize, Pixtral argument order, generation not stopped on early exit |
+| Model tests on real weights (`*.model.test.ts`) | built | `npm run test:models`, the promote workflow's models gate; found and fixed: unnormalized images when a processor config omits do_normalize, Pixtral argument order, generation not stopped on early exit |
 | TLA+ model; combinatorial conformance; provenance (SLSA/in-toto/TUF); retention | not started | |
 
 ## Q. Clients
