@@ -17,7 +17,7 @@ export { dockerSandbox } from "./docker-sandbox.ts";
 export { webSocketToken } from "./ws-token.ts";
 export type { DockerSandboxOptions } from "./docker-sandbox.ts";
 export { hostSandbox } from "./host-sandbox.ts";
-export { FileHarnessStore, harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
+export { FileHarnessStore, harnessAdapter, harnessWorker, modelIdsFromCatalog, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, probeModelIds, sandboxProvider } from "./harness-host.ts";
 export type { HarnessSpec, SandboxSpec } from "./harness-host.ts";
 export { evolutionCommand } from "./evolution-command.ts";
 export type { EvolutionDeps, EvolutionIo } from "./evolution-command.ts";
@@ -27,3 +27,4 @@ export { loadTestingRoster, testingRosterJsonSchema } from "./testing-roster.ts"
 export type { DeliveryIo, DeliveryPlan, GitAuthor, GitDeliveryOptions, PullRemote } from "./deliver.ts";
 export type { EvolutionConfig } from "./evolution-config.ts";
 export { discoverProjectHome, loadDiscoveredHarnessHome, readHarnessHome } from "./home.ts";
+export { generateCliProject } from "./cli-project.ts";

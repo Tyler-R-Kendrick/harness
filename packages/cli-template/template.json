@@ -1,0 +1,10 @@
+{
+  "files": [
+    "package.json",
+    "tsconfig.json",
+    "src/index.ts",
+    "src/client.ts",
+    "src/interactive.ts",
+    "src/main.ts"
+  ]
+}

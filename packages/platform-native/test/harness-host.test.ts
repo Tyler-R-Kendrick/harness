@@ -1,10 +1,10 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { WorkerEvent } from "@harness/core";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
-import { FileHarnessStore, harnessAdapter, harnessWorker, hostSandbox, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "@harness/platform-native";
+import { FileHarnessStore, harnessAdapter, harnessWorker, hostSandbox, modelIdsFromCatalog, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, sandboxProvider } from "@harness/platform-native";
 import { scriptedHarness } from "@harness/testkit";
 
 const dir = () => mkdtempSync(join(tmpdir(), "harness-host-"));
@@ -28,6 +28,56 @@ describe("harness sessions on the native host", () => {
     expect(harnessAdapter({ kind: "claude-code" }).harnessId).toBe("claude-code");
     expect(harnessAdapter({ kind: "codex" }).harnessId).toBe("codex");
     expect(harnessAdapter({ kind: "acp", package: "gemini-acp", version: "2.0.0", executable: "gemini" }).harnessId).toBe("acp");
+  });
+
+  it("HH1.8 a dead loopback Claude base URL is replaced by the model its origin lists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "claude-local-"));
+    const probed: string[] = [];
+    const launch = await prepareLocalClaude({
+      env: { ANTHROPIC_BASE_URL: "https://api.example.test" },
+      settingsText: JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9/coding-agent" } }),
+      configDir: dir,
+      probe: async (url) => {
+        probed.push(url);
+        return url === "http://127.0.0.1:9/v1/models" ? ["local-model"] : undefined;
+      },
+    });
+    expect(probed).toEqual(["http://127.0.0.1:9/coding-agent/v1/models", "http://127.0.0.1:9/v1/models"]);
+    expect(launch?.["CLAUDE_CONFIG_DIR"]).toBe(dir);
+    expect(launch?.["ANTHROPIC_BASE_URL"]).toBe("http://127.0.0.1:9");
+    expect(launch?.["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"]).toBe("0");
+    expect(launch?.["CLAUDE_CODE_SIMPLE"]).toBe("1");
+    const written = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
+      model: string;
+      env: { ANTHROPIC_BASE_URL: string; CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: string; CLAUDE_CODE_SIMPLE: string };
+    };
+    expect(written.model).toBe("local-model");
+    expect(written.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:9");
+    expect(written.env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT).toBe("1");
+    expect(written.env.CLAUDE_CODE_SIMPLE).toBe("1");
+
+    const publicCloud = await prepareLocalClaude({
+      env: {},
+      settingsText: JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://api.example.test" } }),
+      configDir: dir,
+      probe: async () => ["should-not-be-used"],
+    });
+    expect(publicCloud).toBeUndefined();
+
+    const healthy = await prepareLocalClaude({
+      env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:9" },
+      settingsText: undefined,
+      configDir: dir,
+      probe: async (url) => (url === "http://127.0.0.1:9/v1/models" ? ["kept"] : undefined),
+    });
+    expect(healthy).toBeUndefined();
+  });
+
+  it("HH1.9 a model catalog is the ids an OpenAI or Ollama list names", () => {
+    expect(modelIdsFromCatalog({ data: [{ id: "a" }, { id: "" }, { name: "nope" }, null] })).toEqual(["a"]);
+    expect(modelIdsFromCatalog({ models: [{ name: "b" }, { model: "c" }] })).toEqual(["b"]);
+    expect(modelIdsFromCatalog({ data: "nope" })).toEqual([]);
+    expect(modelIdsFromCatalog(null)).toEqual([]);
   });
 
   it("HH1.3 parked harness sessions are kept in a file, so a restarted daemon finds them", async () => {

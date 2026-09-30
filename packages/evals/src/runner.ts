@@ -1,6 +1,7 @@
 import { experimental_evaluate } from "ai";
 import { CognitiveError, JudgeAnswerSchema, wilsonInterval } from "@harness/cognitive";
 import type { Ensemble } from "@harness/cognitive";
+import { generatorJudge } from "@harness/models";
 import type { Answer, Judge, Question, State } from "./judge.ts";
 import { caseVerdict, questionVerdict } from "./verdict.ts";
 import type { Expectation, Verdict } from "./verdict.ts";
@@ -57,13 +58,32 @@ const NO_JUDGE = { provider: "none", modelId: "none" };
  * preference, each tried until one loads (a hosted model needs its credential, a local
  * one its server). Without one, the reasons each failed.
  */
-export async function chooseJudge(ensemble: Ensemble): Promise<JudgeChoice> {
+/** Keep the named cases. An id outside the pool, or an empty list, is an error. */
+export function filterCases(cases: readonly EvalCase[], ids: readonly string[]): readonly EvalCase[] {
+  if (ids.length === 0) throw new Error("name at least one case");
+  const known = new Set(cases.map((c) => c.id));
+  const missing = ids.filter((id) => !known.has(id));
+  if (missing.length > 0) throw new Error(`unknown case(s): ${missing.join(", ")}`);
+  const want = new Set(ids);
+  return cases.filter((c) => want.has(c.id));
+}
+
+export async function chooseJudge(ensemble: Ensemble, options: { readonly generator?: boolean } = {}): Promise<JudgeChoice> {
   try {
     const { id, port } = await ensemble.resolve("judgment", "judge");
     const { runtime } = ensemble.members().find((m) => m.id === id)!.descriptor;
     return { judge: { identity: { provider: runtime, modelId: id }, model: port } };
   } catch (e) {
     if (!(e instanceof CognitiveError)) throw e;
+    if (options.generator) {
+      try {
+        const { id, port } = await ensemble.resolve("chat", "generator");
+        const { runtime } = ensemble.members().find((m) => m.id === id)!.descriptor;
+        return { judge: { identity: { provider: runtime, modelId: id }, model: generatorJudge(port) } };
+      } catch (fallback) {
+        if (!(fallback instanceof CognitiveError)) throw fallback;
+      }
+    }
     const reasons = ensemble.members().flatMap((m) => (m.descriptor.tasks.includes("judgment") && m.reason ? [`${m.id}: ${m.reason}`] : []));
     return { unavailable: `No judge could be reached${reasons.length ? `: ${reasons.join("; ")}` : ""}` };
   }

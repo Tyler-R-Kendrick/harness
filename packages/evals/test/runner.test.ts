@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { bytes, Ensemble, probability } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
-import { BlockedError, chooseJudge, runEvals } from "@harness/evals";
+import { MockLanguageModelV4 } from "ai/test";
+import { BlockedError, chooseJudge, filterCases, runEvals } from "@harness/evals";
 import type { EvalCase } from "@harness/evals";
 import { scriptedJudge } from "@harness/testkit";
 
@@ -98,6 +99,38 @@ describe("chooseJudge", () => {
     const none = await chooseJudge(ensemble);
     expect(none).toEqual({ unavailable: "No judge could be reached: hosted-judge: no credential; local-judge: revoked" });
     expect(await chooseJudge(new Ensemble({ platform: "native" }))).toEqual({ unavailable: "No judge could be reached" });
+  });
+
+  it("EV3.10 the chat generator judges only when asked, after every judgment model fails", async () => {
+    const chat: ModelDescriptor = {
+      id: "chat-gen",
+      name: "chat-gen",
+      publisher: "p",
+      tasks: ["chat"],
+      ports: ["generator"],
+      locality: "local",
+      platforms: ["native"],
+      license: "x",
+      downloadBytes: bytes(0),
+      runtime: "ai-gateway",
+      run: { model: "chat-gen" },
+      benchmarks: [],
+    };
+    const ensemble = new Ensemble({ platform: "native" });
+    ensemble.register(chat, async () => ({ generator: new MockLanguageModelV4({}) }));
+    expect(await chooseJudge(ensemble)).toEqual({ unavailable: "No judge could be reached" });
+    const choice = await chooseJudge(ensemble, { generator: true });
+    expect(choice.judge?.identity).toEqual({ provider: "ai-gateway", modelId: "chat-gen" });
+    const model = choice.judge?.model;
+    if (model === undefined || typeof model === "string") throw new Error("expected a generator judge");
+    expect(model.provider).toBe("harness.generator-judge");
+  });
+
+  it("EV3.11 filterCases keeps a named subset and rejects an id outside it", () => {
+    const cases = [yesCase("a", "1"), yesCase("b", "2"), yesCase("c", "3")];
+    expect(filterCases(cases, ["c", "a"]).map((item) => item.id)).toEqual(["a", "c"]);
+    expect(() => filterCases(cases, ["missing"])).toThrow(/unknown case\(s\): missing/);
+    expect(() => filterCases(cases, [])).toThrow(/at least one case/);
   });
 
   it("EV3.9 errors other than having no judge are not hidden", async () => {
