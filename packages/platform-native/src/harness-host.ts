@@ -1,3 +1,5 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { HarnessV1, HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { createACP } from "@ai-sdk/harness-acp";
@@ -32,10 +34,104 @@ export function parseHarnessSpec(text: string): HarnessSpec {
 }
 
 /** The official AI SDK adapter for a harness. */
-export function harnessAdapter(spec: HarnessSpec): AnyHarness {
+/** Ids named by an OpenAI-compatible `{ data: [{ id }] }` catalog, or an Ollama `{ models: [{ name }] }` catalog. */
+export function modelIdsFromCatalog(body: unknown): readonly string[] {
+  const named = (items: unknown, key: "id" | "name"): readonly string[] =>
+    Array.isArray(items)
+      ? items.flatMap((item) => {
+          if (typeof item !== "object" || item === null || !Object.prototype.hasOwnProperty.call(item, key)) return [];
+          const value = (item as Record<string, unknown>)[key];
+          return typeof value === "string" && value.length > 0 ? [value] : [];
+        })
+      : [];
+  if (typeof body !== "object" || body === null) return [];
+  const openai = named((body as Record<string, unknown>)["data"], "id");
+  return openai.length > 0 ? openai : named((body as Record<string, unknown>)["models"], "name");
+}
+
+export async function probeModelIds(url: string): Promise<readonly string[] | undefined> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(2000) });
+    if (!response.ok) return undefined;
+    const ids = modelIdsFromCatalog(await response.json());
+    return ids.length > 0 ? ids : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function baseUrlFromSettings(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const env = (parsed as Record<string, unknown>)["env"];
+  if (typeof env !== "object" || env === null) return undefined;
+  const base = (env as Record<string, unknown>)["ANTHROPIC_BASE_URL"];
+  return typeof base === "string" && base.length > 0 ? base : undefined;
+}
+
+function loopbackBase(baseUrl: string): URL | undefined {
+  try {
+    const url = new URL(baseUrl);
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1" ? url : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function modelListUrl(url: URL): string {
+  const path = url.pathname.replace(/\/$/, "");
+  const list = new URL(url.href);
+  list.pathname = path.endsWith("/v1") ? `${path}/models` : `${path}/v1/models`;
+  list.search = "";
+  list.hash = "";
+  return list.toString();
+}
+
+/**
+ * Claude Code applies ~/.claude/settings.json after the process environment, so a dead
+ * loopback base URL there wins. When that URL lists no models and its origin does, point
+ * CLAUDE_CONFIG_DIR at a cache settings file whose model is the one the origin listed.
+ * That overlay sets CLAUDE_CODE_SIMPLE so the local model answers the user and the next
+ * turn sees the same session, instead of the coding-agent tool prompt. A public base
+ * URL, and a loopback URL that already lists models, are left alone.
+ */
+export async function prepareLocalClaude(options: {
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly settingsText: string | undefined;
+  readonly configDir: string;
+  readonly probe: (url: string) => Promise<readonly string[] | undefined>;
+}): Promise<Readonly<Record<string, string>> | undefined> {
+  const base = loopbackBase(baseUrlFromSettings(options.settingsText) ?? options.env["ANTHROPIC_BASE_URL"] ?? "");
+  if (base === undefined) return undefined;
+  const atBase = modelListUrl(base);
+  const atOrigin = `${base.origin}/v1/models`;
+  const listedAtBase = await options.probe(atBase);
+  if (listedAtBase !== undefined && listedAtBase.length > 0) return undefined;
+  const originModels = atOrigin === atBase ? listedAtBase : await options.probe(atOrigin);
+  const model = originModels?.find((id) => id.length > 0);
+  if (model === undefined) return undefined;
+  const settingsEnv = {
+    ANTHROPIC_BASE_URL: base.origin,
+    ANTHROPIC_API_KEY: "local",
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "0",
+    CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT: "1",
+    CLAUDE_CODE_SIMPLE: "1",
+  };
+  await mkdir(options.configDir, { recursive: true });
+  await writeFile(join(options.configDir, "settings.json"), `${JSON.stringify({ model, env: settingsEnv }, null, 2)}\n`);
+  return { CLAUDE_CONFIG_DIR: options.configDir, ...settingsEnv };
+}
+
+export function harnessAdapter(spec: HarnessSpec, claudeEnv?: Readonly<Record<string, string>>): AnyHarness {
   switch (spec.kind) {
     case "claude-code":
-      return createClaudeCode();
+      return claudeEnv === undefined ? createClaudeCode() : createClaudeCode({ env: claudeEnv });
     case "codex":
       return createCodex();
     case "acp":
@@ -114,10 +210,12 @@ export function harnessWorker(
     readonly skills?: readonly HarnessSkill[];
     readonly step?: StepHook;
     readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
+    /** Host tools that wait for the session's approver. The next typed line answers. */
+    readonly toolApproval?: Record<string, "user-approval">;
   } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
 ): { worker: AgentWorker; close(): Promise<void> } {
   const sandbox = "sandbox" in options ? options.sandbox : hostSandbox({ root: options.sandboxRoot });
-  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...(options.skills === undefined ? {} : { skills: options.skills }) });
+  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...(options.skills === undefined ? {} : { skills: options.skills }), ...(options.toolApproval === undefined ? {} : { toolApproval: options.toolApproval }) });
   // With a step hook (procedural graphs), each turn's prompt is prepended with its guidance.
   const sessions = harnessSessions(agent, {
     ...(options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) }),

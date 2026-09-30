@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
 import { wrapLanguageModel } from "ai";
@@ -20,7 +21,7 @@ import { instructionsWithSkills } from "@harness/core";
 import type { HarnessHome } from "@harness/core";
 import { documentImporter } from "@harness/dialogue-standards";
 import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
-import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, sandboxProvider } from "./harness-host.ts";
+import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, probeModelIds, sandboxProvider } from "./harness-host.ts";
 import { loadDiscoveredHarnessHome } from "./home.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
@@ -39,6 +40,7 @@ import {
   nativeTaskEvaluator,
   proceduralStore,
 } from "./procedural-host.ts";
+import { generateCliProject } from "./cli-project.ts";
 import { lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
@@ -79,8 +81,24 @@ const { values } = parseArgs({
     "ws-origin": { type: "string", multiple: true },
     "sandbox-setup": { type: "string" },
     "sandbox-env": { type: "string", multiple: true },
+    "new-cli": { type: "string" },
+    "cli-name": { type: "string" },
   },
 });
+
+if (values["new-cli"] !== undefined || values["cli-name"] !== undefined) {
+  if (values["new-cli"] === undefined || values["cli-name"] === undefined) {
+    process.stderr.write("usage: harness --new-cli <dir> --cli-name <name>\n");
+    process.exit(2);
+  }
+  try {
+    generateCliProject(fileURLToPath(new URL("../../cli-template/", import.meta.url)), values["new-cli"], values["cli-name"]);
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
 
 if (!values.stdio && values.socket === undefined && values.ws === undefined) {
   process.stderr.write(
@@ -236,7 +254,23 @@ if ((values.worker === "harness") !== (values.harness !== undefined)) {
   process.stderr.write("--worker harness and --harness go together: the harness names the agent that runs sessions\n");
   process.exit(2);
 }
-const adapter = values.harness === undefined ? undefined : harnessAdapter(parseHarnessSpec(values.harness));
+let claudeSettings: string | undefined;
+if (values.harness === "claude-code") {
+  try {
+    claudeSettings = readFileSync(join(homedir(), ".claude", "settings.json"), "utf8");
+  } catch {
+    claudeSettings = undefined;
+  }
+}
+const claudeEnv = values.harness === "claude-code"
+  ? await prepareLocalClaude({
+      env: process.env,
+      settingsText: claudeSettings,
+      configDir: join(homedir(), ".cache", "harness", "claude-code-local"),
+      probe: probeModelIds,
+    })
+  : undefined;
+const adapter = values.harness === undefined ? undefined : harnessAdapter(parseHarnessSpec(values.harness), claudeEnv);
 // Composition (agent and harness workers): dream compiles well-trodden paths into workflows staged in the
 // procedural directory (never the shared --workflows library), with the session tools as its catalog, and
 // each session is offered its host tools plus exactly the workflows its pinned core binds. The ensemble and
@@ -360,6 +394,12 @@ const sessions: Worker = harness
 // constrain a template's holes); with the others, whose models it cannot reach (an external
 // harness, the echo worker), in front of the worker.
 const worker: Worker = dialogue && (harness || (values.worker !== "model" && values.worker !== "ensemble")) ? new DialogueWorker(sessions, dialogue, { handoff: values.worker !== "echo" }) : sessions;
+if (values.worker === "ensemble") {
+  process.stderr.write("session agent: the catalog chat model answers turns; the first reply downloads it when it is not cached\n");
+}
+if (values.worker === "harness") {
+  process.stderr.write(`session agent: ${values.harness} runs each session, with that harness's tools\n`);
+}
 
 // The dialogue is managed over ACP as the `dialogue` cognitive extension (status, list, get, put,
 // feedback, import), on the ensemble when there is one, else on an ensemble of its own.

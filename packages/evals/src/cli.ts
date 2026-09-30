@@ -3,19 +3,21 @@ import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
-import { chooseJudge, runEvals } from "./runner.ts";
+import { chooseJudge, filterCases, runEvals } from "./runner.ts";
 import type { EvalCase } from "./runner.ts";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { buildNativeEnsemble } from "@harness/platform-native";
 import { calibrationSuite } from "./suites/calibration.ts";
 import { cognitiveSuite } from "./suites/cognitive.ts";
+import { chatSuite } from "./suites/chat.ts";
 import { harnessSuite } from "./suites/harness.ts";
 
 const { values } = parseArgs({
   options: {
     out: { type: "string", default: "eval-results/results.json" },
     suite: { type: "string", default: "all" },
+    case: { type: "string" },
     "require-live": { type: "boolean", default: false },
   },
 });
@@ -31,9 +33,10 @@ const native = buildNativeEnsemble({
 const suites: Record<string, () => readonly EvalCase[]> = {
   calibration: () => calibrationSuite,
   harness: () => harnessSuite,
+  chat: () => chatSuite,
   cognitive: () => cognitiveSuite(async () => native.ensemble),
 };
-const selected = values.suite === "all" ? ["calibration", "harness"] : values.suite.split(",");
+const selected = values.suite === "all" ? ["calibration", "harness", "chat"] : values.suite.split(",");
 const unknown = selected.filter((s) => !(s in suites));
 if (unknown.length > 0) {
   process.stderr.write(`unknown suite(s): ${unknown.join(", ")}; choose from ${Object.keys(suites).join(", ")}, all\n`);
@@ -49,9 +52,17 @@ function sourceRevision(): string | undefined {
   }
 }
 
-const cases = selected.flatMap((s) => suites[s]!());
+const pool = selected.flatMap((s) => suites[s]!());
+const named = values.case?.split(",").map((id) => id.trim()).filter((id) => id.length > 0);
+let cases: readonly EvalCase[];
+try {
+  cases = named === undefined ? pool : filterCases(pool, named);
+} catch (e) {
+  process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+  process.exit(2);
+}
 const revision = sourceRevision();
-const report = await runEvals(cases, await chooseJudge(native.ensemble), revision === undefined ? {} : { sourceRevision: revision });
+const report = await runEvals(cases, await chooseJudge(native.ensemble, process.env["HARNESS_GENERATOR_JUDGE"] === "1" ? { generator: true } : {}), revision === undefined ? {} : { sourceRevision: revision });
 
 await native.close();
 await mkdir(dirname(values.out), { recursive: true });

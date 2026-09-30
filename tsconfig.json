@@ -90,6 +90,9 @@
     },
     {
       "path": "packages/cli"
+    },
+    {
+      "path": "packages/cli-template"
     }
   ]
 }
