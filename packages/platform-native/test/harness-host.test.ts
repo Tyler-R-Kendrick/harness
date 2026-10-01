@@ -6,6 +6,7 @@ import type { WorkerEvent } from "@harness/core";
 import type { HarnessV1SandboxProvider } from "@ai-sdk/harness";
 import { FileHarnessStore, harnessAdapter, harnessWorker, hostSandbox, modelIdsFromCatalog, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, sandboxProvider } from "@harness/platform-native";
 import { scriptedHarness } from "@harness/testkit";
+import { jsonSchema, tool } from "ai";
 
 const dir = () => mkdtempSync(join(tmpdir(), "harness-host-"));
 
@@ -78,6 +79,71 @@ describe("harness sessions on the native host", () => {
     expect(modelIdsFromCatalog({ models: [{ name: "b" }, { model: "c" }] })).toEqual(["b"]);
     expect(modelIdsFromCatalog({ data: "nope" })).toEqual([]);
     expect(modelIdsFromCatalog(null)).toEqual([]);
+  });
+
+  it("HH1.10 a loopback session starts with no builtin tools, so the local model is not handed the tool catalog", async () => {
+    const base = scriptedHarness((p) => `got ${p}`);
+    const seen: unknown[] = [];
+    const bash = tool({ description: "Run a command.", inputSchema: jsonSchema<Record<string, never>>({ type: "object" }) });
+    const harness = {
+      ...base,
+      builtinTools: { bash },
+      supportsBuiltinToolFiltering: true,
+      async doStart(options: Parameters<typeof base.doStart>[0]) {
+        seen.push(options.builtinToolFiltering);
+        return base.doStart(options);
+      },
+    };
+    const worker = harnessWorker({ harness, sandboxRoot: dir(), activeTools: [] });
+    expect(await turn(worker.worker, "what can you do?")).toBe("got what can you do?");
+    expect(seen).toEqual([{ mode: "allow", toolNames: [] }]);
+    await worker.close();
+  });
+
+  it("HH1.11 a loopback overlay is the harness auth, so an empty Claude login is not refreshed", async () => {
+    const saved = {
+      ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"],
+      ANTHROPIC_AUTH_TOKEN: process.env["ANTHROPIC_AUTH_TOKEN"],
+      ANTHROPIC_BASE_URL: process.env["ANTHROPIC_BASE_URL"],
+      CLAUDE_CODE_OAUTH_TOKEN: process.env["CLAUDE_CODE_OAUTH_TOKEN"],
+      AI_GATEWAY_API_KEY: process.env["AI_GATEWAY_API_KEY"],
+      VERCEL_OIDC_TOKEN: process.env["VERCEL_OIDC_TOKEN"],
+    };
+    for (const key of Object.keys(saved)) delete process.env[key];
+    const fetched: string[] = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      fetched.push(String(input));
+      return new Response("", { status: 401 });
+    }) as typeof fetch;
+    const ran: string[] = [];
+    try {
+      const harness = harnessAdapter({ kind: "claude-code" }, {
+        ANTHROPIC_BASE_URL: "http://127.0.0.1:9",
+        ANTHROPIC_API_KEY: "local",
+        CLAUDE_CODE_SIMPLE: "1",
+      });
+      const sandbox = {
+        getPortEndpoint: () => ({ url: "ws://127.0.0.1:9" }),
+        async run({ command }: { command: string }) {
+          ran.push(command);
+          return { exitCode: 0, stdout: "/tmp/sandbox-home", stderr: "" };
+        },
+      };
+      await Promise.resolve(harness.doStart({
+        sessionId: "s",
+        sessionWorkDir: "/tmp/w",
+        sandboxSession: sandbox as unknown as Parameters<typeof harness.doStart>[0]["sandboxSession"],
+      })).catch((error: unknown) => error);
+      expect(fetched).toEqual([]);
+      expect(ran.length).toBeGreaterThan(0);
+    } finally {
+      globalThis.fetch = original;
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("HH1.3 parked harness sessions are kept in a file, so a restarted daemon finds them", async () => {

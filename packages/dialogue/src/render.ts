@@ -86,6 +86,87 @@ export function fill(
 }
 
 /**
+ * Several rendered replies as one, in the order given. Fixed text is copied. A hole keeps
+ * its constraint, and a hole name used again is renamed so the sections stay apart. A blank
+ * line separates sections. Nothing here is generated.
+ */
+export function composeReplies(
+  sections: readonly ({ kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint })[],
+): { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint } {
+  const seen = new Map<string, number>();
+  const hole = (name: string): string => {
+    const used = seen.get(name) ?? 0;
+    seen.set(name, used + 1);
+    return used === 0 ? name : `${name}-${used + 1}`;
+  };
+  const parts: TemplatePart[] = [];
+  sections.forEach((section, index) => {
+    if (index > 0) parts.push("\n\n");
+    if (section.kind === "text") parts.push(section.text);
+    else for (const part of section.template.parts) parts.push(typeof part === "string" ? part : { ...part, hole: hole(part.hole) });
+  });
+  return parts.every((part) => typeof part === "string") ? { kind: "text", text: parts.join("") } : { kind: "template", template: templateOf(parts) };
+}
+
+type HolePart = Exclude<TemplatePart, string>;
+
+/** Quoted pieces of an EBNF grammar. A sentence's only quoted pieces are spaces. */
+function quotedLiterals(ebnf: string): string[] {
+  return [...ebnf.matchAll(/"([^\"]*)"/g)].map((match) => match[1] ?? "");
+}
+
+function plainProse(ebnf: string): boolean {
+  const literals = quotedLiterals(ebnf);
+  return literals.length > 0 && literals.every((literal) => /^ *$/.test(literal));
+}
+
+/** A document grammar's sentence, when it defines the prose, spaces and word rules. */
+function sentenceOf(ebnf: string): string | undefined {
+  const lines = ["prose", "spaces", "word"].map((name) => ebnf.split("\n").find((line) => line.startsWith(`${name} ::=`)));
+  if (lines.some((line) => line === undefined)) return undefined;
+  return `root ::= prose\n${lines.join("\n")}`;
+}
+
+/** A one-hole template is already an answer: a sentence, or a grammar that is not built from one. */
+function keepWhole(part: HolePart): boolean {
+  const constraint = part.constraint;
+  if (constraint === undefined || constraint.type !== "grammar") return true;
+  if (plainProse(constraint.ebnf)) return true;
+  return sentenceOf(constraint.ebnf) === undefined;
+}
+
+function sentenceHole(part: HolePart): HolePart | undefined {
+  if (part.constraint?.type !== "grammar") return undefined;
+  const ebnf = sentenceOf(part.constraint.ebnf);
+  if (ebnf === undefined) return undefined;
+  return { hole: "answer", constraint: { type: "grammar", ebnf } };
+}
+
+/**
+ * One answer from a rendered section, so a stitch stays a few holes.
+ * Fixed text is copied. One hole stays when it is prose, an equation, or
+ * any grammar that has no prose rule inside it. A document becomes its plain
+ * prose hole, or one prose answer taken from the prose rules inside it.
+ * The prose rule has no word cap: a template may exceed the model's limits.
+ */
+export function stitchAnswer(
+  section: { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint },
+): { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint } {
+  if (section.kind === "text") return section;
+  const holes = section.template.parts.filter((part): part is HolePart => typeof part !== "string");
+  const only = holes.length === 1 ? holes[0] : undefined;
+  if (only !== undefined && keepWhole(only)) return section;
+  const prose = holes.find((part) => part.constraint?.type === "grammar" && plainProse(part.constraint.ebnf));
+  if (prose !== undefined) return { kind: "template", template: { type: "template", parts: [prose] } };
+  for (const part of holes) {
+    const answer = sentenceHole(part);
+    if (answer !== undefined) return { kind: "template", template: { type: "template", parts: [answer] } };
+  }
+  const first = holes[0];
+  return first !== undefined ? { kind: "template", template: { type: "template", parts: [first] } } : section;
+}
+
+/**
  * The holes of the model's reply read as the script's (see `fits`), or nothing when it is
  * not what the script says.
  */

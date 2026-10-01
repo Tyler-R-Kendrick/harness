@@ -1,12 +1,12 @@
 import { embed, embedMany, experimental_evaluate, tool } from "ai";
 import type { EmbeddingModel, JSONValue, LanguageModel, ToolSet } from "ai";
 import { z } from "zod";
-import { embedding, ProbabilitySchema, route, similarity } from "@harness/cognitive";
-import type { EvaluationModelV4, Probability, Similarity, TemplateConstraint, ToolSpec } from "@harness/cognitive";
+import { CorrectionInputSchema, correctedArtifact, embedding, PreferenceRecordSchema, ProbabilitySchema, route, similarity } from "@harness/cognitive";
+import type { ArtifactText, CorrectionInput, EvaluationModelV4, PreferenceRecord, Probability, Similarity, TemplateConstraint, ToolSpec } from "@harness/cognitive";
 import { shapeSimilarity } from "./align.ts";
 import { draft, draftedScript } from "./draft.ts";
 import { induce, normalizeUtterance } from "./induce.ts";
-import { fill, findValue, fits, matchPattern, readHoles, replySlots } from "./render.ts";
+import { composeReplies, fill, findValue, fits, matchPattern, readHoles, replySlots, stitchAnswer } from "./render.ts";
 import { ClusterSchema, DocumentSchema, FlowNameSchema, groupsOf, parseBook, parseScript, scriptId } from "./schemas.ts";
 import type { Cluster, DocumentInput, DocumentRecord, Observation, Script, ScriptId, ScriptInput, SessionSave, Settings, ToolResult } from "./schemas.ts";
 
@@ -42,9 +42,9 @@ export interface Shadow {
  * (and, when a candidate matched, what to check its reply against).
  */
 export type Decision =
-  | { readonly kind: "reply"; readonly script: ScriptId; readonly text: string; readonly match: Match }
+  | { readonly kind: "reply"; readonly script: ScriptId; readonly scripts?: readonly ScriptId[]; readonly text: string; readonly match: Match }
   | { readonly kind: "flow"; readonly flow: string; readonly script?: ScriptId; readonly text: string; readonly match: Match }
-  | { readonly kind: "generate"; readonly script: ScriptId; readonly template: TemplateConstraint; readonly instruction: string; readonly match: Match; readonly said?: string }
+  | { readonly kind: "generate"; readonly script: ScriptId; readonly scripts?: readonly ScriptId[]; readonly template: TemplateConstraint; readonly instruction: string; readonly match: Match; readonly said?: string }
   | { readonly kind: "ask"; readonly script: ScriptId; readonly slot: string; readonly text: string; readonly match: Match }
   | { readonly kind: "pass"; readonly reason: string; readonly context?: ScriptId; readonly shadow?: Shadow; readonly said?: string; readonly teaches?: false };
 
@@ -72,6 +72,12 @@ export interface DialogueOptions {
   readonly now?: () => number;
   /** Called with what happens to the book: a script built, put, promoted or retired; a document put (see DialogueEvent). */
   readonly onEvent?: (event: DialogueEvent) => void;
+  /**
+   * When a turn passes because no script matches, draft a template for that session
+   * from the model's reply. It is kept only when it still reproduces that reply and
+   * leaves a particular open as a slot or a hole.
+   */
+  readonly sessionTemplates?: boolean;
 }
 
 /** Something that happened to a dialogue's book, e.g. for plugins on the hook bus: `dialogue.script.built`, `.put`, `.promoted`, `.retired`, `dialogue.document.put`. */
@@ -164,8 +170,9 @@ function short(json: unknown, max: number): unknown {
   return json;
 }
 
-/** A template as the model is shown it: its text, with each hole written {name}. */
-const shown = (template: TemplateConstraint) => template.parts.map((p) => (typeof p === "string" ? p : `{${p.hole}}`)).join("");
+/** A template as the model is shown it: fixed text, and a blank for each hole. */
+const BLANK = "____";
+const shown = (template: TemplateConstraint) => template.parts.map((p) => (typeof p === "string" ? p : BLANK)).join("");
 
 /** A script's shape: what it says and when; a retired shape is not built again. */
 const shape = (s: Script) => JSON.stringify([s.reply, s.patterns, s.result, s.context]);
@@ -185,6 +192,8 @@ interface Matched {
   readonly match: Match;
   /** Slots the person has confirmed (see Slot.confirm). */
   readonly confirmed?: readonly string[];
+  /** Authored text and template sections when the router accepted several scripts. */
+  readonly sections?: readonly { readonly script: Script; readonly filled: { kind: "text"; text: string } | { kind: "template"; template: TemplateConstraint } }[];
 }
 
 /** A form being filled (see FormSchema). */
@@ -203,6 +212,8 @@ interface SessionState {
   transferred: boolean;
   /** A flow to go on with on the next utterance (it ended its turn with `{ continue: state }`). */
   next: NonNullable<SessionSave["next"]> | undefined;
+  /** Templates drafted from this session's fallbacks. They answer only here, and are not part of the book. */
+  templates: Script[];
 }
 
 /** A session's state as saved (without what it does not have). */
@@ -298,6 +309,8 @@ export class Dialogue {
   /** The flow every session starts in, if the book names one. */
   #entry: string | undefined;
   readonly #onEvent: ((event: DialogueEvent) => void) | undefined;
+  /** Draft a session template when a turn passes because no script matches. */
+  readonly #draftForSession: boolean;
   /** Flow runs started (run ids are never reused). */
   #runs: number;
   readonly #interpreters: readonly Interpreter[];
@@ -306,6 +319,8 @@ export class Dialogue {
   readonly #imported = new Map<string, { readonly record: DocumentRecord; readonly compiled: CompiledDocument }>();
   /** Scripts by id (a cluster's script, when it has none, is simply not found). */
   readonly #scripts = new Map<string | undefined, Script>();
+  /** Preference records appended from a person's corrections. */
+  #preferences: PreferenceRecord[];
   #clusters: Cluster[];
   #next: number;
   readonly #sessions = new Map<string, SessionState>();
@@ -329,11 +344,13 @@ export class Dialogue {
     this.#next = book.next;
     this.#entry = book.entry;
     this.#runs = book.runs;
+    this.#preferences = [...book.preferences];
     this.#interpreters = options.interpreters ?? [];
     this.#now = options.now;
     this.#onEvent = options.onEvent;
+    this.#draftForSession = options.sessionTemplates === true;
     for (const document of book.documents) this.#imported.set(document.name, { record: document, compiled: this.#compile(document) });
-    for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true, next: s.next });
+    for (const s of book.sessions) this.#sessions.set(s.id, { id: s.id, last: s.last, form: s.form, flow: s.flow, transferred: s.transferred === true, next: s.next, templates: [] });
   }
 
   /** A document compiled by the interpreter for its type; one it cannot run throws. */
@@ -406,6 +423,58 @@ export class Dialogue {
     this.#count(id, kind === "helpful" ? "fits" : "misses", session);
   }
 
+  /** Preference records stored for a later trainer, oldest first. */
+  preferences(): readonly PreferenceRecord[] {
+    return this.#preferences.map((record) => ({ ...record, artifact: { ...record.artifact } }));
+  }
+
+  /** Append a preference record and, for a replacement or a steering instruction, update the artifact that answered. */
+  async correct(input: CorrectionInput, port?: ArtifactText): Promise<PreferenceRecord> {
+    const correction = CorrectionInputSchema.parse(input);
+    const record = PreferenceRecordSchema.parse({ ...correction, signal: "negative" });
+    const { kind, id } = record.artifact;
+    // A steering instruction is one more part. Flattening the reply would drop a hole or a flow.
+    if (kind === "script" && record.action === "steering") {
+      const script = this.#scripts.get(id);
+      if (!script) throw new Error(`no script ${id}`);
+      this.#preferences.push(record);
+      // A flow is a reply of its own: the instruction is applied when that flow answers.
+      const [only] = script.reply;
+      if (script.reply.length === 1 && typeof only === "object" && "flow" in only) this.#changed();
+      else this.put({ ...script, reply: [...script.reply, `\n${record.text}`] });
+      return record;
+    }
+    const content = await this.#artifactText(kind, id, port);
+    const next = correctedArtifact(kind, content, record.action, record.text);
+    this.#preferences.push(record);
+    if (next !== content) await this.#writeArtifact(kind, id, next, port);
+    this.#changed();
+    return record;
+  }
+
+  async #artifactText(kind: PreferenceRecord["artifact"]["kind"], id: string, port: ArtifactText | undefined): Promise<string> {
+    if (kind === "script") {
+      const script = this.#scripts.get(id);
+      if (!script) throw new Error(`no script ${id}`);
+      return script.reply.map((part) => (typeof part === "string" ? part : "")).join("");
+    }
+    if (port === undefined) throw new Error(`no ${kind} store`);
+    const content = await port.read(id);
+    if (content === undefined) throw new Error(`no ${kind} ${id}`);
+    return content;
+  }
+
+  async #writeArtifact(kind: PreferenceRecord["artifact"]["kind"], id: string, content: string, port: ArtifactText | undefined): Promise<void> {
+    if (kind === "script") {
+      const script = this.#scripts.get(id);
+      if (!script) throw new Error(`no script ${id}`);
+      this.put({ ...script, reply: [content] });
+      return;
+    }
+    if (port === undefined) throw new Error(`no ${kind} store`);
+    await port.write(id, content);
+  }
+
   /** A turn of a session the dialogue did not see (the step was not one it answers): its form and context end there. */
   skip(sessionId: string): void {
     const state = this.#sessions.get(sessionId);
@@ -425,6 +494,7 @@ export class Dialogue {
       sessions: [...this.#sessions.values()].map(saved).filter((s) => Object.keys(s).length > 1),
       runs: this.#runs,
       documents: [...this.#imported.values()].map((d) => d.record),
+      ...(this.#preferences.length > 0 ? { preferences: this.#preferences } : {}),
     };
   }
 
@@ -440,7 +510,7 @@ export class Dialogue {
     const context = session?.last;
     const decision = step.result !== undefined ? await this.#onResult(step, session, context) : await this.#onUtterance(step, session, context);
     if (session) session.last = decision.kind === "pass" ? decision.shadow?.script : decision.script;
-    if (decision.kind === "reply" || decision.kind === "generate") this.#count(decision.script, "served");
+    if (decision.kind === "reply" || decision.kind === "generate") for (const id of decision.scripts ?? [decision.script]) this.#count(id, "served");
     // A session's state is saved too, so a restart loses no context, form or flow.
     // Run ids come from a counter saved with the book: a run started is saved, so its id is never reused.
     if ((session && JSON.stringify(saved(session)) !== before) || this.#runs !== runs) this.#changed();
@@ -466,13 +536,19 @@ export class Dialogue {
     };
     const shadow = decision.shadow;
     // Learning is best effort: a failure (a model's among them) loses one observation, never a turn.
-    this.#work = this.#work.then(() => (shadow ? this.#verify(shadow, observation) : this.#learn(observation, decision.context))).catch((e: unknown) => this.#failed(e));
+    this.#work = this.#work
+      .then(async () => {
+        if (shadow) return this.#verify(shadow, observation);
+        await this.#learn(observation, decision.context);
+        if (this.#draftForSession && decision.reason === "no script matches" && step.sessionId !== undefined && !acted) await this.#sessionTemplate(step.sessionId, observation);
+      })
+      .catch((e: unknown) => this.#failed(e));
   }
 
   // ---- responding ---------------------------------------------------------------
 
   #session(id: string): SessionState {
-    const state = this.#sessions.get(id) ?? { id, last: undefined, form: undefined, flow: undefined, transferred: false, next: undefined };
+    const state = this.#sessions.get(id) ?? { id, last: undefined, form: undefined, flow: undefined, transferred: false, next: undefined, templates: [] };
     this.#sessions.delete(id);
     this.#sessions.set(id, state);
     for (const oldest of this.#sessions.keys()) {
@@ -525,13 +601,21 @@ export class Dialogue {
       const decided = await this.#continueForm(step, session, form, context);
       if (decided) return decided;
     }
-    const matched = await this.#match(utterance, context, step.scope);
+    const matched = await this.#match(utterance, context, step.scope, undefined, session?.templates);
     return matched ? this.#answer(matched, step, session, context) : pass("no script matches", context);
   }
 
   /** A matched script's answer: shadowing for a candidate, its reply, its flow, or a question for a slot it lacks. */
   async #answer(matched: Matched, step: Step, session: SessionState | undefined, context: ScriptId | undefined): Promise<Decision> {
     const { script, slots, match } = matched;
+    const sections = matched.sections;
+    if (sections !== undefined && sections.length > 1) {
+      const composed = composeReplies(sections.map((section) => stitchAnswer(section.filled)));
+      const scripts = sections.map((section) => section.script.id);
+      const scriptId = scripts[0]!;
+      if (composed.kind === "text") return { kind: "reply", script: scriptId, scripts, text: composed.text, match };
+      return { kind: "generate", script: scriptId, scripts, template: composed.template, instruction: `${this.#settings.generate.instruction}\n\n${shown(composed.template)}`, match };
+    }
     if (script.status === "candidate") return pass(`${script.id} is a candidate`, context, { script: script.id, slots, match });
     // A built script is checked again now and then: the model answers in its place, in shadow.
     // Every `audit` serves (an audit of 0 never: n % 0 is NaN).
@@ -561,7 +645,12 @@ export class Dialogue {
       const result = step.result && this.#shortResult(step.result);
       session.flow = { ...this.#newFlow(session, filled.flow, { utterance: step.utterance, slots, ...(result ? { result } : {}) }), script: script.id };
       const turn = await this.#runFlow(session, undefined, match);
-      return "answered" in turn ? turn.answered : after(turn.said, pass(turn.transferred ? "the flow handed the person to the model" : `flow ${filled.flow} handed the turn on`, context));
+      const decision = "answered" in turn ? turn.answered : after(turn.said, pass(turn.transferred ? "the flow handed the person to the model" : `flow ${filled.flow} handed the turn on`, context));
+      const notes = this.#preferences.flatMap((record) => (record.artifact.kind === "script" && record.artifact.id === script.id && record.action === "steering" ? [record.text] : []));
+      const aside = `${script.reply.flatMap((part) => (typeof part === "string" ? [part] : [])).join("")}${notes.length === 0 ? "" : `\n${notes.join("\n")}`}`;
+      if (aside === "") return decision;
+      if ("text" in decision) return { ...decision, text: `${decision.text}${aside}` };
+      return { ...decision, said: decision.said === undefined ? aside.replace(/^\n/, "") : `${decision.said}${aside}` };
     }
     const unaskable = filled.slots.find((slot) => session === undefined || script.slots[slot]!.prompts.length === 0);
     if (unaskable !== undefined || !session) return pass(`no value for slot ${unaskable}`, context);
@@ -573,7 +662,7 @@ export class Dialogue {
   /** The answer to a form's prompt: its slot's value, another script taking over, the next prompt, or the model. */
   async #continueForm(step: Step, session: SessionState, form: Form, context: ScriptId | undefined): Promise<Decision | undefined> {
     const { utterance } = step;
-    const script = this.#scripts.get(form.script);
+    const script = this.#scripts.get(form.script) ?? session.templates.find((item) => item.id === form.script);
     if (!script || script.status === "retired") return undefined;
     if (form.confirming) return this.#confirming(step, session, script, form, context);
     const slots = { ...form.slots };
@@ -586,7 +675,7 @@ export class Dialogue {
     };
     if (value !== undefined) return answered(value);
     // Another script taking the answer comes before taking the whole answer as the value.
-    const other = await this.#match(utterance, context, step.scope, script.id);
+    const other = await this.#match(utterance, context, step.scope, script.id, session.templates);
     if (other) return this.#answer(other, step, session, context);
     // A long answer is not a slot's value.
     const whole = this.#router || script.slots[form.slot]!.pattern !== undefined || !this.#short(utterance) ? undefined : normalizeUtterance(utterance) || undefined;
@@ -708,7 +797,7 @@ export class Dialogue {
   async #valueFor(script: Script, slot: string, utterance: string): Promise<string | undefined> {
     const pattern = script.slots[slot]!.pattern;
     if (pattern !== undefined) return this.#short(utterance) ? findValue(pattern, utterance) : undefined;
-    return (await this.#pick(utterance, [script]))?.slots[slot];
+    return (await this.#pick(utterance, [script]))?.picked[0]?.slots[slot];
   }
 
   /** A tool result with its long values left out, as observations and flows keep it. */
@@ -728,8 +817,8 @@ export class Dialogue {
    * router (active scripts only: a candidate is not worth a model call). Scripts in
    * context come before those without, and active ones before candidates.
    */
-  async #match(utterance: string, context: ScriptId | undefined, scope: string | undefined, exclude?: ScriptId): Promise<Matched | undefined> {
-    const eligible = this.scripts
+  async #match(utterance: string, context: ScriptId | undefined, scope: string | undefined, exclude?: ScriptId, sessionTemplates: readonly Script[] = []): Promise<Matched | undefined> {
+    const eligible = [...sessionTemplates, ...this.scripts]
       .filter((s) => s.result === undefined && s.status !== "retired" && s.id !== exclude && inScope(s, scope) && (s.context === undefined || s.context === context))
       .sort((a, b) => rank(a) - rank(b));
     for (const script of this.#short(utterance) ? eligible : [])
@@ -743,7 +832,20 @@ export class Dialogue {
     const active = eligible.filter((s) => s.status === "active");
     if (active.length === 0) return undefined;
     const picked = await this.#pick(utterance, active);
-    return picked && { script: picked.script, slots: await this.#slotsFor(picked.script, utterance, picked.slots, { routed: true }), match: { by: "router", confidence: picked.confidence } };
+    if (!picked) return undefined;
+    const detailed: { script: Script; slots: Record<string, string> }[] = [];
+    for (const one of picked.picked) detailed.push({ script: one.script, slots: await this.#slotsFor(one.script, utterance, one.slots, { routed: true }) });
+    const [first] = detailed;
+    if (!first) return undefined;
+    const routed = { by: "router" as const, confidence: picked.confidence };
+    if (detailed.length === 1) return { script: first.script, slots: first.slots, match: routed };
+    const sections = detailed.flatMap((one) => {
+      if (one.script.origin !== "authored") return [];
+      const filled = fill(one.script, { slots: one.slots });
+      return filled.kind === "text" || filled.kind === "template" ? [{ script: one.script, filled }] : [];
+    });
+    if (sections.length < 2) return { script: first.script, slots: first.slots, match: routed };
+    return { script: sections[0]!.script, slots: first.slots, match: routed, sections };
   }
 
   /** The best-ranked script with an exemplar alike enough (the most alike, among equals), and how alike. */
@@ -761,14 +863,20 @@ export class Dialogue {
     return best && { script: best.script, similarity: similarity(best.similarity) };
   }
 
-  /** The router's one pick among scripts, at or above its threshold, with the slots it filled; nothing without a router, or when it fails. */
-  async #pick(utterance: string, scripts: readonly Script[]): Promise<{ script: Script; slots: Record<string, string>; confidence: Probability } | undefined> {
+  /** The router's picks among scripts, at or above its threshold, in the order offered; nothing without a router, or when it fails. */
+  async #pick(utterance: string, scripts: readonly Script[]): Promise<{ picked: { script: Script; slots: Record<string, string> }[]; confidence: Probability } | undefined> {
     if (!this.#router) return undefined;
     const routed = await route(this.#router, { input: utterance, tools: scripts.map(toolSpec) }).catch((e: unknown) => this.#failed(e));
-    if (!routed || routed.problems.length > 0 || routed.valid.length !== 1 || routed.confidence < this.#settings.match.route) return undefined;
-    const [call] = routed.valid;
-    // A valid call names an offered tool, which is one of the scripts.
-    return { script: scripts.find((s) => s.id === call!.name)!, slots: slotValues(call!.arguments), confidence: routed.confidence };
+    if (!routed || routed.problems.length > 0 || routed.valid.length === 0 || routed.confidence < this.#settings.match.route) return undefined;
+    const names = routed.valid.map((call) => call.name);
+    if (new Set(names).size !== names.length || names.some((name) => scripts.every((script) => script.id !== name))) return undefined;
+    const calls = new Map(routed.valid.map((call) => [call.name, call]));
+    const picked = scripts.flatMap((script) => {
+      const call = calls.get(script.id);
+      return call === undefined ? [] : [{ script, slots: slotValues(call.arguments) }];
+    });
+    if (picked.length === 0) return undefined;
+    return { picked, confidence: routed.confidence };
   }
 
   /**
@@ -788,7 +896,7 @@ export class Dialogue {
     // The router is asked only for an active script's slots: a candidate is not worth a model call.
     if (how.routed || script.status !== "active" || needed.every((slot) => slots[slot] !== undefined)) return slots;
     const picked = await this.#pick(utterance, [script]);
-    return { ...picked?.slots, ...slots };
+    return { ...picked?.picked[0]?.slots, ...slots };
   }
 
   /** Embeddings of documents (exemplars, cluster heads), each embedded once. */
@@ -942,6 +1050,35 @@ export class Dialogue {
     await this.#draft(cluster, this.#drafter);
   }
 
+  /** A template for this session from one fallback, kept only when it generalises that reply. */
+  async #sessionTemplate(sessionId: string, observation: Observation): Promise<void> {
+    const drafter = this.#drafter;
+    if (!drafter) return;
+    const drafted = await draft(
+      drafter,
+      {
+        ...this.#settings.draft,
+        system: `${this.#settings.draft.system}\n\nWrite it so a later request of the same kind can use it: names, numbers and places that are particular to this one request are slots or generated holes, not fixed text.`,
+      },
+      [observation],
+    );
+    const id = this.#nextId();
+    const main = observation.scope === undefined ? draftedScript(drafted, id, undefined) : draftedScript(drafted, id, undefined, observation.scope);
+    if (!this.#general(main, observation) || this.#retired(main)) return;
+    this.#next++;
+    this.#session(sessionId).templates.push({ ...main, status: "active" });
+  }
+
+  /** The reply is reproduced, and something particular is left open, without the open part swallowing it. */
+  #general(script: Script, observation: Observation): boolean {
+    const open = script.reply.filter((part) => typeof part !== "string");
+    if (open.length === 0 || open.length > this.#settings.induce.holes) return false;
+    const read = readHoles(script, observation.reply, { slots: {}, utterance: observation.utterance });
+    if (read === undefined || observation.reply.length === 0) return false;
+    const free = script.reply.flatMap((part) => (typeof part === "object" && "generate" in part ? [read[part.generate]?.length ?? 0] : [])).reduce((sum, n) => sum + n, 0);
+    return 1 - free / observation.reply.length >= this.#settings.induce.determined;
+  }
+
   /**
    * A drafted script, kept when it reproduces a reply the cluster saw, as much of it
    * determined without the model as induction requires and with no more holes; with its
@@ -993,12 +1130,28 @@ export class Dialogue {
     return script;
   }
 
+  /** A template drafted for a session still kept, and where it sits. */
+  #templateAt(id: string): { session: SessionState; index: number } | undefined {
+    for (const session of this.#sessions.values()) {
+      const index = session.templates.findIndex((item) => item.id === id);
+      if (index >= 0) return { session, index };
+    }
+    return undefined;
+  }
+
   /** Count a fit (from a session, if named), a miss, or a time served, and apply what it means. */
   #count(id: string, field: "fits" | "misses" | "served" | "audits", session?: string): void {
-    const script = this.#scripts.get(id)!;
-    const { sessions } = script.evidence;
-    const counted = session === undefined || sessions.includes(session) || sessions.length >= this.#settings.promote.sessionsKept ? sessions : [...sessions, session];
-    this.#set(this.#due({ ...script, evidence: { ...script.evidence, [field]: script.evidence[field] + 1, sessions: counted } }));
+    const apply = (script: Script): Script => {
+      const { sessions } = script.evidence;
+      const counted = session === undefined || sessions.includes(session) || sessions.length >= this.#settings.promote.sessionsKept ? sessions : [...sessions, session];
+      return this.#due({ ...script, evidence: { ...script.evidence, [field]: script.evidence[field] + 1, sessions: counted } });
+    };
+    const at = this.#scripts.has(id) ? undefined : this.#templateAt(id);
+    if (at) {
+      at.session.templates[at.index] = apply(at.session.templates[at.index]!);
+      return;
+    }
+    this.#set(apply(this.#scripts.get(id)!));
   }
 
   /** Keep a script; a cluster is dropped once its script is no longer a candidate (its observations are no longer needed). */

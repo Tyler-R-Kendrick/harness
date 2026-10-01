@@ -65,7 +65,7 @@ describe("matching", () => {
       kind: "generate",
       script: "confirm-cancel",
       template: { type: "template", parts: ["Done: ", { hole: "summary", constraint: { type: "regex", pattern: "[^\\n]{1,80}" } }, "."] },
-      instruction: `${settings().generate.instruction}\n\nDone: {summary}.`,
+      instruction: `${settings().generate.instruction}\n\nDone: ____.`,
       match: { by: "pattern" },
     });
     await d.respond(step("where is order 5"));

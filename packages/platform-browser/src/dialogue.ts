@@ -1,9 +1,21 @@
-import type { Ensemble } from "@harness/cognitive";
+import type { ArtifactText, Ensemble } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { Dialogue, dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import type { DialogueEvent, Settings } from "@harness/dialogue";
 import { documentImporter, STANDARD_INTERPRETERS } from "@harness/dialogue-standards";
+import { workflowText } from "@harness/workflows";
 import type { WorkflowHost } from "@harness/workflows";
+
+/** Answer-template bodies this page keeps, so a correction can replace one. */
+function memoryTemplates(): ArtifactText {
+  const bodies = new Map<string, string>();
+  return {
+    read: (id) => bodies.get(id),
+    write: (id, content) => {
+      bodies.set(id, content);
+    },
+  };
+}
 
 /**
  * The scripted dialogue in the browser host (ADR 0012), as the native host has it: its
@@ -20,11 +32,13 @@ export async function browserDialogue(
     readonly settings: Settings;
     readonly storage: SnapshotStorage;
     readonly flows?: WorkflowHost;
+    /** Answer templates a correction can replace. The page keeps its own when this is omitted. */
+    readonly templates?: ArtifactText;
     readonly embeddings?: boolean;
     readonly onError?: (error: unknown) => void;
     readonly onEvent?: (event: DialogueEvent) => void;
   },
-): Promise<{ readonly dialogue: Dialogue; readonly saved: () => Promise<void> }> {
+): Promise<{ readonly dialogue: Dialogue; readonly saved: () => Promise<void>; readonly templates: ArtifactText }> {
   const { flows, onError, onEvent } = options;
   const book = await options.storage.load();
   const saves = dialogueSaves(options.storage, onError ?? (() => {}));
@@ -42,6 +56,13 @@ export async function browserDialogue(
     ...(onError ? { onError } : {}),
     ...(onEvent ? { onEvent } : {}),
   });
-  ensemble.install(dialogueExtension({ dialogue, ...(flows ? { importer: documentImporter(flows.library) } : {}) }));
-  return { dialogue, saved: saves.settled };
+  const templates = options.templates ?? memoryTemplates();
+  ensemble.install(
+    dialogueExtension({
+      dialogue,
+      ...(flows ? { importer: documentImporter(flows.library) } : {}),
+      artifacts: { template: templates, ...(flows ? { workflow: workflowText(flows.library) } : {}) },
+    }),
+  );
+  return { dialogue, saved: saves.settled, templates };
 }

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { asSchema, generateText, jsonSchema, Output, tool } from "ai";
 import type { LanguageModel, ToolSet } from "ai";
 import { constrain } from "@harness/cognitive";
-import type { CognitiveExtension, Constraint } from "@harness/cognitive";
+import type { ArtifactText, CognitiveExtension, Constraint } from "@harness/cognitive";
 import type { SnapshotStorage } from "@harness/core";
 import { ASK, runWorkflow } from "./run.ts";
 import type { Effects, RunResult, ToolSpec } from "./run.ts";
@@ -55,6 +55,20 @@ export class MemoryLibrary implements WorkflowLibrary {
     // Stryker disable next-line EqualityOperator: equivalent; names are unique, so < and <= order them alike
     return [...this.#workflows.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
   }
+}
+
+/** The workflow's code, read and written through the library that already keeps it. */
+export function workflowText(library: WorkflowLibrary): ArtifactText {
+  return {
+    async read(id) {
+      return (await library.get(id))?.code;
+    },
+    async write(id, code) {
+      const current = await library.get(id);
+      if (!current) throw new Error(`no workflow ${id}`);
+      await library.put({ ...current, code });
+    },
+  };
 }
 
 export interface WorkflowHostOptions {

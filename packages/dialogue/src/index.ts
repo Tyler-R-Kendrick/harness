@@ -2,7 +2,7 @@ export { align, commonSubsequence, shapeSimilarity, tokens } from "./align.ts";
 export type { Alignment } from "./align.ts";
 export { BookSchema, bookJsonSchema, ClusterSchema, ContinuingFlowSchema, DocumentSchema, EvidenceSchema, FlowNameSchema, FormSchema, groupsOf, RunningFlowSchema, SessionSchema, ObservationSchema, parseBook, parseScript, parseSettings, PartSchema, PathSchema, PATTERN_FLAGS, ResultSchema, SCRIPT_STATUSES, ScriptIdSchema, scriptId, ScriptSchema, SettingsSchema, settingsJsonSchema, SlotSchema } from "./schemas.ts";
 export type { Book, Cluster, DocumentInput, DocumentRecord, Evidence, Observation, Part, Path, Script, ScriptId, ScriptInput, ScriptStatus, SessionSave, Settings, Slot, ToolResult } from "./schemas.ts";
-export { exponential, fill, findValue, fits, flowOf, matchPattern, readHoles, replySlots, valueAt } from "./render.ts";
+export { composeReplies, exponential, fill, findValue, fits, flowOf, matchPattern, readHoles, replySlots, valueAt } from "./render.ts";
 export type { Fillers } from "./render.ts";
 export { induce, maskExemplar, normalizeUtterance } from "./induce.ts";
 export { Dialogue } from "./dialogue.ts";

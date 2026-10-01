@@ -20,6 +20,7 @@ function interpreter(options: {
   maxOptions?: number;
   sessions?: readonly { name: string; harness: string; state: unknown }[];
   settings?: readonly { key: string; description: string; fallback: string; values?: readonly string[] }[];
+  settingState?: Readonly<Record<string, { readonly requested: string; readonly accepted?: string }>>;
   decide?: (text: string, context: string, options: readonly { name: string; description: string }[]) => DecisionAnswer | Promise<DecisionAnswer>;
   infer?: (text: string, context: string) => InferenceAnswer | Promise<InferenceAnswer>;
   suggest?: (text: string, context: string) => { ok: true; suggestions: readonly { text: string; description: string }[] } | { ok: false } | Promise<{ ok: true; suggestions: readonly { text: string; description: string }[] } | { ok: false }>;
@@ -35,6 +36,7 @@ function interpreter(options: {
     commands: options.commands ?? [{ name: "ask", description: "Run a turn." }],
     ...(options.maxOptions === undefined ? {} : { maxOptions: options.maxOptions }),
     ...(options.settings === undefined ? {} : { settings: options.settings }),
+    ...(options.settingState === undefined ? {} : { settingState: options.settingState }),
     ...(options.sessions === undefined
       ? {}
       : {
@@ -75,6 +77,27 @@ async function run(engine: InputInterpreter, text: string, context = prior): Pro
 
 async function complete(engine: InputInterpreter, prefix: string, context = prior) {
   return engine.complete(prefix, context);
+}
+
+function manualSections(message: string): Record<string, string> {
+  const headings = ["NAME", "SYNOPSIS", "DESCRIPTION", "OPTIONS", "EXAMPLES", "SEE ALSO"];
+  let cursor = 0;
+  const at: number[] = [];
+  for (const heading of headings) {
+    const found = message.indexOf(heading, cursor);
+    expect(found).toBeGreaterThanOrEqual(cursor);
+    at.push(found);
+    cursor = found + heading.length;
+  }
+  const sections: Record<string, string> = {};
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index]!;
+    const start = at[index]! + heading.length;
+    const end = at[index + 1] ?? message.length;
+    sections[heading] = message.slice(start, end).trim();
+  }
+  for (const heading of headings) expect(sections[heading]?.length ?? 0).toBeGreaterThan(0);
+  return sections;
 }
 
 describe("input interpreter", () => {
@@ -356,6 +379,7 @@ describe("input interpreter", () => {
     expect(await run(engine, "/sessions nope")).toMatchObject({ type: "command-usage", name: "sessions" });
     expect(await run(engine, "/export alpha")).toEqual({ type: "unknown-command", name: "export" });
     expect(await run(engine, "/resume codex")).toEqual({ type: "unknown-command", name: "resume" });
+    expect(await run(engine, "/new")).toEqual({ type: "unknown-command", name: "new" });
     expect(calls.files).toEqual([]);
     expect(calls.resumes).toEqual([]);
     expect(seen.decide).toEqual([]);
@@ -363,6 +387,124 @@ describe("input interpreter", () => {
     expect(await run(registered.engine, "/export alpha")).toEqual({ type: "harness-command", name: "export", argument: "alpha" });
     expect(registered.calls.files).toEqual([]);
     expect(registered.seen.decide).toEqual([]);
+  });
+
+  it("IN2.9 /sessions new asks for another session and /new is not a command", async () => {
+    const { engine, calls, seen } = interpreter({ sessions: [alpha, beta, gamma] });
+    expect(await run(engine, "/sessions new")).toEqual({ type: "new-session" });
+    expect(await run(engine, " /sessions new ")).toEqual({ type: "new-session" });
+    expect(await run(engine, "/sessions new extra")).toEqual({ type: "command-usage", name: "new", message: "usage: /sessions new" });
+    expect(await run(engine, "/new")).toEqual({ type: "unknown-command", name: "new" });
+    expect(calls.files).toEqual([]);
+    expect(calls.clips).toEqual([]);
+    expect(calls.resumes).toEqual([]);
+    expect(seen.decide).toEqual([]);
+    const unwired = interpreter();
+    expect(await run(unwired.engine, "/sessions new")).toEqual({ type: "new-session" });
+    expect(await run(unwired.engine, "/sessions new extra")).toEqual({ type: "command-usage", name: "new", message: "usage: /sessions new" });
+    expect(unwired.calls.resumes).toEqual([]);
+  });
+
+  it("IN2.10 /sessions btw, /sessions bg, and /sessions switch are subcommands, and /session, /btw, /bg, and /switch are not", async () => {
+    const { engine, calls, seen } = interpreter({ sessions: [alpha] });
+    expect(await run(engine, "/sessions btw what now")).toEqual({ type: "session-btw", question: "what now" });
+    expect(await run(engine, "/sessions btw what is on the main thread")).toEqual({ type: "session-btw", question: "what is on the main thread" });
+    expect(await run(engine, "/sessions btw")).toEqual({ type: "command-usage", name: "btw", message: "usage: /sessions btw <question>" });
+    expect(await run(engine, "/sessions btw --nope")).toEqual({ type: "command-usage", name: "btw", message: "usage: /sessions btw <question>" });
+    expect(await run(engine, "/sessions bg")).toEqual({ type: "session-bg" });
+    expect(await run(engine, "/sessions bg extra")).toEqual({ type: "command-usage", name: "bg", message: "usage: /sessions bg" });
+    expect(await run(engine, "/sessions switch ses_A")).toEqual({ type: "session-switch", session: "ses_A" });
+    expect(await run(engine, "/sessions switch")).toEqual({ type: "command-usage", name: "switch", message: "usage: /sessions switch <session>" });
+    expect(await run(engine, "/sessions switch ses_A extra")).toEqual({ type: "command-usage", name: "switch", message: "usage: /sessions switch <session>" });
+    expect(await run(engine, "/session")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(engine, "/session btw what now")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(engine, "/session bg")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(engine, "/session switch ses_A")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(engine, "/session --help")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(engine, "/btw")).toEqual({ type: "unknown-command", name: "btw" });
+    expect(await run(engine, "/bg")).toEqual({ type: "unknown-command", name: "bg" });
+    expect(await run(engine, "/switch")).toEqual({ type: "unknown-command", name: "switch" });
+    expect(await run(engine, "/fork")).toEqual({ type: "unknown-command", name: "fork" });
+    const btwHelp = await run(engine, "/sessions btw --help");
+    expect(btwHelp).toMatchObject({ type: "help", name: "sessions btw" });
+    if (btwHelp.type === "help") {
+      const page = manualSections(btwHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions btw <question>");
+      expect(page["DESCRIPTION"]).toContain("main thread");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    expect(await run(engine, "/sessions btw what now --help")).toEqual(btwHelp);
+    expect(await run(engine, "/sessions --help btw")).toEqual(btwHelp);
+    const bgHelp = await run(engine, "/sessions bg --help");
+    expect(bgHelp).toMatchObject({ type: "help", name: "sessions bg" });
+    if (bgHelp.type === "help") {
+      const page = manualSections(bgHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions bg");
+      expect(page["DESCRIPTION"]).toContain("background");
+    }
+    expect(await run(engine, "/sessions bg extra --help")).toEqual(bgHelp);
+    const switchHelp = await run(engine, "/sessions switch --help");
+    expect(switchHelp).toMatchObject({ type: "help", name: "sessions switch" });
+    if (switchHelp.type === "help") {
+      const page = manualSections(switchHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions switch <session>");
+      expect(page["DESCRIPTION"]).toContain("inspect");
+    }
+    expect(await run(engine, "/sessions switch ses_A --help")).toEqual(switchHelp);
+    expect(calls.files).toEqual([]);
+    expect(calls.clips).toEqual([]);
+    expect(calls.resumes).toEqual([]);
+    expect(seen.decide).toEqual([]);
+    const unwired = interpreter();
+    expect(await run(unwired.engine, "/sessions btw what now")).toEqual({ type: "session-btw", question: "what now" });
+    expect(await run(unwired.engine, "/sessions bg")).toEqual({ type: "session-bg" });
+    expect(await run(unwired.engine, "/sessions switch ses_A")).toEqual({ type: "session-switch", session: "ses_A" });
+    expect(await run(unwired.engine, "/session btw what now")).toEqual({ type: "unknown-command", name: "session" });
+    expect(await run(unwired.engine, "/btw what now")).toEqual({ type: "unknown-command", name: "btw" });
+    expect(() => interpreter({ commands: [{ name: "session", description: "no" }] })).toThrow(/harness command session is built in/);
+    expect((await complete(engine, "/session ")).completions.map((item) => item.text)).toEqual(["/sessions"]);
+    expect((await complete(engine, "/sessions ")).completions.map((item) => item.text)).toEqual(expect.arrayContaining(["/sessions btw", "/sessions bg", "/sessions switch", "/sessions fork"]));
+  });
+
+  it("IN2.11 /sessions fork takes an optional thread id and an optional message id, and /fork is not a command", async () => {
+    const { engine, calls, seen } = interpreter({ sessions: [alpha] });
+    const usage = "usage: /sessions fork [--thread <id>] [--message <id>]";
+    expect(await run(engine, "/sessions")).toMatchObject({ type: "list-sessions" });
+    expect(await run(engine, "/sessions fork")).toEqual({ type: "session-fork" });
+    expect(await run(engine, "/sessions fork --thread ses_A")).toEqual({ type: "session-fork", thread: "ses_A" });
+    expect(await run(engine, "/sessions fork --message m1")).toEqual({ type: "session-fork", message: "m1" });
+    expect(await run(engine, "/sessions fork --thread ses_A --message m1")).toEqual({ type: "session-fork", thread: "ses_A", message: "m1" });
+    expect(await run(engine, "/sessions fork --message m1 --thread ses_A")).toEqual({ type: "session-fork", thread: "ses_A", message: "m1" });
+    for (const line of ["/sessions fork extra", "/sessions fork ses_A", "/sessions fork m1", "/sessions fork --thread", "/sessions fork --message", "/sessions fork --thread --message m1", "/sessions fork --thread ses_A --message", "/sessions fork --thread ses_A extra", "/sessions fork --thread ses_A --thread ses_B", "/sessions fork --message m1 --message m2", "/sessions fork --nope", "/sessions fork --thread ses_A --message m1 extra"]) {
+      expect(await run(engine, line)).toEqual({ type: "command-usage", name: "fork", message: usage });
+    }
+    expect(await run(engine, "/fork")).toEqual({ type: "unknown-command", name: "fork" });
+    expect(await run(engine, "/session fork")).toEqual({ type: "unknown-command", name: "session" });
+    const forkHelp = await run(engine, "/sessions fork --help");
+    expect(forkHelp).toMatchObject({ type: "help", name: "sessions fork" });
+    if (forkHelp.type === "help") {
+      const page = manualSections(forkHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions fork [--thread <id>] [--message <id>]");
+      expect(page["DESCRIPTION"]).toContain("thread");
+      expect(page["DESCRIPTION"]).toContain("message");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    expect(forkHelp).not.toMatchObject({ type: "session-fork" });
+    expect(await run(engine, "/sessions fork --thread ses_A --message m1 --help")).toEqual(forkHelp);
+    expect(await run(engine, "/sessions --help fork")).toEqual(forkHelp);
+    expect(await run(engine, "/sessions fork --help --thread ses_A")).toEqual(forkHelp);
+    const listed = await run(engine, "/sessions --help");
+    expect(listed).toMatchObject({ type: "help", name: "sessions" });
+    if (listed.type === "help") expect(manualSections(listed.message)["SYNOPSIS"]).toBe("/sessions [new | export | resume | fork | btw | bg | switch]");
+    expect(calls.files).toEqual([]);
+    expect(calls.clips).toEqual([]);
+    expect(calls.resumes).toEqual([]);
+    expect(seen.decide).toEqual([]);
+    const unwired = interpreter();
+    expect(await run(unwired.engine, "/sessions fork")).toEqual({ type: "session-fork" });
+    expect(await run(unwired.engine, "/sessions fork --thread ses_A --message m1")).toEqual({ type: "session-fork", thread: "ses_A", message: "m1" });
+    expect(unwired.calls.resumes).toEqual([]);
+    expect(unwired.seen.decide).toEqual([]);
   });
 
   const workerSetting = { key: "worker", description: "Which worker runs a turn.", fallback: "echo", values: ["echo", "model"] as const };
@@ -459,48 +601,90 @@ describe("input interpreter", () => {
     expect(() => interpreter({ settings: [{ key: "worker", description: "x", fallback: "echo", values: ["echo", "echo"] }] })).toThrow(/duplicated/);
   });
 
+  it("IN3.6 a seeded setting is already accepted", async () => {
+    const seeded = interpreter({
+      settings: [workerSetting],
+      settingState: { worker: { requested: "model", accepted: "model" }, other: { requested: "nope", accepted: "nope" } },
+    });
+    expect(await run(seeded.engine, "/settings worker")).toEqual({
+      type: "settings",
+      view: "show",
+      entry: { key: "worker", description: workerSetting.description, requested: "model", accepted: "model", effective: "model" },
+    });
+    const requestedOnly = interpreter({
+      settings: [workerSetting],
+      settingState: { worker: { requested: "model" } },
+    });
+    expect(await run(requestedOnly.engine, "/settings worker")).toEqual({
+      type: "settings",
+      view: "show",
+      entry: { key: "worker", description: workerSetting.description, requested: "model", effective: "echo" },
+    });
+  });
+
   it("IN4.1 /tools --help describes the command and every registration", async () => {
     const { engine, seen } = interpreter();
-    const listed = [
-      "usage: /tools [name | kind:name] [argument]",
-      "Lists registered skills, MCPs, and native tools, or invokes one.",
-      "tool echo: Repeat text.",
-      "skill search: Search as a skill.",
-      "mcp search: Search as an MCP.",
-    ].join("\n");
-    expect(await run(engine, " /tools --help ")).toEqual({ type: "help", name: "tools", message: listed });
-    expect(await run(engine, "/tools --help --help")).toEqual({ type: "help", name: "tools", message: listed });
+    const listed = await run(engine, " /tools --help ");
+    expect(listed.type).toBe("help");
+    if (listed.type !== "help") return;
+    expect(listed.name).toBe("tools");
+    const page = manualSections(listed.message);
+    expect(page["SYNOPSIS"]).toBe("/tools [name | kind:name] [argument]");
+    expect(page["DESCRIPTION"]).toContain("Lists registered skills, MCPs, and native tools, or invokes one.");
+    for (const line of ["tool echo: Repeat text.", "skill search: Search as a skill.", "mcp search: Search as an MCP."]) expect(page["DESCRIPTION"]).toContain(line);
+    expect(page["OPTIONS"]).toContain("--help");
+    expect(page["OPTIONS"]).toMatch(/does not run/);
+    expect(await run(engine, "/tools --help --help")).toEqual(listed);
     const empty = interpreter({ tools: [] });
-    expect(await run(empty.engine, "/tools --help")).toEqual({
-      type: "help",
-      name: "tools",
-      message: "usage: /tools [name | kind:name] [argument]\nLists registered skills, MCPs, and native tools, or invokes one.",
-    });
+    const blank = await run(empty.engine, "/tools --help");
+    expect(blank.type).toBe("help");
+    if (blank.type !== "help") return;
+    expect(blank.name).toBe("tools");
+    const blankPage = manualSections(blank.message);
+    expect(blankPage["SYNOPSIS"]).toBe("/tools [name | kind:name] [argument]");
+    expect(blankPage["DESCRIPTION"]).toBe("Lists registered skills, MCPs, and native tools, or invokes one.");
+    expect(blankPage["DESCRIPTION"]).not.toMatch(/(?:tool|skill|mcp) \S+:/);
     expect(seen.decide).toEqual([]);
     expect(seen.infer).toEqual([]);
   });
 
   it("IN4.2 --help on a tool, skill, or MCP describes that registration and does not invoke it", async () => {
     const { engine, seen } = interpreter();
-    const echoHelp = { type: "help", name: "tools echo", message: "usage: /tools echo [argument]\ntool echo: Repeat text." };
-    expect(await run(engine, "/tools echo --help")).toEqual(echoHelp);
+    const echoHelp = await run(engine, "/tools echo --help");
+    expect(echoHelp.type).toBe("help");
+    if (echoHelp.type !== "help") return;
+    const echoPage = manualSections(echoHelp.message);
+    expect(echoHelp.name).toBe("tools echo");
+    expect(echoPage["SYNOPSIS"]).toBe("/tools echo [argument]");
+    expect(echoPage["DESCRIPTION"]).toContain("tool echo: Repeat text.");
+    expect(echoPage["DESCRIPTION"]).not.toContain("skill search");
+    expect(echoPage["OPTIONS"]).toMatch(/does not run/);
     expect(await run(engine, "/tools --help echo")).toEqual(echoHelp);
     expect(await run(engine, "/tools echo say hi --help")).toEqual(echoHelp);
-    expect(await run(engine, "/tools skill:search --help")).toEqual({
-      type: "help",
-      name: "tools skill:search",
-      message: "usage: /tools skill:search [argument]\nskill search: Search as a skill.",
-    });
-    expect(await run(engine, "/tools mcp:search --help")).toEqual({
-      type: "help",
-      name: "tools mcp:search",
-      message: "usage: /tools mcp:search [argument]\nmcp search: Search as an MCP.",
-    });
-    expect(await run(engine, "/tools search --help")).toEqual({
-      type: "help",
-      name: "tools search",
-      message: "usage: /tools search [argument]\nskill search: Search as a skill.\nmcp search: Search as an MCP.",
-    });
+    const skill = await run(engine, "/tools skill:search --help");
+    expect(skill).toMatchObject({ type: "help", name: "tools skill:search" });
+    if (skill.type === "help") {
+      const skillPage = manualSections(skill.message);
+      expect(skillPage["SYNOPSIS"]).toBe("/tools skill:search [argument]");
+      expect(skillPage["DESCRIPTION"]).toContain("skill search: Search as a skill.");
+      expect(skillPage["DESCRIPTION"]).not.toContain("mcp search");
+    }
+    const mcp = await run(engine, "/tools mcp:search --help");
+    expect(mcp).toMatchObject({ type: "help", name: "tools mcp:search" });
+    if (mcp.type === "help") {
+      const mcpPage = manualSections(mcp.message);
+      expect(mcpPage["SYNOPSIS"]).toBe("/tools mcp:search [argument]");
+      expect(mcpPage["DESCRIPTION"]).toContain("mcp search: Search as an MCP.");
+      expect(mcpPage["DESCRIPTION"]).not.toContain("skill search");
+    }
+    const shared = await run(engine, "/tools search --help");
+    expect(shared).toMatchObject({ type: "help", name: "tools search" });
+    if (shared.type === "help") {
+      const sharedPage = manualSections(shared.message);
+      expect(sharedPage["SYNOPSIS"]).toBe("/tools search [argument]");
+      expect(sharedPage["DESCRIPTION"]).toContain("skill search: Search as a skill.");
+      expect(sharedPage["DESCRIPTION"]).toContain("mcp search: Search as an MCP.");
+    }
     expect(await run(engine, "/tools missing --help")).toEqual({ type: "unknown-tool", name: "missing" });
     expect(await run(engine, "/tools mcp:missing --help")).toEqual({ type: "unknown-tool", name: "mcp:missing" });
     expect(seen.decide).toEqual([]);
@@ -508,31 +692,47 @@ describe("input interpreter", () => {
 
   it("IN4.3 --help on /sessions and its subcommands does not export or resume", async () => {
     const { engine, seen, calls } = interpreter({ sessions: [alpha, beta, gamma] });
-    const sessionsHelp = {
-      type: "help",
-      name: "sessions",
-      message: "usage: /sessions [export | resume]\nLists managed harness sessions in this session.",
-    };
-    const exportHelp = {
-      type: "help",
-      name: "sessions export",
-      message: "usage: /sessions export [session] [--clipboard | --file <filename>]\nWrites the named session, or every managed session, as JSON. The default destination is a file.",
-    };
-    const resumeHelp = {
-      type: "help",
-      name: "sessions resume",
-      message: "usage: /sessions resume <harness> [session]\nResumes one managed harness session.",
-    };
-    expect(await run(engine, "/sessions --help")).toEqual(sessionsHelp);
+    const sessionsHelp = await run(engine, "/sessions --help");
+    expect(sessionsHelp).toMatchObject({ type: "help", name: "sessions" });
+    if (sessionsHelp.type === "help") {
+      const page = manualSections(sessionsHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions [new | export | resume | fork | btw | bg | switch]");
+      expect(page["DESCRIPTION"]).toContain("Lists managed harness sessions in this session.");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    const exportHelp = await run(engine, "/sessions export --help");
+    expect(exportHelp).toMatchObject({ type: "help", name: "sessions export" });
+    if (exportHelp.type === "help") {
+      const page = manualSections(exportHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions export [session] [--clipboard | --file <filename>]");
+      expect(page["DESCRIPTION"]).toContain("Writes the named session, or every managed session, as JSON. The default destination is a file.");
+    }
+    const resumeHelp = await run(engine, "/sessions resume --help");
+    expect(resumeHelp).toMatchObject({ type: "help", name: "sessions resume" });
+    if (resumeHelp.type === "help") {
+      const page = manualSections(resumeHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions resume <harness> [session]");
+      expect(page["DESCRIPTION"]).toContain("Resumes one managed harness session.");
+    }
     expect(await run(engine, "/sessions export --help")).toEqual(exportHelp);
     expect(await run(engine, "/sessions --help export")).toEqual(exportHelp);
     expect(await run(engine, "/sessions export alpha --file out.json --help")).toEqual(exportHelp);
     expect(await run(engine, "/sessions resume --help")).toEqual(resumeHelp);
     expect(await run(engine, "/sessions resume codex --help")).toEqual(resumeHelp);
+    const newHelp = await run(engine, "/sessions new --help");
+    expect(newHelp).toMatchObject({ type: "help", name: "sessions new" });
+    if (newHelp.type === "help") {
+      const page = manualSections(newHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/sessions new");
+      expect(page["DESCRIPTION"]).toContain("Starts another harness session.");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    expect(await run(engine, "/sessions new extra --help")).toEqual(newHelp);
+    expect(await run(engine, "/sessions --help new")).toEqual(newHelp);
     expect(await run(engine, "/sessions nope --help")).toEqual({
       type: "command-usage",
       name: "sessions",
-      message: "usage: /sessions [export | resume]",
+      message: "usage: /sessions [new | export | resume | fork | btw | bg | switch]",
     });
     expect(calls.files).toEqual([]);
     expect(calls.clips).toEqual([]);
@@ -542,37 +742,48 @@ describe("input interpreter", () => {
     expect(await run(unwired.engine, "/sessions --help")).toEqual(sessionsHelp);
     expect(await run(unwired.engine, "/sessions export --help")).toEqual(exportHelp);
     expect(await run(unwired.engine, "/sessions resume --help")).toEqual(resumeHelp);
+    expect(await run(unwired.engine, "/sessions new --help")).toEqual(newHelp);
+    expect(calls.files).toEqual([]);
+    expect(calls.clips).toEqual([]);
+    expect(calls.resumes).toEqual([]);
   });
 
   it("IN4.4 --help on /settings describes the catalog and a key without changing it", async () => {
     const { engine, seen } = interpreter({ settings: [workerSetting, decideSetting] });
     await run(engine, "/settings worker model");
-    const settingsHelp = {
-      type: "help",
-      name: "settings",
-      message: [
-        "usage: /settings [key] [value | --unset]",
-        "Reads and writes harness configuration.",
-        "worker: Which worker runs a turn.",
-        "decide: Which decision model picks.",
-      ].join("\n"),
-    };
-    const workerHelp = {
-      type: "help",
-      name: "settings worker",
-      message: "usage: /settings worker [value | --unset]\nWhich worker runs a turn.\nfallback: echo\nvalues: echo, model",
-    };
-    expect(await run(engine, "/settings --help")).toEqual(settingsHelp);
+    const settingsHelp = await run(engine, "/settings --help");
+    expect(settingsHelp).toMatchObject({ type: "help", name: "settings" });
+    if (settingsHelp.type === "help") {
+      const page = manualSections(settingsHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/settings [key] [value | --unset]");
+      expect(page["DESCRIPTION"]).toContain("Reads and writes harness configuration.");
+      expect(page["DESCRIPTION"]).toContain("worker: Which worker runs a turn.");
+      expect(page["DESCRIPTION"]).toContain("decide: Which decision model picks.");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    const workerHelp = await run(engine, "/settings worker --help");
+    expect(workerHelp).toMatchObject({ type: "help", name: "settings worker" });
+    if (workerHelp.type === "help") {
+      const page = manualSections(workerHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/settings worker [value | --unset]");
+      expect(page["DESCRIPTION"]).toContain("Which worker runs a turn.");
+      expect(page["DESCRIPTION"]).toContain("fallback: echo");
+      expect(page["DESCRIPTION"]).toContain("values: echo, model");
+    }
     expect(await run(engine, "/settings worker --help")).toEqual(workerHelp);
     expect(await run(engine, "/settings --help worker")).toEqual(workerHelp);
     expect(await run(engine, "/settings worker model --help")).toEqual(workerHelp);
     expect(await run(engine, "/settings --unset worker --help")).toEqual(workerHelp);
     expect(await run(engine, "/settings --unset --help")).toEqual(settingsHelp);
-    expect(await run(engine, "/settings decide --help")).toEqual({
-      type: "help",
-      name: "settings decide",
-      message: "usage: /settings decide [value | --unset]\nWhich decision model picks.\nfallback: auto",
-    });
+    const decideHelp = await run(engine, "/settings decide --help");
+    expect(decideHelp).toMatchObject({ type: "help", name: "settings decide" });
+    if (decideHelp.type === "help") {
+      const page = manualSections(decideHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/settings decide [value | --unset]");
+      expect(page["DESCRIPTION"]).toContain("Which decision model picks.");
+      expect(page["DESCRIPTION"]).toContain("fallback: auto");
+      expect(page["DESCRIPTION"]).not.toContain("values:");
+    }
     expect(await run(engine, "/settings missing --help")).toEqual({ type: "command-usage", name: "settings", message: "no setting missing" });
     expect(await run(engine, "/settings worker")).toEqual({
       type: "settings",
@@ -581,35 +792,109 @@ describe("input interpreter", () => {
     });
     expect(seen.decide).toEqual([]);
     const unwired = interpreter();
-    expect(await run(unwired.engine, "/settings --help")).toEqual({
-      type: "help",
-      name: "settings",
-      message: "usage: /settings [key] [value | --unset]\nReads and writes harness configuration.",
-    });
+    const unwiredHelp = await run(unwired.engine, "/settings --help");
+    expect(unwiredHelp).toMatchObject({ type: "help", name: "settings" });
+    if (unwiredHelp.type === "help") {
+      const page = manualSections(unwiredHelp.message);
+      expect(page["DESCRIPTION"]).toBe("Reads and writes harness configuration.");
+    }
     expect(await run(unwired.engine, "/settings worker --help")).toEqual({
       type: "command-usage",
       name: "settings",
       message: "no settings are configured",
     });
     const empty = interpreter({ settings: [] });
-    expect(await run(empty.engine, "/settings --help")).toEqual({
-      type: "help",
-      name: "settings",
-      message: "usage: /settings [key] [value | --unset]\nReads and writes harness configuration.",
-    });
+    const emptyHelp = await run(empty.engine, "/settings --help");
+    expect(emptyHelp).toMatchObject({ type: "help", name: "settings" });
+    if (emptyHelp.type === "help") expect(manualSections(emptyHelp.message)["DESCRIPTION"]).toBe("Reads and writes harness configuration.");
   });
 
   it("IN4.5 --help on a harness command describes it, and an unknown command stays unknown", async () => {
     const { engine, seen } = interpreter();
-    const askHelp = { type: "help", name: "ask", message: "usage: /ask [argument]\nRun a turn." };
-    expect(await run(engine, "/ask --help")).toEqual(askHelp);
+    const askHelp = await run(engine, "/ask --help");
+    expect(askHelp).toMatchObject({ type: "help", name: "ask" });
+    if (askHelp.type === "help") {
+      const page = manualSections(askHelp.message);
+      expect(page["SYNOPSIS"]).toBe("/ask [argument]");
+      expect(page["DESCRIPTION"]).toContain("Run a turn.");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
     expect(await run(engine, "/ask --help the rest")).toEqual(askHelp);
     expect(await run(engine, "/nope --help")).toEqual({ type: "unknown-command", name: "nope" });
     expect(seen.decide).toEqual([]);
     expect(seen.infer).toEqual([]);
   });
 
-  it("IN5.1 a partial command completes known harness commands and a decision model reranks them", async () => {
+  it("IN4.6 /help is a man page of the commands and hooks and does not classify the line", async () => {
+    const { engine, seen } = interpreter({ commands: [] });
+    const listed = await run(engine, "/help");
+    expect(listed).toMatchObject({ type: "help", name: "help" });
+    if (listed.type !== "help") return;
+    const page = manualSections(listed.message);
+    expect(page["SYNOPSIS"]).toBe("/help");
+    expect(page["OPTIONS"]).toMatch(/does not run/);
+    expect(page["DESCRIPTION"]).toMatch(/Type a message/);
+    for (const synopsis of [
+      "/tools [name | kind:name] [argument]",
+      "/sessions [new | export | resume | fork | btw | bg | switch]",
+      "/sessions new",
+      "/sessions export [session] [--clipboard | --file <filename>]",
+      "/sessions resume <harness> [session]",
+      "/sessions fork [--thread <id>] [--message <id>]",
+      "/sessions btw <question>",
+      "/sessions bg",
+      "/sessions switch <session>",
+      "/settings [key] [value | --unset]",
+      "/autopilot [instructions]",
+      "/autopilot updates",
+      "/autopilot apply <id>",
+      "/autopilot stop",
+    ]) expect(page["DESCRIPTION"]).toContain(synopsis);
+    for (const hook of [
+      "behavior.changed",
+      "behavior.raised",
+      "session.created",
+      "session.attached",
+      "session.detached",
+      "turn.started",
+      "turn.ended",
+      "permission.requested",
+      "permission.resolved",
+      "capability.added",
+      "capability.revoked",
+      "input.received",
+      "intent.decide",
+      "intent.infer",
+      "intent.unresolved",
+      "action.ready",
+      "branch.intention",
+      "branch.result",
+      "branch.failure",
+      "branch.correction",
+      "dialogue.script.built",
+      "dialogue.script.put",
+      "dialogue.script.promoted",
+      "dialogue.script.retired",
+      "dialogue.document.put",
+      "procedural.approval.requested",
+      "procedural.approval.decided",
+      "procedural.plan.completed",
+    ]) expect(page["DESCRIPTION"]).toContain(hook);
+    expect(page["DESCRIPTION"]).toContain("does not change the trunk");
+    expect(listed.message).not.toContain("/new");
+    expect(listed.message).not.toContain("/ask");
+    expect(await run(engine, "/help --help")).toEqual(listed);
+    expect(await run(engine, "/help extra")).toEqual({ type: "command-usage", name: "help", message: "usage: /help" });
+    expect(engine.helpPage()).toBe(listed.message);
+    const ask = interpreter();
+    const withAsk = await run(ask.engine, "/help");
+    expect(withAsk).toMatchObject({ type: "help" });
+    if (withAsk.type === "help") expect(withAsk.message).toContain("/ask [argument]");
+    expect(seen.decide).toEqual([]);
+    expect(seen.infer).toEqual([]);
+  });
+
+  it("IN5.1 a partial command completes known harness commands in tree order", async () => {
     const ranked = interpreter({
       decide: () => ({
         choice: "/tools",
@@ -623,26 +908,29 @@ describe("input interpreter", () => {
     expect(ranked.seen.decide).toEqual([]);
     expect(await complete(ranked.engine, "/")).toEqual({
       completions: [
-        { text: "/ask", description: "Run a turn.", source: "command", score: 0.4 },
-        { text: "/settings", description: "Reads and writes harness configuration.", source: "command", score: 0.3 },
-        { text: "/sessions", description: "Lists managed harness sessions in this session.", source: "command", score: 0.2 },
-        { text: "/autopilot", description: "Proposes its own goals on a branch until interrupted.", source: "command", score: 0.15 },
-        { text: "/tools", description: "Lists registered skills, MCPs, and native tools, or invokes one.", source: "command", score: 0.1 },
+        { text: "/tools", description: "Lists registered skills, MCPs, and native tools, or invokes one.", source: "command", score: 0 },
+        { text: "/sessions", description: "Lists managed harness sessions in this session.", source: "command", score: 0 },
+        { text: "/settings", description: "Reads and writes harness configuration.", source: "command", score: 0 },
+        { text: "/autopilot", description: "Proposes its own goals on a branch until interrupted.", source: "command", score: 0 },
+        { text: "/ask", description: "Run a turn.", source: "command", score: 0 },
       ],
     });
-    expect(ranked.seen.decide).toHaveLength(1);
-    expect(ranked.seen.decide[0]?.split("\n---\n")[0]).toBe("remember /tools from before\nthe earlier fact");
-    expect(ranked.seen.decide[0]).toContain("---\n/\n[/tools,/sessions,/settings,/autopilot,/ask]");
+    expect(ranked.seen.decide).toEqual([]);
     expect(ranked.seen.infer).toEqual([]);
     expect(ranked.engine.events()).toEqual([]);
     const tied = interpreter({
       decide: () => ({ choice: "/ask", complicated: false, probabilities: { "/tools": 0.25, "/sessions": 0.25, "/settings": 0.25, "/autopilot": 0.25, "/ask": 0.25 } }),
     });
     expect((await complete(tied.engine, "/")).completions.map((item) => item.text)).toEqual(["/tools", "/sessions", "/settings", "/autopilot", "/ask"]);
+    expect(tied.seen.decide).toEqual([]);
     const huge = `${"y".repeat(5000)}END`;
-    const bounded = interpreter({ decide: () => ({ choice: "/tools", complicated: false }) });
-    await complete(bounded.engine, "/", { turns: [{ role: "user", text: "OLD" }, { role: "assistant", text: huge }] });
-    expect(bounded.seen.decide[0]?.split("\n---\n")[0]).toBe(`${"y".repeat(1997)}END`);
+    const bounded = interpreter({
+      suggest: () => ({ ok: true, suggestions: [{ text: "please export", description: "Guess an export." }] }),
+      decide: () => { throw new Error("down"); },
+    });
+    await complete(bounded.engine, "please", { turns: [{ role: "user", text: "OLD" }, { role: "assistant", text: huge }] });
+    expect(bounded.seen.decide).toEqual([]);
+    expect(bounded.seen.suggest[0]?.split("\n---\n")[0]).toBe(`${"y".repeat(1997)}END`);
     expect(await run(ranked.engine, "/tools")).toEqual({ type: "list-tools", tools: [echo, searchSkill, searchMcp] });
   });
 
@@ -652,23 +940,23 @@ describe("input interpreter", () => {
     });
     expect(await complete(engine, "/tools ")).toEqual({
       completions: [
-        { text: "/tools --help", description: "Describes /tools.", source: "command", score: 1 },
         { text: "/tools echo", description: "tool echo: Repeat text.", source: "command", score: 0 },
         { text: "/tools search", description: "skill search: Search as a skill.\nmcp search: Search as an MCP.", source: "command", score: 0 },
         { text: "/tools tool:echo", description: "tool echo: Repeat text.", source: "command", score: 0 },
         { text: "/tools skill:search", description: "skill search: Search as a skill.", source: "command", score: 0 },
         { text: "/tools mcp:search", description: "mcp search: Search as an MCP.", source: "command", score: 0 },
+        { text: "/tools --help", description: "Describes /tools.", source: "command", score: 0 },
       ],
     });
     expect(await complete(engine, "/tools")).toEqual({
       completions: [
-        { text: "/tools --help", description: "Describes /tools.", source: "command", score: 1 },
         { text: "/tools", description: "Lists registered skills, MCPs, and native tools, or invokes one.", source: "command", score: 0 },
         { text: "/tools echo", description: "tool echo: Repeat text.", source: "command", score: 0 },
         { text: "/tools search", description: "skill search: Search as a skill.\nmcp search: Search as an MCP.", source: "command", score: 0 },
         { text: "/tools tool:echo", description: "tool echo: Repeat text.", source: "command", score: 0 },
         { text: "/tools skill:search", description: "skill search: Search as a skill.", source: "command", score: 0 },
         { text: "/tools mcp:search", description: "mcp search: Search as an MCP.", source: "command", score: 0 },
+        { text: "/tools --help", description: "Describes /tools.", source: "command", score: 0 },
       ],
     });
     expect(await complete(engine, "/tools ec")).toEqual({
@@ -679,21 +967,31 @@ describe("input interpreter", () => {
     });
     expect(await complete(engine, "/tools echo")).toEqual({
       completions: [
-        { text: "/tools echo --help", description: "Describes /tools echo.", source: "command", score: 1 },
         { text: "/tools echo", description: "tool echo: Repeat text.", source: "command", score: 0 },
+        { text: "/tools echo --help", description: "Describes /tools echo.", source: "command", score: 0 },
       ],
     });
     expect(await complete(engine, "/tools echo say")).toEqual({ completions: [] });
-    expect(seen.decide).toHaveLength(3);
+    expect(seen.decide).toEqual([]);
     expect(seen.infer).toEqual([]);
   });
 
-  it("IN5.3 /sessions completes export and resume without writing or resuming", async () => {
+  it("IN5.3 /sessions completes new, export, and resume without writing or resuming", async () => {
     const { engine, calls, seen } = interpreter({
       sessions: [alpha, beta, gamma],
       decide: (_text, _context, options) => ({ choice: options[0]?.name ?? "", complicated: false }),
     });
-    expect((await complete(engine, "/sessions ")).completions.map((item) => item.text)).toEqual(["/sessions export", "/sessions resume", "/sessions --help"]);
+    expect((await complete(engine, "/sessions ")).completions.map((item) => item.text)).toEqual(["/sessions new", "/sessions export", "/sessions resume", "/sessions fork", "/sessions btw", "/sessions bg", "/sessions switch", "/sessions --help"]);
+    expect((await complete(engine, "/sessions n")).completions).toEqual([
+      { text: "/sessions new", description: "Starts another harness session.", source: "command", score: 1 },
+    ]);
+    expect((await complete(engine, "/sessions new ")).completions).toEqual([
+      { text: "/sessions new --help", description: "Describes /sessions new.", source: "command", score: 1 },
+    ]);
+    expect((await complete(engine, "/sessions f")).completions).toEqual([
+      { text: "/sessions fork", description: "Starts a session from a point in the conversation.", source: "command", score: 1 },
+    ]);
+    expect((await complete(engine, "/sessions fork ")).completions.map((item) => item.text)).toEqual(["/sessions fork --thread", "/sessions fork --message", "/sessions fork --help"]);
     expect((await complete(engine, "/sessions exp")).completions).toEqual([
       { text: "/sessions export", description: "Writes the named session, or every managed session, as JSON. The default destination is a file.", source: "command", score: 1 },
     ]);
@@ -780,7 +1078,7 @@ describe("input interpreter", () => {
     expect(await complete(engine, "/nope")).toEqual({ completions: [] });
   });
 
-  it("IN5.5 an empty prefix predicts the next instruction and reranks natural language after commands", async () => {
+  it("IN5.5 an empty prefix lists commands and then natural language", async () => {
     const suggestions = [
       { text: "please export", description: "Guess an export." },
       { text: "/tools", description: "Do not replace the command." },
@@ -797,27 +1095,27 @@ describe("input interpreter", () => {
     });
     expect(await complete(engine, "")).toEqual({
       completions: [
-        { text: "please export", description: "Guess an export.", source: "language", score: 0.7 },
-        { text: "hello there", description: "A greeting.", source: "language", score: 0.1 },
-        { text: "/tools", description: "Lists registered skills, MCPs, and native tools, or invokes one.", source: "command", score: 0.05 },
-        { text: "/sessions", description: "Lists managed harness sessions in this session.", source: "command", score: 0.05 },
-        { text: "/settings", description: "Reads and writes harness configuration.", source: "command", score: 0.05 },
-        { text: "/autopilot", description: "Proposes its own goals on a branch until interrupted.", source: "command", score: 0.05 },
-        { text: "/ask", description: "Run a turn.", source: "command", score: 0.05 },
+        { text: "/tools", description: "Lists registered skills, MCPs, and native tools, or invokes one.", source: "command", score: 0 },
+        { text: "/sessions", description: "Lists managed harness sessions in this session.", source: "command", score: 0 },
+        { text: "/settings", description: "Reads and writes harness configuration.", source: "command", score: 0 },
+        { text: "/autopilot", description: "Proposes its own goals on a branch until interrupted.", source: "command", score: 0 },
+        { text: "/ask", description: "Run a turn.", source: "command", score: 0 },
+        { text: "please export", description: "Guess an export.", source: "language", score: 0 },
+        { text: "hello there", description: "A greeting.", source: "language", score: 0 },
         { text: "Hello there", description: "Different case.", source: "language", score: 0 },
       ],
     });
-    expect(seen.decide[0]).toContain("[/tools,/sessions,/settings,/autopilot,/ask,please export,hello there,Hello there]");
+    expect(seen.decide).toEqual([]);
     expect(seen.suggest).toHaveLength(1);
     expect(seen.infer).toEqual([]);
     expect((await complete(engine, "   ")).completions.map((item) => item.text)).toEqual([
-      "please export",
-      "hello there",
       "/tools",
       "/sessions",
       "/settings",
       "/autopilot",
       "/ask",
+      "please export",
+      "hello there",
       "Hello there",
     ]);
     expect(await complete(engine, "hel")).toEqual({
@@ -855,7 +1153,7 @@ describe("input interpreter", () => {
     ]);
     expect(predicted.completions.every((item) => item.score === 0)).toBe(true);
     expect(full.seen.suggest).toEqual([]);
-    expect(full.seen.decide[0]).toContain("[/tools,/sessions,/settings,/autopilot,/c0,/c1,/c2,/c3,/c4,/c5,/c6,/c7,/c8,/c9,/c10,/c11,/c12,/c13,/c14,/c15]");
+    expect(full.seen.decide).toEqual([]);
     const narrow = interpreter({
       maxOptions: 2,
       suggest: () => ({ ok: true, suggestions: [{ text: "guess", description: "A guess." }] }),
@@ -888,5 +1186,80 @@ describe("input interpreter", () => {
     });
     expect((await complete(infinite.engine, "/")).completions.map((item) => item.text)).toEqual(["/tools", "/sessions", "/settings", "/autopilot", "/ask"]);
     expect((await complete(infinite.engine, "/")).completions.every((item) => item.score === 0)).toBe(true);
+  });
+
+  it("IN5.7 a slash prefix and a subcommand complete in tree order without inference", async () => {
+    const ranked = interpreter({
+      decide: () => ({
+        choice: "/settings",
+        complicated: false,
+        probabilities: { "/sessions": 0.1, "/settings": 0.9, "/sessions new": 0.1, "/sessions --help": 0.9 },
+      }),
+      suggest: () => ({ ok: true, suggestions: [{ text: "please export", description: "Guess an export." }] }),
+    });
+    const sessionsFirst = ["/sessions", "/settings"];
+    const first = await complete(ranked.engine, "/se");
+    const second = await complete(ranked.engine, "/se");
+    expect(first.completions.map((item) => item.text)).toEqual(sessionsFirst);
+    expect(second).toEqual(first);
+    expect(first.completions.every((item) => item.source === "command")).toBe(true);
+    const subcommands = [
+      "/sessions new",
+      "/sessions export",
+      "/sessions resume",
+      "/sessions fork",
+      "/sessions btw",
+      "/sessions bg",
+      "/sessions switch",
+      "/sessions --help",
+    ];
+    expect((await complete(ranked.engine, "/sessions ")).completions.map((item) => item.text)).toEqual(subcommands);
+    expect((await complete(ranked.engine, "/sessions n")).completions.map((item) => item.text)).toEqual(["/sessions new"]);
+    expect(ranked.seen.decide).toEqual([]);
+    expect(ranked.seen.suggest).toEqual([]);
+    const offline = interpreter({
+      decide: () => { throw new Error("down"); },
+      suggest: () => { throw new Error("down"); },
+    });
+    expect(await complete(offline.engine, "/se")).toEqual(first);
+    expect((await complete(offline.engine, "/sessions ")).completions.map((item) => item.text)).toEqual(subcommands);
+    expect((await complete(offline.engine, "/sessions n")).completions.map((item) => item.text)).toEqual(["/sessions new"]);
+    expect((await complete(offline.engine, "/sessions n"))).toEqual(await complete(offline.engine, "/sessions n"));
+  });
+
+  it("IN5.8 only a non-slash prefix asks for language, and a failure leaves command rows", async () => {
+    const live = interpreter({
+      suggest: () => ({ ok: true, suggestions: [{ text: "please export", description: "Guess an export." }] }),
+      decide: () => { throw new Error("down"); },
+    });
+    const commands = ["/tools", "/sessions", "/settings", "/autopilot", "/ask"];
+    const predicted = await complete(live.engine, "");
+    expect(predicted.completions.filter((item) => item.source === "command").map((item) => item.text)).toEqual(commands);
+    expect(predicted.completions.some((item) => item.source === "language" && item.text === "please export")).toBe(true);
+    expect(predicted.completions.findIndex((item) => item.source === "language")).toBeGreaterThan(predicted.completions.findIndex((item) => item.text === "/ask"));
+    expect(live.seen.suggest).toHaveLength(1);
+    expect(live.seen.decide).toEqual([]);
+    const slash = await complete(live.engine, "/se");
+    expect(slash.completions.map((item) => item.text)).toEqual(["/sessions", "/settings"]);
+    expect(live.seen.suggest).toHaveLength(1);
+    const spoken = await complete(live.engine, "please");
+    expect(spoken.completions.map((item) => item.text)).toEqual(["please export"]);
+    expect(spoken.completions[0]?.source).toBe("language");
+    expect(live.seen.suggest).toHaveLength(2);
+    expect(live.seen.decide).toEqual([]);
+    const offline = interpreter({
+      decide: () => { throw new Error("down"); },
+      suggest: () => { throw new Error("down"); },
+    });
+    const quiet = await complete(offline.engine, "");
+    expect(quiet.completions.map((item) => item.text)).toEqual(commands);
+    expect(quiet.completions.some((item) => item.source === "language")).toBe(false);
+    expect(await complete(offline.engine, "please")).toEqual({ completions: [] });
+    expect(await complete(offline.engine, "/se")).toEqual(slash);
+    const absent = interpreter({ decide: () => { throw new Error("down"); } });
+    expect((await complete(absent.engine, "")).completions.map((item) => item.text)).toEqual(commands);
+    expect(await complete(absent.engine, "please")).toEqual({ completions: [] });
+    expect(offline.seen.decide).toEqual([]);
+    expect(absent.seen.decide).toEqual([]);
   });
 });

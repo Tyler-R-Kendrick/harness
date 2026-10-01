@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseCatalog } from "@harness/cognitive";
 import type { Catalog } from "@harness/cognitive";
 import { parseSettings as parseDialogueSettings } from "@harness/dialogue";
@@ -39,6 +39,62 @@ export function loadPluginSettings(file: string = require.resolve("@harness/lear
 /** Read and parse the dialogue's settings (thresholds, the drafter's prompt): its own data file by default, or a tweaked copy. */
 export function loadDialogueSettings(file: string = require.resolve("@harness/dialogue/data/settings.json")): DialogueSettings {
   return parseDialogueSettings(JSON.parse(readFileSync(file, "utf8")));
+}
+
+/** The builtin script book: fixed replies, templates whose holes the chat model fills, and the default AIML chat and VoiceXML menu. */
+export function loadBuiltinBook(file: string = require.resolve("@harness/dialogue/data/builtin.json")): unknown {
+  const book = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  if (!isRecord(book)) return book;
+  const have = new Set(listedDocuments(book).map((document) => document.name));
+  const documents = [...builtinDocuments(dirname(file)).filter((document) => !have.has(document.name)).map((document) => document.raw), ...listedDocuments(book).map((document) => document.raw)];
+  const entry = typeof book["entry"] === "string" ? book["entry"] : "harness-chat";
+  return { ...book, entry, documents };
+}
+
+/** The shipped chat and menu, read from beside the book so the AIML and VoiceXML stay the files the standards edit. */
+function builtinDocuments(dir: string): { name: string; raw: unknown }[] {
+  const chat = readFileSync(join(dir, "builtin", "harness-chat.aiml"), "utf8");
+  const menu = readFileSync(join(dir, "builtin", "harness-menu.vxml"), "utf8");
+  return [
+    { name: "harness-chat", raw: { name: "harness-chat", type: "aiml", files: { "harness-chat.aiml": chat } } },
+    { name: "harness-menu", raw: { name: "harness-menu", type: "voicexml", files: { "harness-menu.vxml": menu }, options: { nomatch: "reprompt" } } },
+  ];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function listedScripts(book: unknown): { id: string; raw: unknown }[] {
+  if (!isRecord(book) || !Array.isArray(book["scripts"])) return [];
+  return book["scripts"].flatMap((script) => {
+    if (!isRecord(script) || typeof script["id"] !== "string") return [];
+    return [{ id: script["id"], raw: script }];
+  });
+}
+
+/**
+ * `book` laid over the builtin book. Scripts and documents in `book` follow the builtin
+ * ones, and a shared id or document name keeps the one from `book`. No book is the builtin
+ * book itself. A book with no entry uses the builtin chat.
+ */
+export function withBuiltinBook(book: unknown): unknown {
+  const builtin = loadBuiltinBook();
+  if (book === undefined) return builtin;
+  const ids = new Set(listedScripts(book).map((script) => script.id));
+  const scripts = [...listedScripts(builtin).filter((script) => !ids.has(script.id)).map((script) => script.raw), ...listedScripts(book).map((script) => script.raw)];
+  const names = new Set(listedDocuments(book).map((document) => document.name));
+  const documents = [...listedDocuments(builtin).filter((document) => !names.has(document.name)).map((document) => document.raw), ...listedDocuments(book).map((document) => document.raw)];
+  const entry = isRecord(book) && typeof book["entry"] === "string" ? book["entry"] : isRecord(builtin) && typeof builtin["entry"] === "string" ? builtin["entry"] : undefined;
+  return { ...(isRecord(book) ? book : {}), scripts, documents, ...(entry === undefined ? {} : { entry }) };
+}
+
+function listedDocuments(book: unknown): { name: string; raw: unknown }[] {
+  if (!isRecord(book) || !Array.isArray(book["documents"])) return [];
+  return book["documents"].flatMap((document) => {
+    if (!isRecord(document) || typeof document["name"] !== "string") return [];
+    return [{ name: document["name"], raw: document }];
+  });
 }
 
 /** Read and parse the evolution settings (rounds, selection rule, the proposer's prompt): its own data file by default, or a tweaked copy. */

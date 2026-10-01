@@ -3,6 +3,9 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 
+/** llama-server context when a host does not pass one. Shared with the ensemble's compaction budget. */
+export const DEFAULT_CONTEXT_SIZE = 16_384;
+
 export interface LlamaServerStart {
   /** Path to llama.cpp's llama-server binary. */
   readonly binary: string;
@@ -51,7 +54,7 @@ export class LlamaServerProcess {
       String(port),
       "--jinja",
       "-c",
-      String(options.contextSize ?? 16384),
+      String(options.contextSize ?? DEFAULT_CONTEXT_SIZE),
       ...(options.args ?? []),
     ];
     const child = spawn(options.binary, args, { stdio: ["ignore", "ignore", "pipe"] });

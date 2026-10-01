@@ -131,7 +131,7 @@ function close<P>(graph: TaskGraph<P>, node: string, failure: BranchFailure): Re
   if (status === undefined) return err("unknown_node", `no node ${node}`);
   if (failure === "failed") return status === "failed" ? undefined : graph.complete(node, "failed");
   if (status === "cancelled") return undefined;
-  if (status !== "pending" && status !== "running") return err("already_terminal", `${node} is ${status}`);
+  if (status !== "pending" && status !== "running" && status !== "awaiting") return err("already_terminal", `${node} is ${status}`);
   return graph.cancel(node);
 }
 

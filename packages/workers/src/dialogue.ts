@@ -81,18 +81,14 @@ function fits(template: TemplateConstraint, text: string): boolean {
 }
 
 /**
- * Call options asking for a script's template: as a constraint, for models that enforce
- * one, and as an instruction after the call's own system messages, for models that do
- * not. The call's own provider options (its session among them) are kept.
+ * Call options asking for a script's template as a constraint. The template stays out of
+ * the prompt, so its fixed text is not sent. The call's own prompt and provider options
+ * (its session among them) are kept.
  */
-const templated = (options: LanguageModelV4CallOptions, decision: Generated): LanguageModelV4CallOptions => {
-  const at = options.prompt.findIndex((m) => m.role !== "system");
-  return {
-    ...options,
-    prompt: [...options.prompt.slice(0, at), { role: "system", content: decision.instruction }, ...options.prompt.slice(at)],
-    providerOptions: { ...options.providerOptions, [HARNESS]: { ...options.providerOptions?.[HARNESS], ...constrain(decision.template).providerOptions[HARNESS] } },
-  };
-};
+const templated = (options: LanguageModelV4CallOptions, decision: Generated): LanguageModelV4CallOptions => ({
+  ...options,
+  providerOptions: { ...options.providerOptions, [HARNESS]: { ...options.providerOptions?.[HARNESS], ...constrain(decision.template).providerOptions[HARNESS] } },
+});
 
 /**
  * How the model answered a step, to learn from: it acted when it called tools; its reply

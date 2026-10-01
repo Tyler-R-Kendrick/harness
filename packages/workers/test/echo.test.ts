@@ -77,6 +77,21 @@ describe("EchoWorker", () => {
     expect(events.at(-1)).toMatchObject({ type: "end", stopReason: "cancelled" });
   });
 
+  it("WK1.8 a prompt containing !fail ends as a refusal notice", async () => {
+    const w = new EchoWorker();
+    const { events, emit } = collect();
+    await w.run(cmd("!fail"), emit);
+    expect(events).toEqual([
+      {
+        type: "update",
+        sessionId: "s1",
+        turnId: "t1",
+        update: { sessionUpdate: "notice", severity: "error", title: "Model call failed", description: "model offline" },
+      },
+      { type: "end", sessionId: "s1", turnId: "t1", stopReason: "refusal" },
+    ]);
+  });
+
   it("WK1.7 commands for unknown turns are ignored", () => {
     const w = new EchoWorker();
     expect(() => w.cancel("s1", "nope")).not.toThrow();

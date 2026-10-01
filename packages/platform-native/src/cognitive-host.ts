@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { BehaviorEngine } from "@harness/behavior";
 import type { BehaviorPack } from "@harness/behavior";
 import { wrapLanguageModel } from "ai";
-import { Ensemble } from "@harness/cognitive";
+import { bytes, decisionRouter, DECISION_ACCEPT, Ensemble, probability } from "@harness/cognitive";
 import type { Catalog, Constraint, Dimensions, ModelDescriptor, Ports, Runtime, StateChange } from "@harness/cognitive";
 import {
   ArtifactStore,
@@ -10,6 +10,7 @@ import {
   sessionHooks,
   generatorJudge,
   llamaServer,
+  openAiCompatibleDecisionsModel,
   loadChatTokenizer,
   loadDecisionModel,
   OnnxSteerableSession,
@@ -23,18 +24,19 @@ import { ensembleReasoner, Learning, learningExtension, Plugins } from "@harness
 import type { Settings } from "@harness/learning";
 import { recordingTeacher, skillBuilder, toolBuilder, workflowBuilder } from "@harness/learning-plugins";
 import { askModel, WorkflowHost, workflowsExtension } from "@harness/workflows";
+import type { WorkflowLibrary } from "@harness/workflows";
 import { aiCodeMode } from "@harness/workflows/node";
 import { ConstraintEngine } from "@harness/constrained";
 import type { Vocabulary } from "@harness/constrained";
 import type { LanguageModel, ToolSet } from "ai";
-import { Dialogue } from "@harness/dialogue";
+import { Dialogue, parseBook } from "@harness/dialogue";
 import type { DialogueEvent, FlowRunner, Settings as DialogueSettings } from "@harness/dialogue";
-import { STANDARD_INTERPRETERS } from "@harness/dialogue-standards";
-import { LlamaServerProcess } from "./llama-server-process.ts";
+import { documentFlow, STANDARD_INTERPRETERS } from "@harness/dialogue-standards";
+import { DEFAULT_CONTEXT_SIZE, LlamaServerProcess } from "./llama-server-process.ts";
 import { FileByteCache, loadEmscriptenModule } from "./model-cache.ts";
 import { proceduralExtension } from "@harness/procedural";
 import type { ProceduralExtensionOptions, ProceduralStore, Settings as ProceduralSettings } from "@harness/procedural";
-import { loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings, loadProceduralSettings } from "./catalog-files.ts";
+import { loadBuiltinBook, loadCatalog, loadDialogueSettings, loadLearningSettings, loadPluginSettings, loadProceduralSettings } from "./catalog-files.ts";
 import { proceduralStore } from "./procedural-host.ts";
 import { WorkflowFiles } from "./workflow-files.ts";
 import { loadXGrammar } from "./xgrammar.ts";
@@ -62,6 +64,8 @@ export interface NativeEnsembleOptions {
   readonly behavior?: BehaviorPack;
   /** Environment to read credentials and server addresses from (default process.env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** An OpenAI-compatible endpoint that answered the decisions API. Classification uses it. */
+  readonly decisions?: { readonly baseUrl: string; readonly model: string; readonly apiKey?: string };
   /** Install memory: its embedding model, vector recall and session memory. */
   readonly memory?: {
     /** A previous Memory.save(), to continue from. */
@@ -107,6 +111,9 @@ export interface NativeEnsembleOptions {
 type Of<R extends Runtime> = Extract<ModelDescriptor, { runtime: R }>;
 type Loaders = { readonly [R in Runtime]?: (m: Of<R>) => Promise<Ports> };
 
+/** The classification member for a configured OpenAI-compatible decisions endpoint. */
+const OPENAI_DECISIONS = "openai-compatible/decisions";
+
 /**
  * The native host's cognitive core: every catalog model that can run here, registered
  * with its runtime's loader, which fetches and verifies the pinned weights on first
@@ -130,7 +137,15 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
   const allowHosted = options.allowHosted !== false;
   const catalog = options.catalog ?? loadCatalog();
   const env = options.env ?? process.env;
-  const ensemble = new Ensemble({ platform: "native", preferences: catalog.preferences, selection: { allowHosted } });
+  const configured =
+    options.decisions !== undefined && (options.only === undefined || options.only.includes(OPENAI_DECISIONS)) ? options.decisions : undefined;
+  const ensemble = new Ensemble({
+    platform: "native",
+    preferences: catalog.preferences,
+    selection: { allowHosted },
+    contextTokens: DEFAULT_CONTEXT_SIZE,
+    ...(configured === undefined ? {} : { pins: { classification: OPENAI_DECISIONS } }),
+  });
   const fetchFn = options.fetch ?? fetch;
   const artifacts = new ArtifactStore({ fetch: fetchFn, cache: new FileByteCache(join(options.cacheDir, "artifacts")) });
   const files = new ModelFiles({ dir: join(options.cacheDir, "gguf"), fetch: fetchFn });
@@ -216,6 +231,33 @@ export function buildNativeEnsemble(options: NativeEnsembleOptions): {
     if (!load || !m.platforms.includes("native") || (!allowHosted && m.locality === "hosted")) continue;
     if (options.only && !options.only.includes(m.id)) continue;
     ensemble.register(m, () => load(m));
+  }
+  if (configured) {
+    const endpoint = configured;
+    ensemble.register(
+      {
+        id: OPENAI_DECISIONS,
+        name: "OpenAI-compatible decisions",
+        publisher: "configured",
+        tasks: ["classification"],
+        ports: ["judge"],
+        locality: "local",
+        runtime: "typesafe-api",
+        run: { baseUrl: endpoint.baseUrl, model: endpoint.model },
+        platforms: ["native"],
+        license: "proprietary",
+        downloadBytes: bytes(1),
+        benchmarks: [],
+      },
+      async () => ({
+        judge: openAiCompatibleDecisionsModel({
+          baseUrl: endpoint.baseUrl,
+          model: endpoint.model,
+          fetch: fetchFn,
+          ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+        }),
+      }),
+    );
   }
   const memory =
     options.memory &&
@@ -331,6 +373,37 @@ export function buildDialogue(options: {
     now: () => Date.now(),
     ...(onEvent ? { onEvent } : {}),
   });
+}
+
+/**
+ * The session's builtin scripts, in front of the model even when no `--dialogue` file is set.
+ * The classification decision model is the router: a likely script is that script's fixed
+ * text, and anything else goes to the chat model. That fallback drafts a template for the
+ * session when a reasoning model is available. The builtin AIML chat hears first when a
+ * flow runner is set, and the VoiceXML menu starts from its script. The builtin book is not saved.
+ */
+export function builtinDialogue(options: { readonly ensemble: Ensemble; readonly onError?: (error: unknown) => void; readonly flows?: FlowRunner }): Dialogue {
+  const settings = loadDialogueSettings();
+  const router = options.ensemble.serves("classification", "judge") ? decisionRouter(options.ensemble.evaluationModel("classification")) : undefined;
+  const drafter = options.ensemble.serves("reasoning", "generator") ? options.ensemble.languageModel("reasoning") : undefined;
+  return new Dialogue({
+    settings: { ...settings, match: { ...settings.match, route: probability(DECISION_ACCEPT) } },
+    book: loadBuiltinBook(),
+    interpreters: STANDARD_INTERPRETERS,
+    sessionTemplates: true,
+    ...(options.flows ? { flows: options.flows } : {}),
+    ...(router ? { router } : {}),
+    ...(drafter ? { drafter } : {}),
+    ...(options.onError ? { onError: options.onError } : {}),
+  });
+}
+
+/** Put a book's document flows into the library that runs them. The flow calls the document; the book holds the AIML or VoiceXML. */
+export async function installDocumentFlows(library: WorkflowLibrary, book: unknown): Promise<void> {
+  for (const document of parseBook(book).documents) {
+    const what = document.type === "voicexml" ? "VoiceXML application" : document.type === "aiml" ? "AIML bot" : `${document.type} document`;
+    await library.put(documentFlow(document.name, `Runs the ${what} ${document.name} a turn at a time.`));
+  }
 }
 
 /**

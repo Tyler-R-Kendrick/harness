@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createProviderRegistry, embed, experimental_evaluate, generateText, jsonSchema, Output, streamText } from "ai";
 import { convertArrayToReadableStream, Experimental_EvaluationMockModelV4, MockEmbeddingModelV4, MockLanguageModelV4 } from "ai/test";
 import { bytes, CognitiveError, constrain, Ensemble, MODEL_HEADER, mirrorCapabilities, usage } from "@harness/cognitive";
+import type { LanguageModelV4Prompt } from "@ai-sdk/provider";
 import type { BenchmarkResult, EmbeddingModelV4, EvaluationModelV4, LanguageModelV4, ModelDescriptor, Ports, TaskCategory } from "@harness/cognitive";
 
 function descriptor(id: string, tasks: readonly TaskCategory[], ports: ModelDescriptor["ports"], extra: Partial<ModelDescriptor> = {}): ModelDescriptor {
@@ -365,5 +366,77 @@ describe("failover on calls", () => {
     expect(e.state("down")).toBe("failed");
     expect(await vector(e)).toEqual([5]);
     expect(e.state("down-emb")).toBe("failed");
+  });
+
+  it("EN4.1 a prompt over the context budget is compacted with the compressor before a generate or a stream", async () => {
+    const prompts: LanguageModelV4Prompt[] = [];
+    const e = new Ensemble({ platform: "native", contextTokens: 6 });
+    const record = (options: { prompt: LanguageModelV4Prompt }) => prompts.push(options.prompt);
+    e.register(descriptor("chatty", ["chat"], ["generator"]), async () => ({
+      generator: new MockLanguageModelV4({
+        doGenerate: async (options) => {
+          record(options);
+          return { content: [{ type: "text", text: "ok" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] };
+        },
+        doStream: async (options) => {
+          record(options);
+          return {
+            stream: convertArrayToReadableStream([
+              { type: "text-start", id: "0" },
+              { type: "text-delta", id: "0", delta: "ok" },
+              { type: "text-end", id: "0" },
+              { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: usage() },
+            ]),
+          };
+        },
+      }),
+    }));
+    e.register(descriptor("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
+      compressor: {
+        compress: async (request) => {
+          const all = request.text.split(/\s+/).filter((word) => word.length > 0);
+          const kept = request.rate >= 1 ? all : all.slice(0, Math.floor(all.length * request.rate));
+          return { text: kept.join(" "), originalTokens: all.length, compressedTokens: kept.length };
+        },
+      },
+    }));
+    const prompt: LanguageModelV4Prompt = [
+      { role: "system", content: "STABLE ____" },
+      { role: "user", content: [{ type: "text", text: "alpha bravo charlie delta echo foxtrot golf hotel" }] },
+      { role: "user", content: [{ type: "text", text: "LATEST ____" }] },
+    ];
+    const model = e.languageModel();
+    await model.doGenerate({ prompt });
+    await model.doStream({ prompt });
+    expect(prompts).toHaveLength(2);
+    for (const got of prompts) {
+      expect(got[0]).toMatchObject({ role: "system", content: "STABLE ____" });
+      expect(got.at(-1)).toBe(prompt[2]);
+      expect(got[1]).toMatchObject({ role: "user", content: [{ type: "text", text: "alpha bravo" }] });
+      expect(JSON.stringify(got)).not.toContain("foxtrot");
+    }
+  });
+
+  it("EN4.2 without a context budget the generator receives the prompt unchanged", async () => {
+    const prompts: LanguageModelV4Prompt[] = [];
+    const e = new Ensemble({ platform: "native" });
+    e.register(descriptor("chatty", ["chat"], ["generator"]), async () => ({
+      generator: new MockLanguageModelV4({
+        doGenerate: async (options) => {
+          prompts.push(options.prompt);
+          return { content: [{ type: "text", text: "ok" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] };
+        },
+      }),
+    }));
+    e.register(descriptor("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
+      compressor: { compress: async () => { throw new Error("compressor should not run"); } },
+    }));
+    const prompt: LanguageModelV4Prompt = [
+      { role: "system", content: "STABLE ____" },
+      { role: "user", content: [{ type: "text", text: "alpha bravo charlie delta echo foxtrot golf hotel" }] },
+      { role: "user", content: [{ type: "text", text: "LATEST ____" }] },
+    ];
+    await e.languageModel().doGenerate({ prompt });
+    expect(prompts[0]).toBe(prompt);
   });
 });

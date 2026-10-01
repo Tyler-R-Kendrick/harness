@@ -143,7 +143,7 @@ describe("matching, exactly", () => {
         { id: "live", intent: "t", result: { tool: "t" }, reply: ["Live ", { output: ["v"] }, ": ", { generate: "why" }, "."] },
       ),
     });
-    expect(await d.respond(resultStep(result))).toEqual({ kind: "generate", script: "live", template: { type: "template", parts: ["Live x: ", { hole: "why" }, "."] }, instruction: `${settings().generate.instruction}\n\nLive x: {why}.`, match: { by: "result" } });
+    expect(await d.respond(resultStep(result))).toEqual({ kind: "generate", script: "live", template: { type: "template", parts: ["Live x: ", { hole: "why" }, "."] }, instruction: `${settings().generate.instruction}\n\nLive x: ____.`, match: { by: "result" } });
     expect(d.script("live")!.evidence.served).toBe(1);
     d.feedback("live", "harmful");
     d.feedback("live", "harmful");

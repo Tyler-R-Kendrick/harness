@@ -2,6 +2,7 @@ import { NoSuchModelError } from "@ai-sdk/provider";
 import type { EmbeddingModelV4, LanguageModelV4, LanguageModelV4CallOptions, ProviderV4 } from "@ai-sdk/provider";
 import { TASK_CATEGORIES } from "./models.ts";
 import type { ModelDescriptor, Platform, PortKind, TaskCategory } from "./models.ts";
+import { compactContext } from "./context.ts";
 import { constraintOf, MODEL_HEADER, withResponseFormat } from "./options.ts";
 import type { Compression, CompressRequest, EvaluationModelV4, PortMap, Ports } from "./ports.ts";
 import { rankForTask } from "./selection.ts";
@@ -71,6 +72,13 @@ export interface EnsembleOptions {
   readonly preferences?: Partial<Record<TaskCategory, readonly string[]>>;
   /** Per-task model pins, e.g. to force a model while evaluating it. */
   readonly pins?: Partial<Record<TaskCategory, string>>;
+  /**
+   * Input token budget for a language-model call. When a compressor is installed and the
+   * prompt is over this budget, the turns between the system prefix and the current turn
+   * are compacted with it. That prefix and the current turn stay byte-identical, even
+   * when they alone exceed the budget.
+   */
+  readonly contextTokens?: number;
 }
 
 /**
@@ -216,11 +224,13 @@ export class Ensemble {
       modelId: kind === "generator" ? task : `${task}/${kind}`,
       supportedUrls: {},
       doGenerate: async (options) => {
-        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(withResponseFormat(options)), prefer(options));
+        const prepared = await this.#fit(options);
+        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(withResponseFormat(prepared)), prefer(prepared));
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
       doStream: async (options) => {
-        const { id, value } = await this.#call(task, kind, (m) => m.doStream(withResponseFormat(options)), prefer(options));
+        const prepared = await this.#fit(options);
+        const { id, value } = await this.#call(task, kind, (m) => m.doStream(withResponseFormat(prepared)), prefer(prepared));
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
     };
@@ -291,6 +301,14 @@ export class Ensemble {
   }
 
   /** Compress a prompt with the best compressor (prompt compression has no AI SDK model kind). */
+  /** Compact the middle of a prompt that exceeds the context budget. A missing budget or compressor leaves the call alone. */
+  async #fit(options: LanguageModelV4CallOptions): Promise<LanguageModelV4CallOptions> {
+    const budget = this.#options.contextTokens;
+    if (budget === undefined || !this.serves("prompt-compression", "compressor")) return options;
+    const prompt = await compactContext(options.prompt, budget, (request) => this.compress(request));
+    return prompt === options.prompt ? options : { ...options, prompt };
+  }
+
   async compress(request: CompressRequest): Promise<Compression & { readonly model: string }> {
     const { id, value } = await this.#call("prompt-compression", "compressor", (port) => port.compress(request));
     return { ...value, model: id };

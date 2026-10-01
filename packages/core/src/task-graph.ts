@@ -4,7 +4,7 @@ import type { Result } from "./result.ts";
 export type DependencyKind = "data" | "control" | "assurance";
 export type EdgeKind = "contains" | DependencyKind | "exclusion";
 export type Join = { readonly kind: "all" } | { readonly kind: "any" } | { readonly kind: "quorum"; readonly count: number };
-export type NodeStatus = "pending" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
+export type NodeStatus = "pending" | "running" | "awaiting" | "succeeded" | "failed" | "cancelled" | "skipped";
 
 export interface NodeSpec<P = unknown> {
   readonly join?: Join;
@@ -68,9 +68,9 @@ interface GraphNode<P> {
 }
 
 const TERMINAL: ReadonlySet<NodeStatus> = new Set(["succeeded", "failed", "cancelled", "skipped"]);
-const STATUSES: ReadonlySet<unknown> = new Set(["pending", "running", ...TERMINAL]);
-/** Statuses only a node that was ready can reach. */
-const STARTED: ReadonlySet<NodeStatus> = new Set(["running", "succeeded", "failed"]);
+const STATUSES: ReadonlySet<unknown> = new Set(["pending", "running", "awaiting", ...TERMINAL]);
+/** Statuses only a node that was ready can reach. Awaiting is a running node parked for a person. */
+const STARTED: ReadonlySet<NodeStatus> = new Set(["running", "awaiting", "succeeded", "failed"]);
 const EDGE_KINDS: ReadonlySet<unknown> = new Set(["contains", "data", "control", "assurance", "exclusion"]);
 
 /**
@@ -196,11 +196,23 @@ export class TaskGraph<P = unknown> {
     return ok(undefined);
   }
 
-  /** Finish a running node. Returns nodes that became unsatisfiable and were skipped. */
-  complete(id: string, outcome: "succeeded" | "failed"): Result<string[], GraphError> {
+  /**
+   * Park a running node that is awaiting a person. It leaves the running slot and its
+   * exclusive resources, stays unfinished, and is not ready to start again.
+   */
+  background(id: string): Result<void, GraphError> {
     const n = this.#nodes.get(id);
     if (!n) return err("unknown_node", `no node ${id}`);
     if (n.status !== "running") return err("not_running", `${id} is ${n.status}`);
+    n.status = "awaiting";
+    return ok(undefined);
+  }
+
+  /** Finish a running or awaiting node. Returns nodes that became unsatisfiable and were skipped. */
+  complete(id: string, outcome: "succeeded" | "failed"): Result<string[], GraphError> {
+    const n = this.#nodes.get(id);
+    if (!n) return err("unknown_node", `no node ${id}`);
+    if (n.status !== "running" && n.status !== "awaiting") return err("not_running", `${id} is ${n.status}`);
     n.status = outcome;
     return ok(this.#settle());
   }

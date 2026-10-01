@@ -4,7 +4,6 @@ import type { AutopilotFinding, AutopilotGoal, DecisionAnswer, InputContext } fr
 
 const prior: InputContext = { turns: [{ role: "user", text: "hi" }] };
 
-const HELP = "usage: /autopilot [instructions]\nProposes its own goals until interrupted. Instructions are the goal. Goals are upgrades, known vulnerabilities, research, and performance experiments recorded as Open Experiment Standard 0.1.0 documents. Each goal is a harness update on branch autopilot/<id> with release notes, and it is not applied to the trunk until /autopilot apply <id>.";
 
 function finding(kind: AutopilotFinding["kind"], subject: string, detail: string, sourceSystem?: string): AutopilotFinding {
   return { kind, subject, detail, ...(sourceSystem === undefined ? {} : { sourceSystem }) };
@@ -291,23 +290,38 @@ describe("autopilot", () => {
 
   it("AP2.2 --help describes autopilot and does not start it", async () => {
     const { engine, seen } = interpreter();
-    expect(await run(engine, "/autopilot --help")).toEqual({ type: "help", name: "autopilot", message: HELP });
-    expect(await run(engine, "/autopilot updates --help")).toEqual({
-      type: "help",
-      name: "autopilot updates",
-      message: "usage: /autopilot updates\nLists harness updates. Each one is the reviewable branch and its release notes.",
-    });
-    expect(await run(engine, "/autopilot apply --help")).toEqual({
-      type: "help",
-      name: "autopilot apply",
-      message: "usage: /autopilot apply <id>\nMarks one update applied. It does not change the trunk.",
-    });
-    expect(await run(engine, "/autopilot stop --help")).toEqual({
-      type: "help",
-      name: "autopilot stop",
-      message: "usage: /autopilot stop\nInterrupts the run.",
-    });
-    expect(await run(engine, "/autopilot upgrade deps --help")).toEqual({ type: "help", name: "autopilot", message: HELP });
+    const help = await run(engine, "/autopilot --help");
+    expect(help).toMatchObject({ type: "help", name: "autopilot" });
+    if (help.type === "help") {
+      const page = manualSections(help.message);
+      expect(page["SYNOPSIS"]).toBe("/autopilot [instructions]");
+      expect(page["DESCRIPTION"]).toContain("Proposes its own goals until interrupted.");
+      expect(page["DESCRIPTION"]).toContain("Open Experiment Standard 0.1.0");
+      expect(page["DESCRIPTION"]).toContain("not applied to the trunk until /autopilot apply <id>");
+      expect(page["OPTIONS"]).toMatch(/does not run/);
+    }
+    const updates = await run(engine, "/autopilot updates --help");
+    expect(updates).toMatchObject({ type: "help", name: "autopilot updates" });
+    if (updates.type === "help") {
+      const page = manualSections(updates.message);
+      expect(page["SYNOPSIS"]).toBe("/autopilot updates");
+      expect(page["DESCRIPTION"]).toContain("Lists harness updates. Each one is the reviewable branch and its release notes.");
+    }
+    const apply = await run(engine, "/autopilot apply --help");
+    expect(apply).toMatchObject({ type: "help", name: "autopilot apply" });
+    if (apply.type === "help") {
+      const page = manualSections(apply.message);
+      expect(page["SYNOPSIS"]).toBe("/autopilot apply <id>");
+      expect(page["DESCRIPTION"]).toContain("Marks one update applied. It does not change the trunk.");
+    }
+    const stop = await run(engine, "/autopilot stop --help");
+    expect(stop).toMatchObject({ type: "help", name: "autopilot stop" });
+    if (stop.type === "help") {
+      const page = manualSections(stop.message);
+      expect(page["SYNOPSIS"]).toBe("/autopilot stop");
+      expect(page["DESCRIPTION"]).toContain("Interrupts the run.");
+    }
+    expect(await run(engine, "/autopilot upgrade deps --help")).toEqual(help);
     expect(engine.autopilot.running).toBe(false);
     expect(engine.autopilot.updates()).toEqual([]);
     expect(seen.decide).toEqual([]);
@@ -428,4 +442,25 @@ function interpreter(options: {
 
 async function run(engine: InputInterpreter, text: string) {
   return (await engine.submit(text, prior, 5)).action;
+}
+
+function manualSections(message: string): Record<string, string> {
+  const headings = ["NAME", "SYNOPSIS", "DESCRIPTION", "OPTIONS", "EXAMPLES", "SEE ALSO"];
+  let cursor = 0;
+  const at: number[] = [];
+  for (const heading of headings) {
+    const found = message.indexOf(heading, cursor);
+    expect(found).toBeGreaterThanOrEqual(cursor);
+    at.push(found);
+    cursor = found + heading.length;
+  }
+  const sections: Record<string, string> = {};
+  for (let index = 0; index < headings.length; index += 1) {
+    const heading = headings[index]!;
+    const start = at[index]! + heading.length;
+    const end = at[index + 1] ?? message.length;
+    sections[heading] = message.slice(start, end).trim();
+  }
+  for (const heading of headings) expect(sections[heading]?.length ?? 0).toBeGreaterThan(0);
+  return sections;
 }

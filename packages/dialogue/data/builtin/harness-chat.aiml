@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<aiml version="2.0">
+  <category>
+    <pattern>HELLO</pattern>
+    <template>This is the harness. A turn stays on this session. What should I explain?</template>
+  </category>
+  <category>
+    <pattern>HI</pattern>
+    <template><srai>HELLO</srai></template>
+  </category>
+  <category>
+    <pattern>HEY</pattern>
+    <template><srai>HELLO</srai></template>
+  </category>
+  <category>
+    <pattern>WHAT IS THE HARNESS</pattern>
+    <template>The harness is this session. A script answers when one fits, and the local catalog model answers the rest.</template>
+  </category>
+  <category>
+    <pattern>WHAT IS THIS</pattern>
+    <template><srai>WHAT IS THE HARNESS</srai></template>
+  </category>
+  <category>
+    <pattern>WHO ARE YOU</pattern>
+    <template><srai>WHAT IS THE HARNESS</srai></template>
+  </category>
+  <category>
+    <pattern>HOW DO SESSIONS WORK</pattern>
+    <template>/sessions new starts a session. /sessions lists them, and /sessions resume daemon plus an id continues one. /sessions btw asks about the main thread, /sessions bg moves the active turn to the background, /sessions switch inspects a session, and /sessions fork starts one from an optional thread id and an optional message id.</template>
+  </category>
+  <category>
+    <pattern>WHAT IS A SESSION</pattern>
+    <template><srai>HOW DO SESSIONS WORK</srai></template>
+  </category>
+  <category>
+    <pattern>SESSIONS</pattern>
+    <that>WHAT SHOULD I EXPLAIN</that>
+    <template><srai>HOW DO SESSIONS WORK</srai></template>
+  </category>
+  <category>
+    <pattern>HOW DO SETTINGS WORK</pattern>
+    <template>Settings are read from the workspace .harness/settings.json, then your user file, then /etc/harness/settings.json. /settings reads and writes them.</template>
+  </category>
+  <category>
+    <pattern>WHERE ARE SETTINGS</pattern>
+    <template><srai>HOW DO SETTINGS WORK</srai></template>
+  </category>
+  <category>
+    <pattern>SETTINGS</pattern>
+    <that>WHAT SHOULD I EXPLAIN</that>
+    <template><srai>HOW DO SETTINGS WORK</srai></template>
+  </category>
+  <category>
+    <pattern>WHAT TOOLS ARE REGISTERED</pattern>
+    <template>/tools lists the tools registered on this session.</template>
+  </category>
+  <category>
+    <pattern>TOOLS</pattern>
+    <that>WHAT SHOULD I EXPLAIN</that>
+    <template><srai>WHAT TOOLS ARE REGISTERED</srai></template>
+  </category>
+  <category>
+    <pattern>HOW DO I RESUME</pattern>
+    <template>Press Ctrl+C twice. The screen clears, and the next line is npm run dev:cli -- session resume and the session id.</template>
+  </category>
+  <category>
+    <pattern>HOW DO I EXIT</pattern>
+    <template><srai>HOW DO I RESUME</srai></template>
+  </category>
+  <category>
+    <pattern>RESUME</pattern>
+    <that>WHAT SHOULD I EXPLAIN</that>
+    <template><srai>HOW DO I RESUME</srai></template>
+  </category>
+</aiml>

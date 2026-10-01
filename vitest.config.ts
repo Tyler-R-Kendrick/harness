@@ -31,7 +31,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts"],
-      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/platform-native/src/evolution-cli.ts", "packages/platform-native/src/deliver-cli.ts", "packages/playground/src/app.ts", "packages/cli/src/main.ts", "packages/cli-template/src/main.ts"],
+      exclude: ["packages/*/src/index.ts", "packages/*/src/bin.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/platform-native/src/evolution-cli.ts", "packages/platform-native/src/deliver-cli.ts", "packages/playground/src/app.ts", "packages/cli/src/main.ts", "packages/cli-template/src/main.ts"],
       reporter: ["text-summary", "json-summary", "html"],
       thresholds: { lines: 95, branches: 90, functions: 95, statements: 95 },
     },

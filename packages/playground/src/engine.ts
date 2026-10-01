@@ -178,7 +178,11 @@ export class TemplateEngine {
       if (generation === "off") return { text: "No template answers this, and generation is off: /generate auto lets the local model write one or answer, or add one under ~/agent/templates.", meta };
       return { call: { toolName: "write_template", input: { request } }, meta };
     }
-    if (template.refine !== undefined && generation !== "off") return { call: { toolName: "refine_template", input: { id: template.id, request, note: template.refine } }, meta };
+    // A note already written into the body is the answer. Refine stays for a note that has not been applied.
+    if (template.refine !== undefined && generation !== "off") {
+      const applied = (await store.preferences()).some((record) => record.artifact.id === template.id && record.action !== "rating");
+      if (!applied) return { call: { toolName: "refine_template", input: { id: template.id, request, note: template.refine } }, meta };
+    }
     return this.#render(template, request, {}, meta);
   }
 
