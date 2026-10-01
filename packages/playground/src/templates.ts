@@ -10,8 +10,8 @@
 import type { IFileSystem } from "just-bash";
 import { parse, stringify } from "yaml";
 import { z } from "zod";
-import { ConstraintSchema } from "@harness/cognitive";
-import type { TemplateConstraint } from "@harness/cognitive";
+import { ConstraintSchema, CorrectionInputSchema, correctedText, PreferenceRecordSchema } from "@harness/cognitive";
+import type { ArtifactText, CorrectionInput, PreferenceRecord, TemplateConstraint } from "@harness/cognitive";
 import { HOME } from "./vfs.ts";
 
 /** Where the templates live in the virtual filesystem. */
@@ -176,8 +176,57 @@ export class TemplateStore {
     return { helpful: next.helpful, harmful: next.harmful, refine: next.refine, retired };
   }
 
+  /** Preference records for this directory, oldest first. A later session reads the same file. */
+  async preferences(): Promise<readonly PreferenceRecord[]> {
+    return this.#readPreferences();
+  }
+
+  /**
+   * Store a negative rating, replacement, or steering instruction for a template, and
+   * rewrite its body. A rating leaves the body. The helpful/harmful counts are separate.
+   */
+  async prefer(input: CorrectionInput): Promise<PreferenceRecord> {
+    const correction = CorrectionInputSchema.parse(input);
+    if (correction.artifact.kind !== "template") throw new Error("a template correction names a template");
+    const template = await this.get(correction.artifact.id);
+    if (!template) throw new Error(`no template ${correction.artifact.id}`);
+    const record = PreferenceRecordSchema.parse({ ...correction, signal: "negative" });
+    await this.#writePreferences([...(await this.#readPreferences()), record]);
+    const next = correctedText(template.body, record.action, record.text);
+    if (next !== template.body) await this.put({ ...template, body: next });
+    return record;
+  }
+
+  async #readPreferences(): Promise<PreferenceRecord[]> {
+    const path = `${this.dir}/preferences.json`;
+    if (!(await this.#fs.exists(path))) return [];
+    const parsed = z.strictObject({ records: z.array(PreferenceRecordSchema) }).safeParse(JSON.parse(await this.#fs.readFile(path)));
+    if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));
+    return parsed.data.records;
+  }
+
+  async #writePreferences(records: readonly PreferenceRecord[]): Promise<void> {
+    await this.#fs.mkdir(this.dir, { recursive: true });
+    await this.#fs.writeFile(`${this.dir}/preferences.json`, `${JSON.stringify({ records })}
+`);
+  }
+
   async #write(template: TemplateDraft): Promise<void> {
     await this.#fs.mkdir(this.dir, { recursive: true });
     await this.#fs.writeFile(`${this.dir}/${template.id}.md`, templateFile(template));
   }
+}
+
+/** A template's body, read and written through the store that already keeps it. */
+export function templateText(store: TemplateStore): ArtifactText {
+  return {
+    async read(id) {
+      return (await store.get(id))?.body;
+    },
+    async write(id, body) {
+      const current = await store.get(id);
+      if (!current) throw new Error(`no template ${id}`);
+      await store.put({ ...current, body });
+    },
+  };
 }

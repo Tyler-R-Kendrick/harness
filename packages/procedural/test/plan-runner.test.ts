@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { jsonSchema, tool } from "ai";
 import { MemoryStorage } from "@harness/testkit";
-import { GraphIdSchema, importGraph, MemoryProceduralStore, modelTasks, parseSettings, planFromSubgraph, planRunner, PlanRunRecordSchema, readGraph, revisionId, SnapshotPlanRuns } from "@harness/procedural";
+import { GraphIdSchema, importGraph, MemoryProceduralStore, modelTasks, parseSettings, planFromSubgraph, planRunner, PlanRunIdSchema, PlanRunRecordSchema, readGraph, revisionId, SnapshotPlanRuns } from "@harness/procedural";
 import type { TaskGraph } from "@harness/core";
 import type { PlanNotice, PlanPayload, PlanRunRecord, PlanRunStore, PlanTask, PlanTaskContext } from "@harness/procedural";
 import { chain, chainDoc } from "./compose-fixtures.ts";
@@ -103,6 +103,29 @@ describe("plan runs on a host (planRunner)", () => {
     const other = GraphIdSchema.parse("team/none");
     expect(await runner.run(other, await planOf(store, "search", "search"))).toMatchObject({ run: "0202020202020202", graph: other, status: "succeeded" });
     expect(contexts[1]).toEqual({ graph: other });
+  });
+
+  it("PC1.72 an answer reaches a parked task of a live run through the runner; an unknown run answers false", async () => {
+    const store = await seeded();
+    const runs = recording();
+    const asker: PlanTask = async (input) => (input.answer !== undefined ? { ok: true, output: input.answer } : { awaiting: true });
+    const runner = planRunner({ store, runs, settings, entropy: counting(), task: () => asker });
+    const id = PlanRunIdSchema.parse("0101010101010101");
+    expect(runner.answer(id, "search", "early")).toBe(false);
+    const running = runner.run(graph, await planOf(store, "search", "summarize"));
+    for (let attempt = 0; attempt < 200 && !runs.writes.some((w) => w.includes("awaiting")); attempt += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(runs.writes.some((w) => w.includes("awaiting"))).toBe(true);
+    expect(runner.answer(id, "search", "one")).toBe(true);
+    expect(runner.answer(id, "Fetch_Page", "two")).toBe(true);
+    expect(runner.answer(id, "summarize", "three")).toBe(true);
+    const outcome = await running;
+    expect(outcome.status).toBe("succeeded");
+    expect(outcome.tasks).toEqual([
+      { id: "search", status: "succeeded", output: "one" },
+      { id: "Fetch_Page", status: "succeeded", output: "two" },
+      { id: "summarize", status: "succeeded", output: "three" },
+    ]);
+    expect(runner.answer(id, "search", "late")).toBe(false);
   });
 
   it("PC1.68 resume continues every kept run from its state, as a restarted host does: finished tasks stay finished, and each run is announced and dropped", async () => {

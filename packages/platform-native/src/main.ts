@@ -5,17 +5,17 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { gateway } from "@ai-sdk/gateway";
-import { wrapLanguageModel } from "ai";
 import type { LanguageModel } from "ai";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
-import { AgentWorker, dialogueMiddleware, DialogueWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
-import { askModel, workflowTools } from "@harness/workflows";
+import { AgentWorker, citationBook, DialogueWorker, EchoWorker, rememberTurns, sessionAgent, sessionModel, voiceWorker } from "@harness/workers";
+import { askModel, workflowText, workflowTools } from "@harness/workflows";
 import { sessionCodeMode } from "@harness/workflows/node";
-import type { Worker } from "@harness/workers";
+import { directoryTemplates } from "./template-text.ts";
+import type { ForeignVoice, Worker } from "@harness/workers";
 import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
 import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/procedural";
-import { buildDialogue, buildNativeEnsemble, dialogueFlows } from "./cognitive-host.ts";
-import { loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite } from "./catalog-files.ts";
+import { buildDialogue, buildNativeEnsemble, builtinDialogue, dialogueFlows, installDocumentFlows } from "./cognitive-host.ts";
+import { loadBuiltinBook, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook, withoutBuiltinBook } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import { instructionsWithSkills } from "@harness/core";
@@ -23,9 +23,11 @@ import type { HarnessHome } from "@harness/core";
 import { documentImporter } from "@harness/dialogue-standards";
 import { conversationsDir, fileConversations, FileStorage } from "./file-storage.ts";
 import { harnessAdapter, harnessWorker, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, probeModelIds, sandboxProvider } from "./harness-host.ts";
-import { loadDiscoveredHarnessHome } from "./home.ts";
+import { discoverProjectHome, loadDiscoveredHarnessHome } from "./home.ts";
+import { configuredDecisionsEndpoint, readSettingsLayers } from "./openai-endpoint.ts";
 import { webSocketToken } from "./ws-token.ts";
 import { NodeHost } from "./node-host.ts";
+import { sessionTools } from "./clock.ts";
 import {
   daemonSessions,
   describePlanRun,
@@ -209,11 +211,23 @@ if (proceduralLock?.status === "held") {
 }
 const storeLock = proceduralLock?.lock;
 const proceduralFiles = values.procedural === undefined ? undefined : proceduralStore(values.procedural);
+const projectHome = discoverProjectHome(process.cwd(), homedir());
+const decisions =
+  values.cognitive || values.worker === "ensemble"
+    ? await configuredDecisionsEndpoint({
+        layers: readSettingsLayers({
+          ...(projectHome === undefined ? {} : { project: projectHome }),
+          user: join(homedir(), ".harness"),
+          global: "/etc/harness",
+        }),
+      })
+    : undefined;
 const cognitive =
   values.cognitive || values.worker === "ensemble"
     ? buildNativeEnsemble({
         cacheDir: values["model-cache"] ?? join(homedir(), ".cache", "harness", "models"),
         allowHosted: !values["no-hosted"],
+        ...(decisions === undefined ? {} : { decisions }),
         ...(values["llama-server"] === undefined ? {} : { llamaServer: values["llama-server"] }),
         ...(behavior ? { behavior } : {}),
         ...(memoryFile ? { memory: { ...(saved === undefined ? {} : { saved }), persist: (s: unknown) => void memoryFile.save(s) } } : {}),
@@ -320,29 +334,57 @@ if (!/^\d+$/.test(values["dialogue-grace"]) || dialogueGrace > 2_147_483_647) {
   process.exit(2);
 }
 const dialogueFile = values.dialogue === undefined ? undefined : new FileStorage(values.dialogue);
+const builtinFlowDir = join(process.env["XDG_CACHE_HOME"] ?? join(homedir(), ".cache"), "harness", "builtin-flows");
 const flows =
   values.dialogue === undefined
-    ? undefined
+    ? cognitive
+      ? (cognitive.workflowHost ?? dialogueFlows({ dir: builtinFlowDir, ask: askModel(cognitive.ensemble.languageModel()) }))
+      : undefined
     : (cognitive?.workflowHost ??
       dialogueFlows({ dir: values["dialogue-flows"] ?? `${values.dialogue}.flows`, ask: askModel(cognitive ? cognitive.ensemble.languageModel() : gateway(values.model)) }));
 const book = await dialogueFile?.load();
+const dialogueBook = dialogueFile ? withBuiltinBook(book) : cognitive ? loadBuiltinBook() : undefined;
+if (flows && dialogueBook !== undefined) await installDocumentFlows(flows.library, dialogueBook);
 // A model the dialogue could not use, or a save that failed, is logged; the model answers the step instead.
 const dialogueError = (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`);
-const dialogueSaved = dialogueFile && dialogueSaves(dialogueFile, dialogueError);
+const dialogueSaved =
+  dialogueFile && dialogueSaves({ save: (saved) => dialogueFile.save(withoutBuiltinBook(saved, book)) }, dialogueError);
 // The host the dialogue's events go to, once it is running.
 const running: { host?: NodeHost } = {};
-const dialogue =
-  dialogueSaved &&
-  buildDialogue({
-    ...(cognitive ? { ensemble: cognitive.ensemble, embeddings: cognitive.memory !== undefined } : { drafter: gateway(values.model) }),
-    ...(book === undefined ? {} : { book }),
-    ...(flows ? { flows } : {}),
-    persist: dialogueSaved.persist,
-    onError: dialogueError,
-    // What happens to the book (scripts built, promoted, retired; documents put) goes to plugins on the hook bus.
-    onEvent: (event) => void running.host?.runtime.publish(event),
-  });
-const scripted = (model: Exclude<LanguageModel, string>) => (dialogue ? wrapLanguageModel({ model, middleware: dialogueMiddleware(dialogue) }) : model);
+// A `--dialogue` book keeps its router and is saved. The builtin book is merged under it
+// at runtime (a shared id is the book's own), but never saved: the file keeps only its own
+// scripts and documents, and what the dialogue learns or imports. With no file, the
+// ensemble still answers from the builtin book: the decision model picks a script, and
+// the chat model only sees a turn no script takes.
+const dialogue = dialogueSaved
+  ? buildDialogue({
+      ...(cognitive ? { ensemble: cognitive.ensemble, embeddings: cognitive.memory !== undefined } : { drafter: gateway(values.model) }),
+      book: dialogueBook,
+      ...(flows ? { flows } : {}),
+      persist: dialogueSaved.persist,
+      onError: dialogueError,
+      // What happens to the book (scripts built, promoted, retired; documents put) goes to plugins on the hook bus.
+      onEvent: (event) => void running.host?.runtime.publish(event),
+    })
+  : cognitive
+    ? builtinDialogue({ ensemble: cognitive.ensemble, onError: dialogueError, ...(flows ? { flows } : {}) })
+    : undefined;
+// The reply schema sits inside the dialogue, so a script still sees the turn before any schema is added.
+// Personality and skills stay on the harness. A model other than the one it speaks as is rewritten
+// into that voice, and the citation reads back the raw body. With no ensemble, no model is that speaker.
+const citations = citationBook();
+// Recalled for the foreign turn in progress. The store writes the lines here; they are not sent outward.
+const memory: string[] = [];
+const harnessVoice = {
+  personality: values.system ?? "",
+  skills: defined.skills.map((skill) => `${skill.name}: ${skill.description}`),
+  memory,
+};
+const speaking = cognitive?.ensemble.languageModel(behavior ? "steered-chat" : "chat");
+const ownModelId = speaking?.modelId ?? "\u0000";
+const remembered = cognitive?.memory;
+const sessionVoice = { voice: harnessVoice, book: citations, ownModelId, ...(remembered === undefined ? {} : { memoryStore: remembered }) };
+const scripted = (model: Exclude<LanguageModel, string>) => sessionModel(model, dialogue || undefined, sessionVoice);
 // MCP tools are callable only through code mode. When the ensemble can classify, a turn's tools are ranked and those below the decision bar are left out.
 const codeMode = sessionCodeMode();
 const rankedTools = cognitive?.ensemble.serves("classification", "judge") ? { decide: cognitive.ensemble.evaluationModel("classification") } : {};
@@ -362,22 +404,21 @@ const harness =
           env: Object.fromEntries((values["sandbox-env"] ?? []).flatMap((name) => (process.env[name] === undefined ? [] : [[name, process.env[name]!]]))),
         }),
         stateFile: values["harness-state"] ?? join(homedir(), ".cache", "harness", "harness-sessions.json"),
-        ...instructions,
-        ...(defined.skills.length === 0 ? {} : { skills: defined.skills }),
+        ...(claudeEnv === undefined ? {} : { activeTools: [] }),
         ...(step ? { step } : {}),
-        ...(composition ? { tools: composition.tools } : cognitive?.workflowHost ? { tools: () => workflowTools(cognitive.workflowHost!) } : {}),
+        tools: sessionTools(composition ? composition.tools : cognitive?.workflowHost ? () => workflowTools(cognitive.workflowHost!) : undefined),
       });
 // The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
 // on the ensemble (the steered kernel with a behavior pack), with memory and learning.
 const sessions: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}), codeMode, ...rankedTools }), ...conversations })
+    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...(step ? { step } : {}), tools: sessionTools(composition?.tools), codeMode, ...rankedTools }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
             model: scripted(cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat")),
-            vision: cognitive!.ensemble.languageModel("vision-qa"),
+            vision: sessionModel(cognitive!.ensemble.languageModel("vision-qa"), undefined, sessionVoice),
             ...instructions,
             ...(step ? { step } : {}),
             ...(cognitive!.memory ? { memory: cognitive!.memory } : {}),
@@ -386,7 +427,7 @@ const sessions: Worker = harness
             ...(values.consult === undefined ? {} : { consult: gateway(values.consult) }),
             // The workflow library's workflows are durable tools, looked up each turn as learning adds to them
             // (with procedural graphs, plus the workflows the session's pinned core binds).
-            ...(composition ? { tools: composition.tools } : cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
+            tools: sessionTools(composition ? composition.tools : cognitive!.workflowHost ? () => workflowTools(cognitive!.workflowHost!) : undefined),
             codeMode,
             ...rankedTools,
           }),
@@ -399,18 +440,30 @@ const sessions: Worker = harness
 // With the model and ensemble workers the dialogue sits in front of the model (it can
 // constrain a template's holes); with the others, whose models it cannot reach (an external
 // harness, the echo worker), in front of the worker.
-const worker: Worker = dialogue && (harness || (values.worker !== "model" && values.worker !== "ensemble")) ? new DialogueWorker(sessions, dialogue, { handoff: values.worker !== "echo" }) : sessions;
+const foreignHarness: ForeignVoice | undefined =
+  values.harness === undefined
+    ? undefined
+    : { voice: harnessVoice, book: citations, producer: { kind: "harness", id: values.harness }, ...(remembered === undefined ? {} : { memoryStore: remembered }) };
+const worker: Worker = dialogue && (harness || (values.worker !== "model" && values.worker !== "ensemble"))
+  ? new DialogueWorker(sessions, dialogue, {
+      handoff: values.worker !== "echo",
+      ...(foreignHarness === undefined ? {} : { voice: foreignHarness }),
+    })
+  : foreignHarness === undefined
+    ? sessions
+    : voiceWorker(sessions, foreignHarness);
 if (values.worker === "ensemble") {
-  process.stderr.write("session agent: the catalog chat model answers turns; the first reply downloads it when it is not cached\n");
+  process.stderr.write("session agent: the catalog's local chat model answers turns from the shared model cache\n");
 }
 if (values.worker === "harness") {
-  process.stderr.write(`session agent: ${values.harness} runs each session, with that harness's tools\n`);
+  process.stderr.write(claudeEnv === undefined ? `session agent: ${values.harness} runs each session, with that harness's tools\n` : `session agent: ${values.harness} runs each session on the local model, without builtin tools\n`);
 }
 
 // The dialogue is managed over ACP as the `dialogue` cognitive extension (status, list, get, put,
 // feedback, import), on the ensemble when there is one, else on an ensemble of its own.
 const ensemble = cognitive?.ensemble ?? (dialogue ? new Ensemble({ platform: "native" }) : undefined);
-if (dialogue) ensemble!.install(dialogueExtension({ dialogue, importer: documentImporter(flows!.library) }));
+const templateDir = values.dialogue === undefined ? join(builtinFlowDir, "..", "templates") : `${values.dialogue}.templates`;
+if (dialogue && flows) ensemble!.install(dialogueExtension({ dialogue, importer: documentImporter(flows.library), artifacts: { workflow: workflowText(flows.library), template: directoryTemplates(templateDir) } }));
 const host = await NodeHost.start({
   worker,
   identity: { principal, kind: "human" },

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<vxml version="2.1">
+  <menu id="topics">
+    <prompt>Harness menu. Say sessions, settings, tools, resume, or done.</prompt>
+    <choice next="#sessions">sessions</choice>
+    <choice next="#settings">settings</choice>
+    <choice next="#tools">tools</choice>
+    <choice next="#resume">resume</choice>
+    <choice next="#done">done</choice>
+    <nomatch>Say sessions, settings, tools, resume, or done.<reprompt/></nomatch>
+  </menu>
+  <form id="sessions">
+    <block>/sessions new starts a session. /sessions lists them, and /sessions resume daemon plus an id continues one. /sessions btw asks about the main thread, /sessions bg moves the active turn to the background, and /sessions switch inspects a session.<goto next="#topics"/></block>
+  </form>
+  <form id="settings">
+    <block>Settings are read from the workspace .harness/settings.json, then your user file, then /etc/harness/settings.json.<goto next="#topics"/></block>
+  </form>
+  <form id="tools">
+    <block>/tools lists the tools registered on this session.<goto next="#topics"/></block>
+  </form>
+  <form id="resume">
+    <block>Press Ctrl+C twice. The screen clears, and the next line is npm run dev:cli -- session resume and the session id.<goto next="#topics"/></block>
+  </form>
+  <form id="done">
+    <block>Back to the session.<exit/></block>
+  </form>
+</vxml>

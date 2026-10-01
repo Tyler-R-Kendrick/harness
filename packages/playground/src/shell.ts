@@ -347,10 +347,36 @@ export class SlashCommands {
     cli.command("rate <verdict> [...why]", "Rate the last answer: good, or bad and why (a bad one is rewritten when next chosen)").action(async (verdict: string, why: string[]) => {
       const { engine, store } = this.#ctx;
       if (!engine || !store) return fail("no template engine here\n", 1);
-      if (verdict !== "good" && verdict !== "bad") return fail("usage: /rate good|bad [why]\n");
+      if (verdict !== "good" && verdict !== "bad" && verdict !== "replace") return fail("usage: /rate good|bad [why]\n");
       const last = engine.last;
       if (!last) return fail("nothing to rate yet: /ask something first\n", 1);
       const note = why.join(" ").trim();
+      if (verdict === "replace") {
+        if (note === "") return fail("usage: /rate replace <text>\n");
+        if (last.request.trim() === "") return fail("nothing to rate yet: /ask something first\n", 1);
+        const template = await store.get(last.templateId);
+        if (!template) return fail(`no template ${last.templateId}\n`, 1);
+        await store.prefer({
+          utterance: last.request,
+          answer: template.body,
+          text: note,
+          action: "replacement",
+          artifact: { kind: "template", id: last.templateId },
+        });
+        return ok(`${last.templateId}: replaced\n`);
+      }
+      if (verdict === "bad") {
+        const template = await store.get(last.templateId);
+        if (template && last.request.trim() !== "") {
+          await store.prefer({
+            utterance: last.request,
+            answer: template.body,
+            text: note,
+            action: note === "" ? "rating" : "steering",
+            artifact: { kind: "template", id: last.templateId },
+          });
+        }
+      }
       const counted = await store.feedback(last.templateId, verdict === "good" ? "helpful" : "harmful", note || undefined);
       const after = counted.retired ? `; retired to ${tilde(store.dir)}/retired` : counted.refine !== undefined && verdict === "bad" ? `; rewritten when next chosen (${counted.refine})` : "";
       return ok(`${last.templateId}: ${counted.helpful} helpful, ${counted.harmful} harmful${after}\n`);

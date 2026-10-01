@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { TaskGraph } from "@harness/core";
 import { coreView, parsePlan, parsePlanRun, parseSettings, planFromSubgraph, PlanPayloadSchema, runPlan } from "@harness/procedural";
-import type { PlanPayload, PlanRunState, PlanTask, PlanTaskInput, Settings, TaskOutcome } from "@harness/procedural";
+import type { PlanPayload, PlanRun, PlanRunState, PlanTask, PlanTaskInput, Settings, TaskOutcome } from "@harness/procedural";
 import { chainDoc, graphOf } from "./compose-fixtures.ts";
 
 const file = JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")) as Record<string, unknown>;
@@ -188,5 +188,234 @@ describe("running plans (runPlan)", () => {
     expect(log.map((t) => t.id)).toEqual(["search", "Fetch_Page", "summarize", "review"]);
     expect(log[1]).toMatchObject({ inputs: { search: "search()" }, payload: { binding: { kind: "tool", name: "fetch" } } });
     expect(result.status).toBe("succeeded");
+  });
+
+  it("PC1.74 a task awaiting a person yields the queue so the next item extends the same graph before any answer, and the asker is not terminal", async () => {
+    const plan = new TaskGraph<PlanPayload>();
+    plan.addNode("ask", { payload: payload("ask"), resources: ["ear"] });
+    plan.addNode("extend", { payload: payload("extend") });
+    plan.addNode("next", { payload: payload("next"), resources: ["ear"] });
+    plan.addNode("after", { payload: payload("after") });
+    plan.addEdge("ask", "after", "control");
+    const handle: { run?: PlanRun } = {};
+    const heard: string[] = [];
+    const task: PlanTask = async (input) => {
+      if (input.answer !== undefined) heard.push(input.id);
+      if (input.id === "ask") {
+        if (input.answer !== undefined) return { ok: true, output: input.answer };
+        return { awaiting: true };
+      }
+      if (input.id === "extend") {
+        expect(plan.addNode("added", { payload: payload("added") }).ok).toBe(true);
+        expect(plan.status("ask")).toBe("awaiting");
+        expect(["succeeded", "failed", "cancelled", "skipped"]).not.toContain(plan.status("ask"));
+        expect(plan.status("ask")).not.toBe("running");
+        expect(plan.status("after")).toBe("pending");
+        const scheduled = plan.schedule(8);
+        expect(scheduled).toContain("added");
+        expect(scheduled).toContain("next");
+        expect(scheduled).not.toContain("after");
+        expect(heard).toEqual([]);
+        if (handle.run === undefined) throw new Error("run has not started");
+        handle.run.answer("ask", "yes");
+        return { ok: true, output: "extended" };
+      }
+      return { ok: true, output: input.id };
+    };
+    const run = runPlan({ plan, task, settings: settings(1) });
+    handle.run = run;
+    const result = await run;
+    expect(result.tasks.find((t) => t.id === "ask")).toEqual({ id: "ask", status: "succeeded", output: "yes" });
+    expect(plan.status("added")).toBe("succeeded");
+    expect(heard).toEqual(["ask"]);
+  });
+
+  it("PC1.75 a later answer reaches only the parked task, which finishes while a task that never awaited still blocks its dependent and its exclusive rival", async () => {
+    const plan = new TaskGraph<PlanPayload>();
+    plan.addNode("ask", { payload: payload("ask") });
+    plan.addNode("extend", { payload: payload("extend") });
+    plan.addNode("hold", { payload: payload("hold"), resources: ["lock"] });
+    plan.addNode("rival", { payload: payload("rival"), resources: ["lock"] });
+    plan.addNode("later", { payload: payload("later") });
+    plan.addEdge("hold", "later", "control");
+    const heard: string[] = [];
+    const handle: { run?: PlanRun } = {};
+    let askSaved!: () => void;
+    const askSucceeded = new Promise<void>((resolve) => void (askSaved = resolve));
+    const task: PlanTask = async (input) => {
+      if (input.answer !== undefined) heard.push(input.id);
+      if (input.id === "ask") {
+        if (input.answer !== undefined) return { ok: true, output: input.answer };
+        return { awaiting: true };
+      }
+      if (input.id === "extend") {
+        expect(plan.addNode("added", { payload: payload("added") }).ok).toBe(true);
+        expect(plan.schedule(8)).toContain("added");
+        expect(plan.status("ask")).toBe("awaiting");
+        return { ok: true, output: "extended" };
+      }
+      if (input.id === "hold") {
+        expect(plan.status("rival")).toBe("pending");
+        expect(plan.status("later")).toBe("pending");
+        expect(plan.status("ask")).toBe("awaiting");
+        if (handle.run === undefined) throw new Error("run has not started");
+        handle.run.answer("ask", "from-the-person");
+        await askSucceeded;
+        expect(heard).toEqual(["ask"]);
+        expect(plan.status("ask")).toBe("succeeded");
+        expect(plan.status("rival")).toBe("pending");
+        expect(plan.status("later")).toBe("pending");
+        expect(plan.toJSON().nodes.some((n) => n.id === "added")).toBe(true);
+        return { ok: true, output: "held" };
+      }
+      expect(input.answer).toBeUndefined();
+      return { ok: true, output: input.id };
+    };
+    const run = runPlan({
+      plan,
+      task,
+      settings: settings(1),
+      save: async (state) => {
+        if (state.plan.nodes.some((n) => n.id === "ask" && n.status === "succeeded")) askSaved();
+      },
+    });
+    handle.run = run;
+    const result = await run;
+    expect(result.status).toBe("succeeded");
+    expect(result.tasks.find((t) => t.id === "ask")).toEqual({ id: "ask", status: "succeeded", output: "from-the-person" });
+    expect(heard).toEqual(["ask"]);
+    expect(plan.status("added")).toBe("succeeded");
+    expect(plan.status("rival")).toBe("succeeded");
+    expect(plan.status("later")).toBe("succeeded");
+  });
+
+  it("PC1.76 a restored awaiting task is not started over; it stays awaiting until its own answer", async () => {
+    const plan = planOf(["ask", "extend"], []);
+    const saved: PlanRunState[] = [];
+    const handle: { run?: PlanRun } = {};
+    const task: PlanTask = async (input) => {
+      if (input.id === "ask") {
+        if (input.answer !== undefined) return { ok: true, output: input.answer };
+        return { awaiting: true };
+      }
+      if (handle.run === undefined) throw new Error("run has not started");
+      handle.run.answer("ask", "kept");
+      return { ok: true, output: "extended" };
+    };
+    const run = runPlan({ plan, task, settings: settings(1), save: async (state) => void saved.push(structuredClone(state)) });
+    handle.run = run;
+    await run;
+    const parked = saved.find((s) => s.plan.nodes.some((n) => n.id === "ask" && n.status === "awaiting"));
+    expect(parked?.outcomes["ask"]).toBeUndefined();
+    const restored = parsePlanRun(JSON.parse(JSON.stringify(parked)));
+    const calls: PlanTaskInput[] = [];
+    const handle2: { run?: PlanRun } = {};
+    const task2: PlanTask = async (input) => {
+      calls.push(input);
+      if (input.id === "extend") {
+        expect(calls.map((c) => c.id)).toEqual(["extend"]);
+        expect(restored.plan.status("ask")).toBe("awaiting");
+        if (handle2.run === undefined) throw new Error("run has not started");
+        handle2.run.answer("ask", "later");
+        return { ok: true, output: "extended" };
+      }
+      expect(input.answer).toBe("later");
+      return { ok: true, output: input.answer };
+    };
+    const run2 = runPlan({ plan: restored.plan, outcomes: restored.outcomes, task: task2, settings: settings(1) });
+    handle2.run = run2;
+    const result = await run2;
+    expect(calls.map((c) => c.id)).toEqual(["extend", "ask"]);
+    expect(result.tasks).toEqual([
+      { id: "ask", status: "succeeded", output: "later" },
+      { id: "extend", status: "succeeded", output: "extended" },
+    ]);
+  });
+
+  it("PC1.77 a parked task that yields again releases the queue so the node it added runs before the next answer", async () => {
+    const plan = planOf(["ask"], []);
+    const handle: { run?: PlanRun } = {};
+    const seen: string[] = [];
+    let asks = 0;
+    let noteParked!: () => void;
+    let noteExtra!: () => void;
+    const parkedOnce = new Promise<void>((resolve) => void (noteParked = resolve));
+    const extraOnce = new Promise<void>((resolve) => void (noteExtra = resolve));
+    const task: PlanTask = async (input) => {
+      seen.push(input.id);
+      if (input.id === "ask") {
+        asks += 1;
+        if (asks === 1) return { awaiting: true };
+        if (asks === 2) {
+          expect(input.answer).toBe("one");
+          expect(plan.addNode("extra", { payload: payload("extra") }).ok).toBe(true);
+          return { awaiting: true };
+        }
+        expect(input.answer).toBe("two");
+        return { ok: true, output: input.answer };
+      }
+      expect(input.id).toBe("extra");
+      expect(asks).toBe(2);
+      expect(plan.status("ask")).toBe("awaiting");
+      return { ok: true, output: "extra" };
+    };
+    const run = runPlan({
+      plan,
+      task,
+      settings: settings(1),
+      save: async (state) => {
+        const ask = state.plan.nodes.find((n) => n.id === "ask");
+        const extra = state.plan.nodes.find((n) => n.id === "extra");
+        if (ask?.status === "awaiting" && extra === undefined) noteParked();
+        if (ask?.status === "awaiting" && extra?.status === "succeeded") noteExtra();
+      },
+    });
+    handle.run = run;
+    await parkedOnce;
+    // Let the scheduler settle on the parked task before the next answer. An answer during the park's own save still runs in that same turn of the loop.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (handle.run === undefined) throw new Error("run has not started");
+    handle.run.answer("ask", "one");
+    const outcome = await Promise.race([extraOnce.then(() => "ran" as const), new Promise<"held">((resolve) => setTimeout(() => resolve("held"), 100))]);
+    if (outcome === "ran") {
+      expect(seen).toEqual(["ask", "ask", "extra"]);
+      expect(plan.status("ask")).toBe("awaiting");
+      expect(plan.status("extra")).toBe("succeeded");
+    }
+    handle.run.answer("ask", "two");
+    const result = await run;
+    expect(outcome).toBe("ran");
+    expect(seen).toEqual(["ask", "ask", "extra", "ask"]);
+    expect(result.tasks).toEqual([
+      { id: "ask", status: "succeeded", output: "two" },
+      { id: "extra", status: "succeeded", output: "extra" },
+    ]);
+  });
+
+  it("PC1.78 a data edge added while a task is awaiting passes that predecessor's output to the new task", async () => {
+    const plan = planOf(["ask", "extend"], []);
+    const handle: { run?: PlanRun } = {};
+    let addedInputs: Readonly<Record<string, unknown>> | undefined;
+    const task: PlanTask = async (input) => {
+      if (input.id === "ask") {
+        if (input.answer !== undefined) return { ok: true, output: input.answer };
+        return { awaiting: true };
+      }
+      if (input.id === "extend") {
+        expect(plan.addNode("added", { payload: payload("added") }).ok).toBe(true);
+        expect(plan.addEdge("extend", "added", "data").ok).toBe(true);
+        return { ok: true, output: "extended" };
+      }
+      addedInputs = input.inputs;
+      if (handle.run === undefined) throw new Error("run has not started");
+      handle.run.answer("ask", "yes");
+      return { ok: true, output: "added" };
+    };
+    const run = runPlan({ plan, task, settings: settings(1) });
+    handle.run = run;
+    const result = await run;
+    expect(addedInputs).toEqual({ extend: "extended" });
+    expect(result.tasks.find((t) => t.id === "added")).toEqual({ id: "added", status: "succeeded", output: "added" });
+    expect(result.tasks.find((t) => t.id === "extend")).toEqual({ id: "extend", status: "succeeded", output: "extended" });
   });
 });

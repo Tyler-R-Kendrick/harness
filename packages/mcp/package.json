@@ -1,0 +1,17 @@
+{
+  "name": "@harness/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MCP client and server for protocol 2026-07-28, including authorization, apps, events, tasks, and skills.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/client": "2.2.0",
+    "@modelcontextprotocol/core": "2.2.0",
+    "@modelcontextprotocol/server": "2.2.0",
+    "zod": "4.6.5"
+  }
+}

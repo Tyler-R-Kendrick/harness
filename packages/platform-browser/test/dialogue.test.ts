@@ -35,4 +35,21 @@ describe("the dialogue in the browser host", () => {
     await saved();
     expect(errors.map((e) => (e as Error).message)).toEqual(["quota"]);
   });
+
+  it("BD1.3 a correction can replace an answer template the host keeps", async () => {
+    const ensemble = new Ensemble({ platform: "browser" });
+    const storage = { load: async () => undefined, save: async () => {} };
+    const { templates } = await browserDialogue(ensemble, { settings, storage });
+    await templates.write("greet", "Hello");
+    await invokeCognitive(ensemble, "dialogue.feedback", {
+      id: "greet",
+      kind: "harmful",
+      artifact: "template",
+      utterance: "hi",
+      answer: "Hello",
+      text: "Goodbye",
+      action: "replacement",
+    });
+    expect(await templates.read("greet")).toBe("Goodbye");
+  });
 });

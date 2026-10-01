@@ -7,6 +7,11 @@
  * state is the plan (statuses included) and each finished task's outcome, handed to
  * `save` after every change, and `parsePlanRun` restores it. A task restored as running
  * was interrupted, so it runs again: a task runs at least once, as the hook bus delivers.
+ * A task that returns `{ awaiting: true }` is parked instead: it leaves the running slot
+ * and its exclusive resources, stays unfinished, and the queue moves on. A further yield
+ * from that parked task wakes the queue again. `answer` later resumes that task only.
+ * Inputs are the graph's data edges at the call, so an edge added during the run counts.
+ * A task restored as awaiting is not started over.
  */
 import { z } from "zod";
 import type { NodeStatus, TaskGraph, TaskGraphData } from "@harness/core";
@@ -18,15 +23,22 @@ import type { Settings } from "./settings.ts";
 export const TaskOutcomeSchema = z.discriminatedUnion("ok", [z.strictObject({ ok: z.literal(true), output: z.unknown() }), z.strictObject({ ok: z.literal(false), error: z.string() })]);
 export type TaskOutcome = z.output<typeof TaskOutcomeSchema>;
 
-/** What a task is given: its id, its payload, and the outputs of the tasks it takes input from (its data predecessors), by id. */
+/** What a task is given: its id, its payload, and the outputs of the tasks it takes input from (its data predecessors), by id. `answer` is present only when this call continues a task that was awaiting a person. */
 export interface PlanTaskInput {
   readonly id: string;
   readonly payload: PlanPayload;
   readonly inputs: Readonly<Record<string, unknown>>;
+  readonly answer?: unknown;
 }
 
+/** A task is awaiting a person. The promise has resolved; the task has not finished. */
+export type PlanTaskYield = { readonly awaiting: true };
+
+/** What a task returns: a finished outcome, or a yield while it waits for a person. */
+export type PlanTaskResult = TaskOutcome | PlanTaskYield;
+
 /** Runs one task (`modelTask` by default on a host). A throw is the task's failure. */
-export type PlanTask = (input: PlanTaskInput) => Promise<TaskOutcome>;
+export type PlanTask = (input: PlanTaskInput) => Promise<PlanTaskResult>;
 
 /** A run as it is saved: the plan with its statuses, and each finished task's outcome. */
 export interface PlanRunState {
@@ -87,9 +99,14 @@ export interface PlanRunResult {
   readonly state: PlanRunState;
 }
 
+/** A run under way. `answer` delivers a person's response to the task that asked. */
+export interface PlanRun extends Promise<PlanRunResult> {
+  answer(id: string, value: unknown): void;
+}
+
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-async function attempt(task: PlanTask, input: PlanTaskInput): Promise<TaskOutcome> {
+async function attempt(task: PlanTask, input: PlanTaskInput): Promise<PlanTaskResult> {
   try {
     return await task(input);
   } catch (e) {
@@ -97,12 +114,39 @@ async function attempt(task: PlanTask, input: PlanTaskInput): Promise<TaskOutcom
   }
 }
 
+const isYield = (result: PlanTaskResult): result is PlanTaskYield => !("ok" in result);
+
+/** `answer` is set only for a continuation, including when the person answered `undefined`. */
+function deliver(input: PlanTaskInput, value: unknown): PlanTaskInput {
+  const delivered: PlanTaskInput = { id: input.id, payload: input.payload, inputs: input.inputs };
+  return Object.assign(delivered, { answer: value });
+}
+
 /**
- * Run a plan to the end: every task runs or is skipped. Resolves with each task's
- * outcome; rejects only when `save` fails, and then starts nothing more (tasks already
- * running finish unsaved, and run again when the run is resumed from its last state).
+ * Run a plan to the end: every task runs, is skipped, or waits for a person. Resolves
+ * with each task's outcome; rejects when `save` fails or a task that yielded cannot be
+ * parked in the graph, and then starts nothing more (tasks already running finish
+ * unsaved, and run again when the run is resumed from its last state). A task awaiting
+ * a person does not hold a slot: the queue keeps going, and `answer` finishes that task later.
  */
-export async function runPlan(options: RunPlanOptions): Promise<PlanRunResult> {
+export function runPlan(options: RunPlanOptions): PlanRun {
+  const answers = new Map<string, { readonly value: unknown }>();
+  const waiters = new Map<string, (value: unknown) => void>();
+  const promise = drive(options, answers, waiters);
+  return Object.assign(promise, {
+    answer(id: string, value: unknown) {
+      const waiter = waiters.get(id);
+      if (waiter !== undefined) {
+        waiters.delete(id);
+        waiter(value);
+        return;
+      }
+      if (!answers.has(id)) answers.set(id, { value });
+    },
+  });
+}
+
+async function drive(options: RunPlanOptions, answers: Map<string, { readonly value: unknown }>, waiters: Map<string, (value: unknown) => void>): Promise<PlanRunResult> {
   const { plan, task, save } = options;
   const limit = options.settings.plans.concurrency;
   const outcomes: Record<string, TaskOutcome> = { ...options.outcomes };
@@ -124,27 +168,95 @@ export async function runPlan(options: RunPlanOptions): Promise<PlanRunResult> {
     await saving;
     if (failure !== undefined) throw failure.error;
   };
-  const edges = plan.toJSON().edges;
   const inputsOf = (id: string): Record<string, unknown> => {
     const inputs: Record<string, unknown> = {};
-    for (const e of edges) {
+    for (const e of plan.toJSON().edges) {
       const outcome = outcomes[e.from];
       if (e.kind === "data" && e.to === id && outcome?.ok === true) inputs[e.from] = outcome.output;
     }
     return inputs;
   };
+  const inputOf = (id: string): PlanTaskInput => ({ id, payload: plan.payload(id)!, inputs: inputsOf(id) });
   const running = new Map<string, Promise<void>>();
+  const parked = new Map<string, Promise<void>>();
+  // A parked continuation that yields again does not settle its promise, so the loop also waits on a pulse it can poke.
+  let resolvePulse: (() => void) | undefined;
+  let pulse: Promise<void> | undefined;
+  let pendingPoke = false;
+  const poke = () => {
+    if (resolvePulse !== undefined) {
+      const resolve = resolvePulse;
+      resolvePulse = undefined;
+      pulse = undefined;
+      resolve();
+      return;
+    }
+    pendingPoke = true;
+  };
+  const nextPulse = (): Promise<void> => {
+    if (pendingPoke) {
+      pendingPoke = false;
+      resolvePulse = undefined;
+      pulse = undefined;
+      return Promise.resolve();
+    }
+    pulse ??= new Promise<void>((resolve) => {
+      resolvePulse = resolve;
+    });
+    return pulse;
+  };
+  const takeAnswer = (id: string): Promise<unknown> => {
+    const queued = answers.get(id);
+    if (queued !== undefined) {
+      answers.delete(id);
+      return Promise.resolve(queued.value);
+    }
+    return new Promise((resolve) => void waiters.set(id, resolve));
+  };
+  /** Wait for this task's answer and finish it, without taking a running slot. */
+  const park = (id: string) => {
+    const slot: { current?: Promise<void> } = {};
+    const pending = (async () => {
+      for (;;) {
+        const value = await takeAnswer(id);
+        const result = await attempt(task, deliver(inputOf(id), value));
+        if (isYield(result)) {
+          poke();
+          continue;
+        }
+        outcomes[id] = result;
+        plan.complete(id, result.ok ? "succeeded" : "failed");
+        changed();
+        return;
+      }
+    })().finally(() => {
+      if (parked.get(id) === slot.current) parked.delete(id);
+    });
+    slot.current = pending;
+    parked.set(id, pending);
+  };
   const launch = (id: string) => {
-    const done = attempt(task, { id, payload: plan.payload(id)!, inputs: inputsOf(id) }).then((outcome) => {
-      outcomes[id] = outcome;
-      plan.complete(id, outcome.ok ? "succeeded" : "failed");
+    const done = attempt(task, inputOf(id)).then((result) => {
+      if (isYield(result)) {
+        const parkedNode = plan.background(id);
+        if (!parkedNode.ok) throw new Error(parkedNode.error.message);
+        park(id);
+        running.delete(id);
+        changed();
+        return;
+      }
+      outcomes[id] = result;
+      plan.complete(id, result.ok ? "succeeded" : "failed");
       running.delete(id);
       changed();
     });
     running.set(id, done);
   };
-  // A task restored as running was interrupted: it runs again.
-  for (const n of plan.toJSON().nodes) if (n.status === "running") launch(n.id);
+  // A task restored as running was interrupted: it runs again. One restored as awaiting keeps waiting for its answer.
+  for (const n of plan.toJSON().nodes) {
+    if (n.status === "running") launch(n.id);
+    else if (n.status === "awaiting") park(n.id);
+  }
   for (;;) {
     await saved();
     for (const id of plan.schedule(limit - running.size)) {
@@ -152,8 +264,8 @@ export async function runPlan(options: RunPlanOptions): Promise<PlanRunResult> {
       changed();
       launch(id);
     }
-    if (running.size === 0) break;
-    await Promise.race(running.values());
+    if (running.size === 0 && parked.size === 0) break;
+    await Promise.race([...running.values(), ...parked.values(), nextPulse()]);
   }
   await saved();
   const final = state();

@@ -9,6 +9,7 @@ interface Turn {
 
 /**
  * Deterministic worker for tests and demos: echoes the prompt back word by word.
+ * A prompt containing `!fail` reports a model-call failure and ends as a refusal.
  * A prompt containing `!permission` first asks for permission, exercising routing.
  * It never calls a model.
  */
@@ -25,11 +26,19 @@ export class EchoWorker implements Worker {
     const turn: Turn = { cancelled: false };
     this.#turns.set(key, turn);
     const base = { sessionId: command.sessionId, turnId: command.turnId };
-    const end = (stopReason: "end_turn" | "cancelled") => {
+    const end = (stopReason: "end_turn" | "cancelled" | "refusal") => {
       this.#turns.delete(key);
       emit({ type: "end", ...base, stopReason });
     };
     const text = promptText(command.prompt);
+    if (text.includes("!fail")) {
+      emit({
+        type: "update",
+        ...base,
+        update: { sessionUpdate: "notice", severity: "error", title: "Model call failed", description: "model offline" },
+      });
+      return end("refusal");
+    }
     if (text.includes("!permission")) {
       const decision = new Promise<CallbackOutcome>((resolve) => (turn.decide = resolve));
       emit({

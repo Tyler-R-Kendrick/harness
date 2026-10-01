@@ -21,7 +21,7 @@ export { decayedSupport, differenceBounds, proposals, statusChanges } from "./ov
 export { coreView, EntryStatusSchema, OverlayEntrySchema, OverlayEventSchema, type Arm, type EdgeStats, type EffectiveEdge, type EffectiveGraph, type EffectiveNode, type EntryEvidence, type EntryStatus, type OverlayEntry, type OverlayEvent, type OverlayState, type TransitionStats } from "./overlay-types.ts";
 export { edgeKey, effectiveGraph, emptyOverlay, entryId, exposed, foldAll, foldOverlay, MAX_SESSIONS, MAX_TURNS, rebaseOverlay } from "./overlay.ts";
 export { latestOn, overlayAt, overlayBases, pinSession, readOverlay, SALT_BYTES, type PinRequest } from "./pinning.ts";
-export { parsePlanRun, runPlan, TaskOutcomeSchema, type PlanRunResult, type PlanRunState, type PlanTask, type PlanTaskInput, type PlanTaskReport, type RestoredPlanRun, type RunPlanOptions, type TaskOutcome } from "./plan-run.ts";
+export { parsePlanRun, runPlan, TaskOutcomeSchema, type PlanRun, type PlanRunResult, type PlanRunState, type PlanTask, type PlanTaskInput, type PlanTaskReport, type PlanTaskResult, type PlanTaskYield, type RestoredPlanRun, type RunPlanOptions, type TaskOutcome } from "./plan-run.ts";
 export { modelTask, type ModelTaskOptions } from "./plan-task.ts";
 export { modelTasks, PlanRunIdSchema, PlanRunRecordSchema, planRunner, SnapshotPlanRuns, type InvalidPlanRun, type PlanNotice, type PlanRunId, type PlanRunner, type PlanRunnerOptions, type PlanRunOutcome, type PlanRunRecord, type PlanRunStore, type PlanTaskContext } from "./plan-runner.ts";
 export { parsePlan, PLAN_RELATIONS, planFromSubgraph, PlanPayloadSchema, type PlanOptions, type PlanPayload, type PlanRelations, type PlanResult } from "./plan.ts";

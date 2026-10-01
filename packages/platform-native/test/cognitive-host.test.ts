@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { embed, experimental_evaluate, generateText, streamText } from "ai";
-import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
-import { constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES } from "@harness/cognitive";
+import { MockLanguageModelV4 } from "ai/test";
+import type { LanguageModelV4CallOptions, LanguageModelV4Prompt } from "@ai-sdk/provider";
+import { bytes, constrain, dimensions, embedding, invokeCognitive, MODEL_HEADER, rankForTask, route, TASK_CATEGORIES, usage } from "@harness/cognitive";
 import type { Runtime } from "@harness/cognitive";
 import { buildDialogue, buildNativeEnsemble, loadCatalog, loadDialogueSettings } from "@harness/platform-native";
 
@@ -27,6 +28,41 @@ describe("native cognitive host", () => {
     await close();
   });
 
+  it("CH1.6 a prompt over the llama-server context is compacted before the chat model sees it", async () => {
+    const { ensemble, close } = buildNativeEnsemble({ cacheDir: "/nonexistent/cache", allowHosted: false, catalog: { models: [], preferences: {} } });
+    const prompts: LanguageModelV4Prompt[] = [];
+    const described = (id: string, tasks: ModelDescriptor["tasks"], ports: ModelDescriptor["ports"]): ModelDescriptor =>
+      ({ id, name: id, publisher: "t", tasks, ports, locality: "local", runtime: "transformers.js", run: { dtype: "q4" }, platforms: ["native"], license: "MIT", downloadBytes: bytes(1), benchmarks: [] }) as ModelDescriptor;
+    ensemble.register(described("chatty", ["chat"], ["generator"]), async () => ({
+      generator: new MockLanguageModelV4({
+        doGenerate: async (options) => {
+          prompts.push(options.prompt);
+          return { content: [{ type: "text", text: "ok" }], finishReason: { unified: "stop", raw: undefined }, usage: usage(), warnings: [] };
+        },
+      }),
+    }));
+    ensemble.register(described("compressor-a", ["prompt-compression"], ["compressor"]), async () => ({
+      compressor: {
+        compress: async (request) => {
+          const all = request.text.split(/\s+/).filter((word) => word.length > 0);
+          const kept = request.rate >= 1 ? all : all.slice(0, Math.floor(all.length * request.rate));
+          return { text: kept.join(" "), originalTokens: all.length, compressedTokens: kept.length };
+        },
+      },
+    }));
+    const history = Array.from({ length: 20_000 }, (_, i) => `w${i}`).join(" ");
+    const prompt: LanguageModelV4Prompt = [
+      { role: "system", content: "STABLE ____" },
+      { role: "user", content: [{ type: "text", text: history }] },
+      { role: "user", content: [{ type: "text", text: "LATEST ____" }] },
+    ];
+    await ensemble.languageModel().doGenerate({ prompt });
+    expect(prompts[0]?.[0]).toMatchObject({ role: "system", content: "STABLE ____" });
+    expect(prompts[0]?.at(-1)).toBe(prompt[2]);
+    expect(JSON.stringify(prompts[0])).not.toContain("w19999");
+    await close();
+  });
+
   it("CH1.3 selection uses the catalog's benchmarks and preferences", async () => {
     const { ensemble, close } = buildNativeEnsemble({ cacheDir: "/nonexistent/cache", llamaServer: "/bin/llama-server" });
     for (const task of TASK_CATEGORIES) {
@@ -45,13 +81,36 @@ describe("native cognitive host", () => {
     expect(ensemble.members()[0]).toMatchObject({ state: "failed", reason: expect.stringMatching(/503/) });
     await close();
   });
+
+  it("CH1.5 the dev ensemble ranks a quantized llama.cpp chat model, the ONNX decision model, and the uint8 compressor, with hosted providers off", async () => {
+    const { ensemble, close } = buildNativeEnsemble({
+      cacheDir: join(homedir(), ".cache", "harness", "models"),
+      allowHosted: false,
+      llamaServer: join(homedir(), ".cache", "harness", "bin", "llama-server"),
+    });
+    const chat = ensemble.candidates("chat");
+    const quantized = chat.find((c) => c.descriptor.runtime === "llama.cpp-server" && "model" in c.descriptor.run && c.descriptor.run.model.includes("Q4"));
+    const transformersChat = chat.find((c) => c.descriptor.runtime === "transformers.js" && c.descriptor.tasks.includes("vision-qa"));
+    expect(quantized).toBeDefined();
+    expect(transformersChat).toBeDefined();
+    expect(chat[0]?.id).toBe(quantized?.id);
+    expect(chat.map((c) => c.id)).toContain(transformersChat?.id);
+    expect(ensemble.candidates("vision-qa")[0]).toMatchObject({ id: transformersChat?.id, descriptor: { runtime: "transformers.js" } });
+    const decision = ensemble.candidates("classification").filter((c) => c.descriptor.ports.includes("judge"));
+    expect(decision[0]?.descriptor.runtime).toBe("onnxruntime-decision");
+    const compression = ensemble.candidates("prompt-compression");
+    expect(compression[0]?.descriptor).toMatchObject({ runtime: "transformers.js", run: { dtype: "uint8" } });
+    expect(ensemble.members().some((m) => m.descriptor.locality === "hosted")).toBe(false);
+    expect(ensemble.candidates("judgment").some((c) => c.descriptor.runtime === "ai-gateway")).toBe(false);
+    await close();
+  });
 });
 
 // ---- loaders, driven against fakes -----------------------------------------------------------
 
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
 import type { ModelDescriptor } from "@harness/cognitive";

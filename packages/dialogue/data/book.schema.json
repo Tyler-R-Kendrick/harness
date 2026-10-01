@@ -696,6 +696,69 @@
         ],
         "additionalProperties": false
       }
+    },
+    "preferences": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "utterance": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          },
+          "text": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "rating",
+              "replacement",
+              "steering"
+            ]
+          },
+          "artifact": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "template",
+                  "workflow",
+                  "script"
+                ]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "additionalProperties": false
+          },
+          "signal": {
+            "type": "string",
+            "const": "negative"
+          }
+        },
+        "required": [
+          "utterance",
+          "answer",
+          "text",
+          "action",
+          "artifact",
+          "signal"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "additionalProperties": false,

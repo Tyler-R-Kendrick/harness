@@ -28,6 +28,62 @@ export function typesafeApiEvaluationModel(options: TypeSafeApiOptions): Experim
   }).evaluationModel(options.model);
 }
 
+/** Origin of an OpenAI-compatible base, whether or not the setting already ends in `/v1`. */
+export function openAiCompatibleRoot(baseUrl: string): string {
+  return baseUrl.replace(/\/$/, "").replace(/\/v1$/, "");
+}
+
+/** Where an OpenAI-compatible server serves the decisions API. */
+export function decisionsUrl(baseUrl: string): string {
+  return `${openAiCompatibleRoot(baseUrl)}/v1/decisions`;
+}
+
+const DECISIONS_ROUTE = new Set([200, 400, 401, 403, 415, 422]);
+
+/**
+ * Whether `baseUrl` serves the decisions API. An empty body is not a question.
+ * A route that exists answers; a missing route answers 404.
+ */
+export async function decisionsApiAvailable(baseUrl: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const response = await fetchFn(decisionsUrl(baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: AbortSignal.timeout(2000),
+    });
+    await response.arrayBuffer();
+    return DECISIONS_ROUTE.has(response.status);
+  } catch {
+    return false;
+  }
+}
+
+function requestUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
+/**
+ * The decisions API on an OpenAI-compatible server. The call is the evaluation request
+ * the decision layer already sends (a model, a state, and named questions), at `/v1/decisions`.
+ */
+export function openAiCompatibleDecisionsModel(options: TypeSafeApiOptions): Experimental_EvaluationModelV4 {
+  const inner = options.fetch ?? fetch;
+  const rewriting = ((input: string | URL | Request, init?: RequestInit) => {
+    const href = requestUrl(input);
+    const url = href.endsWith("/systemone") ? `${href.slice(0, -"/systemone".length)}/decisions` : href;
+    return inner(url, init);
+  }) as typeof fetch;
+  return typesafeApiEvaluationModel({
+    baseUrl: openAiCompatibleRoot(options.baseUrl),
+    model: options.model,
+    fetch: rewriting,
+    ...(options.apiKey ? { apiKey: options.apiKey } : {}),
+  });
+}
+
 /** Whether a service answers `url` with a success status within two seconds. */
 export async function serviceAvailable(url: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
   try {

@@ -63,6 +63,11 @@ export type InputAction =
   | { readonly type: "invoke-tool"; readonly tool: RegisteredTool; readonly argument: string }
   | { readonly type: "harness-command"; readonly name: string; readonly argument: string }
   | { readonly type: "list-sessions"; readonly sessions: readonly { readonly name: string; readonly harness: string }[] }
+  | { readonly type: "new-session" }
+  | { readonly type: "session-btw"; readonly question: string }
+  | { readonly type: "session-bg" }
+  | { readonly type: "session-switch"; readonly session: string }
+  | { readonly type: "session-fork"; readonly thread?: string; readonly message?: string }
   | { readonly type: "exported"; readonly sessions: readonly { readonly name: string; readonly harness: string }[]; readonly destination: { readonly type: "file"; readonly filename: string } | { readonly type: "clipboard" } }
   | { readonly type: "resumed"; readonly harness: string; readonly session: string }
   | { readonly type: "command-usage"; readonly name: string; readonly message: string }
@@ -146,7 +151,7 @@ export class InputInterpreter {
   #at = 0;
 
   constructor(
-    registry: { readonly tools: readonly RegisteredTool[]; readonly commands: readonly HarnessCommand[]; readonly maxOptions?: number; readonly harnesses?: ManagedHarnesses; readonly settings?: readonly SettingSpec[]; readonly autopilot?: AutopilotPorts },
+    registry: { readonly tools: readonly RegisteredTool[]; readonly commands: readonly HarnessCommand[]; readonly maxOptions?: number; readonly harnesses?: ManagedHarnesses; readonly settings?: readonly SettingSpec[]; readonly settingState?: Readonly<Record<string, { readonly requested: string; readonly accepted?: string }>>; readonly autopilot?: AutopilotPorts },
     ports: InputInterpreterPorts,
   ) {
     this.#maxOptions = checkedMax(registry.maxOptions);
@@ -155,6 +160,7 @@ export class InputInterpreter {
     this.#ports = ports;
     this.#harnesses = checkedHarnesses(registry.harnesses);
     this.#settings = checkedSettings(registry.settings);
+    this.#seed(registry.settingState);
     this.#autopilot = new Autopilot(registry.autopilot ?? { survey: () => [], implement: () => "" });
     for (const tool of this.#tools) {
       const key = `${tool.kind}:${tool.name}`;
@@ -163,7 +169,7 @@ export class InputInterpreter {
     }
     const seenCommands = new Set<string>();
     for (const command of this.#commands) {
-      if (command.name === "tools" || command.name === "sessions" || command.name === "settings" || command.name === "autopilot") throw new TypeError(`harness command ${command.name} is built in`);
+      if (command.name === "tools" || command.name === "sessions" || command.name === "session" || command.name === "settings" || command.name === "autopilot" || command.name === "help") throw new TypeError(`harness command ${command.name} is built in`);
       if (seenCommands.has(command.name)) throw new TypeError(`duplicated command ${command.name}`);
       seenCommands.add(command.name);
     }
@@ -171,6 +177,20 @@ export class InputInterpreter {
     this.#bus.subscribe("actor.decider", { types: ["intent.decide"] });
     this.#bus.subscribe("actor.inferencer", { types: ["intent.infer"] });
     this.#bus.subscribe("actor.eliciter", { types: ["intent.unresolved"] });
+  }
+
+  #seed(state: Readonly<Record<string, { readonly requested: string; readonly accepted?: string }>> | undefined): void {
+    if (state === undefined || this.#settings === undefined) return;
+    const known = new Set(this.#settings.map((spec) => spec.key));
+    for (const [key, value] of Object.entries(state)) {
+      if (!known.has(key)) continue;
+      if (value.accepted === undefined) this.#settingState.set(key, { requested: value.requested });
+      else this.#settingState.set(key, { requested: value.requested, accepted: value.accepted });
+    }
+  }
+
+  helpPage(): string {
+    return harnessManual(this.#commands);
   }
 
   async submit(text: string, context: InputContext, at: number): Promise<{ readonly action: InputAction }> {
@@ -190,14 +210,16 @@ export class InputInterpreter {
 
   /**
    * Typeahead for the text a person has typed, or a prediction when that text is empty.
-   * Command candidates come first. Natural language is asked only when the prefix is not
-   * a slash command and the command list still fits in the decision model's option window.
+   * Command and subcommand candidates stay in command-tree order and do not call inference.
+   * Natural language is the only completion that uses inference, and only for a non-slash
+   * prefix whose command rows still fit in the option window.
    */
   async complete(prefix: string, context: InputContext): Promise<{ readonly completions: readonly Completion[] }> {
     const body = prefix.replace(/^\s+/, "");
-    const rendered = renderContext(context.turns);
     const commands = commandCandidates(body, commandTree(this.#tools, this.#harnesses?.sessions ?? [], this.#settings ?? [], this.#autopilot.updates(), this.#commands));
-    const language = body.startsWith("/") || commands.length >= this.#maxOptions ? [] : await languageCandidates(body, rendered, this.#ports.suggest);
+    const language = body.startsWith("/") || commands.length >= this.#maxOptions
+      ? []
+      : await languageCandidates(body, renderContext(context.turns), this.#ports.suggest);
     const seen = new Set(commands.map((candidate) => candidate.text));
     const merged = [...commands];
     for (const candidate of language) {
@@ -205,7 +227,7 @@ export class InputInterpreter {
       seen.add(candidate.text);
       merged.push(candidate);
     }
-    return { completions: await rankCompletions(body, rendered, merged.slice(0, this.#maxOptions), this.#ports.decide) };
+    return { completions: scoreCompletions(merged.slice(0, this.#maxOptions)) };
   }
 
   async #drain(start: number): Promise<InputAction> {
@@ -257,6 +279,7 @@ export class InputInterpreter {
     const name = match[1] ?? "";
     const raw = (match[2] ?? "").trim();
     if (name === "") return { type: "unknown-command", name: "" };
+    if (name === "help") return this.#harnessHelp(raw);
     if (requestsHelp(raw)) return this.#help(name, raw);
     if (name === "tools") return this.#toolsCommand(raw);
     if (name === "sessions") return this.#sessionsCommand(raw);
@@ -274,51 +297,74 @@ export class InputInterpreter {
     if (name === "autopilot") return this.#autopilotHelp(subject);
     const command = this.#commands.find((item) => item.name === name);
     if (command === undefined) return { type: "unknown-command", name };
-    return { type: "help", name: command.name, message: `usage: /${command.name} [argument]\n${command.description}` };
+    return { type: "help", name: command.name, message: manual(`${command.name} - ${command.description}`, `/${command.name} [argument]`, command.description, [`/${command.name}`, `/${command.name} --help`], ["/help"]) };
+  }
+
+  #harnessHelp(raw: string): InputAction {
+    if (helpSubject(raw) !== undefined) return { type: "command-usage", name: "help", message: "usage: /help" };
+    return { type: "help", name: "help", message: this.helpPage() };
   }
 
   #toolsHelp(subject: string | undefined): InputAction {
+    const synopsis = "/tools [name | kind:name] [argument]";
     if (subject === undefined) {
       const listed = this.#tools.map(toolLine);
-      return { type: "help", name: "tools", message: ["usage: /tools [name | kind:name] [argument]", "Lists registered skills, MCPs, and native tools, or invokes one.", ...listed].join("\n") };
+      const description = listed.length === 0 ? TOOLS_LEAD : [TOOLS_LEAD, ...listed].join("\n");
+      return { type: "help", name: "tools", message: manual(`tools - ${TOOLS_LEAD}`, synopsis, description, ["/tools", "/tools --help"], ["/help"]) };
     }
     if (subject.includes(":")) {
       const tool = this.#byKey.get(subject);
       if (tool === undefined) return { type: "unknown-tool", name: subject };
-      return { type: "help", name: `tools ${subject}`, message: `usage: /tools ${subject} [argument]\n${toolLine(tool)}` };
+      return { type: "help", name: `tools ${subject}`, message: toolManual(`tools ${subject}`, subject, [toolLine(tool)]) };
     }
     const matches = this.#tools.filter((tool) => tool.name === subject);
     const only = matches.length === 1 ? matches[0] : undefined;
-    if (only !== undefined) return { type: "help", name: `tools ${subject}`, message: `usage: /tools ${subject} [argument]\n${toolLine(only)}` };
-    if (matches.length > 1) return { type: "help", name: `tools ${subject}`, message: [`usage: /tools ${subject} [argument]`, ...matches.map(toolLine)].join("\n") };
+    if (only !== undefined) return { type: "help", name: `tools ${subject}`, message: toolManual(`tools ${subject}`, subject, [toolLine(only)]) };
+    if (matches.length > 1) return { type: "help", name: `tools ${subject}`, message: toolManual(`tools ${subject}`, subject, matches.map(toolLine)) };
     return { type: "unknown-tool", name: subject };
   }
 
   #sessionsHelp(subject: string | undefined): InputAction {
     if (subject === undefined) {
-      return { type: "help", name: "sessions", message: "usage: /sessions [export | resume]\nLists managed harness sessions in this session." };
+      return { type: "help", name: "sessions", message: manual("sessions - Lists managed harness sessions in this session.", SESSIONS_SYNOPSIS, "Lists managed harness sessions in this session. With no arguments it lists them. fork starts a session from a point in a conversation. btw asks a side question, bg hands the active turn to the background, and switch inspects a session.", ["/sessions", "/sessions fork", "/sessions --help"], ["/help"]) };
+    }
+    if (subject === "new") {
+      return { type: "help", name: "sessions new", message: manual("sessions new - Starts another harness session.", "/sessions new", "Starts another harness session.", ["/sessions new", "/sessions new --help"], ["/sessions"]) };
     }
     if (subject === "export") {
-      return { type: "help", name: "sessions export", message: "usage: /sessions export [session] [--clipboard | --file <filename>]\nWrites the named session, or every managed session, as JSON. The default destination is a file." };
+      return { type: "help", name: "sessions export", message: manual("sessions export - Writes sessions as JSON.", "/sessions export [session] [--clipboard | --file <filename>]", "Writes the named session, or every managed session, as JSON. The default destination is a file.", ["/sessions export", "/sessions export --help"], ["/sessions"]) };
     }
     if (subject === "resume") {
-      return { type: "help", name: "sessions resume", message: "usage: /sessions resume <harness> [session]\nResumes one managed harness session." };
+      return { type: "help", name: "sessions resume", message: manual("sessions resume - Resumes one managed harness session.", "/sessions resume <harness> [session]", "Resumes one managed harness session.", ["/sessions resume <harness>", "/sessions resume --help"], ["/sessions"]) };
     }
-    return { type: "command-usage", name: "sessions", message: "usage: /sessions [export | resume]" };
+    if (subject === "fork") {
+      return { type: "help", name: "sessions fork", message: manual("sessions fork - Starts a session from a point in the conversation.", FORK_SYNOPSIS, "Starts a session from a point in the conversation. With neither a thread id nor a message id, forks at the end of the active thread. A thread id alone forks at the end of that thread. A message id alone forks through that message. Both fork through that message on that thread.", ["/sessions fork", "/sessions fork --thread <id>", "/sessions fork --message <id>", "/sessions fork --help"], ["/sessions"]) };
+    }
+    if (subject === "btw") {
+      return { type: "help", name: "sessions btw", message: manual("sessions btw - Asks about the main thread.", "/sessions btw <question>", "Asks about the main thread. A later question on the same fork sees later main-thread updates. The question and the answer stay off the main transcript, and the main thread keeps running.", ["/sessions btw <question>", "/sessions btw --help"], ["/sessions"]) };
+    }
+    if (subject === "bg") {
+      return { type: "help", name: "sessions bg", message: manual("sessions bg - Sends the active turn to the background.", "/sessions bg", "Sends the active turn to the background and answers later lines on a new main. When the background turn finishes, its result merges into that main.", ["/sessions bg", "/sessions bg --help"], ["/sessions"]) };
+    }
+    if (subject === "switch") {
+      return { type: "help", name: "sessions switch", message: manual("sessions switch - Inspects one session.", "/sessions switch <session>", "Use it to inspect a session's identity and recent content. It does not move the input queue, cancel the main thread, or merge background work.", ["/sessions switch <session>", "/sessions switch --help"], ["/sessions"]) };
+    }
+    return { type: "command-usage", name: "sessions", message: SESSIONS_USAGE };
   }
 
   #settingsHelp(subject: string | undefined): InputAction {
     if (subject === undefined) {
       const catalog = (this.#settings ?? []).map((spec) => `${spec.key}: ${spec.description}`);
-      return { type: "help", name: "settings", message: ["usage: /settings [key] [value | --unset]", "Reads and writes harness configuration.", ...catalog].join("\n") };
+      const description = catalog.length === 0 ? SETTINGS_LEAD : [SETTINGS_LEAD, ...catalog].join("\n");
+      return { type: "help", name: "settings", message: manual(`settings - ${SETTINGS_LEAD}`, "/settings [key] [value | --unset]", description, ["/settings", "/settings --help"], ["/help"]) };
     }
     const specs = this.#settings;
     if (specs === undefined) return { type: "command-usage", name: "settings", message: "no settings are configured" };
     const spec = specs.find((item) => item.key === subject);
     if (spec === undefined) return { type: "command-usage", name: "settings", message: `no setting ${subject}` };
-    const parts = [`usage: /settings ${spec.key} [value | --unset]`, spec.description, `fallback: ${spec.fallback}`];
+    const parts = [spec.description, `fallback: ${spec.fallback}`];
     if (spec.values !== undefined) parts.push(`values: ${spec.values.join(", ")}`);
-    return { type: "help", name: `settings ${spec.key}`, message: parts.join("\n") };
+    return { type: "help", name: `settings ${spec.key}`, message: manual(`settings ${spec.key} - ${spec.description}`, `/settings ${spec.key} [value | --unset]`, parts.join("\n"), [`/settings ${spec.key}`, `/settings ${spec.key} --help`], ["/settings"]) };
   }
 
   #settingsCommand(raw: string): InputAction {
@@ -358,9 +404,32 @@ export class InputInterpreter {
     const gap = raw.search(/\s/);
     const token = gap === -1 ? raw : raw.slice(0, gap);
     const rest = gap === -1 ? "" : raw.slice(gap).trim();
+    if (token === "new") {
+      if (rest !== "") return { type: "command-usage", name: "new", message: "usage: /sessions new" };
+      return { type: "new-session" };
+    }
     if (token === "export") return this.#exportCommand(rest);
     if (token === "resume") return this.#resumeCommand(rest);
-    return { type: "command-usage", name: "sessions", message: "usage: /sessions [export | resume]" };
+    if (token === "fork") return this.#forkCommand(rest);
+    if (token === "btw") {
+      if (rest === "" || rest.startsWith("--")) return { type: "command-usage", name: "btw", message: "usage: /sessions btw <question>" };
+      return { type: "session-btw", question: rest };
+    }
+    if (token === "bg") {
+      if (rest !== "") return { type: "command-usage", name: "bg", message: "usage: /sessions bg" };
+      return { type: "session-bg" };
+    }
+    if (token === "switch") {
+      if (rest === "" || /\s/.test(rest)) return { type: "command-usage", name: "switch", message: "usage: /sessions switch <session>" };
+      return { type: "session-switch", session: rest };
+    }
+    return { type: "command-usage", name: "sessions", message: SESSIONS_USAGE };
+  }
+
+  #forkCommand(raw: string): InputAction {
+    const parsed = parseFork(raw);
+    if (!parsed.ok) return { type: "command-usage", name: "fork", message: parsed.message };
+    return { type: "session-fork", ...(parsed.thread === undefined ? {} : { thread: parsed.thread }), ...(parsed.message === undefined ? {} : { message: parsed.message }) };
   }
 
   #listSessions(): InputAction {
@@ -517,10 +586,10 @@ export class InputInterpreter {
   }
 
   #autopilotHelp(subject: string | undefined): InputAction {
-    if (subject === "updates") return { type: "help", name: "autopilot updates", message: "usage: /autopilot updates\nLists harness updates. Each one is the reviewable branch and its release notes." };
-    if (subject === "apply") return { type: "help", name: "autopilot apply", message: "usage: /autopilot apply <id>\nMarks one update applied. It does not change the trunk." };
-    if (subject === "stop") return { type: "help", name: "autopilot stop", message: "usage: /autopilot stop\nInterrupts the run." };
-    return { type: "help", name: "autopilot", message: AUTOPILOT_HELP };
+    if (subject === "updates") return { type: "help", name: "autopilot updates", message: manual("autopilot updates - Lists harness updates.", "/autopilot updates", "Lists harness updates. Each one is the reviewable branch and its release notes.", ["/autopilot updates", "/autopilot updates --help"], ["/autopilot"]) };
+    if (subject === "apply") return { type: "help", name: "autopilot apply", message: manual("autopilot apply - Marks one update applied.", "/autopilot apply <id>", "Marks one update applied. It does not change the trunk.", ["/autopilot apply <id>", "/autopilot apply --help"], ["/autopilot"]) };
+    if (subject === "stop") return { type: "help", name: "autopilot stop", message: manual("autopilot stop - Interrupts the run.", "/autopilot stop", "Interrupts the run.", ["/autopilot stop", "/autopilot stop --help"], ["/autopilot"]) };
+    return { type: "help", name: "autopilot", message: manual("autopilot - Proposes its own goals on a branch until interrupted.", "/autopilot [instructions]", AUTOPILOT_BODY, ["/autopilot", "/autopilot --help"], ["/help"]) };
   }
 }
 
@@ -621,6 +690,30 @@ function parseExport(raw: string): ExportLine | { readonly ok: false; readonly m
   return { ok: true, destination, ...(session === undefined ? {} : { session }), ...(filename === undefined ? {} : { filename }) };
 }
 
+const FORK_SYNOPSIS = "/sessions fork [--thread <id>] [--message <id>]";
+const FORK_USAGE = "usage: /sessions fork [--thread <id>] [--message <id>]";
+
+function parseFork(raw: string): { readonly ok: true; readonly thread?: string; readonly message?: string } | { readonly ok: false; readonly message: string } {
+  const tokens = raw.split(/\s+/).filter((token) => token !== "");
+  let thread: string | undefined;
+  let message: string | undefined;
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index] ?? "";
+    if (token !== "--thread" && token !== "--message") return { ok: false, message: FORK_USAGE };
+    const next = tokens[index + 1];
+    if (next === undefined || next.startsWith("--")) return { ok: false, message: FORK_USAGE };
+    if (token === "--thread") {
+      if (thread !== undefined) return { ok: false, message: FORK_USAGE };
+      thread = next;
+    } else {
+      if (message !== undefined) return { ok: false, message: FORK_USAGE };
+      message = next;
+    }
+    index += 1;
+  }
+  return { ok: true, ...(thread === undefined ? {} : { thread }), ...(message === undefined ? {} : { message }) };
+}
+
 function parseResume(raw: string): { readonly ok: true; readonly harness: string; readonly session?: string } | { readonly ok: false; readonly message: string } {
   const tokens = raw.split(/\s+/).filter((token) => token !== "");
   const harness = tokens[0];
@@ -634,7 +727,11 @@ function exportedSession(session: ManagedHarnessSession): { name: string; harnes
   return { name: session.name, harness: session.harness, state: session.state };
 }
 
-const AUTOPILOT_HELP = "usage: /autopilot [instructions]\nProposes its own goals until interrupted. Instructions are the goal. Goals are upgrades, known vulnerabilities, research, and performance experiments recorded as Open Experiment Standard 0.1.0 documents. Each goal is a harness update on branch autopilot/<id> with release notes, and it is not applied to the trunk until /autopilot apply <id>.";
+const SESSIONS_SYNOPSIS = "/sessions [new | export | resume | fork | btw | bg | switch]";
+const SESSIONS_USAGE = "usage: /sessions [new | export | resume | fork | btw | bg | switch]";
+const TOOLS_LEAD = "Lists registered skills, MCPs, and native tools, or invokes one.";
+const SETTINGS_LEAD = "Reads and writes harness configuration.";
+const AUTOPILOT_BODY = "Proposes its own goals until interrupted. Instructions are the goal. Goals are upgrades, known vulnerabilities, research, and performance experiments recorded as Open Experiment Standard 0.1.0 documents. Each goal is a harness update on branch autopilot/<id> with release notes, and it is not applied to the trunk until /autopilot apply <id>.";
 const AUTOPILOT_USAGE = "usage: /autopilot [instructions | updates | apply <id> | stop]";
 const AUTOPILOT_DESCRIPTION = "Proposes its own goals on a branch until interrupted.";
 
@@ -653,6 +750,76 @@ function helpSubject(raw: string): string | undefined {
 
 function toolLine(tool: RegisteredTool): string {
   return `${tool.kind} ${tool.name}: ${tool.description}`;
+}
+
+function toolManual(name: string, subject: string, lines: readonly string[]): string {
+  return manual(`${name} - ${lines[0] ?? subject}`, `/tools ${subject} [argument]`, lines.join("\n"), [`/tools ${subject}`, `/tools ${subject} --help`], ["/tools"]);
+}
+
+const COMMANDS: readonly { readonly synopsis: string; readonly description: string }[] = [
+  { synopsis: "/tools [name | kind:name] [argument]", description: TOOLS_LEAD },
+  { synopsis: SESSIONS_SYNOPSIS, description: "Lists managed harness sessions in this session." },
+  { synopsis: "/sessions new", description: "Starts another harness session." },
+  { synopsis: "/sessions export [session] [--clipboard | --file <filename>]", description: "Writes the named session, or every managed session, as JSON. The default destination is a file." },
+  { synopsis: "/sessions resume <harness> [session]", description: "Resumes one managed harness session." },
+  { synopsis: FORK_SYNOPSIS, description: "Starts a session from a point in the conversation." },
+  { synopsis: "/sessions btw <question>", description: "Asks about the main thread. The question and the answer stay off the main transcript, and the main thread keeps running." },
+  { synopsis: "/sessions bg", description: "Sends the active turn to the background and answers later lines on a new main." },
+  { synopsis: "/sessions switch <session>", description: "Inspects a session's identity and recent content." },
+  { synopsis: "/settings [key] [value | --unset]", description: SETTINGS_LEAD },
+  { synopsis: "/autopilot [instructions]", description: AUTOPILOT_DESCRIPTION },
+  { synopsis: "/autopilot updates", description: "Lists harness updates. Each one is the reviewable branch and its release notes." },
+  { synopsis: "/autopilot apply <id>", description: "Marks one update applied. It does not change the trunk." },
+  { synopsis: "/autopilot stop", description: "Interrupts the run." },
+];
+
+const HOOKS: readonly { readonly name: string; readonly description: string }[] = [
+  { name: "behavior.changed", description: "A session's behavior state changed." },
+  { name: "behavior.raised", description: "A host raised an event on a session's behavior graph." },
+  { name: "session.created", description: "A session was created." },
+  { name: "session.attached", description: "A node attached to a session." },
+  { name: "session.detached", description: "A node detached from a session." },
+  { name: "turn.started", description: "A turn started." },
+  { name: "turn.ended", description: "A turn ended." },
+  { name: "permission.requested", description: "A turn asked for permission." },
+  { name: "permission.resolved", description: "A permission request was resolved." },
+  { name: "capability.added", description: "A capability was offered." },
+  { name: "capability.revoked", description: "A capability was revoked." },
+  { name: "input.received", description: "A line was submitted to the interpreter." },
+  { name: "intent.decide", description: "The parser left the line for the decision model." },
+  { name: "intent.infer", description: "The decision model left the line for the generator." },
+  { name: "intent.unresolved", description: "The generator left the line unresolved." },
+  { name: "action.ready", description: "An action is ready to run." },
+  { name: "branch.intention", description: "A branch named the node it is about to run." },
+  { name: "branch.result", description: "A branch finished a node." },
+  { name: "branch.failure", description: "A branch recorded a node failure." },
+  { name: "branch.correction", description: "A branch selected another path." },
+  { name: "dialogue.script.built", description: "A dialogue script was built." },
+  { name: "dialogue.script.put", description: "A dialogue script was stored." },
+  { name: "dialogue.script.promoted", description: "A dialogue script became active." },
+  { name: "dialogue.script.retired", description: "A dialogue script left the active set." },
+  { name: "dialogue.document.put", description: "A dialogue document was stored." },
+  { name: "procedural.approval.requested", description: "A procedural core edit is waiting for approval." },
+  { name: "procedural.approval.decided", description: "A procedural approval was approved or declined." },
+  { name: "procedural.plan.completed", description: "A procedural plan run ended." },
+];
+
+function harnessManual(commands: readonly HarnessCommand[]): string {
+  const lines = [
+    "Type a message. A line that starts with / is a command, not a message.",
+    "Add --help to a command to describe it.",
+    "",
+    ...COMMANDS.flatMap((command) => [command.synopsis, `    ${command.description}`]),
+    ...commands.flatMap((command) => [`/${command.name} [argument]`, `    ${command.description}`]),
+    "",
+    "Hooks",
+    ...HOOKS.flatMap((hook) => [hook.name, `    ${hook.description}`]),
+  ];
+  return manual("help - Describes the harness commands and hook events.", "/help", lines.join("\n"), ["/help", "/sessions --help"], ["/tools", "/sessions", "/settings", "/autopilot"]);
+}
+
+function manual(name: string, synopsis: string, description: string, examples: readonly string[], see: readonly string[]): string {
+  return ["NAME", name, "SYNOPSIS", synopsis, "DESCRIPTION", description, "OPTIONS", "--help\n    Describes this command and does not run it.", "EXAMPLES", examples.join("\n"), "SEE ALSO", see.join("\n")].join("\n");
 }
 
 function checkedMax(value: number | undefined): number {
@@ -776,8 +943,21 @@ function sessionsChoice(sessions: readonly ManagedHarnessSession[]): Choice {
     token: "/sessions",
     description: "Lists managed harness sessions in this session.",
     children: [
+      { token: "new", description: "Starts another harness session.", children: [helpChoice("/sessions new")] },
       { token: "export", description: "Writes the named session, or every managed session, as JSON. The default destination is a file.", children: [...exportNames, ...exportFlags("/sessions export")] },
       { token: "resume", description: "Resumes one managed harness session.", children: [...resumeNames, helpChoice("/sessions resume")] },
+      {
+        token: "fork",
+        description: "Starts a session from a point in the conversation.",
+        children: [
+          { token: "--thread", description: "Forks at the end of this thread.", children: [] },
+          { token: "--message", description: "Forks through this message.", children: [] },
+          helpChoice("/sessions fork"),
+        ],
+      },
+      { token: "btw", description: "Asks about the main thread. A later question sees later updates.", children: [helpChoice("/sessions btw")] },
+      { token: "bg", description: "Sends the active turn to the background.", children: [helpChoice("/sessions bg")] },
+      { token: "switch", description: "Inspects a session's identity and recent content.", children: [helpChoice("/sessions switch")] },
       helpChoice("/sessions"),
     ],
   };
@@ -869,60 +1049,8 @@ async function languageCandidates(body: string, context: string, suggest: InputI
   }
 }
 
-async function rankCompletions(text: string, context: string, candidates: readonly Candidate[], decide: InputInterpreterPorts["decide"]): Promise<Completion[]> {
+function scoreCompletions(candidates: readonly Candidate[]): Completion[] {
   const only = candidates.length === 1 ? candidates[0] : undefined;
-  if (candidates.length === 0) return [];
   if (only !== undefined) return [{ text: only.text, description: only.description, source: only.source, score: 1 }];
-  try {
-    const answer = await decide({ text, context, options: candidates.map((candidate) => ({ name: candidate.text, description: candidate.description })) });
-    return orderCompletions(candidates, answer);
-  } catch {
-    return zeros(candidates);
-  }
-}
-
-function orderCompletions(candidates: readonly Candidate[], answer: DecisionAnswer): Completion[] {
-  if (answer.complicated || hasNonFiniteScore(candidates, answer.probabilities)) return zeros(candidates);
-  const scores = finiteScores(candidates, answer.probabilities);
-  if (scores !== undefined) return byScore(candidates, scores);
-  const index = candidates.findIndex((candidate) => candidate.text === answer.choice);
-  const winner = candidates[index];
-  if (winner === undefined) return zeros(candidates);
-  const ordered = [winner, ...candidates.filter((_, at) => at !== index)];
-  return ordered.map((candidate, at) => ({ text: candidate.text, description: candidate.description, source: candidate.source, score: at === 0 ? 1 : 0 }));
-}
-
-function hasNonFiniteScore(candidates: readonly Candidate[], probabilities: DecisionAnswer["probabilities"]): boolean {
-  if (probabilities === undefined) return false;
-  return candidates.some((candidate) => {
-    if (!Object.hasOwn(probabilities, candidate.text)) return false;
-    return !Number.isFinite(probabilities[candidate.text]);
-  });
-}
-
-function finiteScores(candidates: readonly Candidate[], probabilities: DecisionAnswer["probabilities"]): number[] | undefined {
-  if (probabilities === undefined) return undefined;
-  const scores: number[] = [];
-  let known = false;
-  for (const candidate of candidates) {
-    if (!Object.hasOwn(probabilities, candidate.text)) {
-      scores.push(0);
-      continue;
-    }
-    known = true;
-    const score = probabilities[candidate.text];
-    if (!Number.isFinite(score)) return undefined;
-    scores.push(score ?? 0);
-  }
-  return known ? scores : undefined;
-}
-
-function byScore(candidates: readonly Candidate[], scores: readonly number[]): Completion[] {
-  const ranked = candidates.map((candidate, index) => ({ candidate, index, score: scores[index] ?? 0 }));
-  ranked.sort((left, right) => right.score - left.score || left.index - right.index);
-  return ranked.map(({ candidate, score }) => ({ text: candidate.text, description: candidate.description, source: candidate.source, score }));
-}
-
-function zeros(candidates: readonly Candidate[]): Completion[] {
   return candidates.map((candidate) => ({ text: candidate.text, description: candidate.description, source: candidate.source, score: 0 }));
 }

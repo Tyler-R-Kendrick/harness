@@ -87,7 +87,7 @@ describe("DialogueWorker: the dialogue in front of any worker", () => {
     const inner = scripted(() => "Done: all set.");
     const worker = new DialogueWorker(inner, new Dialogue({ settings, book }));
     expect((await say(worker, "yes")).reply).toBe("Done: all set.");
-    expect(inner.prompts[0]).toEqual([{ type: "text", text: `${settings.generate.instruction}\n\nDone: {what}.` }, { type: "text", text: "yes" }]);
+    expect(inner.prompts[0]).toEqual([{ type: "text", text: `${settings.generate.instruction}\n\nDone: ____.` }, { type: "text", text: "yes" }]);
     expect((await say(new DialogueWorker(new EchoWorker(), new Dialogue({ settings, book })), "hello world")).reply).toBe("echo: hello world");
   });
 

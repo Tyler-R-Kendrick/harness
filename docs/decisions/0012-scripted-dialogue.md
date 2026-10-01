@@ -260,9 +260,10 @@ the AI SDK retries after the model fails (the same step, its prompt built again)
 decision it had (a call is the same turn when its whole prompt is), so a form or flow
 moves on once per turn; decisions still waiting are kept for as many sessions as the
 dialogue keeps. When a script's holes are the
-model's, the call carries the template both as a constraint (for generators that enforce
-it) and as an instruction showing it with its holes as `{name}` (`generate.instruction`,
-for those that do not), and `harness.dialogue.fitted` says whether the reply kept to it.
+model's, the call carries the template as a constraint only, so its fixed text is not
+copied into the prompt. An external worker that does not enforce the constraint is told
+the template with each hole as a blank (`generate.instruction`). `harness.dialogue.fitted`
+says whether the reply kept to it.
 A step the model answered is observed only when it finished its reply (`stop`) or called
 tools (it acted). A dialogue that fails decides nothing, and the model answers.
 

@@ -240,8 +240,8 @@ describe("drafts are held to the same bar", () => {
 });
 
 describe("templates are shown to the model", () => {
-  it("HR14.1 a script's generated holes come with an instruction from the settings showing its template, holes written {name}", async () => {
+  it("HR14.1 a script's generated holes come with an instruction from the settings showing its template, holes written as blanks", async () => {
     const d = new Dialogue({ settings: settings({ generate: { instruction: "Fill it in." } }), book: book({ id: "t", intent: "t", patterns: ["go"], reply: ["A ", { generate: "x" }, " and ", { generate: "y" }, "."] }) });
-    expect(await d.respond(step("go"))).toMatchObject({ kind: "generate", instruction: "Fill it in.\n\nA {x} and {y}." });
+    expect(await d.respond(step("go"))).toMatchObject({ kind: "generate", instruction: "Fill it in.\n\nA ____ and ____." });
   });
 });

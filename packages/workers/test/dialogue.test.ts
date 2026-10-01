@@ -266,19 +266,27 @@ describe("dialogueMiddleware", () => {
     expect((await generateText({ model, prompt: "7pm", ...session })).text).toBe("Booked for 7pm.");
   });
 
-  it("DW1.12 a template's holes come with an instruction showing the template, for models that do not enforce it, and the answer says whether the reply fits it", async () => {
+  it("DW1.12 a template is the call's constraint and is not copied into the prompt, and the answer says whether the reply fits it", async () => {
     for (const [said, fitted] of [["Done: order 5 is cancelled.", true], ["Sure, cancelled it.", false]] as const) {
       const { inner, model } = setup(() => said);
       await generateText({ model, system: "Be brief.", prompt: "where is order 5", ...session });
       const result = await generateText({ model, system: "Be brief.", prompt: "yes please", ...session });
       const prompt = inner.calls[0]!.prompt;
-      expect(prompt.map((m) => m.role)).toEqual(["system", "system", "user"]);
-      expect(prompt[1]).toEqual({ role: "system", content: `${settings.generate.instruction}\n\nDone: {summary}.` });
+      expect(prompt.map((m) => m.role)).toEqual(["system", "user"]);
+      expect(JSON.stringify(prompt)).toContain("Be brief.");
+      expect(JSON.stringify(prompt)).toContain("yes please");
+      expect(JSON.stringify(prompt)).not.toContain("Done: ____.");
+      expect(JSON.stringify(prompt)).not.toContain(settings.generate.instruction);
+      expect(inner.calls[0]!.providerOptions?.[HARNESS]).toEqual({ session: "session-1", constraint: { type: "template", parts: ["Done: ", { hole: "summary" }, "."] } });
       expect(result.providerMetadata?.[HARNESS]?.["dialogue"]).toMatchObject({ script: "confirm-cancel", fitted });
       await generateText({ model, prompt: "where is order 5", ...session });
       const streamed = streamText({ model, prompt: "yes please", ...session });
       expect((await streamed.providerMetadata)?.[HARNESS]?.["dialogue"]).toMatchObject({ fitted });
-      expect(inner.calls[1]!.prompt[0]).toMatchObject({ role: "system" });
+      const streamedPrompt = inner.calls[1]!.prompt;
+      expect(streamedPrompt.map((m) => m.role)).toEqual(["user"]);
+      expect(JSON.stringify(streamedPrompt)).not.toContain("____");
+      expect(JSON.stringify(streamedPrompt)).not.toContain(settings.generate.instruction);
+      expect(inner.calls[1]!.providerOptions?.[HARNESS]).toEqual({ session: "session-1", constraint: { type: "template", parts: ["Done: ", { hole: "summary" }, "."] } });
     }
   });
 });

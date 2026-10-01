@@ -290,6 +290,20 @@ describe("the template engine's commands", () => {
     expect(await t.run("/rate meh")).toMatchObject({ exitCode: 2, stderr: "usage: /rate good|bad [why]\n" });
   });
 
+  it("TM6.7 /rate replace rewrites the last answer's template and the next answer is that text", async () => {
+    const t = await withEngine();
+    t.engine.last = { templateId: "list-files", request: "list the files" };
+    expect((await t.run("/rate replace Here are the files.")).stdout).toBe("list-files: replaced\n");
+    expect((await t.store.get("list-files"))?.body).toBe("Here are the files.");
+    expect(await t.store.preferences()).toMatchObject([
+      { utterance: "list the files", answer: expect.stringContaining("Files in"), text: "Here are the files.", action: "replacement", signal: "negative", artifact: { kind: "template", id: "list-files" } },
+    ]);
+    const { generateText, isStepCount } = await import("ai");
+    const result = await generateText({ model: t.engine.model(), prompt: "list the files", tools: {}, stopWhen: isStepCount(4) });
+    expect(result.steps[0]!.toolCalls).toEqual([]);
+    expect(result.text).toBe("Here are the files.");
+  });
+
   it("TM6.4 without the engine the template commands say so", async () => {
     const t = await terminal();
     expect(await t.run("/templates")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });

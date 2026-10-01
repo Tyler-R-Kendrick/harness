@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { exponential, fill, fits, parseScript, readHoles, valueAt } from "@harness/dialogue";
+import { composeReplies, exponential, fill, fits, parseScript, readHoles, valueAt } from "@harness/dialogue";
 
 const orderStatus = parseScript({
   id: "order-status",
@@ -109,5 +109,23 @@ describe("patterns that could take exponential time", () => {
     const safe = ["\\d+-\\d+-\\d+", "\\d+\\s+\\d+\\s+\\d+", "\\w+\\d+", "(?<a>\\d+)\\s(?<b>\\w+)\\s(?<c>\\d+)", "\\w+day", "a+b+c+", "[a-c]+[d-f]+[g-i]+", "\\d+(?:\\.\\d+)?", "a+|a+|a+"];
     expect(risky.filter((p) => !exponential(p))).toEqual([]);
     expect(safe.filter((p) => exponential(p))).toEqual([]);
+  });
+});
+
+describe("composing replies", () => {
+  it("RC1.1 fixed text is copied in order and joined by a blank line", () => {
+    expect(composeReplies([{ kind: "text", text: "Alpha." }, { kind: "text", text: "Beta." }])).toEqual({ kind: "text", text: "Alpha.\n\nBeta." });
+  });
+
+  it("RC1.2 holes stay holes, a repeated hole is renamed, and the sections stay in order", () => {
+    expect(
+      composeReplies([
+        { kind: "template", template: { type: "template", parts: ["Abstract\n", { hole: "abstract" }] } },
+        { kind: "template", template: { type: "template", parts: [{ hole: "abstract", constraint: { type: "regex", pattern: "a+" } }] } },
+      ]),
+    ).toEqual({
+      kind: "template",
+      template: { type: "template", parts: ["Abstract\n", { hole: "abstract" }, "\n\n", { hole: "abstract-2", constraint: { type: "regex", pattern: "a+" } }] },
+    });
   });
 });

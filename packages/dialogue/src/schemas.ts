@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ConstraintSchema, ProbabilitySchema, SimilaritySchema } from "@harness/cognitive";
+import { ConstraintSchema, PreferenceRecordSchema, ProbabilitySchema, SimilaritySchema } from "@harness/cognitive";
 
 /**
  * What a dialogue reads and writes, as schemas: script books (authored, or saved with
@@ -244,6 +244,8 @@ export const BookSchema = z
     runs: z.int().min(0).default(0),
     /** Documents in a dialogue standard (see DocumentSchema), each run by its flow. */
     documents: z.array(DocumentSchema).default([]),
+    /** Preference records from a person's corrections of an answer, kept for a later trainer. */
+    preferences: z.array(PreferenceRecordSchema).default([]),
   })
   .superRefine((book, ctx) => {
     const names = new Set<string>();
@@ -327,8 +329,8 @@ export const SettingsSchema = z.strictObject({
     .refine((p) => p.sessionsKept >= p.sessions, "keep at least as many sessions as promotion needs"),
   generate: z.strictObject({
     /**
-     * Put before a script's template when the model writes its holes, for models that do not
-     * enforce the template: the template follows, its holes written {name}.
+     * Shown to a worker that does not enforce the template: the template follows, and each
+     * hole is a blank. A model call carries the template only as a constraint.
      */
     instruction: text,
   }),

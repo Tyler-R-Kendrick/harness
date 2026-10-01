@@ -21,8 +21,8 @@
     "test:mutation": "stryker run",
     "eval": "node packages/evals/src/cli.ts",
     "cli": "node packages/platform-native/src/main.ts",
-    "dev-daemon": "mkdir -p \"${XDG_CACHE_HOME:-$HOME/.cache}/harness\" && node --watch packages/platform-native/src/main.ts --socket \"${XDG_CACHE_HOME:-$HOME/.cache}/harness/dev.sock\"",
-    "dev-cli": "node packages/cli-template/src/main.ts --daemon packages/platform-native/src/main.ts --worker harness --harness claude-code",
+    "dev:daemon": "mkdir -p \"${XDG_CACHE_HOME:-$HOME/.cache}/harness\" && node --watch packages/platform-native/src/main.ts --socket \"${XDG_CACHE_HOME:-$HOME/.cache}/harness/dev.sock\"",
+    "dev:cli": "node packages/cli-template/src/main.ts --daemon packages/platform-native/src/main.ts --worker ensemble --no-hosted --llama-server \"${XDG_CACHE_HOME:-$HOME/.cache}/harness/bin/llama-server\"",
     "check": "npm run typecheck && npm run lint && npm run test:coverage",
     "test:models": "vitest run --config vitest.models.config.ts"
   },

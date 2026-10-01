@@ -20,10 +20,13 @@ whitespace. A slash command in earlier turns is context, not a command. `/tools`
 is the harness command for registered skills, MCPs, and native tools: no
 argument lists them, `kind:name` or a unique name invokes that registration as a
 model tool, and a shared name asks the user which one. `/sessions` with no
-subcommand lists the current session's managed harness instances; `export` and
-`resume` are subcommands of it. `--help` on a command or subcommand describes
-it and does not run it. Other harness commands stay top-level. An unknown
-slash command stays unknown and does not fall through.
+arguments lists the current session's managed harness instances. `new`,
+`export`, `resume`, `fork`, `btw`, `bg`, and `switch` are subcommands of it.
+`fork` takes an optional thread id and an optional message id. `btw`, `bg`,
+and `switch` are a side question, a background handoff, and an inspection.
+`--help` on a command or subcommand describes it and does not run it. Other
+harness commands stay top-level. An unknown slash command stays unknown and
+does not fall through.
 
 Anything the regex does not claim goes to a decision-model port (ADR 0016: a
 choice among 2 to 20 options, classification only). The port sees the new text
@@ -47,10 +50,28 @@ once, acknowledge to advance, and never handle your own event.
 ## Sessions
 
 `/sessions` is built in, like `/tools`. It is not classified. With no
-subcommand and no arguments it lists the current session's managed harness
-instances by `name` and `harness`. `export` and `resume` are subcommands of
-`/sessions`. They are not top-level commands, so a host may register those
-names as ordinary harness commands.
+arguments it lists the current session's managed harness instances by `name`
+and `harness`. `new`, `export`, `resume`, `fork`, `btw`, `bg`, and `switch`
+are subcommands of `/sessions`. They are not top-level commands, so a host may
+register those names as ordinary harness commands. `/sessions new` returns a
+`new-session` action. The interpreter does not open a session; the host does.
+
+`/sessions btw <question>` returns `session-btw`. The host asks that question on
+a fork of the main thread. Later questions on the same fork see later
+main-thread updates. The question and the answer stay off the main transcript.
+`/sessions bg` returns `session-bg`. The host keeps the active turn running on
+the previous main, takes later input on a new main, and merges the finished
+turn into that main. `/sessions switch <session>` returns `session-switch`. The
+host reports that session and does not move the input queue. `/sessions fork`
+returns `session-fork`. The thread id and the message id are optional and
+labeled, so either can be given alone. Neither forks at the end of the active
+thread. A thread id alone forks at the end of that thread. A message id alone
+forks through that message. Both fork through that message on that thread. The
+host copies the conversation through that point into a new session and leaves
+the original unchanged. An unknown thread id, an unknown message id, or a
+message that is not on the named thread does not create a session. A bare
+`/btw`, `/bg`, `/switch`, or `/fork` stays an unknown command, and `/session`
+does not list, fork, ask, hand off, or switch.
 
 The host passes the instances (`name`, `harness`, `state`). `/sessions export`
 writes one named session, or every session when the name is omitted. The
@@ -67,7 +88,8 @@ not run it, classify it, export, resume, invoke a tool, or change a setting.
 `/tools --help` describes the command and every skill, MCP, and native tool.
 `/tools <name> --help` and `/tools <kind:name> --help` describe that
 registration. A shared name lists each match. `/sessions --help` describes the
-command; `export` and `resume` describe themselves. `/settings --help` describes
+command; `new`, `export`, `resume`, `fork`, `btw`, `bg`, and `switch` describe
+themselves. `--help` does not list or fork. `/settings --help` describes
 the command and the catalog; a key describes that setting's fallback and, when
 the set is closed, its values. A registered harness command describes itself
 from its registration. An unknown command or tool stays unknown.

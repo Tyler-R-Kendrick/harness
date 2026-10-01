@@ -14,6 +14,7 @@ export { HARNESS, MODEL_HEADER, STATE_KIND, constrain, constraintOf, embedding, 
 export type { StateChange, TokenLogprob } from "./options.ts";
 export { ImageInputSchema, JudgeAnswerSchema, JudgeQuestionSchema, ToolSpecSchema } from "./ports.ts";
 export { chunkTokens, compressWords, percentile, wordsFromTokens } from "./compression.ts";
+export { compactContext } from "./context.ts";
 export type { CompressWordsOptions, ScoredToken, ScoredWord } from "./compression.ts";
 export { cascadePolicy, decideToolCalls, DEFAULT_CASCADE, route, toolSet, validatedSchema } from "./cascade.ts";
 export { decisionRouter, DECISION_ACCEPT, rankTools } from "./decision-router.ts";
@@ -29,6 +30,8 @@ export type { CognitiveOperation, ExtensionOperation } from "./service.ts";
 export { bytes, BytesSchema, commitSha, CommitShaSchema, dimensions, DimensionsSchema, PositiveBytesSchema, probability, ProbabilitySchema, sha256, Sha256Schema, similarity, SimilaritySchema, sumBytes } from "./units.ts";
 export type { Bytes, CommitSha, Dimensions, Probability, Sha256, Similarity } from "./units.ts";
 export { CONSTRAINT_TYPES, ConstraintSchema, fillTemplate, readTemplate } from "./constraint.ts";
+export { ARTIFACT_KINDS, ArtifactRefSchema, CORRECTION_ACTIONS, CorrectionInputSchema, correctedArtifact, correctedText, correctedWorkflow, PreferenceRecordSchema } from "./preferences.ts";
+export type { ArtifactKind, ArtifactRef, ArtifactText, CorrectionAction, CorrectionInput, PreferenceRecord } from "./preferences.ts";
 export type { Constraint, ConstraintType, TemplateConstraint, TokenConstraint } from "./constraint.ts";
 export { collectParts, finishReason, StreamParts, usage } from "./stream-parts.ts";
 export type { Scope } from "./options.ts";

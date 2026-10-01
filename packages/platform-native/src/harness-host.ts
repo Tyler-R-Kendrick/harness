@@ -131,7 +131,7 @@ export async function prepareLocalClaude(options: {
 export function harnessAdapter(spec: HarnessSpec, claudeEnv?: Readonly<Record<string, string>>): AnyHarness {
   switch (spec.kind) {
     case "claude-code":
-      return claudeEnv === undefined ? createClaudeCode() : createClaudeCode({ env: claudeEnv });
+      return claudeEnv === undefined ? createClaudeCode() : createClaudeCode({ env: claudeEnv, auth: claudeEnv });
     case "codex":
       return createCodex();
     case "acp":
@@ -212,10 +212,12 @@ export function harnessWorker(
     readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
     /** Host tools that wait for the session's approver. The next typed line answers. */
     readonly toolApproval?: Record<string, "user-approval">;
+    /** Empty turns builtin tools off (allow-list of none). The loopback overlay does this so a local model answers instead of printing the tool catalog. */
+    readonly activeTools?: readonly [];
   } & ({ readonly sandbox: HarnessV1SandboxProvider } | { readonly sandboxRoot: string }),
 ): { worker: AgentWorker; close(): Promise<void> } {
   const sandbox = "sandbox" in options ? options.sandbox : hostSandbox({ root: options.sandboxRoot });
-  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...(options.skills === undefined ? {} : { skills: options.skills }), ...(options.toolApproval === undefined ? {} : { toolApproval: options.toolApproval }) });
+  const agent = new HarnessAgent({ harness: options.harness, sandbox, prepareCall: harnessTurnTools, ...(options.instructions === undefined ? {} : { instructions: options.instructions }), ...(options.skills === undefined ? {} : { skills: options.skills }), ...(options.toolApproval === undefined ? {} : { toolApproval: options.toolApproval }), ...(options.activeTools === undefined ? {} : { activeTools: [] }) });
   // With a step hook (procedural graphs), each turn's prompt is prepended with its guidance.
   const sessions = harnessSessions(agent, {
     ...(options.stateFile === undefined ? {} : { store: new FileHarnessStore(options.stateFile) }),

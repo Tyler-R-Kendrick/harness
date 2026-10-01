@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { JSONValue } from "ai";
-import type { Caller, CognitiveExtension } from "@harness/cognitive";
+import type { ArtifactText, Caller, CognitiveExtension } from "@harness/cognitive";
 import type { Dialogue } from "./dialogue.ts";
 import { FlowNameSchema, parse, parseScript, SCRIPT_STATUSES } from "./schemas.ts";
 import type { DocumentInput } from "./schemas.ts";
@@ -20,7 +20,23 @@ export type Importer = (request: ImportRequest) => Promise<{ readonly document: 
 const Id = z.strictObject({ id: z.string().min(1) });
 const ListInput = z.strictObject({ status: z.enum(SCRIPT_STATUSES).exactOptional() });
 const PutInput = z.strictObject({ script: z.unknown() });
-const FeedbackInput = z.strictObject({ id: z.string().min(1), kind: z.enum(["helpful", "harmful"]), session: z.string().min(1).exactOptional() });
+const FeedbackInput = z
+  .strictObject({
+    id: z.string().min(1),
+    kind: z.enum(["helpful", "harmful"]),
+    session: z.string().min(1).exactOptional(),
+    utterance: z.string().min(1).exactOptional(),
+    answer: z.string().min(1).exactOptional(),
+    text: z.string().exactOptional(),
+    action: z.enum(["rating", "replacement", "steering"]).exactOptional(),
+    artifact: z.enum(["template", "workflow", "script"]).exactOptional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === undefined) return;
+    if (value.kind !== "harmful") ctx.addIssue({ code: "custom", message: "a correction is negative feedback" });
+    if (value.utterance === undefined) ctx.addIssue({ code: "custom", message: "a correction names the utterance" });
+    if (value.answer === undefined) ctx.addIssue({ code: "custom", message: "a correction names the answer" });
+  });
 const ImportInput = z.strictObject({
   name: FlowNameSchema,
   files: z.record(z.string().min(1), z.string()),
@@ -48,7 +64,12 @@ function authoring(op: string, caller: Caller | undefined): void {
  * (author a script), `feedback` (on a script's answers) and `import` (a document in a
  * dialogue standard, through the host's importer).
  */
-export function dialogueExtension(options: { readonly dialogue: Dialogue; readonly importer?: Importer }): CognitiveExtension {
+export function dialogueExtension(options: {
+  readonly dialogue: Dialogue;
+  readonly importer?: Importer;
+  /** Templates and workflows a correction can rewrite. A script is the dialogue's own. */
+  readonly artifacts?: { readonly template?: ArtifactText; readonly workflow?: ArtifactText };
+}): CognitiveExtension {
   const { dialogue, importer } = options;
   return {
     id: "dialogue",
@@ -73,7 +94,24 @@ export function dialogueExtension(options: { readonly dialogue: Dialogue; readon
         return { id: (script as { id: string }).id };
       },
       feedback: async (input) => {
-        const { id, kind, session } = parse(FeedbackInput, "dialogue.feedback input", input ?? {});
+        const parsed = parse(FeedbackInput, "dialogue.feedback input", input ?? {});
+        if (parsed.action !== undefined) {
+          const { utterance, answer, action } = parsed;
+          if (utterance === undefined || answer === undefined) throw new Error("a correction names the utterance and the answer");
+          const kind = parsed.artifact ?? "script";
+          const port = kind === "template" ? options.artifacts?.template : kind === "workflow" ? options.artifacts?.workflow : undefined;
+          const correction = {
+            utterance,
+            answer,
+            text: parsed.text ?? "",
+            action,
+            artifact: { kind, id: parsed.id },
+          };
+          const preference = port === undefined ? await dialogue.correct(correction) : await dialogue.correct(correction, port);
+          const script = dialogue.script(parsed.id);
+          return script ? { evidence: script.evidence, preference } : { preference };
+        }
+        const { id, kind, session } = parsed;
         // Feedback counts a session's evidence only from a session the dialogue saw: made-up sessions cannot promote a script.
         if (session !== undefined && !dialogue.hasSession(session)) throw new Error(`no session ${session} in the dialogue`);
         dialogue.feedback(id, kind, session);

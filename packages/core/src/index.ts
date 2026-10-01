@@ -3,6 +3,8 @@ export { ID_KINDS, newId, parseId } from "./ids.ts";
 export type { Id, IdKind } from "./ids.ts";
 export { SessionLog } from "./session-log.ts";
 export type { LogEntry, ReadResult, SessionLogData } from "./session-log.ts";
+export { LiveText, openLiveText, saveLiveText } from "./live-text.ts";
+export type { ArchiveHit, LiveTextData } from "./live-text.ts";
 export { err, ok } from "./result.ts";
 export type { Result } from "./result.ts";
 export { SubagentTree } from "./subagents.ts";

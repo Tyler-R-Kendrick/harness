@@ -36,3 +36,11 @@ list in. Adding a setting is a catalog change, not a new command.
 The daemon does not apply the effective values yet. The playground terminal
 still has its own cac commands for worker, tier, approval, and models. Moving
 those behind `/settings` is later work.
+
+The interactive CLI reads the `daemon` socket before a session exists. The
+workspace `.harness/settings.json` wins, then the user file
+`~/.harness/settings.json`, then the global file `/etc/harness/settings.json`.
+`/settings daemon` writes the workspace file when that layer supplied the
+socket, and the user file otherwise. An empty value is not a connection. The
+client then checks `HARNESS_DAEMON` and the dev socket, and self-hosts a worker
+only when every one of those is empty.

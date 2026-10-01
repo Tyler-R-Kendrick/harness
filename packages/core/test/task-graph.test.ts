@@ -392,7 +392,7 @@ describe("TaskGraph serialization", () => {
   it("TG5.6 fromJSON refuses statuses no execution reaches: a started node whose dependencies or awaited groups were not ready, a skipped node that can still be satisfied", () => {
     const n = (id: string, extra: Record<string, unknown> = {}) => ({ id, join: { kind: "all" }, resources: [], awaits: [], status: "pending", sealed: false, ...extra });
     const dep = [{ from: "a", to: "b", kind: "data" }];
-    for (const status of ["running", "succeeded", "failed"]) {
+    for (const status of ["running", "awaiting", "succeeded", "failed"]) {
       expect(() => TaskGraph.fromJSON({ nodes: [n("a"), n("b", { status })], edges: dep })).toThrow(/node b is .* but was never ready/);
       expect(() => TaskGraph.fromJSON({ nodes: [n("a", { status: "succeeded" }), n("b", { status })], edges: dep })).not.toThrow();
       expect(() => TaskGraph.fromJSON({ nodes: [n("g"), n("b", { status, awaits: ["g"] })], edges: [] })).toThrow(/node b is .* but was never ready/);
@@ -416,5 +416,32 @@ describe("TaskGraph serialization", () => {
     expect(TaskGraph.fromJSON(data).payload("a")).toEqual({ step: 1 });
     expect(TaskGraph.fromJSON(data).toJSON()).toStrictEqual(data);
     expect(() => TaskGraph.fromJSON({ ...data, nodes: data.nodes.map((node) => (node.id === "a" ? { ...node, payload: { step: "one" } } : node)) }, step)).toThrow(/node a has an invalid payload: not a step/);
+  });
+
+  it("TG7.1 background parks a running node off the scheduler without finishing it, freeing its exclusive resource, and it can finish from there", () => {
+    const g = new TaskGraph();
+    g.addNode("ask", { resources: ["ear"] });
+    g.addNode("next", { resources: ["ear"] });
+    g.addNode("after");
+    g.addEdge("ask", "after", "control");
+    expect(g.background("missing").ok).toBe(false);
+    expect(g.background("ask").ok).toBe(false);
+    g.start("ask");
+    expect(g.schedule(4)).toEqual([]);
+    const revision = g.revision();
+    expect(g.background("ask")).toEqual({ ok: true, value: undefined });
+    expect(g.revision()).toBe(revision);
+    expect(g.status("ask")).toBe("awaiting");
+    expect(["succeeded", "failed", "cancelled", "skipped"]).not.toContain(g.status("ask"));
+    expect(g.ready()).toEqual(["next"]);
+    expect(g.schedule(4)).toEqual(["next"]);
+    expect(g.status("after")).toBe("pending");
+    const parked = TaskGraph.fromJSON(JSON.parse(JSON.stringify(g.toJSON())));
+    expect(parked.status("ask")).toBe("awaiting");
+    expect(parked.ready()).toEqual(["next"]);
+    expect(parked.schedule(4)).toEqual(["next"]);
+    expect(g.complete("ask", "succeeded").ok).toBe(true);
+    expect(g.status("ask")).toBe("succeeded");
+    expect(g.ready()).toEqual(["next", "after"]);
   });
 });

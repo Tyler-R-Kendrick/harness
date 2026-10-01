@@ -84,4 +84,25 @@ describe("the template store: files under ~/agent/templates", () => {
     expect(await bash.fs.exists(`${TEMPLATES}/retired/list-files.md`)).toBe(true);
     await expect(store.feedback("nope", "helpful")).rejects.toThrow("no template nope");
   });
+
+  it("TP2.4 a correction is stored for RLHF and rewrites the template; a rating leaves the body; a second session reads both", async () => {
+    const bash = new Bash({ cwd: HOME });
+    const store = new TemplateStore(bash.fs);
+    await store.put(parseTemplate("greet", "---\ndescription: Greets\n---\nHello"));
+    await store.put(parseTemplate("other", "---\ndescription: Other\n---\nStay"));
+    await store.prefer({ utterance: "hi", answer: "Hello", text: "Goodbye", action: "replacement", artifact: { kind: "template", id: "greet" } });
+    expect((await store.get("greet"))?.body).toBe("Goodbye");
+    expect((await store.get("other"))?.body).toBe("Stay");
+    await store.prefer({ utterance: "hi", answer: "Goodbye", text: "be brief", action: "steering", artifact: { kind: "template", id: "greet" } });
+    await store.prefer({ utterance: "hi", answer: "Goodbye", text: "", action: "rating", artifact: { kind: "template", id: "greet" } });
+    const body = (await store.get("greet"))?.body;
+    expect(body).toBe("Goodbye\nbe brief");
+    const again = new TemplateStore(bash.fs);
+    expect(await again.preferences()).toEqual([
+      { utterance: "hi", answer: "Hello", text: "Goodbye", signal: "negative", action: "replacement", artifact: { kind: "template", id: "greet" } },
+      { utterance: "hi", answer: "Goodbye", text: "be brief", signal: "negative", action: "steering", artifact: { kind: "template", id: "greet" } },
+      { utterance: "hi", answer: "Goodbye", text: "", signal: "negative", action: "rating", artifact: { kind: "template", id: "greet" } },
+    ]);
+    expect((await again.get("greet"))?.body).toBe(body);
+  });
 });

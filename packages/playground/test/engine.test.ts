@@ -153,6 +153,24 @@ describe("the template engine: answers from templates before inference", () => {
     expect((await store.get("list-files"))?.refine).toBeUndefined();
   });
 
+  it("TE1.5b a bad note already applied to the template is what the next answer renders", async () => {
+    const { ask, store } = setup();
+    const before = await store.get("list-files");
+    await store.prefer({
+      utterance: "list the files",
+      answer: before!.body,
+      text: "be brief",
+      action: "steering",
+      artifact: { kind: "template", id: "list-files" },
+    });
+    await store.feedback("list-files", "harmful", "be brief");
+    const result = await ask("list the files");
+    expect(result.steps[0]!.toolCalls).toEqual([]);
+    expect(result.text).toContain("Files in ");
+    expect(result.text).toContain("README.md");
+    expect(result.text).toContain("be brief");
+  });
+
   it("TE1.6 with generation off nothing is generated and the reply says how to allow it; with no generator the tool says so", async () => {
     const { ask, setGeneration } = setup({ generation: "off" });
     const off = await ask("write a haiku about the sea");

@@ -3,6 +3,8 @@ import { projectScope } from "@harness/cognitive";
 import type { Decision, Dialogue, Outcome, Step } from "@harness/dialogue";
 import type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } from "./worker.ts";
 import { promptText, textChunk } from "./worker.ts";
+import { citedBody, recalledLines, voiceAnswer } from "./voice.ts";
+import type { ForeignVoice } from "./voice.ts";
 
 type Answer = Exclude<Decision, { kind: "pass" } | { kind: "generate" }>;
 
@@ -49,18 +51,33 @@ export class DialogueWorker implements Worker {
   readonly #unseen = new Map<string, string[]>();
 
   readonly #handoff: boolean;
+  /** Set when the inner worker is a different harness or another model: its text is rewritten, and the harness voice is not sent to it. */
+  readonly #voice: ForeignVoice | undefined;
 
   /** `handoff: false` for a worker that keeps no history of its own (the echo worker): it is not told the turns scripts answered. */
-  constructor(inner: Worker, dialogue: Dialogue, options: { readonly handoff?: boolean } = {}) {
+  constructor(inner: Worker, dialogue: Dialogue, options: { readonly handoff?: boolean; readonly voice?: ForeignVoice } = {}) {
     this.#inner = inner;
     this.#dialogue = dialogue;
     this.#handoff = options.handoff ?? true;
+    this.#voice = options.voice;
+  }
+
+  /** A prompt that is only `cite:<id>` names a stored raw body. */
+  #opened(command: PromptCommand): string | undefined {
+    const voice = this.#voice;
+    if (voice === undefined) return undefined;
+    return citedBody(promptText(command.prompt), voice.book);
   }
 
   async run(command: PromptCommand, emit: Emit): Promise<void> {
     const step = stepOf(command);
     const key = `${command.sessionId}/${command.turnId}`;
     const base = { sessionId: command.sessionId, turnId: command.turnId };
+    const opened = this.#opened(command);
+    if (opened !== undefined) {
+      emit({ type: "update", ...base, update: textChunk(opened) });
+      return emit({ type: "end", ...base, stopReason: "end_turn" });
+    }
     let decision: Decision | undefined;
     this.#deciding.add(key);
     try {
@@ -73,13 +90,26 @@ export class DialogueWorker implements Worker {
       this.#deciding.delete(key);
     }
     if (this.#cancelled.delete(key)) return emit({ type: "end", ...base, stopReason: "cancelled" });
-    if (decision === undefined) return this.#inner.run(this.#told(command), emit);
+    if (decision === undefined) {
+      if (this.#voice === undefined) return this.#inner.run(this.#told(command), emit);
+      const lines = await recalledLines(this.#voice.voice, this.#voice.memoryStore, step?.utterance ?? promptText(command.prompt), command.sessionId);
+      return this.#foreign(this.#voice, this.#told(command), emit, undefined, lines);
+    }
     // What a flow said before handing the turn on is said first; the worker, told it was said, answers after.
     const said = (decision.kind === "pass" || decision.kind === "generate") && decision.said !== undefined ? decision.said : undefined;
     if (said !== undefined) emit({ type: "update", ...base, update: textChunk(`${said}\n`) });
-    if (decision.kind === "generate") return this.#inner.run(this.#saidAfter(this.#told({ ...command, prompt: [{ type: "text", text: decision.instruction }, ...command.prompt] }), said), emit);
-    if (decision.kind === "pass") return this.#observed(this.#saidAfter(this.#told(command), said), emit, step!, decision);
-    if (this.#handoff) this.#remember(command.sessionId, step!.utterance, decision.text);
+    if (decision.kind === "generate" || decision.kind === "pass") {
+      const prompt = decision.kind === "generate"
+        ? this.#saidAfter(this.#told({ ...command, prompt: [{ type: "text", text: decision.instruction }, ...command.prompt] }), said)
+        : this.#saidAfter(this.#told(command), said);
+      if (this.#voice !== undefined) {
+        const lines = await recalledLines(this.#voice.voice, this.#voice.memoryStore, step?.utterance ?? "", command.sessionId);
+        return this.#foreign(this.#voice, prompt, emit, decision.kind === "pass" ? { step: step!, decision } : undefined, lines);
+      }
+      if (decision.kind === "generate") return this.#inner.run(prompt, emit);
+      return this.#observed(prompt, emit, step!, decision);
+    }
+    if (this.#handoff && this.#voice === undefined) this.#remember(command.sessionId, step!.utterance, decision.text);
     const update: SessionUpdate = { ...textChunk(decision.text), _meta: metaOf(decision) };
     emit({ type: "update", ...base, update });
     emit({ type: "end", ...base, stopReason: "end_turn" });
@@ -99,12 +129,13 @@ export class DialogueWorker implements Worker {
 
   /** A prompt for a worker keeping history, told after the user's words what a flow already said in reply this turn. */
   #saidAfter(command: PromptCommand, said: string | undefined): PromptCommand {
-    if (said === undefined || !this.#handoff) return command;
+    if (this.#voice !== undefined || said === undefined || !this.#handoff) return command;
     return { ...command, prompt: [...command.prompt, { type: "text", text: `${this.#dialogue.settings.handoff.said}\n\n${said}` }] };
   }
 
   /** A prompt for the worker, told first the exchanges scripts answered since its last turn. */
   #told(command: PromptCommand): PromptCommand {
+    if (this.#voice !== undefined) return command;
     const unseen = this.#unseen.get(command.sessionId);
     if (!unseen) return command;
     this.#unseen.delete(command.sessionId);
@@ -123,6 +154,27 @@ export class DialogueWorker implements Worker {
       emit(event);
     });
     this.#dialogue.observe(step, decision, outcome);
+  }
+
+  /** The worker's text, rewritten in the harness voice. Tool and end events pass through. The raw reply is not learned. */
+  async #foreign(voice: ForeignVoice, command: PromptCommand, emit: Emit, observe: { readonly step: Step; readonly decision: Decision } | undefined, lines: readonly string[]): Promise<void> {
+    let text = "";
+    let acted = false;
+    let outcome: Outcome;
+    await this.#inner.run(command, (event) => {
+      if (event.type === "update" && event.update.sessionUpdate === "agent_message_chunk" && event.update.content.type === "text") {
+        text += event.update.content.text;
+        return;
+      }
+      if (event.type === "update" && event.update.sessionUpdate === "tool_call") acted = true;
+      if (event.type === "end") {
+        // A cancelled or refused turn's partial text is not an answer: only a finished turn is rewritten.
+        if (event.stopReason === "end_turn" && text !== "") emit({ type: "update", sessionId: command.sessionId, turnId: command.turnId, update: textChunk(voiceAnswer(text, voice.producer, voice.voice, voice.book, lines).text) });
+        outcome = acted ? { acted: true } : undefined;
+      }
+      emit(event);
+    });
+    if (observe !== undefined) this.#dialogue.observe(observe.step, observe.decision, outcome);
   }
 
   cancel(sessionId: string, turnId: string): void {

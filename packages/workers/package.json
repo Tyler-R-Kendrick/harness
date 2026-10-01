@@ -12,6 +12,7 @@
     "@agentclientprotocol/sdk": "1.5.0",
     "@ai-sdk/harness": "1.0.124",
     "@ai-sdk/provider": "4.0.18",
+    "@ax-llm/ax": "24.0.24",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
     "@harness/dialogue": "0.0.0",

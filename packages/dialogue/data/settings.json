@@ -26,7 +26,7 @@
     "question": "Is `candidate` as correct, complete and fitting a reply to `request` as `reply` is, saying nothing that `reply` contradicts?"
   },
   "generate": {
-    "instruction": "Reply with exactly the text below, word for word, writing only the parts in {braces} yourself: replace each {name} with a short phrase that fits there, and add nothing before or after."
+    "instruction": "Reply with exactly the text below, word for word. Where a line is underlined, write the words that answer the user, with spaces between them, a different point in each place, and add nothing before or after."
   },
   "handoff": {
     "heading": "Earlier in this conversation, answered for you (for context; do not repeat it):",
