@@ -328,6 +328,7 @@ export class Dialogue {
   readonly #vectors = new Map<string, number[]>();
   /** Learning runs one observation at a time, in order, off the step's path. */
   #work: Promise<void> = Promise.resolve();
+  #corrections: Promise<void> = Promise.resolve();
 
   constructor(options: DialogueOptions) {
     this.#settings = options.settings;
@@ -432,6 +433,16 @@ export class Dialogue {
   async correct(input: CorrectionInput, port?: ArtifactText): Promise<PreferenceRecord> {
     const correction = CorrectionInputSchema.parse(input);
     const record = PreferenceRecordSchema.parse({ ...correction, signal: "negative" });
+    // A correction reads and rewrites the artifact: one at a time, or two at once lose the first write.
+    const applied = this.#corrections.then(() => this.#applyCorrection(record, port));
+    this.#corrections = applied.then(
+      () => undefined,
+      () => undefined,
+    );
+    return applied;
+  }
+
+  async #applyCorrection(record: PreferenceRecord, port: ArtifactText | undefined): Promise<PreferenceRecord> {
     const { kind, id } = record.artifact;
     // A steering instruction is one more part. Flattening the reply would drop a hole or a flow.
     if (kind === "script" && record.action === "steering") {
@@ -494,7 +505,7 @@ export class Dialogue {
       sessions: [...this.#sessions.values()].map(saved).filter((s) => Object.keys(s).length > 1),
       runs: this.#runs,
       documents: [...this.#imported.values()].map((d) => d.record),
-      ...(this.#preferences.length > 0 ? { preferences: this.#preferences } : {}),
+      ...(this.#preferences.length > 0 ? { preferences: this.preferences() } : {}),
     };
   }
 
@@ -620,7 +631,8 @@ export class Dialogue {
     // A built script is checked again now and then: the model answers in its place, in shadow.
     // Every `audit` serves (an audit of 0 never: n % 0 is NaN).
     // Audits count too, so the turn after an audit is served again.
-    if (script.origin !== "authored" && (script.evidence.served + script.evidence.audits + 1) % this.#settings.promote.audit === 0) {
+    // A session template is not in the book: its shadow could never be verified, so it is served.
+    if (script.origin !== "authored" && this.#scripts.has(script.id) && (script.evidence.served + script.evidence.audits + 1) % this.#settings.promote.audit === 0) {
       this.#count(script.id, "audits");
       return pass(`auditing ${script.id}`, context, { script: script.id, slots, match });
     }

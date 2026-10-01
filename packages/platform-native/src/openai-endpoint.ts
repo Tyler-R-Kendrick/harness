@@ -66,14 +66,18 @@ export async function configuredDecisionsEndpoint(options: {
   if (endpoint === undefined) return undefined;
   const fetchFn = options.fetch ?? fetch;
   if (!(await decisionsApiAvailable(endpoint.baseUrl, fetchFn))) return undefined;
-  const model = endpoint.model ?? (await listedModel(endpoint.baseUrl, fetchFn));
+  const model = endpoint.model ?? (await listedModel(endpoint.baseUrl, fetchFn, endpoint.apiKey));
   if (model === undefined) return undefined;
   return { baseUrl: endpoint.baseUrl, model, ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }) };
 }
 
-async function listedModel(baseUrl: string, fetchFn: typeof fetch): Promise<string | undefined> {
+async function listedModel(baseUrl: string, fetchFn: typeof fetch, apiKey: string | undefined): Promise<string | undefined> {
   try {
-    const response = await fetchFn(`${openAiCompatibleRoot(baseUrl)}/v1/models`, { signal: AbortSignal.timeout(2000) });
+    // An authenticated endpoint answers /v1/models with the configured key, or the discovery is a 401.
+    const response = await fetchFn(`${openAiCompatibleRoot(baseUrl)}/v1/models`, {
+      signal: AbortSignal.timeout(2000),
+      ...(apiKey === undefined ? {} : { headers: { authorization: `Bearer ${apiKey}` } }),
+    });
     if (!response.ok) return undefined;
     const ids = modelIdsFromCatalog(await response.json());
     return ids[0];

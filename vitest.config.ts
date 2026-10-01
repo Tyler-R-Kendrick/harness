@@ -6,7 +6,7 @@ import { defineConfig } from "vitest/config";
 const pkg = (name: string) => new URL(`./packages/${name}/src/index.ts`, import.meta.url).pathname;
 // Subpath entries resolve before their package (aliases match by prefix, in order).
 const SUBPATHS = { "@harness/workflows/node": new URL("./packages/workflows/src/node.ts", import.meta.url).pathname };
-const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "evolution", "procedural", "ir", "adapters", "climb", "report", "runner", "graders", "generate", "cli", "cli-template"];
+const PACKAGES = ["protocol", "core", "cognitive", "testkit", "platform-native", "evals", "workers", "models", "behavior", "memory", "learning", "workflows", "learning-plugins", "constrained", "client", "runtime", "platform-browser", "playground", "dialogue", "dialogue-standards", "evolution", "procedural", "ir", "adapters", "climb", "report", "runner", "graders", "generate", "cli", "cli-template", "mcp"];
 
 // Test taxonomy (by filename suffix):
 //   *.test.ts              atomic unit tests: one behavior per test, named by assertion ID
@@ -31,7 +31,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["packages/*/src/**/*.ts"],
-      exclude: ["packages/*/src/index.ts", "packages/*/src/bin.ts", "packages/evals/src/cli.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/platform-native/src/evolution-cli.ts", "packages/platform-native/src/deliver-cli.ts", "packages/playground/src/app.ts", "packages/cli/src/main.ts", "packages/cli-template/src/main.ts"],
+      exclude: ["packages/*/src/index.ts", "packages/evals/src/cli.ts", "packages/mcp/src/bin.ts", "packages/platform-native/src/main.ts", "packages/platform-native/src/workflow-cli.ts", "packages/platform-native/src/dialogue-cli.ts", "packages/platform-native/src/evolution-cli.ts", "packages/platform-native/src/deliver-cli.ts", "packages/playground/src/app.ts", "packages/cli/src/main.ts", "packages/cli-template/src/main.ts"],
       reporter: ["text-summary", "json-summary", "html"],
       thresholds: { lines: 95, branches: 90, functions: 95, statements: 95 },
     },

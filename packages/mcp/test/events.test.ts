@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
-import { connectHttp, serveHttp, textOf, webhookDecision } from "@harness/mcp";
+import { connectHttp, serveHttp, signWebhook, textOf, webhookDecision } from "@harness/mcp";
 
 const SECRET = "whsec_dGVzdC1zZWNyZXQ";
 
@@ -127,5 +127,25 @@ describe("MCP events", () => {
   it("MCP4.3 a webhook with a bad signature is rejected", () => {
     expect(webhookDecision(SECRET, { id: "evt_1", timestamp: "1", signature: "v1,not-a-real-signature" }, "{\"n\":1}")).toBe("reject");
     expect(webhookDecision(SECRET, { id: "evt_1", timestamp: "1" }, "{\"n\":1}")).toBe("reject");
+  });
+
+  it("MCP4.4 a correctly signed webhook that is not fresh is rejected", () => {
+    const body = "{\"n\":1}";
+    const stale = "1000";
+    const signature = signWebhook(SECRET, "evt_old", stale, body);
+    expect(webhookDecision(SECRET, { id: "evt_old", timestamp: stale, signature }, body, { now: 1_700_000_000_000 })).toBe("reject");
+    const fresh = String(Math.round(1_700_000_000_000 / 1000));
+    const live = signWebhook(SECRET, "evt_new", fresh, body);
+    expect(webhookDecision(SECRET, { id: "evt_new", timestamp: fresh, signature: live }, body, { now: 1_700_000_000_000 })).toBe("accept");
+  });
+
+  it("MCP4.5 a correctly signed delivery seen before is a replay and is rejected", () => {
+    const body = "{\"n\":1}";
+    const timestamp = String(Math.round(1_700_000_000_000 / 1000));
+    const signature = signWebhook(SECRET, "evt_1", timestamp, body);
+    const seen = new Set<string>();
+    const headers = { id: "evt_1", timestamp, signature };
+    expect(webhookDecision(SECRET, headers, body, { now: 1_700_000_000_000, seen })).toBe("accept");
+    expect(webhookDecision(SECRET, headers, body, { now: 1_700_000_000_000, seen })).toBe("reject");
   });
 });

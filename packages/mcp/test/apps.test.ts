@@ -38,4 +38,13 @@ describe("MCP apps", () => {
       await server.close();
     }
   });
+
+  it("MCP3.3 a tool that throws settles the guest's call as an error", async () => {
+    const channel = new MessageChannel();
+    const host = new AppHost("<html></html>", { callTool: () => Promise.reject(new Error("tool broke")) });
+    const view = new AppView({ name: "demo", version: "0.0.0" });
+    host.attach(channel.port1);
+    view.attach(channel.port2);
+    await expect(view.callTool("explode", {})).rejects.toThrow("tool broke");
+  });
 });

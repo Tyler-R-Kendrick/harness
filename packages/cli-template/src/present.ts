@@ -213,7 +213,6 @@ function plainRow(row: string): string {
 }
 
 /** Settled cells, one open thought, one live answer, and one activity label. The terminal is a diff of those rows. */
-/** Settled cells, one open thought, one live answer, and one activity label. The terminal is a diff of those rows. */
 export function openSessionFrame(options: { readonly tty: boolean; readonly color: boolean; readonly rows?: number }): SessionFrame {
   const cells: FrameCell[] = [];
   const rowCache = new Map<FrameCell, readonly string[]>();

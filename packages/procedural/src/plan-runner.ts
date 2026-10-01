@@ -16,7 +16,7 @@ import { readGraph } from "./import-export.ts";
 import type { EffectiveGraph } from "./overlay-types.ts";
 import type { PlanPayload } from "./plan.ts";
 import { parsePlanRun, runPlan } from "./plan-run.ts";
-import type { PlanRunState, PlanTask, PlanTaskReport } from "./plan-run.ts";
+import type { PlanRun, PlanRunState, PlanTask, PlanTaskReport } from "./plan-run.ts";
 import { modelTask } from "./plan-task.ts";
 import type { Settings } from "./settings.ts";
 import type { ProceduralStore } from "./store.ts";
@@ -140,6 +140,11 @@ export interface PlanRunner {
   run(graph: GraphId, plan: TaskGraph<PlanPayload>): Promise<PlanRunOutcome>;
   /** Run every kept run to its end, one after another (a restarted host's). */
   resume(): Promise<(PlanRunOutcome | InvalidPlanRun)[]>;
+  /**
+   * Answer a task of a live run that waits for a person (the task parked as `awaiting`).
+   * False when no such run is live; an unknown task id is kept as a pre-answer, as `runPlan` does.
+   */
+  answer(run: PlanRunId, task: string, value: unknown): boolean;
 }
 
 const hex = (bytes: Uint8Array): string => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -147,17 +152,24 @@ const messageOf = (e: unknown): string => (e instanceof Error ? e.message : Stri
 
 export function planRunner(options: PlanRunnerOptions): PlanRunner {
   const { store, runs, settings, entropy, notify } = options;
+  const live = new Map<PlanRunId, PlanRun>();
   const contextOf = async (graph: GraphId): Promise<PlanTaskContext> => {
     const view = await readGraph({ store, graph });
     return view.status === "ok" ? { graph, view: { core: view.graph, effective: view.effective } } : { graph };
   };
   const execute = async (run: PlanRunId, graph: GraphId, restored: { plan: TaskGraph<PlanPayload>; outcomes?: PlanRunState["outcomes"] }): Promise<PlanRunOutcome> => {
     const task = await options.task(await contextOf(graph));
-    const result = await runPlan({ ...restored, task, settings, save: (state) => runs.put({ id: run, graph, state }) });
-    await runs.delete(run);
-    const outcome: PlanRunOutcome = { run, graph, status: result.status, tasks: result.tasks };
-    await notify?.({ type: "procedural.plan.completed", payload: outcome });
-    return outcome;
+    const planRun = runPlan({ ...restored, task, settings, save: (state) => runs.put({ id: run, graph, state }) });
+    live.set(run, planRun);
+    try {
+      const result = await planRun;
+      await runs.delete(run);
+      const outcome: PlanRunOutcome = { run, graph, status: result.status, tasks: result.tasks };
+      await notify?.({ type: "procedural.plan.completed", payload: outcome });
+      return outcome;
+    } finally {
+      live.delete(run);
+    }
   };
   return {
     run: async (graph, plan) => {
@@ -179,6 +191,12 @@ export function planRunner(options: PlanRunnerOptions): PlanRunner {
         outcomes.push(await execute(record.id, record.graph, restored));
       }
       return outcomes;
+    },
+    answer: (run, task, value) => {
+      const planRun = live.get(run);
+      if (planRun === undefined) return false;
+      planRun.answer(task, value);
+      return true;
     },
   };
 }

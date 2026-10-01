@@ -300,7 +300,6 @@ export class Ensemble {
     return this.#use(task, kind);
   }
 
-  /** Compress a prompt with the best compressor (prompt compression has no AI SDK model kind). */
   /** Compact the middle of a prompt that exceeds the context budget. A missing budget or compressor leaves the call alone. */
   async #fit(options: LanguageModelV4CallOptions): Promise<LanguageModelV4CallOptions> {
     const budget = this.#options.contextTokens;
@@ -309,6 +308,7 @@ export class Ensemble {
     return prompt === options.prompt ? options : { ...options, prompt };
   }
 
+  /** Compress a prompt with the best compressor (prompt compression has no AI SDK model kind). */
   async compress(request: CompressRequest): Promise<Compression & { readonly model: string }> {
     const { id, value } = await this.#call("prompt-compression", "compressor", (port) => port.compress(request));
     return { ...value, model: id };

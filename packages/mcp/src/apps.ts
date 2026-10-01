@@ -58,13 +58,22 @@ export class AppHost {
         params && typeof params === "object" && "arguments" in params && params.arguments && typeof params.arguments === "object"
           ? (params.arguments as Record<string, unknown>)
           : {};
-      const result = await this.tools.callTool(name, args);
-      this.reply(message.id, result);
+      try {
+        const result = await this.tools.callTool(name, args);
+        this.reply(message.id, result);
+      } catch (error) {
+        // A throwing tool is an error reply, not a dropped message: the guest's request must settle.
+        this.fail(message.id, error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
   private reply(id: number, result: unknown): void {
     this.port?.postMessage({ jsonrpc: "2.0", id, result } satisfies RpcResponse);
+  }
+
+  private fail(id: number, message: string): void {
+    this.port?.postMessage({ jsonrpc: "2.0", id, error: { code: -32603, message } } satisfies RpcResponse);
   }
 }
 

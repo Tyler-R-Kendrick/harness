@@ -43,11 +43,27 @@ interface Link {
 /** `session resume <id>` is this client's command, wherever those three words sit. Anything else positional is still a daemon argument. */
 function resumeSession(tokens: typeof parsed.tokens): string | undefined {
   const found = resumeAt(tokens);
-  if (found === "usage" || (found === undefined && positionalsOf(tokens)[0] === "session")) {
+  if (found === "usage" || (found === undefined && leadingCommand(tokens) === "session")) {
     process.stderr.write("usage: harness-cli session resume <session_id>\n");
     process.exit(2);
   }
   return found?.id;
+}
+
+/**
+ * The first bare positional, skipping values of flags this parser does not know: `--worker session`
+ * is the daemon's flag and its value, not this client's `session` command.
+ */
+function leadingCommand(tokens: typeof parsed.tokens): string | undefined {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    if (token.kind === "option" && token.value === undefined && tokens[index + 1]?.kind === "positional") {
+      index += 1;
+    } else if (token.kind === "positional") {
+      return token.value;
+    }
+  }
+  return undefined;
 }
 
 /** Flags this process does not own are the spawned daemon's own switches (`--dialogue`, `--worker`, …). */

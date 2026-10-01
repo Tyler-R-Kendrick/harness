@@ -582,6 +582,60 @@ describe("the interactive cli drives one daemon session", () => {
     expect(await cli.line(`/sessions switch ${original}`)).toContain("gamma-line");
   });
 
+  it("CT6.5 a second /sessions bg with no turn on the new session is usage, and the backgrounded result still merges", async () => {
+    let released = false;
+    let releaseGate: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = () => {
+        if (released) return;
+        released = true;
+        resolve();
+      };
+    });
+    let holds = 0;
+    const host = await NodeHost.start({
+      worker: new EchoWorker({
+        pause: () => {
+          holds += 1;
+          return holds === 1 ? gate : Promise.resolve();
+        },
+      }),
+      identity: { principal: "me", kind: "human" },
+    });
+    hosts.push(host);
+    try {
+      const cli = await openInteractive(stream(host));
+      const original = cli.sessionId();
+      const pending = cli.line("slow-work");
+      for (let attempt = 0; attempt < 200 && holds === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(holds).toBe(1);
+      expect(await cli.line("/sessions bg")).toContain(original);
+      const next = cli.sessionId();
+      const sessionsBefore = host.daemon.snapshot().sessions.length;
+      expect(await cli.line("/sessions bg")).toBe("usage: /sessions bg");
+      expect(cli.sessionId()).toBe(next);
+      expect(host.daemon.snapshot().sessions).toHaveLength(sessionsBefore);
+      releaseGate();
+      expect(await pending).toBe("echo: slow-work");
+      const viewed = await cli.line(`/sessions switch ${next}`);
+      expect(viewed).toContain("echo: slow-work");
+    } finally {
+      releaseGate();
+    }
+  });
+
+  it("CT6.6 /sessions bg cancels a permission the backgrounded turn is waiting on", async () => {
+    const { cli } = await started();
+    const original = cli.sessionId();
+    const armed = cli.armPermission();
+    const pending = cli.line("hello !permission");
+    expect(await armed).toMatch(/allow/i);
+    expect(await cli.line("/sessions bg")).toContain(original);
+    const settled = await Promise.race([pending.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), 2000))]);
+    expect(settled).toBe(true);
+    expect(await cli.line("still-alive")).toBe("echo: still-alive");
+  });
+
   it("TU2.1 a streamed thought collapses in the session frame and the answer stays whole", async () => {
     const token = "trace-9k2";
     const piece = "y".repeat(20);
@@ -1415,8 +1469,6 @@ describe("the interactive cli drives one daemon session", () => {
     };
     const first = await accept();
     const second = await accept();
-    process.stdout.write(`typeahead accepted ${first}\n`);
-    process.stdout.write(`typeahead accepted ${second}\n`);
     expect(first).toBe("/sessions new");
     expect(second).toBe(first);
   });

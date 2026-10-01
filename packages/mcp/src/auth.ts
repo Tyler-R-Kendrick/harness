@@ -111,7 +111,9 @@ export async function discoverAuthorizationServer(resourceMetadataUrl: string, f
   const resource = (await resourceResponse.json()) as ProtectedResourceMetadata;
   const issuer = resource.authorization_servers[0];
   if (!issuer) throw new Error("resource metadata has no authorization server");
-  const metadataUrl = new URL("/.well-known/oauth-authorization-server", issuer);
+  // RFC 8414: the well-known segment goes before any path of the issuer.
+  const issuerUrl = new URL(issuer);
+  const metadataUrl = new URL(`/.well-known/oauth-authorization-server${issuerUrl.pathname.replace(/\/$/, "")}`, issuerUrl.origin);
   const metadataResponse = await fetchFn(metadataUrl);
   if (!metadataResponse.ok) throw new Error(`authorization server metadata ${metadataResponse.status}`);
   const authorization = (await metadataResponse.json()) as AuthorizationServerMetadata;
@@ -141,7 +143,7 @@ export async function redeemAuthorizationCode(options: {
   redirectUri: string;
   scope: string;
   /** Fetch the authorize URL. The scripted server returns the redirect query. */
-  openAuthorization: (authorizationUrl: URL) => Promise<{ code?: string; iss?: string }>;
+  openAuthorization: (authorizationUrl: URL) => Promise<{ code?: string; iss?: string; state?: string }>;
   store: IssuerCredentialStore;
   fetchFn?: typeof fetch;
 }): Promise<RedeemResult> {
@@ -155,11 +157,13 @@ export async function redeemAuthorizationCode(options: {
   authorizationUrl.searchParams.set("client_id", options.clientId);
   authorizationUrl.searchParams.set("redirect_uri", options.redirectUri);
   authorizationUrl.searchParams.set("scope", options.scope);
-  authorizationUrl.searchParams.set("state", randomUUID());
+  const state = randomUUID();
+  authorizationUrl.searchParams.set("state", state);
   authorizationUrl.searchParams.set("code_challenge", challenge);
   authorizationUrl.searchParams.set("code_challenge_method", "S256");
   authorizationUrl.searchParams.set("resource", discovered.resource.resource);
   const redirected = await options.openAuthorization(authorizationUrl);
+  if (redirected.state !== undefined && redirected.state !== state) throw new Error("authorization response state mismatch");
   if (redirected.iss !== undefined && redirected.iss !== issuer) {
     throw new IssuerMismatch(issuer, redirected.iss);
   }
@@ -291,8 +295,14 @@ export async function callWithToken(options: {
     headers,
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  const result = await client.callTool(options.tool ?? "echo", options.args ?? { text: "ok" });
-  return { client, text: textOf(result) };
+  try {
+    const result = await client.callTool(options.tool ?? "echo", options.args ?? { text: "ok" });
+    return { client, text: textOf(result) };
+  } catch (error) {
+    // A failed call still owns the transport: close it so a step-up retry leaks nothing.
+    await client.close();
+    throw error;
+  }
 }
 
 /** Answer an insufficient_scope challenge by authorizing the challenged scope and retrying the call. */

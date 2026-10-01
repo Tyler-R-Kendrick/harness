@@ -894,6 +894,10 @@ describe("input interpreter", () => {
     expect(seen.infer).toEqual([]);
   });
 
+  it("IN4.7 help is built in, and a harness command cannot take its name", () => {
+    expect(() => interpreter({ commands: [{ name: "help", description: "no" }] })).toThrow(/harness command help is built in/);
+  });
+
   it("IN5.1 a partial command completes known harness commands in tree order", async () => {
     const ranked = interpreter({
       decide: () => ({

@@ -10,7 +10,7 @@
     <nomatch>Say sessions, settings, tools, resume, or done.<reprompt/></nomatch>
   </menu>
   <form id="sessions">
-    <block>/sessions new starts a session. /sessions lists them, and /sessions resume daemon plus an id continues one. /session btw asks about the main thread, /session bg moves the active turn to the background, and /session switch inspects a session.<goto next="#topics"/></block>
+    <block>/sessions new starts a session. /sessions lists them, and /sessions resume daemon plus an id continues one. /sessions btw asks about the main thread, /sessions bg moves the active turn to the background, and /sessions switch inspects a session.<goto next="#topics"/></block>
   </form>
   <form id="settings">
     <block>Settings are read from the workspace .harness/settings.json, then your user file, then /etc/harness/settings.json.<goto next="#topics"/></block>

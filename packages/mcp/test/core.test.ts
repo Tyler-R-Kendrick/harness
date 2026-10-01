@@ -207,7 +207,7 @@ describe("stateless MCP 2026-07-28", () => {
     });
   });
 
-  it("MCP1.12 a dropped response stream is re-issued with a new id", async () => {
+  it("MCP1.12 a dropped response stream is re-issued with a new id only for a call marked idempotent", async () => {
     await withHttp(async (url) => {
       const ids: unknown[] = [];
       let dropped = false;
@@ -225,9 +225,26 @@ describe("stateless MCP 2026-07-28", () => {
         },
       });
       try {
-        expect(textOf(await client.callTool("echo", { text: "again" }))).toBe("again");
-        expect(ids).toHaveLength(2);
-        expect(ids[0]).not.toBe(ids[1]);
+        await expect(client.callTool("echo", { text: "again" })).rejects.toThrow("other side closed");
+        expect(ids).toHaveLength(1);
+        dropped = false;
+        let drops = 0;
+        const flaky = await connectHttp(url, {
+          fetch: async (input, init) => {
+            const body = typeof init?.body === "string" ? init.body : "";
+            if (body.includes('"tools/call"') && drops === 0) {
+              drops += 1;
+              throw new Error("other side closed");
+            }
+            return fetch(input, init);
+          },
+        });
+        try {
+          expect(textOf(await flaky.callTool("echo", { text: "again" }, { idempotent: true }))).toBe("again");
+          expect(drops).toBe(1);
+        } finally {
+          await flaky.close();
+        }
       } finally {
         await client.close();
       }

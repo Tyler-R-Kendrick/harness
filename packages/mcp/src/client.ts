@@ -86,6 +86,8 @@ export class HarnessClient {
       logLevel?: string;
       allowInputRequired?: boolean;
       inputResponses?: Record<string, unknown>;
+      /** Retry once when the response stream drops. Only for tools safe to run twice: a dropped response does not prove the first call never ran. */
+      idempotent?: boolean;
     } = {},
   ): Promise<unknown> {
     const params: Record<string, unknown> = { name, arguments: args };
@@ -99,7 +101,7 @@ export class HarnessClient {
     try {
       return await send();
     } catch (error) {
-      if (!isDroppedStream(error)) throw error;
+      if (!options.idempotent || !isDroppedStream(error)) throw error;
       return await send();
     }
   }
@@ -173,7 +175,7 @@ export function connectStdio(
   for (const [key, value] of Object.entries(server.env ?? process.env)) {
     if (typeof value === "string") env[key] = value;
   }
-  env["NODE_OPTIONS"] = "--max-old-space-size=8192";
+  env["NODE_OPTIONS"] = env["NODE_OPTIONS"] ?? "--max-old-space-size=8192";
   const transport = new StdioClientTransport({ command: server.command, args: server.args, env, stderr: "pipe" });
   return connect(transport, options);
 }

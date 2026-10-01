@@ -30,4 +30,5 @@ export {
 } from "./auth.ts";
 export type { ClientMetadataDocument, MetadataServer, ProtectedResourceMetadata, RedeemResult } from "./auth.ts";
 export { signWebhook, verifyWebhook, webhookDecision, webhookKey } from "./webhooks.ts";
+export type { WebhookFreshness } from "./webhooks.ts";
 export { taskIdOf, withResultType } from "./results.ts";

@@ -102,12 +102,6 @@ describe("native cognitive host", () => {
     expect(compression[0]?.descriptor).toMatchObject({ runtime: "transformers.js", run: { dtype: "uint8" } });
     expect(ensemble.members().some((m) => m.descriptor.locality === "hosted")).toBe(false);
     expect(ensemble.candidates("judgment").some((c) => c.descriptor.runtime === "ai-gateway")).toBe(false);
-    console.log(JSON.stringify({
-      chat: chat.map((c) => ({ id: c.id, runtime: c.descriptor.runtime })),
-      vision: ensemble.candidates("vision-qa").map((c) => c.id),
-      classification: decision.map((c) => ({ id: c.id, runtime: c.descriptor.runtime })),
-      compression: compression.map((c) => ({ id: c.id, runtime: c.descriptor.runtime })),
-    }));
     await close();
   });
 });

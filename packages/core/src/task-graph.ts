@@ -217,7 +217,7 @@ export class TaskGraph<P = unknown> {
     return ok(this.#settle());
   }
 
-  /** Stop pending or running work. Cancellation is not rollback: finished work stays finished. */
+  /** Stop pending, running, or awaiting work. Cancellation is not rollback: finished work stays finished. */
   cancel(id: string): Result<string[], GraphError> {
     const n = this.#nodes.get(id);
     if (!n) return err("unknown_node", `no node ${id}`);

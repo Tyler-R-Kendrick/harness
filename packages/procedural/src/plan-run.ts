@@ -124,10 +124,10 @@ function deliver(input: PlanTaskInput, value: unknown): PlanTaskInput {
 
 /**
  * Run a plan to the end: every task runs, is skipped, or waits for a person. Resolves
- * with each task's outcome; rejects only when `save` fails, and then starts nothing more
- * (tasks already running finish unsaved, and run again when the run is resumed from its
- * last state). A task awaiting a person does not hold a slot: the queue keeps going, and
- * `answer` finishes that task later.
+ * with each task's outcome; rejects when `save` fails or a task that yielded cannot be
+ * parked in the graph, and then starts nothing more (tasks already running finish
+ * unsaved, and run again when the run is resumed from its last state). A task awaiting
+ * a person does not hold a slot: the queue keeps going, and `answer` finishes that task later.
  */
 export function runPlan(options: RunPlanOptions): PlanRun {
   const answers = new Map<string, { readonly value: unknown }>();

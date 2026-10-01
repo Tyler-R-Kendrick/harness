@@ -169,7 +169,7 @@ export class InputInterpreter {
     }
     const seenCommands = new Set<string>();
     for (const command of this.#commands) {
-      if (command.name === "tools" || command.name === "sessions" || command.name === "session" || command.name === "settings" || command.name === "autopilot") throw new TypeError(`harness command ${command.name} is built in`);
+      if (command.name === "tools" || command.name === "sessions" || command.name === "session" || command.name === "settings" || command.name === "autopilot" || command.name === "help") throw new TypeError(`harness command ${command.name} is built in`);
       if (seenCommands.has(command.name)) throw new TypeError(`duplicated command ${command.name}`);
       seenCommands.add(command.name);
     }

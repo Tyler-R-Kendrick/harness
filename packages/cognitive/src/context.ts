@@ -29,17 +29,32 @@ function texts(message: LanguageModelV4Prompt[number]): string[] {
 
 const joined = (messages: LanguageModelV4Prompt) => messages.flatMap(texts).join("\n");
 
-const characters = (messages: LanguageModelV4Prompt) => messages.flatMap(texts).reduce((n, text) => n + text.length, 0);
+/** UTF-8 bytes of a string: a token always encodes at least one byte, so this bounds any token count. */
+const utf8 = (text: string): number => {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code < 0xdc00) {
+      bytes += 4;
+      index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+};
+
+const bytes = (messages: LanguageModelV4Prompt) => messages.flatMap(texts).reduce((n, text) => n + utf8(text), 0);
 
 /**
  * Fit a prompt to `budget` compressor tokens. The system prefix and the current turn stay
  * byte-identical, so a prefix cache still hits and a template in either span is never shortened,
  * even when those spans already exceed the budget. Only the middle is compressed, and only then.
- * A prompt whose characters fit in the budget cannot exceed it in tokens, so the compressor stays idle.
+ * A prompt whose UTF-8 bytes fit in the budget cannot exceed it in tokens, so the compressor stays idle.
  */
 export async function compactContext(prompt: LanguageModelV4Prompt, budget: number, compress: Measure): Promise<LanguageModelV4Prompt> {
   const { prefix, middle, suffix } = split(prompt);
-  if (middle.length === 0 || characters(prompt) <= budget) return prompt;
+  if (middle.length === 0 || bytes(prompt) <= budget) return prompt;
   const count = async (text: string) => (text.length === 0 ? 0 : (await compress({ text, rate: 1 })).originalTokens);
   const middleText = joined(middle);
   const [prefixTokens, middleTokens, suffixTokens] = await Promise.all([count(joined(prefix)), count(middleText), count(joined(suffix))]);

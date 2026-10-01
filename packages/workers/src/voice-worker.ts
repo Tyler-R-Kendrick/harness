@@ -25,7 +25,8 @@ export function voiceWorker(inner: Worker, voice: ForeignVoice): Worker {
           text += event.update.content.text;
           return;
         }
-        if (event.type === "end" && text !== "") emit({ type: "update", ...base, update: textChunk(voiceAnswer(text, voice.producer, voice.voice, voice.book, lines).text) });
+        // A cancelled or refused turn's partial text is not an answer: only a finished turn is rewritten.
+        if (event.type === "end" && event.stopReason === "end_turn" && text !== "") emit({ type: "update", ...base, update: textChunk(voiceAnswer(text, voice.producer, voice.voice, voice.book, lines).text) });
         emit(event);
       });
     },

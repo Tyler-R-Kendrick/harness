@@ -168,7 +168,8 @@ export class DialogueWorker implements Worker {
       }
       if (event.type === "update" && event.update.sessionUpdate === "tool_call") acted = true;
       if (event.type === "end") {
-        if (text !== "") emit({ type: "update", sessionId: command.sessionId, turnId: command.turnId, update: textChunk(voiceAnswer(text, voice.producer, voice.voice, voice.book, lines).text) });
+        // A cancelled or refused turn's partial text is not an answer: only a finished turn is rewritten.
+        if (event.stopReason === "end_turn" && text !== "") emit({ type: "update", sessionId: command.sessionId, turnId: command.turnId, update: textChunk(voiceAnswer(text, voice.producer, voice.voice, voice.book, lines).text) });
         outcome = acted ? { acted: true } : undefined;
       }
       emit(event);

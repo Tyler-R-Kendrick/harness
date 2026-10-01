@@ -330,7 +330,11 @@ export async function openInteractive(
           active = created.sessionId;
           inspected = active;
           busy = false;
+          // A permission the backgrounded turn is still awaiting must not hang the daemon.
+          waiting?.resolve({ outcome: { outcome: "cancelled" } });
           waiting = undefined;
+          // The turn stays in flight on the backgrounded session, not on the new active one.
+          inflight = undefined;
           notice = undefined;
           const release = releaseHandoff;
           releaseHandoff = undefined;

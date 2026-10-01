@@ -52,4 +52,17 @@ describe("a template for the session when nothing matched", () => {
     expect(model.calls).toHaveLength(1);
     expect(await dialogue.respond(step("when do you open tomorrow"))).toMatchObject({ kind: "pass", reason: "no script matches" });
   });
+
+  it("ST1.4 a session template is served every turn: it is not in the book, so it is never audited", async () => {
+    const model = drafter(hours);
+    const router = routerModel((input, tools) => (tools.includes("s1") && input.includes("open") ? { tool: "s1", confidence: 0.95 } : undefined));
+    const dialogue = new Dialogue({ settings: settings({ promote: { audit: 1 } }), drafter: model, router, sessionTemplates: true });
+    const first = await dialogue.respond(step("when do you open"));
+    dialogue.observe(step("when do you open"), first, "We're open from nine in the morning.");
+    await dialogue.idle();
+    for (let turn = 0; turn < 3; turn += 1) {
+      const decision = await dialogue.respond(step("when do you open on a holiday"));
+      expect(decision).toMatchObject({ kind: "generate", script: "s1" });
+    }
+  });
 });

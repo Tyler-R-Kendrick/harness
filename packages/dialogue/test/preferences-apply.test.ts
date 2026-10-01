@@ -216,4 +216,22 @@ describe("a correction changes the artifact that answered", () => {
     expect(JSON.stringify(result.output)).toContain("be brief");
     expect(await workflowCode(library, "greet")).toContain(`return { say: "Hello", n: 2 };`);
   });
+
+  it("RF2.12 two corrections at once both land on the artifact", async () => {
+    const { store, feedback } = await world();
+    await Promise.all([feedback(correction("template", "steering", "be brief")), feedback(correction("template", "steering", "say goodbye"))]);
+    const text = await templateAnswer(store, "greet");
+    expect(text).toContain("be brief");
+    expect(text).toContain("say goodbye");
+  });
+
+  it("RF2.13 a saved book's preferences are not changed by a later correction", async () => {
+    const { dialogue, feedback } = await world();
+    await feedback(correction("script", "replacement", "Goodbye"));
+    const saved = dialogue.save() as { preferences?: { text: string }[] };
+    expect(saved.preferences).toHaveLength(1);
+    await feedback(correction("script", "replacement", "Farewell"));
+    expect(saved.preferences).toHaveLength(1);
+    expect(saved.preferences?.[0]?.text).toBe("Goodbye");
+  });
 });

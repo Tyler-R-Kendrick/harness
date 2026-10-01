@@ -45,19 +45,32 @@ function byteAt(bytes: Uint8Array, index: number): number {
 /** Lossless bytes for `text`. A repeated span takes fewer bytes than its characters. */
 export function compressText(text: string): Uint8Array {
   const out: number[] = [];
+  // Hash chains over four-unit prefixes: a position is compared only with earlier
+  // positions that share its prefix, so archival stays near-linear instead of scanning
+  // the whole window per character. The byte format is unchanged.
+  const heads = new Map<number, number>();
+  const prev = new Int32Array(text.length).fill(-1);
+  const hashAt = (i: number): number => ((text.charCodeAt(i) * 31 + text.charCodeAt(i + 1)) * 31 + text.charCodeAt(i + 2)) * 31 + text.charCodeAt(i + 3);
   let i = 0;
   while (i < text.length) {
     let bestLen = 0;
     let bestDist = 0;
     const maxLen = Math.min(MAX_MATCH, text.length - i);
-    for (let j = Math.max(0, i - WINDOW); j < i; j++) {
-      let len = 0;
-      while (len < maxLen && text.charCodeAt(j + len) === text.charCodeAt(i + len)) len += 1;
-      if (len > bestLen) {
-        bestLen = len;
-        bestDist = i - j;
-        if (len === maxLen) break;
+    if (maxLen >= MIN_MATCH) {
+      const hash = hashAt(i);
+      let candidates = 0;
+      for (let j = heads.get(hash) ?? -1; j >= 0 && i - j <= WINDOW && candidates < 256; j = prev[j]!) {
+        candidates += 1;
+        let len = 0;
+        while (len < maxLen && text.charCodeAt(j + len) === text.charCodeAt(i + len)) len += 1;
+        if (len > bestLen) {
+          bestLen = len;
+          bestDist = i - j;
+          if (len === maxLen) break;
+        }
       }
+      prev[i] = heads.get(hash) ?? -1;
+      heads.set(hash, i);
     }
     if (bestLen >= MIN_MATCH) {
       out.push(MATCH, bestDist >> 8, bestDist & 0xff, bestLen >> 8, bestLen & 0xff);
