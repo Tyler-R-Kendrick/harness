@@ -1,7 +1,9 @@
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { streamText, ToolLoopAgent } from "ai";
 import { HARNESS, projectScope } from "@harness/cognitive";
-import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, StepResult, StopCondition, ToolLoopAgentSettings, ToolSet } from "ai";
+import type { EvaluationModelV4 } from "@harness/cognitive";
+import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, StepResult, StopCondition, Tool, ToolLoopAgentSettings, ToolSet } from "ai";
+import { mcpToolNames, offerTurnTools } from "./tool-offer.ts";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
 
@@ -209,6 +211,16 @@ export function sessionAgent(options: {
    * routing resolver reads the first prompt).
    */
   readonly tools?: ToolSet | ((turn: ToolContext) => ToolSet | Promise<ToolSet>);
+  /**
+   * The classification decision model. When set, a turn's tools are ranked against what
+   * was asked and those below the decision bar are left out. A model that throws leaves
+   * the set unpruned.
+   */
+  readonly decide?: EvaluationModelV4;
+  /** Tool names that are MCP tools, besides any whose name starts with `mcp:`. */
+  readonly mcp?: readonly string[];
+  /** Code mode for MCP tools. An MCP tool that remains is callable only through it. */
+  readonly codeMode?: Tool;
   readonly toolApproval?: ToolLoopAgentSettings<TurnOptions, ToolSet>["toolApproval"];
   readonly stopWhen?: StopCondition<ToolSet> | StopCondition<ToolSet>[];
   readonly memory?: SessionMemory;
@@ -243,7 +255,17 @@ export function sessionAgent(options: {
       ]
         .filter(Boolean)
         .join("\n\n");
-      const tools = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: conversationOf(call) }) : undefined;
+      const resolved = typeof options.tools === "function" ? await options.tools({ ...scopeOf(turn), messages: conversationOf(call) }) : options.tools;
+      const mcp = resolved ? mcpToolNames(resolved, options.mcp) : new Set<string>();
+      const offered = resolved && (options.decide !== undefined || mcp.size > 0)
+        ? await offerTurnTools({
+            input: said,
+            tools: resolved,
+            mcp,
+            ...(options.decide ? { decide: options.decide } : {}),
+            ...(options.codeMode ? { codeMode: options.codeMode } : {}),
+          })
+        : undefined;
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const scope = turn.cwd === undefined ? undefined : projectScope(turn.cwd);
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId, ...(scope === undefined ? {} : { scope }) } };
@@ -252,8 +274,16 @@ export function sessionAgent(options: {
         providerOptions,
         ...(instructions ? { instructions } : {}),
         ...(options.vision && hasImage(user) ? { model: options.vision } : {}),
-        ...(tools ? { tools } : {}),
-        ...(options.step ? { prepareStep: preparing(options.step, turn, Object.keys(tools ?? call.tools ?? {})) } : {}),
+        ...(offered
+          ? {
+              tools: offered.tools,
+              toolOrder: [...offered.toolOrder],
+              ...(offered.experimental_toolCallers ? { experimental_toolCallers: offered.experimental_toolCallers } : {}),
+            }
+          : resolved && typeof options.tools === "function"
+            ? { tools: resolved }
+            : {}),
+        ...(options.step ? { prepareStep: preparing(options.step, turn, Object.keys(offered?.tools ?? resolved ?? call.tools ?? {})) } : {}),
       };
     },
   }, options.step);

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { LanguageModelV4CallOptions, LanguageModelV4StreamPart } from "@ai-sdk/provider";
-import { tool } from "ai";
+import { experimental_toolCaller, tool } from "ai";
 import type { ModelMessage, ToolSet } from "ai";
-import { convertArrayToReadableStream, MockLanguageModelV4 } from "ai/test";
+import { convertArrayToReadableStream, Experimental_EvaluationMockModelV4, MockLanguageModelV4 } from "ai/test";
 import { z } from "zod";
 import { sessionOf, stateContent, usage, scopeOf } from "@harness/cognitive";
 import type { WorkerEvent } from "@harness/core";
@@ -36,6 +36,28 @@ function run(worker: AgentWorker, prompt: unknown[], sessionId = "s1", turnId = 
 }
 const updates = (events: WorkerEvent[]) => events.flatMap((e) => (e.type === "update" ? [e.update] : []));
 const end = (events: WorkerEvent[]) => events.at(-1);
+
+/** A decision model that scores the tool whose description names a probability, on both rotations. */
+function scored() {
+  return new Experimental_EvaluationMockModelV4({
+    doEvaluate: async (options) => {
+      const answers = Object.fromEntries(
+        Object.entries(options.questions).map(([id, question]) => {
+          const criteria = question.type === "choice" ? question.criteria : {};
+          const hit = Object.entries(criteria).find(([, text]) => /\b0\.\d+\b/.test(String(text)));
+          const score = hit ? Number(String(hit[1]).match(/0\.\d+/)?.[0]) : 0;
+          const marked = hit?.[0];
+          const keys = Object.keys(criteria);
+          const share = (1 - score) / Math.max(keys.length - (marked === undefined ? 0 : 1), 1);
+          const probabilities = Object.fromEntries(keys.map((key) => [key, key === marked ? score : share]));
+          const choice = keys.reduce((best, key) => ((probabilities[key] ?? 0) > (probabilities[best] ?? 0) ? key : best), keys[0] ?? "o0");
+          return [id, { type: "choice", choice, probabilities }];
+        }),
+      );
+      return { answers: answers as never, warnings: [] };
+    },
+  });
+}
 
 describe("AgentWorker: any AI SDK agent as a session worker", () => {
   it("AW1.1 streams text as message chunks and reasoning as thought chunks, and ends the turn", async () => {
@@ -418,5 +440,97 @@ describe("AgentWorker: any AI SDK agent as a session worker", () => {
       content: [{ type: "text", text: "a" }, { type: "file", data: new Uint8Array([1]), mediaType: "image/png" }],
       said: "a\n",
     });
+  });
+
+  it("AW1.25 a turn ranks tools with the decision model and offers a remaining MCP tool only through code mode", async () => {
+    const bound: string[][] = [];
+    const codeMode = experimental_toolCaller(
+      tool({ description: "Run code that calls tools.", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" }),
+      { type: "local", bind: (tools) => (bound.push(Object.keys(tools)), tool({ description: "bound", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" })) },
+    );
+    const model = scripted([...text("ok"), finish()]);
+    const tools = {
+      search: tool({ description: "Search notes 0.95", inputSchema: z.object({}), execute: async () => "found" }),
+      exportNotes: tool({ description: "Export notes 0.8", inputSchema: z.object({}), execute: async () => "exported" }),
+      format: tool({ description: "Format notes 0.7", inputSchema: z.object({}), execute: async () => "formatted" }),
+      weather: tool({ description: "Weather report 0.2", inputSchema: z.object({}), execute: async () => "sunny" }),
+    };
+    const worker = new AgentWorker({
+      agent: sessionAgent({ model, tools, decide: scored(), mcp: ["search"], codeMode }),
+    });
+    await run(worker, [{ type: "text", text: "search the notes and export them" }]).done;
+    expect(model.doStreamCalls[0]?.tools?.map((item) => item.name)).toEqual(["code_mode", "exportNotes", "format"]);
+    expect(bound).toEqual([["search"]]);
+  });
+
+  it("AW1.26 with no decision model an MCP tool is still only available through code mode and other tools stay", async () => {
+    const bound: string[][] = [];
+    const codeMode = experimental_toolCaller(
+      tool({ description: "Run code that calls tools.", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" }),
+      { type: "local", bind: (tools) => (bound.push(Object.keys(tools)), tool({ description: "bound", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" })) },
+    );
+    const model = scripted([...text("ok"), finish()]);
+    const tools = {
+      "code_mode": codeMode,
+      echo: tool({ description: "Repeat text.", inputSchema: z.object({}), execute: async () => "echo" }),
+      "mcp:search": tool({ description: "Search as an MCP.", inputSchema: z.object({}), execute: async () => "found" }),
+    };
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools }) });
+    await run(worker, [{ type: "text", text: "search" }]).done;
+    expect(model.doStreamCalls[0]?.tools?.map((item) => item.name)).toEqual(["code_mode", "echo"]);
+    expect(bound).toEqual([["mcp:search"]]);
+  });
+
+  it("AW1.27 a decision model that throws leaves the tools in place and an MCP tool stays in code mode", async () => {
+    const bound: string[][] = [];
+    const codeMode = experimental_toolCaller(
+      tool({ description: "Run code that calls tools.", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" }),
+      { type: "local", bind: (tools) => (bound.push(Object.keys(tools)), tool({ description: "bound", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" })) },
+    );
+    const model = scripted([...text("ok"), finish()]);
+    const decide = new Experimental_EvaluationMockModelV4({ doEvaluate: async () => Promise.reject(new Error("decision offline")) });
+    const tools = {
+      search: tool({ description: "Search notes.", inputSchema: z.object({}), execute: async () => "found" }),
+      echo: tool({ description: "Repeat text.", inputSchema: z.object({}), execute: async () => "echo" }),
+    };
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools, decide, mcp: ["search"], codeMode }) });
+    await run(worker, [{ type: "text", text: "search" }]).done;
+    expect(model.doStreamCalls[0]?.tools?.map((item) => item.name).sort()).toEqual(["code_mode", "echo"]);
+    expect(bound).toEqual([["search"]]);
+  });
+
+  it("AW1.28 an MCP tool without code mode is not offered as a direct tool", async () => {
+    const model = scripted([...text("ok"), finish()]);
+    const tools = { "mcp:search": tool({ description: "Search as an MCP.", inputSchema: z.object({}), execute: async () => "found" }) };
+    const { events, done } = run(new AgentWorker({ agent: sessionAgent({ model, tools }) }), [{ type: "text", text: "search" }]);
+    await done;
+    expect(events).toContainEqual(expect.objectContaining({ type: "update", update: expect.objectContaining({ sessionUpdate: "notice", description: "an MCP tool needs code mode" }) }));
+    expect(end(events)).toMatchObject({ stopReason: "refusal" });
+    expect(model.doStreamCalls).toEqual([]);
+  });
+
+  it("AW1.29 a turn with no user text does not ask the decision model", async () => {
+    const bound: string[][] = [];
+    const codeMode = experimental_toolCaller(
+      tool({ description: "Run code that calls tools.", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" }),
+      { type: "local", bind: (tools) => (bound.push(Object.keys(tools)), tool({ description: "bound", inputSchema: z.object({ js: z.string() }), execute: async () => "ok" })) },
+    );
+    const model = scripted([...text("ok"), finish()]);
+    let asked = 0;
+    const decide = new Experimental_EvaluationMockModelV4({
+      doEvaluate: async () => {
+        asked += 1;
+        return { answers: {}, warnings: [] };
+      },
+    });
+    const tools = {
+      search: tool({ description: "Search notes 0.1", inputSchema: z.object({}), execute: async () => "found" }),
+      echo: tool({ description: "Repeat text 0.1", inputSchema: z.object({}), execute: async () => "echo" }),
+    };
+    const worker = new AgentWorker({ agent: sessionAgent({ model, tools, decide, mcp: ["search"], codeMode }) });
+    await run(worker, []).done;
+    expect(asked).toBe(0);
+    expect(model.doStreamCalls[0]?.tools?.map((item) => item.name).sort()).toEqual(["code_mode", "echo"]);
+    expect(bound).toEqual([["search"]]);
   });
 });

@@ -10,6 +10,7 @@ import type { LanguageModel } from "ai";
 import { compilePack, parseGraph, parseSaeRows } from "@harness/behavior";
 import { AgentWorker, dialogueMiddleware, DialogueWorker, EchoWorker, rememberTurns, sessionAgent } from "@harness/workers";
 import { askModel, workflowTools } from "@harness/workflows";
+import { sessionCodeMode } from "@harness/workflows/node";
 import type { Worker } from "@harness/workers";
 import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
 import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/procedural";
@@ -342,6 +343,9 @@ const dialogue =
     onEvent: (event) => void running.host?.runtime.publish(event),
   });
 const scripted = (model: Exclude<LanguageModel, string>) => (dialogue ? wrapLanguageModel({ model, middleware: dialogueMiddleware(dialogue) }) : model);
+// MCP tools are callable only through code mode. When the ensemble can classify, a turn's tools are ranked and those below the decision bar are left out.
+const codeMode = sessionCodeMode();
+const rankedTools = cognitive?.ensemble.serves("classification", "judge") ? { decide: cognitive.ensemble.evaluationModel("classification") } : {};
 // The harness worker runs each session on an AI SDK harness (Claude Code, Codex, an ACP
 // agent), in a sandbox of its own (this machine's, or a Docker container each); parked
 // sessions resume after a restart. `--sandbox-env` passes this process's variables in.
@@ -368,7 +372,7 @@ const harness =
 const sessions: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}) }), ...conversations })
+    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...instructions, ...(step ? { step } : {}), ...(composition ? { tools: composition.tools } : {}), codeMode, ...rankedTools }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
@@ -383,6 +387,8 @@ const sessions: Worker = harness
             // The workflow library's workflows are durable tools, looked up each turn as learning adds to them
             // (with procedural graphs, plus the workflows the session's pinned core binds).
             ...(composition ? { tools: composition.tools } : cognitive!.workflowHost ? { tools: () => workflowTools(cognitive!.workflowHost!) } : {}),
+            codeMode,
+            ...rankedTools,
           }),
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
