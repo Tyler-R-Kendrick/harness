@@ -15,7 +15,7 @@ import type { ForeignVoice, Worker } from "@harness/workers";
 import { approvalInbox, exclusiveDream, modelReflector } from "@harness/procedural";
 import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/procedural";
 import { buildDialogue, buildNativeEnsemble, builtinDialogue, dialogueFlows, installDocumentFlows } from "./cognitive-host.ts";
-import { loadBuiltinBook, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook } from "./catalog-files.ts";
+import { loadBuiltinBook, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook, withoutBuiltinBook } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import { instructionsWithSkills } from "@harness/core";
@@ -347,11 +347,13 @@ const dialogueBook = dialogueFile ? withBuiltinBook(book) : cognitive ? loadBuil
 if (flows && dialogueBook !== undefined) await installDocumentFlows(flows.library, dialogueBook);
 // A model the dialogue could not use, or a save that failed, is logged; the model answers the step instead.
 const dialogueError = (e: unknown) => void process.stderr.write(`dialogue: ${e instanceof Error ? e.message : String(e)}\n`);
-const dialogueSaved = dialogueFile && dialogueSaves(dialogueFile, dialogueError);
+const dialogueSaved =
+  dialogueFile && dialogueSaves({ save: (saved) => dialogueFile.save(withoutBuiltinBook(saved, book)) }, dialogueError);
 // The host the dialogue's events go to, once it is running.
 const running: { host?: NodeHost } = {};
-// A `--dialogue` book keeps its router and is saved. The builtin capability script is in
-// that book too, unless the book already has one with the same id. With no file, the
+// A `--dialogue` book keeps its router and is saved. The builtin book is merged under it
+// at runtime (a shared id is the book's own), but never saved: the file keeps only its own
+// scripts and documents, and what the dialogue learns or imports. With no file, the
 // ensemble still answers from the builtin book: the decision model picks a script, and
 // the chat model only sees a turn no script takes.
 const dialogue = dialogueSaved

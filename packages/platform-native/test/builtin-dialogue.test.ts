@@ -3,7 +3,7 @@ import { Experimental_EvaluationMockModelV4 } from "ai/test";
 import { bytes, Ensemble } from "@harness/cognitive";
 import type { ModelDescriptor } from "@harness/cognitive";
 import { parseBook } from "@harness/dialogue";
-import { builtinDialogue, withBuiltinBook } from "@harness/platform-native";
+import { builtinDialogue, withBuiltinBook, withoutBuiltinBook } from "@harness/platform-native";
 
 const decider: ModelDescriptor = {
   id: "decider",
@@ -65,6 +65,29 @@ describe("builtin session dialogue", () => {
     const replaced = parseBook(withBuiltinBook({ scripts: [{ id: "capabilities", intent: "custom", reply: ["Custom."] }] }));
     expect(replaced.scripts.find((script) => script.id === "capabilities")?.reply[0]).toBe("Custom.");
     expect(replaced.scripts.map((script) => script.id)).toEqual(["research", "calculation", "instructions", "manual", "harness-menu", "capabilities"]);
+  });
+
+  it("BK3.3 a save drops the builtin scripts and documents, keeping the book's own and what was learned", () => {
+    const own = { scripts: [{ id: "hours", intent: "Opening hours", reply: ["We open at 9."] }] };
+    const saved = withoutBuiltinBook(
+      {
+        scripts: [
+          { id: "capabilities", intent: "Capabilities", reply: ["Much."] },
+          { id: "hours", intent: "Opening hours", reply: ["We open at 9."] },
+          { id: "s1", intent: "learned", reply: ["Learned."] },
+        ],
+        documents: [
+          { name: "harness-chat", type: "aiml", files: {} },
+          { name: "alice", type: "aiml", files: {} },
+        ],
+      },
+      own,
+    );
+    expect(parseBook(saved).scripts.map((script) => script.id)).toEqual(["hours", "s1"]);
+    expect((saved as { documents: { name: string }[] }).documents.map((document) => document.name)).toEqual(["alice"]);
+    // A book that overrides a builtin id keeps its own script under that id.
+    const overridden = withoutBuiltinBook({ scripts: [{ id: "capabilities", intent: "custom", reply: ["Custom."] }] }, { scripts: [{ id: "capabilities", intent: "custom", reply: ["Custom."] }] });
+    expect(parseBook(overridden).scripts).toHaveLength(1);
   });
 
   it("SO3.1 the decision model picks the research, calculation and instruction scripts", async () => {

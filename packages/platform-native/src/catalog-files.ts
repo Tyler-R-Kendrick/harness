@@ -89,6 +89,27 @@ export function withBuiltinBook(book: unknown): unknown {
   return { ...(isRecord(book) ? book : {}), scripts, documents, ...(entry === undefined ? {} : { entry }) };
 }
 
+/**
+ * `saved` without the scripts and documents that came from the builtin book, keeping any
+ * the user's own `book` has under the same id or name, and anything the dialogue learned
+ * or imported since. The builtin book is merged at runtime; it is never saved.
+ */
+export function withoutBuiltinBook(saved: unknown, book: unknown): unknown {
+  if (!isRecord(saved)) return saved;
+  const builtin = loadBuiltinBook();
+  const builtinScripts = new Set(listedScripts(builtin).map((script) => script.id));
+  const builtinDocuments = new Set(listedDocuments(builtin).map((document) => document.name));
+  const ownScripts = new Set(listedScripts(book).map((script) => script.id));
+  const ownDocuments = new Set(listedDocuments(book).map((document) => document.name));
+  const scripts = listedScripts(saved)
+    .filter((script) => ownScripts.has(script.id) || !builtinScripts.has(script.id))
+    .map((script) => script.raw);
+  const documents = listedDocuments(saved)
+    .filter((document) => ownDocuments.has(document.name) || !builtinDocuments.has(document.name))
+    .map((document) => document.raw);
+  return { ...saved, scripts, documents };
+}
+
 function listedDocuments(book: unknown): { name: string; raw: unknown }[] {
   if (!isRecord(book) || !Array.isArray(book["documents"])) return [];
   return book["documents"].flatMap((document) => {

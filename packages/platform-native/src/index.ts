@@ -8,7 +8,7 @@ export type { LlamaServerStart } from "./llama-server-process.ts";
 export { buildDialogue, buildNativeEnsemble, builtinDialogue, dialogueFlows, installDocumentFlows } from "./cognitive-host.ts";
 export type { NativeEnsembleOptions } from "./cognitive-host.ts";
 export { steerableModel } from "./steerable-model.ts";
-export { loadBuiltinBook, loadCatalog, loadDialogueSettings, loadEvolutionSettings, loadLearningSettings, loadPluginSettings, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook } from "./catalog-files.ts";
+export { loadBuiltinBook, loadCatalog, loadDialogueSettings, loadEvolutionSettings, loadLearningSettings, loadPluginSettings, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook, withoutBuiltinBook } from "./catalog-files.ts";
 export { lockStore, STORE_LOCK, type LockOwner, type LockResult, type StoreLock } from "./store-lock.ts";
 export { daemonSessions, describePlanRun, hookNotifier, hostAuthorizer, hostPorts, nativeComposition, nativeDream, nativeDreamSchedule, nativeLiveLearner, nativePlanRunner, nativeProceduralStep, nativeStepEvictions, nativeTaskEvaluator, planRunsStore, proceduralStore, pumpHookEvents, sessionLogReader, snapshotSessions, terminalApprover, type HookPump } from "./procedural-host.ts";
 export { WorkflowFiles } from "./workflow-files.ts";

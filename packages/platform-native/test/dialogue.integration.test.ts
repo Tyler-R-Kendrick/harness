@@ -187,7 +187,10 @@ await tools.say({ text: "Ordered a shirt in " + size + "." });`;
     await client.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} });
     const bot = `<aiml><category><pattern>HELLO</pattern><template>Hi, I am Alice.</template></category><category><pattern>MY NAME IS *</pattern><template><think><set name="n"><star/></set></think>Hello <get name="n"/>.</template></category></aiml>`;
     expect(await invoke("dialogue.import", { name: "alice", files: { "alice.aiml": bot }, entry: true })).toEqual({ name: "alice", type: "aiml", warnings: [] });
-    expect(await invoke("dialogue.status", {})).toMatchObject({ documents: ["alice"], entry: "alice" });
+    const status = (await invoke("dialogue.status", {})) as { documents: string[]; entry?: string };
+    // The builtin book is merged at runtime, so its documents are listed too.
+    expect(status.entry).toBe("alice");
+    expect(status.documents).toContain("alice");
     const { sessionId } = await client.newSession({ cwd: dir, mcpServers: [] });
     expect(await say(sessionId, "hello")).toMatchObject({ reply: "Hi, I am Alice." });
     expect(await say(sessionId, "my name is Bo")).toMatchObject({ reply: "Hello BO." });
