@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "holdout": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "alpha": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 1
+    },
+    "minGain": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "minHoldout": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 9007199254740991
+    },
+    "maxFailures": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "maxEdits": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "maxEditChars": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "leakWords": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 9007199254740991
+    },
+    "resamples": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 9007199254740991
+    },
+    "proposer": {
+      "type": "object",
+      "properties": {
+        "system": {
+          "type": "string",
+          "minLength": 1
+        },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "system",
+        "maxTokens"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "holdout",
+    "alpha",
+    "minGain",
+    "minHoldout",
+    "maxFailures",
+    "maxEdits",
+    "maxEditChars",
+    "leakWords",
+    "resamples",
+    "proposer"
+  ],
+  "additionalProperties": false
+}

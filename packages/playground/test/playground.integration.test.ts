@@ -144,6 +144,24 @@ describe("the playground page in Chromium", { timeout: 60_000 }, () => {
     await page.close();
   });
 
+  it("PI1.6 which template answers is a decision of the decision layer: the first turn's `$ command` is decided by the match rule and a question by the lexical judge, both listed by /decisions; /status counts them, and the timeline shows decision.made", async () => {
+    const { page, errors } = await open();
+    await type(page, "/ask what files are here?");
+    await page.waitForFunction(() => document.getElementById("count-turns")?.textContent === "2");
+    await type(page, "/decisions");
+    await page.waitForFunction(() => /dec-1 · /.test(document.getElementById("terminal")?.innerText ?? ""));
+    const shown = await terminalText(page);
+    expect(shown).toMatch(/dec-0 · run-command · rule · 1\.00 · active/);
+    expect(shown).toMatch(/dec-1 · list-files · model · \d\.\d\d · active/);
+    expect(shown.replace(/\s+/g, "")).toContain("modelharness.lexical/tf-idf:accepted");
+    await type(page, "/status");
+    await page.waitForFunction(() => /decisions\s+2 of playground\.template/.test(document.getElementById("terminal")?.innerText ?? ""));
+    await page.click("#tab-timeline");
+    expect(await page.locator("#events").innerText()).toContain("decision.made");
+    expect(errors).toEqual([]);
+    await page.close();
+  });
+
   it("PI1.2 a command typed in the terminal asks for approval, runs on y, and its file appears in the Files tab", async () => {
     const { page } = await open();
     await type(page, "/ask $ echo typed > typed.txt");

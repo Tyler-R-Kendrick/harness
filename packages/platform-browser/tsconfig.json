@@ -45,6 +45,9 @@
     },
     {
       "path": "../procedural"
+    },
+    {
+      "path": "../decision"
     }
   ]
 }

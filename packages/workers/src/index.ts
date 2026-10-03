@@ -11,6 +11,6 @@ export { DialogueWorker } from "./dialogue-worker.ts";
 export { harnessSessions, harnessTurnTools } from "./harness.ts";
 export type { HarnessSessions, HarnessStore, HarnessTurnOptions } from "./harness.ts";
 export { rememberTurns, sessionAgent } from "./session-agent.ts";
-export type { LastCall, SessionMemory, StepContext, StepEndContext, StepHook, ToolContext, TurnContext, TurnGuidance, TurnLearning, TurnScope } from "./session-agent.ts";
+export type { DispatchChoice, DispatchRecord, DispatchStepContext, LastCall, SessionMemory, StepContext, StepDispatch, StepEndContext, StepHook, ToolContext, TurnContext, TurnGuidance, TurnLearning, TurnScope } from "./session-agent.ts";
 export { promptText, textChunk } from "./worker.ts";
 export type { Emit, EventCommand, PermissionCommand, PromptCommand, Worker } from "./worker.ts";

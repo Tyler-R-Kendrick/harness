@@ -738,6 +738,9 @@ async function boot() {
     settings: engineSettings,
     facts,
     deciders: () => deciders(decisionModels, settings.decide, lexical),
+    // Which template answers is a decision of the decision layer: recorded (/decisions) and on the timeline as the hook event decision.made.
+    clock: { now: () => Date.now() },
+    onDecision: (event) => tracer.record({ kind: "hook", name: event.type, detail: event.payload, ...(event.sessionId ? { sessionId: event.sessionId } : {}) }),
     // The local model writes (when it enforces a JSON Schema) and answers what no template does; a question waits for it to load.
     generators: async () => writers(settings.writer, await localModel(), claudeState === "ready" ? claude : undefined, enforcesJson(catalog)),
     answerers: async () => answerers(settings.writer, await localModel(), claudeState === "ready" ? claude : undefined),

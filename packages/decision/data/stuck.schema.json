@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repeat": {
+      "type": "object",
+      "properties": {
+        "times": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "times"
+      ],
+      "additionalProperties": false
+    },
+    "cycle": {
+      "type": "object",
+      "properties": {
+        "maxPeriod": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "maxPeriod",
+        "repeats"
+      ],
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "window": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "window"
+      ],
+      "additionalProperties": false
+    },
+    "escalate": {
+      "type": "object",
+      "properties": {
+        "repeat": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "cycle": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "noProgress": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "repeat",
+        "cycle",
+        "noProgress"
+      ],
+      "additionalProperties": false
+    },
+    "recent": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "chars": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "question": {
+      "type": "object",
+      "properties": {
+        "instructions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "criteria": {
+          "type": "object",
+          "properties": {
+            "true": {
+              "type": "string",
+              "minLength": 1
+            },
+            "false": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "instructions"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "version",
+    "repeat",
+    "cycle",
+    "progress",
+    "escalate",
+    "recent",
+    "chars",
+    "question"
+  ],
+  "additionalProperties": false
+}

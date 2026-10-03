@@ -68,6 +68,27 @@ export type StopReason = AcpStopReason;
 /** A choice offered with a permission request, as ACP defines it. */
 export type PermissionOptionSpec = PermissionOption;
 
+/** What an open permission request is about: the turn, the tool call asked about and the choices offered. */
+export interface PermissionDescription {
+  readonly turnId: string;
+  readonly toolCall: ToolCallUpdate;
+  readonly options: readonly PermissionOptionSpec[];
+}
+
+/** An open permission request with where it was made. */
+export interface OpenPermission extends PermissionDescription {
+  readonly sessionId: string;
+  readonly requestId: string;
+}
+
+/** A session as hosts list it: who owns it, where it works, and the turn running in it, if any. */
+export interface SessionSummary {
+  readonly id: string;
+  readonly cwd: string;
+  readonly owner: string;
+  readonly turnId?: string;
+}
+
 /** An opaque record a client gives `session/new` in `_meta.harness.session`; core never interprets it. */
 export type SessionMeta = Readonly<Record<string, unknown>>;
 
@@ -361,6 +382,27 @@ export class Daemon {
       if (!this.#connections.has(pending.connectionId)) return;
       this.#send(pending.connectionId, result.ok ? success(pending.id, result.value) : failure(pending.id, ERROR_CODES.internalError, result.message || "cognitive operation failed"));
     });
+  }
+
+  /**
+   * What the open permission request `requestId` of the session is about, so a host-side
+   * plugin can describe it without hook payloads carrying more. A copy: changing it changes
+   * nothing in the daemon. Undefined when the session or the request is not open.
+   */
+  pendingPermission(sessionId: string, requestId: string): PermissionDescription | undefined {
+    const perm = this.#sessions.get(sessionId)?.permissions.get(requestId);
+    return perm === undefined ? undefined : describePermission(perm);
+  }
+
+  /** Every open permission request (of one session when given), in the order they were opened, as copies. */
+  pendingPermissions(sessionId?: string): OpenPermission[] {
+    const sessions = sessionId === undefined ? [...this.#sessions.values()] : [this.#sessions.get(sessionId)].filter((s) => s !== undefined);
+    return sessions.flatMap((session) => [...session.permissions].map(([requestId, perm]) => ({ sessionId: session.id, requestId, ...describePermission(perm) })));
+  }
+
+  /** The sessions, with the turn running in each (a restored session has none). */
+  sessions(): SessionSummary[] {
+    return [...this.#sessions.values()].map((s) => ({ id: s.id, cwd: s.cwd, owner: s.owner, ...(s.turn ? { turnId: s.turn.turnId } : {}) }));
   }
 
   snapshot(): DaemonSnapshot {
@@ -830,6 +872,11 @@ export class Daemon {
     this.#out = [];
     return out;
   }
+}
+
+/** A permission request as hosts see it: JSON copies of the tool call and the options, which share nothing with the daemon's. */
+function describePermission(perm: PendingPermission): PermissionDescription {
+  return { turnId: perm.turnId, toolCall: JSON.parse(JSON.stringify(perm.toolCall)) as ToolCallUpdate, options: JSON.parse(JSON.stringify(perm.options)) as PermissionOptionSpec[] };
 }
 
 function parseOutcome(v: unknown): CallbackOutcome | undefined {

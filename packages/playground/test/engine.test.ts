@@ -97,6 +97,42 @@ describe("the template engine: answers from templates before inference", () => {
     expect(shown.steps[0]!.providerMetadata).toMatchObject({ harness: { template: "show-file", problems: ["test/down: still loading"] } });
   });
 
+  it("TE1.18 the template a request is answered from was chosen by a recorded decision of the layer; rating the answer attaches the rating to that decision, and an answer no decision chose has none to attach it to", async () => {
+    const { ask, engine } = setup({ generators: [generator({ ...haiku, id: "poem" })] });
+    expect(await engine.rated("good")).toBe(false);
+    await ask("list the files here");
+    const [chosen] = await engine.decisions.log.query();
+    expect(chosen).toMatchObject({ id: "dec-0", fork: "playground.template", action: "list-files", rung: "model", member: "harness.lexical/tf-idf" });
+    expect(engine.lastDecision).toBe("dec-0");
+    expect(await engine.rated("bad")).toBe(true);
+    expect((await engine.decisions.log.get("dec-0"))!.outcome).toMatchObject({ source: "human", kind: "rated-bad" });
+    // No template chosen (one is written): the decision was none, so a rating of the written answer is no outcome of it.
+    await ask("write a haiku about the sea");
+    expect((await engine.decisions.log.query()).map((r) => r.action)).toEqual(["list-files", "none"]);
+    expect(engine.lastDecision).toBeUndefined();
+    expect(await engine.rated("good")).toBe(false);
+  });
+
+  it("TE1.19 each decision is told to the page as decision.made, stamped with the page's clock", async () => {
+    const events: { type: string; id: string }[] = [];
+    const files = { [`${HOME}/README.md`]: "# hello\n", ...SEEDS };
+    const bash = new Bash({ cwd: HOME, files });
+    const store = new TemplateStore(bash.fs, { retireMargin: settings.curation.retireMargin });
+    const engine = new TemplateEngine({
+      store,
+      settings,
+      facts: { cwd: () => HOME, files: () => "README.md", date: () => "2026-09-28", templates: () => "" },
+      deciders: () => [lexicalDecider(settings.lexical)],
+      generators: () => [],
+      generation: () => "off",
+      clock: { now: () => 1234 },
+      onDecision: (e) => events.push({ type: e.type, id: e.payload.id }),
+    });
+    await generateText({ model: engine.model(), prompt: "list the files here", tools: { ...vfsTools(bash), ...engine.tools() }, stopWhen: isStepCount(6) });
+    expect(events).toEqual([{ type: "decision.made", id: "dec-0" }]);
+    expect((await engine.decisions.log.get("dec-0"))!.at).toBe(1234);
+  });
+
   it("TE1.2 a script template runs through the bash tool (a choice hole picked by the decision model), and the reply is its outcome", async () => {
     const { ask } = setup();
     const shown = await ask("show me the readme");
