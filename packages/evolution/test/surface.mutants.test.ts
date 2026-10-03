@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { applyProposal, defineSurface, revert } from "@harness/evolution";
+import { applyProposal, defineSurface, OpSchema, PatchOpSchema, revert } from "@harness/evolution";
 import type { Change, Documents, Proposal } from "@harness/evolution";
 
 type Ops = Proposal["edits"][number]["ops"];
@@ -183,5 +183,124 @@ describe("mutation hardening of surfaces: footprint, regions and entangled edits
   it("RS21.48 edits of one JSON document are never reported as entangled text", () => {
     const r = done({ cfg: { a: 1, b: 1 }, t: "" }, [replace("/a", 2)], [replace("/b", 2)]);
     expect(r.documents["cfg"]).toEqual({ a: 2, b: 2 });
+  });
+});
+
+describe("mutation hardening of surfaces: the shapes that were once hidden from Stryker", () => {
+  const entangled = (id: string) => `edit ${id} could not be taken out of t on its own: the text that locates it overlaps another edit's (make them one edit, or leave more text between them)`;
+  const clashing = (a: string, b: string, where: string) => `edits ${a} and ${b} both touch ${where}: they are one edit, or not independent`;
+
+  it("RS28.1 the footprint of an edit that changes the last of two lines counts the changed line on each side, not the shared first one", () => {
+    expect(done({ cfg: {}, t: "a\nb\nz" }, [on("a\nb", "a\nc")]).edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS28.2 the footprint of an edit that only appends lines counts them, though the old text is a prefix of the new", () => {
+    expect(done({ cfg: {}, t: "a\nz" }, [on("a", "a\nb\nc")]).edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS28.3 the footprint of an edit that only drops trailing lines counts them, though the new text is a prefix of the old", () => {
+    expect(done({ cfg: {}, t: "a\nb\nc\nz" }, [on("a\nb\nc", "a")]).edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS28.4 the footprint of an edit that changes the first line counts it, though the later lines are shared", () => {
+    expect(done({ cfg: {}, t: "a\nb\nz" }, [on("a\nb", "c\nb")]).edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS28.5 a refusal for overlapping paths names the shorter whichever edit holds it, and the path itself when they are equal", () => {
+    const docs = { cfg: { a: { b: { c: 1 } } }, t: "" };
+    expect(problems(apply(docs, [replace("/a/b/c", 2)], [replace("/a/b", { c: 3 })]))).toEqual([clashing("e1", "e2", "cfg/a/b")]);
+    expect(problems(apply(docs, [replace("/a/b", { c: 3 })], [replace("/a/b/c", 2)]))).toEqual([clashing("e1", "e2", "cfg/a/b")]);
+    expect(problems(apply(docs, [replace("/a/b", { c: 3 })], [replace("/a/b", { c: 4 })]))).toEqual([clashing("e1", "e2", "cfg/a/b")]);
+  });
+
+  it("RS28.6 two edits are compared when only the first pair clashes, and when only the last pair does", () => {
+    const docs = { cfg: { a: 1, b: 1, c: 1 }, t: "" };
+    expect(problems(apply(docs, [replace("/a", 2)], [replace("/a", 3)]))).toEqual([clashing("e1", "e2", "cfg/a")]);
+    expect(problems(apply(docs, [replace("/a", 2)], [replace("/b", 2)], [replace("/b", 3)]))).toEqual([clashing("e2", "e3", "cfg/b")]);
+    expect(problems(apply(docs, [replace("/a", 2)], [replace("/b", 2)], [replace("/a", 3)]))).toEqual([clashing("e1", "e3", "cfg/a")]);
+  });
+
+  it("RS28.7 two edits whose recorded context overlaps are refused as entangled, naming the first", () => {
+    expect(problems(apply({ cfg: {}, t: "yxabaab\nbbab" }, [on("\n", "")], [on("aa", "")]))).toEqual([entangled("e1")]);
+  });
+
+  it("RS28.8 two edits of one text whose contexts do not overlap are both applied", () => {
+    const r = done({ cfg: {}, t: "alpha one\n\nbeta two\n\ngamma three" }, [on("one", "1")], [on("three", "3")]);
+    expect(r.documents["t"]).toBe("alpha 1\n\nbeta two\n\ngamma 3");
+  });
+
+  it("RS28.9 the entangled check runs for a text document when the same proposal also edits a JSON document", () => {
+    const docs = { cfg: { a: 1 }, t: "yxabaab\nbbab" };
+    expect(problems(apply(docs, [on("\n", "")], [on("aa", "")], [replace("/a", 2)]))).toEqual([entangled("e1")]);
+  });
+
+  it("RS28.10 a lone text edit of a text that repeats its neighbourhood is applied, not called entangled", () => {
+    const r = done({ cfg: {}, t: "ab ab ab" }, [on("ab ab ab", "ab ab")]);
+    expect(r.documents["t"]).toBe("ab ab");
+  });
+
+  it("RS28.11 a JSON document whose root is a string is edited alone without being called entangled text", () => {
+    const r = done({ cfg: "old", t: "" }, [replace("", "new")]);
+    expect(r.documents["cfg"]).toBe("new");
+  });
+});
+
+describe("mutation hardening of surfaces: the schemas of ops and of recorded changes", () => {
+  const reason = (r: { success: boolean; error?: { issues: { message: string }[] } }) => (r.success ? [] : r.error!.issues.map((i) => i.message));
+
+  it("RS28.12 a path is empty or starts with a slash, and the refusal says so", () => {
+    const op = (path: string) => OpSchema.safeParse({ op: "add", document: "d", path, value: 1 });
+    expect(op("").success).toBe(true);
+    expect(op("/a/b").success).toBe(true);
+    expect(op("a").success).toBe(false);
+    expect(op("a/b").success).toBe(false);
+    expect(reason(op("a"))).toEqual(["a JSON Pointer (empty, or starting with /)"]);
+  });
+
+  it("RS28.13 an add, a replace and a remove op each take a document, a path and (but for remove) a value, and no more", () => {
+    const add = { op: "add", document: "d", path: "/p", value: { a: [1] } };
+    const replaced = { op: "replace", document: "d", path: "/p", value: null };
+    const removed = { op: "remove", document: "d", path: "/p" };
+    for (const op of [add, replaced, removed]) {
+      expect(OpSchema.parse(op)).toEqual(op);
+      expect(OpSchema.safeParse({ ...op, extra: 1 }).success).toBe(false);
+      expect(OpSchema.safeParse({ ...op, document: "" }).success).toBe(false);
+      expect(OpSchema.safeParse({ ...op, path: "p" }).success).toBe(false);
+    }
+    expect(OpSchema.safeParse({ ...removed, value: 1 }).success).toBe(false);
+    expect(OpSchema.safeParse({ op: "add", document: "d", path: "/p" }).success).toBe(false);
+    expect(OpSchema.safeParse({ ...add, op: "move" }).success).toBe(false);
+  });
+
+  it("RS28.14 an edit op takes a non-empty document and old text and any new text, and no path", () => {
+    const edit = { op: "edit", document: "d", old: "a", new: "" };
+    expect(OpSchema.parse(edit)).toEqual(edit);
+    expect(OpSchema.safeParse({ ...edit, extra: 1 }).success).toBe(false);
+    expect(OpSchema.safeParse({ ...edit, old: "" }).success).toBe(false);
+    expect(OpSchema.safeParse({ ...edit, new: 1 }).success).toBe(false);
+  });
+
+  it("RS28.15 a recorded patch op is an add, a replace, a remove (with the length an array is left at) or an edit (with its context), and no more", () => {
+    const ops = [
+      { op: "add", path: "/p", value: [1] },
+      { op: "replace", path: "", value: "t" },
+      { op: "remove", path: "/p" },
+      { op: "remove", path: "/p/0", length: 0 },
+      { op: "edit", old: "a", new: "b" },
+      { op: "edit", old: "a", new: "", before: "x", after: "y" },
+    ];
+    for (const op of ops) {
+      expect(PatchOpSchema.parse(op)).toEqual(op);
+      expect(PatchOpSchema.safeParse({ ...op, extra: 1 }).success).toBe(false);
+    }
+    expect(PatchOpSchema.safeParse({ op: "remove", path: "/p/0", length: -1 }).success).toBe(false);
+    expect(PatchOpSchema.safeParse({ op: "remove", path: "/p/0", length: 1.5 }).success).toBe(false);
+    expect(PatchOpSchema.safeParse({ op: "add", path: "/p" }).success).toBe(false);
+    expect(PatchOpSchema.safeParse({ op: "move", path: "/p" }).success).toBe(false);
+  });
+
+  it("RS28.16 a path through a number of several digits that the original has nothing at is an array index, so edits through two such indices touch the same part", () => {
+    const docs = { cfg: {}, t: "" };
+    expect(problems(apply(docs, [add("/missing/12/x", 1)], [add("/missing/13/y", 1)]))).toEqual(["edits e1 and e2 both touch cfg/missing: they are one edit, or not independent"]);
   });
 });
