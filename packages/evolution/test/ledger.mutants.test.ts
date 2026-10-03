@@ -45,7 +45,37 @@ describe("mutation hardening of the ledger", () => {
     expect(render([rec(0, "accepted", {})], 1)[0]).not.toHaveProperty("predicted");
   });
 
-  it("RS21.49 a record may say its candidate was admissible but not chosen", () => {
+  it("RS21.49 a record may say its candidate was admissible but not chosen, and only one of the four outcomes", () => {
     for (const outcome of ["accepted", "admissible", "rejected", "screened"] as const) expect(rec(0, outcome).outcome).toBe(outcome);
+    expect(() => rec(0, "chosen" as never)).toThrow(/invalid ledger record/);
+  });
+
+  it("RS29.1 an admissible change that was not chosen does not break a stall, an accepted supported one does", () => {
+    expect(stalled([rec(4, "admissible", {})], 5, 3)).toBe(true);
+    expect(stalled([rec(4, "accepted", {})], 5, 3)).toBe(false);
+  });
+
+  it("RS29.2 the paper's stall flag is read from the trajectory when exactly w rounds exist (t equal to w)", () => {
+    expect(paperStall([0, 1], 1, 1, 1.5)).toBe(true);
+    expect(paperStall([0, 1], 1, 1, 0.5)).toBe(false);
+  });
+
+  it("RS29.3 the paper's stall flag is read at the last round of the trajectory (t one below its length)", () => {
+    expect(paperStall([0, 1, 2], 2, 2, 2)).toBe(true);
+    expect(paperStall([0, 1, 2], 2, 2, 1.5)).toBe(false);
+  });
+
+  it("RS29.4 the paper's stall flag is false before w rounds exist, however large delta is", () => {
+    expect(paperStall([0, 1, 2], 0, 1, Infinity)).toBe(false);
+    expect(paperStall([0, 1, 2], 1, 2, Infinity)).toBe(false);
+  });
+
+  it("RS29.5 the paper's stall flag is false past the end of the trajectory, however large delta is", () => {
+    expect(paperStall([0, 1], 2, 1, Infinity)).toBe(false);
+    expect(paperStall([], 0, 0, Infinity)).toBe(false);
+  });
+
+  it("RS29.6 a window of zero compares the incumbent with itself", () => {
+    expect(paperStall([0.5], 0, 0, 0)).toBe(true);
   });
 });
