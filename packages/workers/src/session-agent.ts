@@ -2,7 +2,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import { streamText, ToolLoopAgent } from "ai";
 import { HARNESS, projectScope } from "@harness/cognitive";
 import type { EvaluationModelV4 } from "@harness/cognitive";
-import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, StepResult, StopCondition, Tool, ToolLoopAgentSettings, ToolSet } from "ai";
+import type { AgentCallParameters, AgentStreamParameters, Instructions, LanguageModel, LanguageModelUsage, ModelMessage, PrepareStepFunction, PrepareStepResult, StepResult, StopCondition, Tool, ToolLoopAgentSettings, ToolSet } from "ai";
 import { mcpToolNames, offerTurnTools } from "./tool-offer.ts";
 import { z } from "zod";
 import type { Turn, TurnOptions } from "./agent.ts";
@@ -184,6 +184,51 @@ export interface TurnLearning {
   recall(task: string): Promise<{ readonly playbook: string }>;
 }
 
+/** What a dispatch may choose for a step: keep the step's model, or move it to a tier. */
+export type DispatchChoice = "stay" | "small" | "large";
+
+/** What the dispatch knows about a step when it is asked to plan it. */
+export interface DispatchStepContext {
+  readonly sessionId: string;
+  /** The step's index within the turn, from 0. */
+  readonly stepNumber: number;
+  /** The messages the step's model is about to receive. */
+  readonly messages: readonly ModelMessage[];
+  /** The tools on offer to the step. */
+  readonly toolNames: readonly string[];
+  /**
+   * A cheap estimate of the context's size in tokens: the length of the serialized messages
+   * over four, rounded up (binary data counts as its base64 length; unserializable messages as 0).
+   */
+  readonly contextTokens: number;
+  /** The previous step's tool calls (name and input), when it made any. */
+  readonly lastToolInputs?: readonly { readonly toolName: string; readonly input: unknown }[];
+}
+
+/** One step's dispatch, as recorded: the choice that took effect (a tier that is not given is `stay`). */
+export interface DispatchRecord {
+  readonly sessionId: string;
+  readonly stepNumber: number;
+  readonly choice: DispatchChoice;
+  readonly contextTokens: number;
+}
+
+/**
+ * Per-step model choice. Every step of every turn is planned: `small` and `large` move the
+ * step to that tier when it is given, anything else (and any failure) keeps the step's model.
+ * A step whose messages carry images or other media is never moved off its model, so a
+ * text-only tier never sees one (and the plan is not asked). Structural, so the decision layer
+ * plugs in without this package depending on it.
+ */
+export interface StepDispatch {
+  readonly tiers: { readonly small?: LanguageModel; readonly large?: LanguageModel };
+  plan(step: DispatchStepContext): Promise<DispatchChoice>;
+  /** Told of each step's dispatch (best effort: a failure here goes to `onError`). */
+  readonly onDispatch?: (record: DispatchRecord) => void;
+  /** Told of a failed plan or hook, with the step it concerned. Dispatching is best effort: it never fails a turn. */
+  readonly onError?: (error: unknown, step: DispatchStepContext) => void;
+}
+
 /** A call's conversation: its messages, or its prompt as messages (a text prompt is one user message). */
 export const conversationOf = (call: { readonly messages?: readonly ModelMessage[] | undefined; readonly prompt?: string | readonly ModelMessage[] | undefined }): readonly ModelMessage[] =>
   call.messages ?? (typeof call.prompt === "string" ? [{ role: "user", content: call.prompt }] : (call.prompt ?? []));
@@ -230,6 +275,8 @@ export function sessionAgent(options: {
    * go into the instructions as reference, retrieval for a small local model. Best effort.
    */
   readonly consult?: LanguageModel;
+  /** Chooses the model of every step (see StepDispatch). */
+  readonly dispatch?: StepDispatch;
   /** Prepares each step (see StepHook), e.g. with procedural graph guidance. */
   readonly step?: StepHook;
 }): ToolLoopAgent<TurnOptions, ToolSet> {
@@ -269,6 +316,9 @@ export function sessionAgent(options: {
       // Every call names its daemon session: a steered model keeps that session's behavior state.
       const scope = turn.cwd === undefined ? undefined : projectScope(turn.cwd);
       const providerOptions = { ...call.providerOptions, [HARNESS]: { ...call.providerOptions?.[HARNESS], session: turn.sessionId, ...(scope === undefined ? {} : { scope }) } };
+      const toolNames = Object.keys(offered?.tools ?? resolved ?? call.tools ?? {});
+      const stepped = options.step ? preparing(options.step, turn, toolNames) : call.prepareStep;
+      const prepareStep = options.dispatch ? dispatchStep(options.dispatch, turn.sessionId, toolNames, stepped) : stepped;
       return {
         ...call,
         providerOptions,
@@ -283,10 +333,82 @@ export function sessionAgent(options: {
           : resolved && typeof options.tools === "function"
             ? { tools: resolved }
             : {}),
-        ...(options.step ? { prepareStep: preparing(options.step, turn, Object.keys(offered?.tools ?? resolved ?? call.tools ?? {})) } : {}),
+        ...(prepareStep ? { prepareStep } : {}),
       };
     },
   }, options.step);
+}
+
+const carriesMedia = (messages: readonly ModelMessage[]) =>
+  messages.some(
+    (m) =>
+      typeof m.content !== "string" &&
+      m.content.some((p) => p.type === "file" || p.type === "image" || (p.type === "tool-result" && p.output.type === "content" && p.output.value.some((v) => v.type !== "text"))),
+  );
+
+/** Binary data counts as its base64 length, so images do not blow the estimate up. */
+const sized = (_key: string, value: unknown) => (value instanceof Uint8Array ? "0".repeat(Math.ceil(value.byteLength / 3) * 4) : value);
+
+/** The size estimate: serialized length over four, rounded up; 0 for what cannot be serialized. */
+function estimateTokens(messages: readonly ModelMessage[]): number {
+  try {
+    return Math.ceil(JSON.stringify(messages, sized).length / 4);
+  } catch {
+    return 0;
+  }
+}
+
+/** Best effort: a hook that throws is reported to `onError`, and a failing `onError` is ignored. */
+function guarded(dispatch: StepDispatch, step: DispatchStepContext, run: () => void): void {
+  try {
+    run();
+  } catch (error) {
+    try {
+      dispatch.onError?.(error, step);
+    } catch {
+      // Nothing more can be done about a failing report.
+    }
+  }
+}
+
+/**
+ * The `prepareStep` that dispatches a turn's steps. A `prepareStep` the call already had
+ * runs first; its model (or the step's) is the one `stay` keeps, and its other settings are kept.
+ */
+function dispatchStep(
+  dispatch: StepDispatch,
+  sessionId: string,
+  allTools: readonly string[],
+  inner: PrepareStepFunction<ToolSet> | undefined,
+): PrepareStepFunction<ToolSet> {
+  return async (args) => {
+    const base: PrepareStepResult<ToolSet> = (await inner?.(args)) ?? {};
+    const messages = base.messages ?? args.messages;
+    const active = base.activeTools as readonly string[] | undefined;
+    const lastCalls = args.steps.at(-1)?.toolCalls ?? [];
+    const step: DispatchStepContext = {
+      sessionId,
+      stepNumber: args.stepNumber,
+      messages,
+      toolNames: active ? allTools.filter((name) => active.includes(name)) : allTools,
+      contextTokens: estimateTokens(messages),
+      ...(lastCalls.length ? { lastToolInputs: lastCalls.map((c) => ({ toolName: c.toolName, input: c.input })) } : {}),
+    };
+    let choice: DispatchChoice = "stay";
+    if (!carriesMedia(messages)) {
+      try {
+        const planned = await dispatch.plan(step);
+        if (planned === "small" || planned === "large") choice = dispatch.tiers[planned] === undefined ? "stay" : planned;
+      } catch (error) {
+        guarded(dispatch, step, () => {
+          throw error;
+        });
+      }
+    }
+    guarded(dispatch, step, () => dispatch.onDispatch?.({ sessionId, stepNumber: step.stepNumber, choice, contextTokens: step.contextTokens }));
+    const tier = choice === "stay" ? undefined : dispatch.tiers[choice];
+    return tier === undefined ? base : { ...base, model: tier };
+  };
 }
 
 const CONSULT = "Give brief factual notes that help answer the request: facts, figures, names and caveats. Do not answer in full; another model will.";
