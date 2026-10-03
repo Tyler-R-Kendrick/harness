@@ -9,6 +9,15 @@ import { ChangeSchema } from "./surface.ts";
 
 const text = z.string().min(1);
 
+/**
+ * The examples the proposer's GEPA run is given (models.ts). Ax scores the whole initial
+ * Pareto set before it searches and throws when the metric-call cap cannot cover it:
+ * `AxGEPA: options.maxMetricCalls=N is too small to evaluate the initial Pareto set; need
+ * at least ${set.length} metric calls` (qA in @ax-llm/ax's gepa: the check is
+ * `state.totalCalls + set.length > maxMetricCalls`, and the set is the examples given).
+ */
+export const TUNING_EXAMPLES = 2;
+
 // ---- settings (data/settings.json) -------------------------------------------------
 
 export const SettingsSchema = z
@@ -48,7 +57,13 @@ export const SettingsSchema = z
        * spend cap for one proposer; zero leaves the compiled signature prompt untuned.
        * `seed` fixes the optimizer's sampling.
        */
-      optimize: z.strictObject({ maxMetricCalls: z.int().min(0), seed: z.int().min(0) }),
+      optimize: z.strictObject({
+        maxMetricCalls: z
+          .int()
+          .min(0)
+          .refine((calls) => !(calls > 0 && calls < TUNING_EXAMPLES), { message: `proposer.optimize.maxMetricCalls must be 0 (tuning off) or at least ${TUNING_EXAMPLES}: Ax's GEPA scores the ${TUNING_EXAMPLES} tuning examples once before it searches, and refuses a smaller cap` }),
+        seed: z.int().min(0),
+      }),
     }),
     critic: z.strictObject({ question: text, threshold: ProbabilitySchema, examples: z.int().min(0) }),
   })
@@ -74,6 +89,7 @@ export const SettingsSchema = z
     // them (compare.ts): refuse settings that would fail in the middle of a run, in the
     // round whose level is the smallest, or on the futility prefix.
     let needed = 0;
+    // Stryker disable next-line StringLiteral: equivalent; the loop below runs for every round (rounds >= 1), and its first need() beats needed = 0 and sets why, so the initial text is never read
     let why = "";
     const need = (level: number, what: string) => {
       const n = Math.ceil(1 / level);
