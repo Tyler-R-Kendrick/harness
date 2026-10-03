@@ -163,6 +163,11 @@ describe("tuning the proposer's prompt with GEPA", () => {
 });
 
 describe("failures while tuning", () => {
+  it("RS23.68 an error of the optimizer itself is thrown, not offered as a reason: one metric call cannot even score the examples", async () => {
+    const model = scriptedModel(() => JSON.stringify(toggle("verify")));
+    await expect(modelProposer(model, { ...untuned, optimize: { maxMetricCalls: 1, seed: 0 } })(request)).rejects.toThrow(/maxMetricCalls=1 is too small/);
+  });
+
   it("RS23.65 a transport failure while the optimizer runs is thrown, not offered as a reason", async () => {
     const failing = new MockLanguageModelV4({ doGenerate: async () => { throw new Error("gateway down"); } });
     await expect(modelProposer(failing, tuned)(request)).rejects.toThrow("gateway down");
@@ -181,6 +186,7 @@ describe("failures while tuning", () => {
     for (const spy of spies) spy.mockImplementation((...args: unknown[]) => { written.push(args); return true; });
     try {
       await modelProposer(tuningModel(twoEdits, oneEdit), tuned)(request);
+      await modelProposer(tuningModel({ summary: "s", edits: [{ bogus: 1 }] }, oneEdit), tuned)(request);
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
