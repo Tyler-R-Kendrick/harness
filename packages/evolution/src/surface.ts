@@ -400,7 +400,7 @@ function changedLines(before: string, after: string): number {
   const a = before.split("\n");
   const b = after.split("\n");
   let head = 0;
-  // Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent; the two texts differ, so the lines differ somewhere or one text has fewer: past the end a line is undefined, which equals no line, so the equality test alone stops the loop where either bound would
+  // Stryker disable next-line ConditionalExpression,EqualityOperator,LogicalOperator: equivalent; the two texts differ, so the lines differ somewhere or one text has fewer: past the end a line is undefined, which equals no line, so the equality test alone stops the loop where either bound would (the outer && made an || is not equivalent: RS13.20 kills it, but it shares this line)
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tail = 0;
   while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;

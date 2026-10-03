@@ -1,18 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { applyProposal, defineSurface, revert } from "@harness/evolution";
-import type { Change, Documents, Proposal } from "@harness/evolution";
+import type * as Api from "@harness/evolution";
+import type { Change, Documents, Proposal, Surface } from "@harness/evolution";
+
+// The package is imported inside a hook, not at the top, and a load that throws is left for the tests to report: a mutant in a
+// schema the module builds as it loads then fails each test (api is undefined) where a failing static import, or a failing hook,
+// would only fail or skip the file, and the mutation run would count that as a survivor.
+let api: typeof Api;
+let surface: Surface;
+beforeAll(async () => {
+  try {
+    api = await import("@harness/evolution");
+    surface = api.defineSurface({
+      documents: { cfg: { schema: z.any() }, t: { kind: "text" } },
+      components: ["prompt", "config"],
+    });
+  } catch {
+    // every test below needs api and fails without it
+  }
+});
 
 type Ops = Proposal["edits"][number]["ops"];
 
-const surface = defineSurface({
-  documents: { cfg: { schema: z.any() }, t: { kind: "text" } },
-  components: ["prompt", "config"],
-});
 const edit = (id: string, ops: Ops) => ({ id, hypothesis: `h ${id}`, targets: "mode", predicted: [], ops });
 const proposal = (...edits: Proposal["edits"]): Proposal => ({ summary: "s", edits });
-const apply = (documents: Documents, ...edits: Ops[]) => applyProposal(surface, documents, proposal(...edits.map((ops, i) => edit(`e${i + 1}`, ops))), edits.length + 1);
-const problems = (r: ReturnType<typeof applyProposal>) => (r.kind === "refused" ? r.problems : []);
+const apply = (documents: Documents, ...edits: Ops[]) => api.applyProposal(surface, documents, proposal(...edits.map((ops, i) => edit(`e${i + 1}`, ops))), edits.length + 1);
+const problems = (r: ReturnType<typeof api.applyProposal>) => (r.kind === "refused" ? r.problems : []);
 const done = (documents: Documents, ...edits: Ops[]) => {
   const r = apply(documents, ...edits);
   if (r.kind !== "applied") throw new Error(r.problems.join("; "));
@@ -25,11 +38,11 @@ const on = (old: string, replacement: string, document = "t") => ({ op: "edit" a
 
 describe("mutation hardening of surfaces: declaring and proposing", () => {
   it("RS21.20 structural components that are not components are all named, separated by a comma and a space", () => {
-    expect(() => defineSurface({ documents: {}, components: ["prompt"], structural: ["skill", "tool"] })).toThrow(new RangeError("structural components must be components: skill, tool"));
+    expect(() => api.defineSurface({ documents: {}, components: ["prompt"], structural: ["skill", "tool"] })).toThrow(new RangeError("structural components must be components: skill, tool"));
   });
 
   it("RS21.21 edit ids that repeat are all named, separated by a comma and a space", () => {
-    const r = applyProposal(surface, { cfg: {}, t: "x" }, proposal(edit("a", [add("/p", 1)]), edit("a", [add("/q", 1)]), edit("b", [add("/r", 1)]), edit("b", [add("/s", 1)])), 4);
+    const r = api.applyProposal(surface, { cfg: {}, t: "x" }, proposal(edit("a", [add("/p", 1)]), edit("a", [add("/q", 1)]), edit("b", [add("/r", 1)]), edit("b", [add("/s", 1)])), 4);
     expect(problems(r)).toEqual(["edit ids repeat: a, b"]);
   });
 
@@ -96,64 +109,64 @@ describe("mutation hardening of surfaces: taking changes back out", () => {
 
   it("RS21.32 a path through an array reads an index only: the array's length is not a value written", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "replace", path: "/a/length", value: 2 }], inverse: [{ op: "replace", path: "/b", value: 0 }] };
-    expect(revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfg/a/length was changed after the edit"] });
+    expect(api.revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfg/a/length was changed after the edit"] });
   });
 
   it("RS21.33 a written path that is not a pointer was changed after the edit, even when the inverse names other paths", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "add", path: "nowhere", value: 1 }], inverse: [{ op: "add", path: "/n", value: 5 }] };
-    expect(revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfgnowhere was changed after the edit"] });
+    expect(api.revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfgnowhere was changed after the edit"] });
   });
 
   it("RS21.34 a JSON change whose writes include a text edit is refused as a whole", () => {
-    expect(revert(surface, base, [mixed])).toEqual({ kind: "refused", problems: ["cfg is JSON: an edit op applies to text documents"] });
+    expect(api.revert(surface, base, [mixed])).toEqual({ kind: "refused", problems: ["cfg is JSON: an edit op applies to text documents"] });
   });
 
   it("RS21.35 a JSON change whose inverse includes a text edit is refused as a whole", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "add", path: "/b", value: 1 }], inverse: [{ op: "remove", path: "/b" }, { op: "edit", old: "p", new: "q" }] };
-    expect(revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfg is JSON: an edit op applies to text documents"] });
+    expect(api.revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["cfg is JSON: an edit op applies to text documents"] });
   });
 
   it("RS21.36 a change with fewer inverse ops than writes is not paired, and is taken out as a whole", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "add", path: "/n", value: 1 }, { op: "add", path: "/m", value: 2 }], inverse: [{ op: "remove", path: "/n" }] };
     const docs = { ...base, cfg: { ...base.cfg, n: 1, m: 2 } };
-    expect(revert(surface, docs, [change])).toEqual({ kind: "applied", documents: { cfg: { ...base.cfg, m: 2 }, t: "x" } });
+    expect(api.revert(surface, docs, [change])).toEqual({ kind: "applied", documents: { cfg: { ...base.cfg, m: 2 }, t: "x" } });
   });
 
   it("RS21.37 a change whose inverse paths do not match its writes is not paired, and is taken out as a whole", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "add", path: "/n", value: 1 }, { op: "add", path: "/m", value: 2 }], inverse: [{ op: "remove", path: "/n" }, { op: "remove", path: "/zzz" }] };
     const docs = { ...base, cfg: { ...base.cfg, n: 1, m: 2 } };
-    expect(revert(surface, docs, [change])).toEqual({ kind: "refused", problems: ["cfg/zzz was changed after the edit"] });
+    expect(api.revert(surface, docs, [change])).toEqual({ kind: "refused", problems: ["cfg/zzz was changed after the edit"] });
   });
 
   it("RS21.38 a text document's inverse that is not a replace of the whole text is refused", () => {
     const change: Change = { document: "t", wrote: [{ op: "replace", path: "", value: "x" }], inverse: [{ op: "add", path: "", value: "old" }] };
-    expect(revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["t was changed after the edit"] });
+    expect(api.revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["t was changed after the edit"] });
   });
 
   it("RS21.39 a text document's inverse replace must put back a string", () => {
     const change: Change = { document: "t", wrote: [{ op: "replace", path: "", value: "x" }], inverse: [{ op: "replace", path: "", value: 5 }] };
-    expect(revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["t was changed after the edit"] });
+    expect(api.revert(surface, base, [change])).toEqual({ kind: "refused", problems: ["t was changed after the edit"] });
   });
 
   it("RS21.40 a change to a document the surface lacks is refused though the documents hold it", () => {
     const change: Change = { document: "nowhere", wrote: [{ op: "add", path: "/x", value: 1 }], inverse: [{ op: "remove", path: "/x" }] };
-    expect(revert(surface, { ...base, nowhere: { x: 1 } }, [change])).toEqual({ kind: "refused", problems: ["nowhere is not a document of the surface"] });
+    expect(api.revert(surface, { ...base, nowhere: { x: 1 } }, [change])).toEqual({ kind: "refused", problems: ["nowhere is not a document of the surface"] });
   });
 });
 
 describe("mutation hardening of surfaces: what a declaration keeps", () => {
   it("RS21.41 a JSON document is kept as declared", () => {
     const spec = { schema: z.any(), classify: () => "config" };
-    expect(defineSurface({ documents: { cfg: spec }, components: ["config"] }).documents["cfg"]).toBe(spec);
+    expect(api.defineSurface({ documents: { cfg: spec }, components: ["config"] }).documents["cfg"]).toBe(spec);
   });
 
   it("RS21.42 a surface declared without structural components has none", () => {
-    expect(defineSurface({ documents: {}, components: ["prompt"] }).structural).toEqual([]);
+    expect(api.defineSurface({ documents: {}, components: ["prompt"] }).structural).toEqual([]);
   });
 
   it("RS21.43 the removal of a key that is the empty string is told apart from a path that names no key", () => {
     const change: Change = { document: "cfg", wrote: [{ op: "remove", path: "" }], inverse: [{ op: "replace", path: "/b", value: 0 }] };
-    expect(revert(surface, { cfg: { "": 1, b: 1 }, t: "x" }, [change])).toEqual({ kind: "refused", problems: ["cfg was changed after the edit"] });
+    expect(api.revert(surface, { cfg: { "": 1, b: 1 }, t: "x" }, [change])).toEqual({ kind: "refused", problems: ["cfg was changed after the edit"] });
   });
 });
 
@@ -183,5 +196,48 @@ describe("mutation hardening of surfaces: footprint, regions and entangled edits
   it("RS21.48 edits of one JSON document are never reported as entangled text", () => {
     const r = done({ cfg: { a: 1, b: 1 }, t: "" }, [replace("/a", 2)], [replace("/b", 2)]);
     expect(r.documents["cfg"]).toEqual({ a: 2, b: 2 });
+  });
+});
+
+describe("mutation hardening of surfaces: the op schemas", () => {
+  const ops = [
+    { op: "add", document: "cfg", path: "/a", value: { k: [1, null] } },
+    { op: "replace", document: "cfg", path: "", value: "whole" },
+    { op: "remove", document: "cfg", path: "/a/0" },
+    { op: "edit", document: "t", old: "a", new: "" },
+  ];
+
+  it("RS21.53 each kind of proposed op parses, as it was written", () => {
+    for (const op of ops) expect(api.OpSchema.parse(op)).toEqual(op);
+  });
+
+  it("RS21.54 each kind of recorded op parses, as it was written", () => {
+    const recorded = [
+      { op: "add", path: "/a", value: { k: [1, null] } },
+      { op: "replace", path: "", value: "whole" },
+      { op: "remove", path: "/a/0", length: 0 },
+      { op: "remove", path: "/a" },
+      { op: "edit", old: "a", new: "", before: "x", after: "y" },
+      { op: "edit", old: "a", new: "b" },
+    ];
+    for (const op of recorded) expect(api.PatchOpSchema.parse(op)).toEqual(op);
+    expect(api.PatchOpSchema.safeParse({ op: "remove", path: "/a", length: -1 }).success).toBe(false);
+  });
+
+  it("RS21.55 a proposed path is a JSON Pointer: empty, or starting with a slash and holding no line break", () => {
+    for (const path of ["", "/", "/a/b", "/a b", "/~0/~1"]) expect(api.OpSchema.safeParse({ op: "remove", document: "cfg", path }).success).toBe(true);
+    for (const path of ["a", "a/b", " /a", "\n/a", "/a\nb", "/a\n"]) expect(api.OpSchema.safeParse({ op: "remove", document: "cfg", path }).success).toBe(false);
+  });
+
+  it("RS21.56 a path that is not a pointer is refused with the reason", () => {
+    const r = api.OpSchema.safeParse({ op: "remove", document: "cfg", path: "a" });
+    expect(r.success ? [] : r.error.issues.map((i) => i.message)).toEqual(["a JSON Pointer (empty, or starting with /)"]);
+  });
+
+  it("RS21.57 an array index of two or more digits is an index", () => {
+    const docs = { cfg: { a: Array.from({ length: 12 }, (_, i) => i) }, t: "" };
+    const r = done(docs, [replace("/a/10", "ten")]);
+    expect((r.documents["cfg"] as { a: unknown[] }).a[10]).toBe("ten");
+    expect(problems(apply(docs, [replace("/a/1x", 0)]))).toEqual(["edit e1 does not apply: cannot replace at /a/1x: the index is not valid"]);
   });
 });
