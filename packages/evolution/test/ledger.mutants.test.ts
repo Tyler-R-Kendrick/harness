@@ -44,4 +44,8 @@ describe("mutation hardening of the ledger", () => {
     expect(render([rec(0, "accepted", { misses: ["t2"] })], 1)[0]!.predicted).toEqual({ hit: [], missed: ["t2"] });
     expect(render([rec(0, "accepted", {})], 1)[0]).not.toHaveProperty("predicted");
   });
+
+  it("RS21.49 a record may say its candidate was admissible but not chosen", () => {
+    for (const outcome of ["accepted", "admissible", "rejected", "screened"] as const) expect(rec(0, outcome).outcome).toBe(outcome);
+  });
 });

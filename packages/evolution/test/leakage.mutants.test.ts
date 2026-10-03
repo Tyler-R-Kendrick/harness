@@ -82,4 +82,30 @@ describe("mutation hardening of the leakage screen", () => {
     expect(leaks(added("/x", "gamma delta"), tasks, { ngram: 3 })).toEqual([]);
     expect(leaks(added("/x", "delta"), tasks, { ngram: 3 })).toEqual([]);
   });
+
+  describe("credentials", () => {
+    const none: Task[] = [];
+    const text = (s: string) => leaks(wrote({ op: "edit", old: "x", new: s }), none, { ngram: 2 });
+    const credential = ["it carries a credential"];
+
+    it("RS21.50 a Google API key (AIza and 35 key characters) is a credential, a shorter run is not", () => {
+      expect(text(`key AIza${"aB3_-".repeat(7)} end`)).toEqual(credential);
+      expect(text(`key AIza${"aB3_-".repeat(7).slice(0, 34)} end`)).toEqual([]);
+      expect(text("key AIza!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! end")).toEqual([]);
+    });
+
+    it("RS21.51 an sk- key of twenty or more characters is a credential, a shorter one is not", () => {
+      expect(text(`token sk-${"a1".repeat(10)}`)).toEqual(credential);
+      expect(text(`token sk-${"a1".repeat(10).slice(0, 19)}`)).toEqual([]);
+      expect(text("the sk-learn package")).toEqual([]);
+    });
+
+    it("RS21.52 an api_key assignment of a quoted value of eight or more characters is a credential, with or without spaces around the =", () => {
+      expect(text("api_key = 'abcdefgh'")).toEqual(credential);
+      expect(text("api_key='abcdefgh'")).toEqual(credential);
+      expect(text('api_key   =   "abcdefgh"')).toEqual(credential);
+      expect(text("api_key = 'abcdefg'")).toEqual([]);
+      expect(text("api_key = abcdefghijkl")).toEqual([]);
+    });
+  });
 });
