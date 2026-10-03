@@ -382,3 +382,4 @@ reported as `blocked`, never as a pass.
 | `packages/evolution` | Regularized self-improvement of the harness's data: RRSI's loop with calibrated acceptance, pruning by ablation, a reusable holdout (pure) |
 | `packages/workflows` | Durable workflows as code: a code mode port (AI SDK code mode natively, QuickJS on WebAssembly anywhere), journaled tool calls, library, extension |
 | `packages/learning-plugins` | Workflow, skill and tool builders, and the recording teacher (portable) |
+| `packages/decision` | The decision layer: typed forks, calibration, decision records, the System One wire and its improvement loops (pure) |
