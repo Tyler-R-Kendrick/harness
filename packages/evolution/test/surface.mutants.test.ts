@@ -140,3 +140,48 @@ describe("mutation hardening of surfaces: taking changes back out", () => {
     expect(revert(surface, { ...base, nowhere: { x: 1 } }, [change])).toEqual({ kind: "refused", problems: ["nowhere is not a document of the surface"] });
   });
 });
+
+describe("mutation hardening of surfaces: what a declaration keeps", () => {
+  it("RS21.41 a JSON document is kept as declared", () => {
+    const spec = { schema: z.any(), classify: () => "config" };
+    expect(defineSurface({ documents: { cfg: spec }, components: ["config"] }).documents["cfg"]).toBe(spec);
+  });
+
+  it("RS21.42 a surface declared without structural components has none", () => {
+    expect(defineSurface({ documents: {}, components: ["prompt"] }).structural).toEqual([]);
+  });
+
+  it("RS21.43 the removal of a key that is the empty string is told apart from a path that names no key", () => {
+    const change: Change = { document: "cfg", wrote: [{ op: "remove", path: "" }], inverse: [{ op: "replace", path: "/b", value: 0 }] };
+    expect(revert(surface, { cfg: { "": 1, b: 1 }, t: "x" }, [change])).toEqual({ kind: "refused", problems: ["cfg was changed after the edit"] });
+  });
+});
+
+describe("mutation hardening of surfaces: footprint, regions and entangled edits", () => {
+  it("RS21.44 the footprint of a deletion counts the lines it removed even when the last of them repeats a line kept at the start", () => {
+    const r = done({ cfg: {}, t: "x\ny\nx\nrest" }, [on("x\ny\nx", "x")]);
+    expect(r.documents["t"]).toBe("x\nrest");
+    expect(r.edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS21.45 the footprint of an insertion counts the lines it added even when the last of them repeats a line kept at the start", () => {
+    const r = done({ cfg: {}, t: "x\nrest" }, [on("x", "x\ny\nx")]);
+    expect(r.edits[0]!.footprint).toBe(2);
+  });
+
+  it("RS21.46 a whole-text replace of a text that holds the word undefined is still a replace of the whole text", () => {
+    const r = done({ cfg: {}, t: "say undefined once" }, [replace("", "new text", "t")]);
+    expect(r.documents["t"]).toBe("new text");
+  });
+
+  it("RS21.47 when an edit does not apply, the others are not also reported as entangled", () => {
+    const docs = { cfg: {}, t: "yxabaab\nbbab" };
+    expect(problems(apply(docs, [on("\n", "")], [on("aa", "")]))).toEqual(["edit e1 could not be taken out of t on its own: the text that locates it overlaps another edit's (make them one edit, or leave more text between them)"]);
+    expect(problems(apply(docs, [on("\n", "")], [on("aa", "")], [add("/x/y", 1)]))).toEqual(["edit e3 does not apply: cannot add at /x/y: its parent does not exist"]);
+  });
+
+  it("RS21.48 edits of one JSON document are never reported as entangled text", () => {
+    const r = done({ cfg: { a: 1, b: 1 }, t: "" }, [replace("/a", 2)], [replace("/b", 2)]);
+    expect(r.documents["cfg"]).toEqual({ a: 2, b: 2 });
+  });
+});

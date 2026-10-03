@@ -400,6 +400,7 @@ function changedLines(before: string, after: string): number {
   const a = before.split("\n");
   const b = after.split("\n");
   let head = 0;
+  // Stryker disable next-line ConditionalExpression,EqualityOperator: equivalent; the two texts differ, so the lines differ somewhere or one text has fewer: past the end a line is undefined, which equals no line, so the equality test alone stops the loop where either bound would
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
   let tail = 0;
   while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
@@ -582,6 +583,7 @@ function parseAll(surface: Surface, documents: Documents, changed: Iterable<stri
  * (one that refuses is safe, and is left to the round to call entangled).
  */
 function misplaced(name: string, original: string, made: string, edits: readonly { readonly id: string; readonly change: Change }[]): string[] {
+  // Stryker disable next-line ConditionalExpression: equivalent; a lone edit's inverse, applied to the text that edit made, restores the original exactly (its context was anchored in that very text), so nothing is misplaced and the loop below finds none
   if (edits.length < 2) return [];
   return edits.flatMap((mine) => {
     const reverted = revertText(made, mine.change);
@@ -625,6 +627,7 @@ export function applyProposal(
   const repeated = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
   if (repeated.length) problems.push(`edit ids repeat: ${repeated.join(", ")}`);
   const regions = edits.map((e) => e.ops.map((op) => regionOf(surface, documents, op)));
+  // Stryker disable next-line EqualityOperator: equivalent; at i equal to the number of edits the inner loop (j from i + 1) has no pass
   for (let i = 0; i < edits.length; i++)
     for (let j = i + 1; j < edits.length; j++) {
       const shared = regions[i]!.flatMap((a) => regions[j]!.flatMap((b) => clash(a, b) ?? []));
@@ -705,6 +708,7 @@ export function applyProposal(
   }
   if (problems.length === 0)
     for (const name of new Set(changedDocs)) {
+      // Stryker disable next-line ConditionalExpression: equivalent; a JSON document is not a string, so revertText refuses it ("problem") and misplaced reports nothing for it
       if (!isText(surface.documents[name])) continue;
       const mine = applied.flatMap((e) => e.changes.filter((c) => c.document === name).map((change) => ({ id: e.id, change })));
       problems.push(...misplaced(name, documents[name] as string, working[name] as string, mine));
