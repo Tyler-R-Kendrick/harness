@@ -169,7 +169,7 @@ describe("failures while tuning", () => {
   });
 
   it("RS23.66 a bad answer reported by the AI SDK while the optimizer runs comes back as the reason, whichever of its two errors it is", async () => {
-    const noObject = new MockLanguageModelV4({ doGenerate: async () => { throw new NoObjectGeneratedError({ message: "no object", response: {}, usage: {} as never, finishReason: "stop" }); } });
+    const noObject = new MockLanguageModelV4({ doGenerate: async () => { throw new NoObjectGeneratedError({ message: "no object", response: {} as never, usage: {} as never, finishReason: "stop" }); } });
     expect(await modelProposer(noObject, tuned)(request)).toBe("no object");
     const noOutput = new MockLanguageModelV4({ doGenerate: async () => { throw new NoOutputGeneratedError({ message: "no output" }); } });
     expect(await modelProposer(noOutput, tuned)(request)).toBe("no output");
