@@ -4,9 +4,12 @@ import { ax, AxGenerateError, AxMockAIService, f, optimize } from "@ax-llm/ax";
 import type { AxChatRequest, AxChatResponse } from "@ax-llm/ax";
 import { ProbabilitySchema } from "@harness/cognitive";
 import type { CriticRequest, CriticVerdict, ProposalRequest } from "./evolution.ts";
+import { TUNING_EXAMPLES } from "./schemas.ts";
 import type { Settings } from "./schemas.ts";
 import { ProposalSchema } from "./surface.ts";
 import type { Proposal } from "./surface.ts";
+
+const badAnswer = (e: unknown): e is Error => NoObjectGeneratedError.isInstance(e) || NoOutputGeneratedError.isInstance(e);
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -15,34 +18,46 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * the other way). `AxMockAIService` is the chat function Ax will call, so the harness
  * model stays the model and Ax owns the signature, the prompt and GEPA.
  */
-function languageModelService(model: LanguageModel, maxTokens: number): AxMockAIService<string> {
+function languageModelService(model: LanguageModel, maxTokens: number, transport: WeakSet<Error>): AxMockAIService<string> {
   return new AxMockAIService({
+    // Stryker disable next-line StringLiteral: equivalent; the service name only labels Ax's own metrics, traces and unsupported-feature errors, none of which a service with no tools and no streaming reaches
     name: "ai-sdk",
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral: equivalent; with structuredOutputModes given Ax reads neither structuredOutputs nor functions (without it both default to on), the program has no tools, and AxMockAIService.chat never reads streaming, so no variant changes a request or an answer
     features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ["native"] },
-    chatResponse: async (req?: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
-      if (req === undefined) throw new Error("Ax chat request is required");
-      const declared = req.responseFormat?.type === "json_schema" ? (req.responseFormat.schema?.schema ?? req.responseFormat.schema) : undefined;
-      const { instructions, messages } = promptOf(req.chatPrompt);
-      const { text } = await generateText({
-        model,
-        messages,
-        ...(instructions === undefined ? {} : { instructions }),
-        maxOutputTokens: req.modelConfig?.maxTokens ?? maxTokens,
-        maxRetries: 0,
-        ...(declared ? { output: Output.object({ schema: jsonSchema(declared) }) } : {}),
-      });
-      return { results: [{ index: 0, content: text, finishReason: "stop" }] };
+    chatResponse: async (req: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
+      try {
+        const format = req.responseFormat;
+        const declared =
+          format?.type === "json_schema"
+            ? // Stryker disable next-line OptionalChaining: equivalent; Ax's json_schema response format always carries its schema wrapper, so this `?.` never meets undefined
+              (format.schema?.schema ?? format.schema)
+            : undefined;
+        const { text } = await generateText({
+          model,
+          ...promptOf(req.chatPrompt),
+          // Stryker disable next-line OptionalChaining: equivalent; Ax sets a modelConfig object on every request it sends (at least `{}`)
+          maxOutputTokens: req.modelConfig?.maxTokens ?? maxTokens,
+          maxRetries: 0,
+          ...(declared ? { output: Output.object({ schema: jsonSchema(declared) }) } : {}),
+        });
+        return { results: [{ index: 0, content: text, finishReason: "stop" }] };
+      } catch (e) {
+        // Ax wraps whatever the service throws, and passes some errors on as they are; this
+        // marks everything this service raised (the model, the transport, or our own code
+        // in here), so the proposer can tell it from what Ax says about an answer. A model
+        // that answered badly is not one of them: that answer is the proposer's reason to give back.
+        const failure = e instanceof Error ? e : new Error(String(e));
+        if (!badAnswer(failure)) transport.add(failure);
+        throw failure;
+      }
     },
   });
 }
 
 /** AI SDK takes system text as `instructions`; a system role in `messages` is rejected. */
-function promptOf(prompt: AxChatRequest["chatPrompt"]): { instructions?: string; messages: { role: "user" | "assistant"; content: string }[] } {
-  const instructions = prompt.flatMap((message) => (message.role === "system" && typeof message.content === "string" ? [message.content] : [])).join("\n\n");
-  const messages = prompt.flatMap((message) => {
-    if ((message.role !== "user" && message.role !== "assistant") || typeof message.content !== "string") return [];
-    return [{ role: message.role, content: message.content }];
-  });
+export function promptOf(prompt: AxChatRequest["chatPrompt"]): { instructions?: string; messages: { role: "user" | "assistant"; content: string }[] } {
+  const instructions = prompt.flatMap((message) => (message.role === "system" ? [message.content] : [])).join("\n\n");
+  const messages = prompt.flatMap((message) => ((message.role === "user" || message.role === "assistant") && typeof message.content === "string" ? [{ role: message.role, content: message.content }] : []));
   return instructions ? { instructions, messages } : { messages };
 }
 
@@ -57,20 +72,28 @@ function proposalProgram(system: string) {
       .description(system)
       .useStructured()
       .build(),
+    // The program's own limit is what GEPA's forward calls run under (they pass none): no error-correction retry.
     { maxRetries: 0 },
   );
 }
 
-/** Ax may hand each edit back as an object or as a JSON string. Either must be a proposal. */
-function readProposal(prediction: unknown): Proposal | undefined {
-  if (typeof prediction !== "object" || prediction === null || !("summary" in prediction) || !("edits" in prediction) || !Array.isArray(prediction.edits)) return undefined;
-  let edits: unknown[];
+/** One edit as Ax may hand it back: an object, or a JSON string of one. What is not JSON stays as it is. */
+function decode(edit: unknown): unknown {
+  if (typeof edit !== "string") return edit;
   try {
-    edits = prediction.edits.map((edit) => (typeof edit === "string" ? JSON.parse(edit) : edit));
-  } catch {
-    return undefined;
+    return JSON.parse(edit);
   }
-  const parsed = ProposalSchema.safeParse({ summary: prediction.summary, edits });
+  // Stryker disable next-line BlockStatement: equivalent; a string that is not JSON stays a string, and an empty block leaves undefined: the proposal schema refuses either as an edit
+  catch {
+    return edit;
+  }
+}
+
+/** Either must be a proposal; anything else is not. */
+export function readProposal(prediction: unknown): Proposal | undefined {
+  const { summary, edits } = (prediction ?? {}) as { summary?: unknown; edits?: unknown };
+  if (!Array.isArray(edits)) return undefined;
+  const parsed = ProposalSchema.safeParse({ summary, edits: edits.map(decode) });
   return parsed.success ? parsed.data : undefined;
 }
 
@@ -81,7 +104,8 @@ function readProposal(prediction: unknown): Proposal | undefined {
  */
 async function tune(program: ReturnType<typeof proposalProgram>, service: AxMockAIService<string>, request: ProposalRequest, settings: Settings["proposer"]): Promise<void> {
   const roundRequest = JSON.stringify(request);
-  const result = await optimize(program, [{ roundRequest }, { roundRequest }], ({ prediction }) => {
+  const examples = Array.from({ length: TUNING_EXAMPLES }, () => ({ roundRequest }));
+  const result = await optimize(program, examples, ({ prediction }) => {
     const proposal = readProposal(prediction);
     return proposal !== undefined && proposal.edits.length <= request.budget ? 1 : 0;
   }, {
@@ -95,39 +119,46 @@ async function tune(program: ReturnType<typeof proposalProgram>, service: AxMock
     verbose: false,
     optimizerLogger: () => {},
   });
+  // optimize() leaves the program at the last candidate it evaluated, which need not be the best, and returns no program when it found none.
   if (result.optimizedProgram) program.applyOptimization(result.optimizedProgram);
 }
 
-const badAnswer = (e: unknown): e is Error => NoObjectGeneratedError.isInstance(e) || NoOutputGeneratedError.isInstance(e);
+/** What Ax raised about an answer, as the reason to send back: the error it wrapped when it wrapped one, else the error itself. */
+export const reasonOf = (e: unknown): string => message(e instanceof AxGenerateError && e.cause instanceof Error ? e.cause : e);
 
 /**
  * A proposer on any AI SDK language model. Ax compiles the prompt from a signature
  * and the system text, and constrains the answer to the proposal schema. When the
  * metric-call cap is above zero, Ax's GEPA tunes that prompt once; later requests
  * use the tuned program. An answer that is not a proposal comes back as the reason,
- * which the round sends to the next attempt.
+ * which the round sends to the next attempt. Only two things are returned that way: the
+ * AI SDK's own errors for an answer it could not read (NoObjectGeneratedError and
+ * NoOutputGeneratedError) and an AxGenerateError that the service did not raise, which is
+ * what Ax says about an answer (it is not JSON, a field is missing or ill-typed). Everything
+ * else is thrown: a failure of the model or the transport, which is what the service
+ * recorded as raised by its own call (our code in it included), an error of the optimizer
+ * itself, and any other error, whether from our code here or from inside Ax.
  */
 export function modelProposer(model: LanguageModel, settings: Settings["proposer"]): (request: ProposalRequest) => Promise<unknown> {
   const program = proposalProgram(settings.system);
-  const service = languageModelService(model, settings.maxTokens);
+  const transport = new WeakSet<Error>();
+  const service = languageModelService(model, settings.maxTokens, transport);
   let tuned: Promise<void> | undefined;
+  const failureOf = (e: unknown): Error | undefined => [e, e instanceof Error ? e.cause : undefined].find((x): x is Error => x instanceof Error && transport.has(x));
   return async (request) => {
+    if (settings.optimize.maxMetricCalls > 0) {
+      tuned ??= tune(program, service, request, settings);
+      await tuned;
+    }
     try {
-      if (settings.optimize.maxMetricCalls > 0) {
-        tuned ??= tune(program, service, request, settings);
-        await tuned;
-      }
-      const output = await program.forward(service, { roundRequest: JSON.stringify(request) }, { maxRetries: 0, modelConfig: { maxTokens: settings.maxTokens } });
+      // The request's own token cap is the service's, and its retry limit the program's.
+      const output = await program.forward(service, { roundRequest: JSON.stringify(request) });
       return readProposal(output) ?? "the answer was not a proposal";
     } catch (e) {
-      // Ax wraps both a bad answer and a transport failure. Only the bad answer
-      // is a reason the round can send back; the transport failure still throws.
-      if (e instanceof AxGenerateError) {
-        if (badAnswer(e.cause)) return message(e.cause);
-        if (e.cause instanceof Error) throw e.cause;
-        return message(e);
-      }
-      if (badAnswer(e)) return message(e);
+      const failure = failureOf(e);
+      if (failure) throw failure;
+      // An allowlist: only what is about the answer is a reason; anything else is a fault of ours or of Ax's internals and aborts the run.
+      if (badAnswer(e) || e instanceof AxGenerateError) return reasonOf(e);
       throw e;
     }
   };

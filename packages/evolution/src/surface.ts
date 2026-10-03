@@ -399,8 +399,9 @@ const preview = (s: string) => JSON.stringify(s.length > 40 ? `${s.slice(0, 40)}
 function changedLines(before: string, after: string): number {
   const a = before.split("\n");
   const b = after.split("\n");
-  let head = 0;
-  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  // Past the end of the shorter text a line is undefined, which differs from every line of the other, so no bound is needed.
+  const differs = a.findIndex((line, i) => line !== b[i]);
+  const head = differs === -1 ? a.length : differs;
   let tail = 0;
   while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
   return a.length - head - tail + (b.length - head - tail);
@@ -415,6 +416,7 @@ function anchor(text: string, at: number, length: number): { before?: string; af
   const around = (n: number) => text.slice(Math.max(0, at - n), at + length + n);
   const unique = (n: number) => occurrences(text, around(n)).length === 1;
   if (unique(0)) return {};
+  // Stryker disable next-line ArithmeticOperator: equivalent; `high` only bounds the bisection below, and any bound at or above the whole text (all three are) is unique when the least context is, since a wider window around one place can only occur once if a narrower one does, so the least context found is the same
   let high = Math.max(at, text.length - at - length);
   if (!unique(high)) return undefined;
   // More context never makes a unique snippet ambiguous, so the least is found by bisection.
@@ -555,7 +557,12 @@ function regionOf(surface: Surface, documents: Documents, op: Op): Region {
 /** Where two regions overlap, as they are named in a refusal; undefined when they do not. Regions that touch (one ends where the other starts) are dependent: the context that finds one again may lie in the other. */
 function clash(a: Region, b: Region): string | undefined {
   if (a.document !== b.document) return undefined;
-  if ("path" in a && "path" in b) return overlaps(a.path, b.path) ? `${a.document}${a.path.length <= b.path.length ? a.path : b.path}` : undefined;
+  if ("path" in a && "path" in b) {
+    if (!overlaps(a.path, b.path)) return undefined;
+    // Paths that overlap are equal or one continues the other past a `/`: the shorter is the outer part, and a prefix of the longer.
+    const outer = a.path.slice(0, Math.min(a.path.length, b.path.length));
+    return `${a.document}${outer}`;
+  }
   if ("path" in a || "path" in b) return a.document;
   const start = Math.max(a.start, b.start);
   const end = Math.min(a.end, b.end);
@@ -577,10 +584,11 @@ function parseAll(surface: Surface, documents: Documents, changed: Iterable<stri
  * recorded context, found again in the text all the edits made, is not where it was written
  * (another edit rewrote it, to text that holds it). Each edit's revert is tried here, against
  * the text of the others alone; only a revert that would put text in the wrong place counts
- * (one that refuses is safe, and is left to the round to call entangled).
+ * (one that refuses is safe, and is left to the round to call entangled). A lone edit is
+ * never misplaced (its inverse was anchored in the very text it made), and a JSON document
+ * is not text, so its revert refuses: both find nothing without being told apart.
  */
-function misplaced(name: string, original: string, made: string, edits: readonly { readonly id: string; readonly change: Change }[]): string[] {
-  if (edits.length < 2) return [];
+function misplaced(name: string, original: unknown, made: unknown, edits: readonly { readonly id: string; readonly change: Change }[]): string[] {
   return edits.flatMap((mine) => {
     const reverted = revertText(made, mine.change);
     if ("problem" in reverted) return [];
@@ -623,7 +631,7 @@ export function applyProposal(
   const repeated = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
   if (repeated.length) problems.push(`edit ids repeat: ${repeated.join(", ")}`);
   const regions = edits.map((e) => e.ops.map((op) => regionOf(surface, documents, op)));
-  for (let i = 0; i < edits.length; i++)
+  for (const i of edits.keys())
     for (let j = i + 1; j < edits.length; j++) {
       const shared = regions[i]!.flatMap((a) => regions[j]!.flatMap((b) => clash(a, b) ?? []));
       if (shared.length) problems.push(`edits ${edits[i]!.id} and ${edits[j]!.id} both touch ${shared[0]}: they are one edit, or not independent`);
@@ -703,9 +711,8 @@ export function applyProposal(
   }
   if (problems.length === 0)
     for (const name of new Set(changedDocs)) {
-      if (!isText(surface.documents[name])) continue;
       const mine = applied.flatMap((e) => e.changes.filter((c) => c.document === name).map((change) => ({ id: e.id, change })));
-      problems.push(...misplaced(name, documents[name] as string, working[name] as string, mine));
+      problems.push(...misplaced(name, documents[name], working[name], mine));
     }
   problems.push(...parseAll(surface, working, changedDocs));
   return problems.length ? { kind: "refused", problems } : { kind: "applied", documents: working, edits: applied };
