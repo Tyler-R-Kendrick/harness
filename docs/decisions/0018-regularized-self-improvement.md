@@ -263,13 +263,15 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   resolve is refused before anything is evaluated, also when a saved run is restored
   against a smaller set (RS16.1–RS16.5). Settings whose resamples cannot resolve a round's
   level are refused too (RS14.7).
-- **Futility staging saves evaluations without adding acceptances.** With `select.futility`
+- **Futility staging saves evaluations without adding false acceptances.** With `select.futility`
   a drafted change is first evaluated on a random prefix of the evolve tasks; if the
   prefix gain's upper bound (at the futility level) is below the non-inferiority margin
   it can be neither a supported gain nor a non-inferior saving, and is abandoned with the
   reason recorded. Survivors are evaluated on the rest and the acceptance test runs on
-  all tasks at its unchanged level, so staging can only remove acceptances, never add
-  them. On the study world the tests pin: no more null acceptances than the budget
+  all tasks at its unchanged level, so staging can only remove a candidate's own
+  acceptance, never add one, and each test keeps its level. That is a statement about
+  each candidate, not about a whole run: when the best candidate is abandoned a weaker
+  admissible one can win the round in its place (`futility.ts`). On the study world the tests pin: no more null acceptances than the budget
   allows in 40 runs, with it and without (RS14.60); bad candidates (harm 0.2) abandoned
   in most runs with about a fifth fewer evolve tasks evaluated overall, about a third
   fewer counting only candidates (RS14.61, observed 331 of 400 abandoned and 18.8%
@@ -339,7 +341,8 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   compiles the prompt from that signature and the system text, and constrains the
   answer to the proposal schema (RS12.1–RS12.2). Once per proposer, when
   `proposer.optimize.maxMetricCalls` is above zero, Ax's `optimize` (GEPA) tunes that
-  prompt. The metric is deterministic and is not a second selection test: the answer
+  prompt (the cap must be at least the two examples handed to `optimize`, or Ax
+  refuses the run, so the settings schema refuses 1; 0 turns tuning off). The metric is deterministic and is not a second selection test: the answer
   parses and stays within the round's edit budget. The cap and the seed are data
   (RS12.4). The run stores no labeled proposals, so the search is GEPA alone, not a
   bootstrap of gold demos. The student is the same AI SDK language model the host
