@@ -1,0 +1,25 @@
+{
+  "$schema": "./attention.schema.json",
+  "version": "attention-1",
+  "weights": {
+    "kind": { "permission": 4, "failure": 3, "question": 2.5, "review": 2, "idle": 0.5 },
+    "age": 2,
+    "blocked": 1.5,
+    "urgency": 3
+  },
+  "age": { "saturatesAfterMs": 3600000 },
+  "chars": 400,
+  "question": {
+    "instructions": "How urgently should a person look at this item from one of their agent sessions? Consider whether the agent is blocked waiting for them, whether something failed or is about to be done that cannot be undone, and whether it can wait.",
+    "levels": [
+      "low: nothing depends on it; it can wait until the person next looks",
+      "normal: worth a look soon, but nothing is waiting",
+      "high: work is blocked or something risky needs a decision",
+      "urgent: harm, cost or lost work if the person does not look now"
+    ]
+  },
+  "floors": [
+    { "when": { "eq": ["kind", "permission"] }, "atLeast": "high", "reason": "a permission request blocks the session" },
+    { "when": { "eq": ["kind", "failure"] }, "atLeast": "normal", "reason": "a failure is never low" }
+  ]
+}
