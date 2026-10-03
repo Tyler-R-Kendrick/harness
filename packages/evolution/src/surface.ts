@@ -415,6 +415,7 @@ function anchor(text: string, at: number, length: number): { before?: string; af
   const around = (n: number) => text.slice(Math.max(0, at - n), at + length + n);
   const unique = (n: number) => occurrences(text, around(n)).length === 1;
   if (unique(0)) return {};
+  // Stryker disable next-line ArithmeticOperator: equivalent; `high` only bounds the bisection below, and any bound at or above the whole text (all three are) is unique when the least context is, since a wider window around one place can only occur once if a narrower one does, so the least context found is the same
   let high = Math.max(at, text.length - at - length);
   if (!unique(high)) return undefined;
   // More context never makes a unique snippet ambiguous, so the least is found by bisection.
@@ -555,6 +556,7 @@ function regionOf(surface: Surface, documents: Documents, op: Op): Region {
 /** Where two regions overlap, as they are named in a refusal; undefined when they do not. Regions that touch (one ends where the other starts) are dependent: the context that finds one again may lie in the other. */
 function clash(a: Region, b: Region): string | undefined {
   if (a.document !== b.document) return undefined;
+  // Stryker disable next-line EqualityOperator: equivalent; paths that overlap are equal or one is longer (it continues past a `/`), so `<=` and `<` choose the same path when the lengths are equal
   if ("path" in a && "path" in b) return overlaps(a.path, b.path) ? `${a.document}${a.path.length <= b.path.length ? a.path : b.path}` : undefined;
   if ("path" in a || "path" in b) return a.document;
   const start = Math.max(a.start, b.start);
