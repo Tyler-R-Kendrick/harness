@@ -28,6 +28,11 @@
         },
         "rotate": {
           "type": "boolean"
+        },
+        "keep": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -35,7 +40,8 @@
         "maxOptions",
         "question",
         "none",
-        "rotate"
+        "rotate",
+        "keep"
       ],
       "additionalProperties": false
     },

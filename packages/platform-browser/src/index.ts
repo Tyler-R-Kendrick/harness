@@ -17,3 +17,5 @@ export { packagedEmscripten, xgrammarFromFactory } from "./packaged.ts";
 export { browserComposition, browserPlanRunner, browserProcedural } from "./procedural.ts";
 export type { PackagedModule } from "./packaged.ts";
 export { browserDialogue } from "./dialogue.ts";
+export { browserDecision } from "./decision.ts";
+export type { BrowserDecision, BrowserDecisionOptions } from "./decision.ts";

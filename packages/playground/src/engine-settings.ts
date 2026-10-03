@@ -20,6 +20,8 @@ const EngineSettingsSchema = z.strictObject({
     none: Prompt,
     /** Ask a model with the options in every rotation at once and average its answers, so an option's position does not decide it. */
     rotate: z.boolean(),
+    /** Decision records the page keeps in memory (the decision layer's log of which template answered); the oldest go first. */
+    keep: z.number().int().min(1),
   }),
   lexical: z.strictObject({
     /** The probability the lexical decision model's choice needs before its template answers. */

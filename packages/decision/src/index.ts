@@ -26,3 +26,4 @@ export * from "./compose.ts";
 export * from "./extension.ts";
 export * from "./plugin.ts";
 export * from "./condition.ts";
+export * from "./host.ts";

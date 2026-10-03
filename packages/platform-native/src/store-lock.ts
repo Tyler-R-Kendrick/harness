@@ -25,6 +25,12 @@ import { z } from "zod";
 /** The lock file's name in the store directory. */
 export const STORE_LOCK = "procedural.lock";
 
+/**
+ * The lock file's name in a decision directory: the daemon (`--decision <dir>`) and
+ * `harness-decision` take it the same way, since opening the log may compact or truncate it.
+ */
+export const DECISION_LOCK = "decision.lock";
+
 export interface LockOwner {
   readonly pid: number;
   /** Who holds it: `harness` (the daemon) or `harness-procedural` (the CLI). */
@@ -90,15 +96,17 @@ function heldLock(path: string, mine: LockOwner): StoreLock {
 
 /**
  * Take the lock on the store in `dir` for `holder`, or say who holds it. `alive` decides
- * whether a holder's process still runs (by default, a signal-0 check on its pid).
+ * whether a holder's process still runs (by default, a signal-0 check on its pid). `file`
+ * names the lock file in `dir` (by default `STORE_LOCK`, the procedural store's).
  */
-export async function lockStore(dir: string, holder: string, options: { readonly alive?: (pid: number) => boolean } = {}): Promise<LockResult> {
+export async function lockStore(dir: string, holder: string, options: { readonly alive?: (pid: number) => boolean; readonly file?: string } = {}): Promise<LockResult> {
   const alive = options.alive ?? processAlive;
+  const file = options.file ?? STORE_LOCK;
   await mkdir(dir, { recursive: true });
-  const path = join(dir, STORE_LOCK);
+  const path = join(dir, file);
   const mine: LockOwner = { pid: process.pid, holder };
   // The lock appears whole or not at all: a complete scratch file is linked into place.
-  const scratch = join(dir, `.${STORE_LOCK}.${process.pid}.${randomUUID()}`);
+  const scratch = join(dir, `.${file}.${process.pid}.${randomUUID()}`);
   await writeFile(scratch, JSON.stringify(mine), { mode: 0o600 });
   try {
     for (;;) {
