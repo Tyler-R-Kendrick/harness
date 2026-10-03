@@ -341,7 +341,8 @@ so a run can reproduce the paper and the two can be compared (RS10.2, RS9.10–R
   compiles the prompt from that signature and the system text, and constrains the
   answer to the proposal schema (RS12.1–RS12.2). Once per proposer, when
   `proposer.optimize.maxMetricCalls` is above zero, Ax's `optimize` (GEPA) tunes that
-  prompt. The metric is deterministic and is not a second selection test: the answer
+  prompt (the cap must be at least the two examples handed to `optimize`, or Ax
+  refuses the run, so the settings schema refuses 1; 0 turns tuning off). The metric is deterministic and is not a second selection test: the answer
   parses and stays within the round's edit budget. The cap and the seed are data
   (RS12.4). The run stores no labeled proposals, so the search is GEPA alone, not a
   bootstrap of gold demos. The student is the same AI SDK language model the host
