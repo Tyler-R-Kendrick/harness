@@ -100,7 +100,7 @@ function tuningModel(without: unknown, withInstruction: unknown) {
     return JSON.stringify(system.includes(TUNED) ? withInstruction : without);
   });
 }
-const tuned = { ...untuned, optimize: { maxMetricCalls: 40, seed: 0 } };
+const tuned = { ...untuned, optimize: { maxMetricCalls: 60, seed: 0 } };
 const twoEdits = { summary: "two", edits: [edit1, { ...edit1, id: "e2" }] };
 const oneEdit = { summary: "one", edits: [edit1] };
 const reflections = (model: ReturnType<typeof scriptedModel>) => model.doGenerateCalls.filter((c) => c.responseFormat === undefined);
