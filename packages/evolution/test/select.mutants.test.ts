@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calibratedDecision, choose, paperDecision } from "@harness/evolution";
+import { CalibratedRuleSchema, PaperRuleSchema, RuleSchema, calibratedDecision, choose, paperDecision } from "@harness/evolution";
 import type { CalibratedContext, CalibratedRule, Decision, Measured, PaperContext, PaperRule } from "@harness/evolution";
 
 type Paper = PaperRule & { readonly delta: number };
@@ -78,25 +78,25 @@ const CTX: CalibratedContext = { drift: 0, certified: 0, anchor: {} };
 const decide = (c: Partial<Measured>, rule: Partial<CalibratedRule> = {}, ctx: Partial<CalibratedContext> = {}): Decision => calibratedDecision(measuredOf(c), { ...RULE, ...rule }, { ...CTX, ...ctx });
 
 describe("the calibrated rule: guards and the cost cap", () => {
-  it("RS22.30 several violated guards are listed separated by a semicolon and a space", () => {
+  it("RS22.70 several violated guards are listed separated by a semicolon and a space", () => {
     expect(decide({ guards: ["valid rate fell", "latency rose"] })).toMatchObject({ admissible: false, reason: "domain guard violated: valid rate fell; latency rose" });
   });
 
-  it("RS22.31 a base harness whose cost is zero sets no cap", () => {
+  it("RS22.71 a base harness whose cost is zero sets no cap", () => {
     // Against a zero anchor every candidate would be infinitely over; a cost of 0 is no base to be relative to.
     const d = decide({ kind: "prune", cost: 100 }, {}, { anchor: { cost: 0 } });
     expect(d).toMatchObject({ admissible: true, reason: "non-inferior (lower bound 0.0000 > -0.0100), and removes a mechanism" });
   });
 
-  it("RS22.32 a base harness with no cost sets no cap either", () => {
+  it("RS22.72 a base harness with no cost sets no cap either", () => {
     expect(decide({ kind: "prune", cost: 100 }, {}, { anchor: {} }).admissible).toBe(true);
   });
 
-  it("RS22.33 a candidate that reports no cost is not capped even when the base harness has one", () => {
+  it("RS22.73 a candidate that reports no cost is not capped even when the base harness has one", () => {
     expect(decide({ kind: "prune" }, { beta0: 0 }, { anchor: { cost: 100 } }).admissible).toBe(true);
   });
 
-  it("RS22.34 a total cost exactly at the allowance beta0 + beta1 max(0, certified + lower) is within it", () => {
+  it("RS22.74 a total cost exactly at the allowance beta0 + beta1 max(0, certified + lower) is within it", () => {
     // Anchor 100, cost 125: 25% over; the allowance is beta0 = 25% (the lower bound and the certified total are 0).
     const rule = { beta0: 0.25 };
     expect(decide({ kind: "prune", cost: 125 }, rule, { anchor: { cost: 100 } }).admissible).toBe(true);
@@ -106,7 +106,7 @@ describe("the calibrated rule: guards and the cost cap", () => {
     });
   });
 
-  it("RS22.35 with an upper bound and a cost change the cap uses the upper bound, and says up to", () => {
+  it("RS22.75 with an upper bound and a cost change the cap uses the upper bound, and says up to", () => {
     // Cost 200 against an incumbent that cost 100 (change +100%), upper bound +150%: up to 200 * 2.5 / 2 / 100 - 1 = +150%.
     const d = decide({ kind: "prune", cost: 200, costChange: 1, costUpper: 1.5, costLower: 0.5 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
     expect(d).toMatchObject({
@@ -115,7 +115,7 @@ describe("the calibrated rule: guards and the cost cap", () => {
     });
   });
 
-  it("RS22.36 with a cost change but no upper bound the cap uses the point cost, not an up to", () => {
+  it("RS22.76 with a cost change but no upper bound the cap uses the point cost, not an up to", () => {
     const d = decide({ kind: "prune", cost: 200, costChange: 1 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
     expect(d).toMatchObject({
       admissible: false,
@@ -123,7 +123,7 @@ describe("the calibrated rule: guards and the cost cap", () => {
     });
   });
 
-  it("RS22.37 with an upper bound but no cost change the cap uses the point cost, not an up to", () => {
+  it("RS22.77 with an upper bound but no cost change the cap uses the point cost, not an up to", () => {
     const d = decide({ kind: "prune", cost: 200, costUpper: 1.5 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
     expect(d).toMatchObject({
       admissible: false,
@@ -132,20 +132,33 @@ describe("the calibrated rule: guards and the cost cap", () => {
   });
 });
 
+describe("the calibrated rule: the cost cap when the incumbent's cost is all that remains", () => {
+  it("RS26.1 a cost change of exactly -100% leaves nothing to scale the upper bound by, so the point cost is used", () => {
+    // 1 + costChange = 0: the upper bound would be divided by zero (an infinite total); the point cost 50 against the base 100 is -50%, within the allowance.
+    const d = decide({ kind: "prune", cost: 50, costChange: -1, costLower: -1, costUpper: 0 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
+    expect(d).toMatchObject({ admissible: true, reason: "non-inferior (lower bound 0.0000 > -0.0100), and removes a mechanism" });
+  });
+
+  it("RS26.2 a cost change below -100% is not scaled by either", () => {
+    const d = decide({ kind: "prune", cost: 50, costChange: -2, costLower: -2, costUpper: 0 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
+    expect(d.admissible).toBe(true);
+  });
+});
+
 describe("the calibrated rule: which claim a candidate makes", () => {
-  it("RS22.40 a removal with a positive lower bound is judged as a removal, not as a gain", () => {
+  it("RS22.78 a removal with a positive lower bound is judged as a removal, not as a gain", () => {
     expect(decide({ kind: "prune", lower: 0.05, upper: 0.1, gain: 0.07 })).toMatchObject({
       admissible: true,
       reason: "non-inferior (lower bound 0.0500 > -0.0100), and removes a mechanism",
     });
   });
 
-  it("RS22.41 a change with a positive lower bound is a supported gain, and its reason names the gain, its bound, the cost and the budget", () => {
+  it("RS22.79 a change with a positive lower bound is a supported gain, and its reason names the gain, its bound, the cost and the budget", () => {
     const d = decide({ lower: 0.25, upper: 0.5, gain: 0.375, costChange: 0.5, costLower: 0.25, costUpper: 0.75 });
     expect(d).toMatchObject({ admissible: true, verdict: "supported", reason: "supported gain: 0.3750, at least 0.2500; cost +50.0% within +1010.0%" });
   });
 
-  it("RS22.42 a gain whose cost bound is above its budget is refused, but one without a cost bound is not", () => {
+  it("RS22.80 a gain whose cost bound is above its budget is refused, but one without a cost bound is not", () => {
     // Budget 0.1 + 40 * 0.25 = 10.1; with 20 as the lower bound of the cost change the gain does not pay for it.
     const refused = decide({ lower: 0.25, upper: 0.5, gain: 0.375, costChange: 30, costLower: 20, costUpper: 40 });
     expect(refused).toMatchObject({
@@ -155,7 +168,7 @@ describe("the calibrated rule: which claim a candidate makes", () => {
     expect(decide({ lower: 0.25, upper: 0.5, gain: 0.375, costChange: 30 }).admissible).toBe(true);
   });
 
-  it("RS22.43 a gain's cost lower bound exactly at its budget is within it", () => {
+  it("RS22.81 a gain's cost lower bound exactly at its budget is within it", () => {
     // Budget 0.25 + 1 * 0.5 = 0.75.
     const rule = { beta0: 0.25, beta1: 1 };
     expect(decide({ lower: 0.5, upper: 1, gain: 0.75, costChange: 0.75, costLower: 0.75, costUpper: 0.75 }, rule).admissible).toBe(true);
@@ -164,7 +177,7 @@ describe("the calibrated rule: which claim a candidate makes", () => {
 });
 
 describe("the calibrated rule: reasons of the non-inferiority claims", () => {
-  it("RS22.50 a change whose lower bound is at or below the margin is refused for having no supported gain, saying so", () => {
+  it("RS22.82 a change whose lower bound is at or below the margin is refused for having no supported gain, saying so", () => {
     expect(decide({ lower: -0.0123 })).toEqual({
       admissible: false,
       reason: "no supported gain (lower bound -0.0123 <= 0), and it may be worse than the incumbent by the margin or more: lower bound -0.0123 <= -0.0100",
@@ -172,7 +185,7 @@ describe("the calibrated rule: reasons of the non-inferiority claims", () => {
     });
   });
 
-  it("RS22.51 a removal whose lower bound is at or below the margin is refused without saying it sought a gain", () => {
+  it("RS22.83 a removal whose lower bound is at or below the margin is refused without saying it sought a gain", () => {
     expect(decide({ kind: "prune", lower: -0.0123 })).toEqual({
       admissible: false,
       reason: "it may be worse than the incumbent by the margin or more: lower bound -0.0123 <= -0.0100",
@@ -180,41 +193,41 @@ describe("the calibrated rule: reasons of the non-inferiority claims", () => {
     });
   });
 
-  it("RS22.52 a removal that costs more than beta0 is refused, naming its cost change and upper bound", () => {
+  it("RS22.84 a removal that costs more than beta0 is refused, naming its cost change and upper bound", () => {
     expect(decide({ kind: "prune", costChange: 0.3, costLower: 0.2, costUpper: 0.5 })).toMatchObject({
       admissible: false,
       reason: "non-inferior (lower bound 0.0000 > -0.0100), but removing it costs +30.0% tokens (up to +50.0% at the test's level), more than +10.0%",
     });
   });
 
-  it("RS22.53 a removal that reports a cost change without bounds is refused as an unknown share", () => {
+  it("RS22.85 a removal that reports a cost change without bounds is refused as an unknown share", () => {
     expect(decide({ kind: "prune", costChange: 0.3 })).toMatchObject({
       admissible: false,
       reason: "non-inferior (lower bound 0.0000 > -0.0100), but removing it costs +30.0% tokens (up to an unknown share at the test's level), more than +10.0%",
     });
   });
 
-  it("RS22.54 a removal with an upper bound of exactly beta0 is allowed; one with no cost at all is allowed", () => {
+  it("RS22.86 a removal with an upper bound of exactly beta0 is allowed; one with no cost at all is allowed", () => {
     expect(decide({ kind: "prune", costChange: 0.1, costLower: 0, costUpper: 0.1 }).admissible).toBe(true);
     expect(decide({ kind: "prune", costChange: 0.1, costLower: 0, costUpper: 0.1000001 }).admissible).toBe(false);
     expect(decide({ kind: "prune" }).admissible).toBe(true);
   });
 
-  it("RS22.55 a saving that is not certified is refused, with the cost change and an unknown upper bound said so", () => {
+  it("RS22.87 a saving that is not certified is refused, with the cost change and an unknown upper bound said so", () => {
     expect(decide({ costChange: 0.125 })).toMatchObject({
       admissible: false,
       reason: "no supported gain (lower bound 0.0000 <= 0) and saves no more than 5.0% tokens with confidence (change +12.5%, at most unknown)",
     });
   });
 
-  it("RS22.56 a saving whose upper bound is above -saving is refused, with the bound shown", () => {
+  it("RS22.88 a saving whose upper bound is above -saving is refused, with the bound shown", () => {
     expect(decide({ costChange: -0.0625, costLower: -0.5, costUpper: -0.025 })).toMatchObject({
       admissible: false,
       reason: "no supported gain (lower bound 0.0000 <= 0) and saves no more than 5.0% tokens with confidence (change -6.3%, at most -2.5%)",
     });
   });
 
-  it("RS22.57 a saving whose upper bound is exactly -saving is certified", () => {
+  it("RS22.89 a saving whose upper bound is exactly -saving is certified", () => {
     const d = decide({ costChange: -0.125, costLower: -0.5, costUpper: -0.0625 }, { saving: 0.0625 });
     expect(d).toMatchObject({
       admissible: true,
@@ -229,16 +242,37 @@ describe("choose: the winner among admissible candidates", () => {
   const evidenced = measuredOf({ label: "evidenced", score: 0.6, lower: 0.25, upper: 0.375, gain: 0.1 });
   const decided = [lucky, evidenced].map((candidate) => ({ candidate, decision: ok }));
 
-  it("RS22.60 by score, the highest point score wins even with the lower bound behind", () => {
+  it("RS22.90 by score, the highest point score wins even with the lower bound behind", () => {
     expect(choose(decided, "score")?.label).toBe("lucky");
   });
 
-  it("RS22.61 by lower, the highest lower bound wins even with the score behind", () => {
+  it("RS22.91 by lower, the highest lower bound wins even with the score behind", () => {
     expect(choose(decided, "lower")?.label).toBe("evidenced");
   });
 
-  it("RS22.62 an inadmissible candidate never wins", () => {
+  it("RS22.92 an inadmissible candidate never wins", () => {
     const refused = [{ candidate: lucky, decision: { admissible: false, reason: "no" } }, { candidate: evidenced, decision: ok }];
     expect(choose(refused, "score")?.label).toBe("evidenced");
+  });
+});
+
+describe("the rule schemas", () => {
+  const paper = { rule: "paper", beta0: 0.25, beta1: 1, ws: 1, wc: 0, wn: 0, prune: 4 };
+  const calibrated = { rule: "calibrated", alpha: 0.1, resamples: 1000, margin: 0.01, saving: 0.05, beta0: 0.1, beta1: 40 };
+
+  it("RS26.3 a paper rule parses, with z defaulting to 2, and an unknown key is refused", () => {
+    expect(PaperRuleSchema.parse(paper)).toMatchObject({ rule: "paper", z: 2, prune: 4 });
+    expect(PaperRuleSchema.safeParse({ ...paper, extra: 1 }).success).toBe(false);
+  });
+
+  it("RS26.4 a calibrated rule parses, with a uniform spending default, and an unknown key is refused", () => {
+    expect(CalibratedRuleSchema.parse(calibrated)).toMatchObject({ rule: "calibrated", alpha: 0.1, spending: { kind: "uniform" } });
+    expect(CalibratedRuleSchema.safeParse({ ...calibrated, extra: 1 }).success).toBe(false);
+  });
+
+  it("RS26.5 the union picks the schema by its rule field", () => {
+    expect(RuleSchema.parse(paper).rule).toBe("paper");
+    expect(RuleSchema.parse(calibrated).rule).toBe("calibrated");
+    expect(RuleSchema.safeParse({ ...calibrated, rule: "other" }).success).toBe(false);
   });
 });
