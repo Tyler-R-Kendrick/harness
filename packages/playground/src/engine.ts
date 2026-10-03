@@ -19,11 +19,13 @@ import { createIdGenerator, generateText, Output, simulateReadableStream, tool }
 import type { ToolApprovalStatus, ToolSet } from "ai";
 import { z } from "zod";
 import { collectParts, fillTemplate, finishReason, usage } from "@harness/cognitive";
+import type { Clock, DecisionEvent, DecisionId } from "@harness/decision";
 import { chooseTemplate, holeNames, holeOf, resolveHoles } from "./decide.ts";
 import type { Decider } from "./decide.ts";
 import type { Facts } from "./decide.ts";
 import type { EngineSettings } from "./engine-settings.ts";
 import { report } from "./shell-model.ts";
+import { TemplateDecisions } from "./template-decision.ts";
 import { HOLE_SOURCES, parseTemplate, TEMPLATE_KINDS, templateFile } from "./templates.ts";
 import type { Template, TemplateStore } from "./templates.ts";
 
@@ -48,6 +50,10 @@ export interface EngineOptions {
   /** Models that answer a request themselves when no template can be written; the first that answers is kept to. */
   readonly answerers?: () => readonly LanguageModelV4[] | Promise<readonly LanguageModelV4[]>;
   readonly generation: () => Generation;
+  /** The time decisions are stamped with (the page's clock); without one they are numbered in order. */
+  readonly clock?: Clock;
+  /** Told of each template decision the decision layer makes (`decision.made`). */
+  readonly onDecision?: (event: DecisionEvent) => void;
   /**
    * Runs a script on a throwaway copy of the files: a written script template is tried
    * this way before it is kept, and one that fails leaves the writing to the next generator.
@@ -88,6 +94,10 @@ export class TemplateEngine {
   readonly #written: ReturnType<typeof writtenSchema>;
   /** The template that answered last, for feedback. */
   last: { readonly templateId: string; readonly request: string } | undefined;
+  /** Every decision about which template answers, as the decision layer records it (a log in memory, with the ladder's trace). */
+  readonly decisions: TemplateDecisions;
+  /** The record of the last decision that chose a template (its id, to attach a rating to). */
+  lastDecision: DecisionId | undefined = undefined;
   /** What the decision models failed with in the last decision (and its holes), when a later one decided. */
   lastProblems: readonly string[] = [];
   /** What the generators failed with in the last generation, when a later one wrote (or none did). */
@@ -95,7 +105,14 @@ export class TemplateEngine {
 
   constructor(options: EngineOptions) {
     this.#options = options;
+    let tick = 0;
+    this.decisions = new TemplateDecisions({ clock: options.clock ?? { now: () => tick++ }, keep: options.settings.decision.keep, ...(options.onDecision ? { publish: options.onDecision } : {}) });
     this.#written = writtenSchema(options.settings.generation.limits);
+  }
+
+  /** Rate the last answer to the decision that chose its template (the layer's outcome); false when it was not chosen by a decision, or the log no longer has it. */
+  async rated(verdict: "good" | "bad"): Promise<boolean> {
+    return this.lastDecision === undefined ? false : this.decisions.outcome(this.lastDecision, verdict === "good" ? "rated-good" : "rated-bad");
   }
 
   /** The approval a generation tool needs under the generation setting (other tools: not this engine's to say). */
@@ -169,8 +186,9 @@ export class TemplateEngine {
 
   async #decide(request: string): Promise<Reply> {
     const { store, settings, deciders } = this.#options;
-    const decision = await chooseTemplate(deciders(), request, (await store.list()).templates, settings);
+    const decision = await chooseTemplate(deciders(), request, (await store.list()).templates, settings, this.decisions);
     this.lastProblems = decision.problems ?? [];
+    this.lastDecision = decision.template ? decision.id : undefined;
     const meta = { template: decision.template?.id ?? null, by: decision.by, probability: decision.probability, ...(decision.problems ? { problems: [...decision.problems] } : {}) };
     const generation = this.#options.generation();
     const template = decision.template;

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "default": {
+      "type": "object",
+      "properties": {
+        "act": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "verify": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "accept": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "rotate": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16
+        },
+        "explore": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "active",
+            "shadow"
+          ]
+        }
+      },
+      "required": [
+        "act",
+        "verify",
+        "accept",
+        "rotate",
+        "explore",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "forks": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 64,
+        "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "act": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "verify": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "accept": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "rotate": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "explore": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "active",
+              "shadow"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "default",
+    "forks"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,29 @@
+{
+  "$schema": "./permission-questions.schema.json",
+  "version": "permission-risk-1",
+  "chars": 500,
+  "questions": {
+    "irreversible": {
+      "instructions": "Would carrying out this request be hard or impossible to undo, for example deleting data without a copy, overwriting, sending, publishing or force-pushing?",
+      "criteria": { "true": "it cannot easily be undone", "false": "it can be undone or changes nothing" }
+    },
+    "costs": {
+      "instructions": "Would carrying out this request spend money or other limited resources, for example paid API calls, cloud resources, large downloads or long-running compute?",
+      "criteria": { "true": "it spends money or resources", "false": "it costs nothing to speak of" }
+    },
+    "visible": {
+      "instructions": "Would carrying out this request be visible outside this machine or change something other people rely on, for example sending data over the network, messages, pushes, deployments or edits to shared services?",
+      "criteria": { "true": "it is visible or has effects outside this machine", "false": "it stays on this machine" }
+    },
+    "risk": {
+      "instructions": "Overall, how risky is it to let this request run without a person checking it first?",
+      "levels": [
+        "none: read-only or trivially undone, and local",
+        "low: local and easily undone",
+        "high: hard to undo, costly or visible to others",
+        "severe: destructive, or could cause lasting harm"
+      ]
+    }
+  },
+  "combine": { "yesAt": 0.5, "carefulAt": 1.5, "criticalAt": 2.5 }
+}

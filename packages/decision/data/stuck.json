@@ -1,0 +1,17 @@
+{
+  "$schema": "./stuck.schema.json",
+  "version": "stuck-1",
+  "repeat": { "times": 3 },
+  "cycle": { "maxPeriod": 4, "repeats": 3 },
+  "progress": { "window": 6 },
+  "escalate": { "repeat": 6, "cycle": 5, "noProgress": 12 },
+  "recent": 12,
+  "chars": 200,
+  "question": {
+    "instructions": "Given the goal and the agent's most recent steps, is the agent making progress toward the goal? It is not if it repeats itself, goes round in a loop, or keeps trying small variations of something that keeps failing.",
+    "criteria": {
+      "true": "the recent steps move toward the goal",
+      "false": "the recent steps repeat, loop or stall"
+    }
+  }
+}

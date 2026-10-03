@@ -31,5 +31,7 @@ export function rankDecisionModels(catalog: Catalog): ModelDescriptor[] {
 /** Who decides for a slug, in order: its model when it is ready, the lexical judge always last. */
 export function deciders(models: LocalModels<EvaluationModelV4>, slug: string, lexical: Decider): Decider[] {
   const judge = models.port(slug);
-  return judge ? [modelDecider(judge), lexical] : [lexical];
+  const model = models.current(slug);
+  // The model decides under its catalog id and the revision its weights are pinned to.
+  return judge && model ? [modelDecider(judge, { id: model.id, version: model.version }), lexical] : [lexical];
 }

@@ -30,7 +30,7 @@ export interface Role {
 }
 
 type State<P> = { readonly kind: "idle" } | { readonly kind: "loading" } | { readonly kind: "ready"; readonly port: P } | { readonly kind: "failed"; readonly reason: string };
-type Described = Pick<ModelDescriptor, "id" | "name" | "downloadBytes">;
+type Described = Pick<ModelDescriptor, "id" | "name" | "downloadBytes" | "artifact">;
 const mb = (n: number) => `${Math.round(n / 1e6)} MB`;
 
 export const AUTO = "auto";
@@ -130,6 +130,11 @@ export class LocalModel<P> {
 
   get id(): string {
     return this.#model.id;
+  }
+
+  /** What decisions and calibration pin the model to: the commit its weights are pinned to in the catalog (never "latest"); a model that pins none is its own version. */
+  get version(): string {
+    return this.#model.artifact?.revision ?? this.#model.id;
   }
 
   /** The model's name and id, for the harness's own description (`~/AGENTS.md`). */

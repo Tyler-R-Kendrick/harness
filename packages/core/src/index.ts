@@ -41,6 +41,6 @@ export type { DependencyKind, EdgeKind, GraphError, Join, NodeSpec, NodeStatus, 
 export { abandonBranch, completeBranch, intendBranch, recoverBranch } from "./branch.ts";
 export type { BranchFailure, BranchPath, BranchPlan, BranchRecovery, BranchStep } from "./branch.ts";
 export { COGNITIVE_OPS, Daemon } from "./daemon.ts";
-export type { AgentInfo, BehaviorChange, CognitiveOp, CognitiveResult, CognitiveWork, DaemonDeps, DaemonSnapshot, Identity, Output, PermissionOptionSpec, SessionMeta, StopReason, WorkerCommand, WorkerEvent } from "./daemon.ts";
+export type { AgentInfo, BehaviorChange, CognitiveOp, CognitiveResult, CognitiveWork, DaemonDeps, DaemonSnapshot, Identity, OpenPermission, Output, PermissionDescription, PermissionOptionSpec, SessionMeta, SessionSummary, StopReason, WorkerCommand, WorkerEvent } from "./daemon.ts";
 export { instructionsWithSkills, mergeHarnessHomes, parseHarnessHome } from "./home.ts";
 export type { HarnessHome, HarnessHomeFile, HarnessSkill } from "./home.ts";

@@ -6,13 +6,14 @@
  */
 import { experimental_evaluate } from "ai";
 import type { Experimental_EvaluationModelV4 as EvaluationModelV4, Experimental_EvaluationModelV4Input as EvaluationInput } from "@ai-sdk/provider";
+import type { DecisionId } from "@harness/decision";
 import type { EngineSettings } from "./engine-settings.ts";
+import { fingerprint, NONE, nameOf, TemplateDecisions } from "./template-decision.ts";
 import type { Hole, Template } from "./templates.ts";
 
 type LexicalSettings = EngineSettings["lexical"];
 
-/** The option a decision model is given for "none of these". */
-export const NONE = "none";
+export { NONE };
 
 const asText = (input: EvaluationInput | null | undefined): string => (input == null ? "" : typeof input === "string" ? input : JSON.stringify(input));
 
@@ -79,11 +80,20 @@ export function lexicalJudge(settings: LexicalSettings): EvaluationModelV4 {
 export interface Decider {
   readonly judge: EvaluationModelV4;
   readonly lexical: boolean;
+  /**
+   * Who the decision layer records as having decided: the id and the pinned version its
+   * calibration belongs to (a catalog model's id and artifact revision; a model that pins
+   * nothing is its own version).
+   */
+  readonly identity: { readonly id: string; readonly version: string };
 }
-export const modelDecider = (judge: EvaluationModelV4): Decider => ({ judge, lexical: false });
-export const lexicalDecider = (settings: LexicalSettings): Decider => ({ judge: lexicalJudge(settings), lexical: true });
-
-const nameOf = (judge: EvaluationModelV4) => `${judge.provider}/${judge.modelId}`;
+export const modelDecider = (judge: EvaluationModelV4, identity: Decider["identity"] = { id: nameOf(judge), version: nameOf(judge) }): Decider => ({ judge, lexical: false, identity });
+export function lexicalDecider(settings: LexicalSettings): Decider {
+  const judge = lexicalJudge(settings);
+  // The judge is what its scoring settings make it: a version follows them (the threshold it must clear is the engine's).
+  const { none, temperature, stopwords } = settings;
+  return { judge, lexical: true, identity: { id: nameOf(judge), version: `${judge.modelId}-${fingerprint(JSON.stringify({ none, temperature, stopwords }))}` } };
+}
 
 /**
  * A choice put to a decider. A model is given every rotation of the options at once (one
@@ -133,6 +143,8 @@ export interface Decision {
   readonly by: string;
   /** Why the decision models asked before it did not decide. */
   readonly problems?: readonly string[];
+  /** The decision's record in the decision log (absent when nothing was decided: no templates). */
+  readonly id?: DecisionId;
 }
 
 const describe = (t: Template) => [t.description, ...t.examples].join(". ");
@@ -148,21 +160,20 @@ function narrow<T>(request: string, items: readonly T[], text: (item: T) => stri
     .map((x) => x.item);
 }
 
-/** Ask the deciders, in order, which template answers the request (or none). */
-export async function chooseTemplate(deciders: readonly Decider[], request: string, templates: readonly Template[], settings: EngineSettings): Promise<Decision> {
+/**
+ * Which template answers the request (or none), decided by the decision layer as the fork
+ * `playground.template` (`template-decision.ts`): a template's `match` is its rule, then the
+ * deciders in order, each sure enough by its own threshold or passing the decision on. The
+ * decision is recorded in `decisions`' log (a throwaway one when none is given).
+ */
+export async function chooseTemplate(deciders: readonly Decider[], request: string, templates: readonly Template[], settings: EngineSettings, decisions?: TemplateDecisions): Promise<Decision> {
   if (templates.length === 0) return { probability: 0, probabilities: {}, by: "none: no templates" };
   const matched = templates.find((t) => t.match !== undefined && new RegExp(t.match).test(request));
-  if (matched) return { template: matched, probability: 1, probabilities: { [matched.id]: 1 }, by: "match" };
-  const candidates = narrow(request, templates, (t) => `${t.id} ${describe(t)}`, settings.decision.maxOptions - 1, settings.lexical.stopwords);
-  const { value: answer, decider, problems } = await firstAnswer(deciders, (d) => {
-    const options: [string, string][] = [[NONE, settings.decision.none], ...candidates.map((t) => [t.id, d.lexical ? describe(t) : t.description] as [string, string])];
-    return choose(d, request, settings.decision.question, options, settings.decision.rotate);
-  });
-  const { probabilities } = answer;
-  const probability = probabilities[answer.choice]!;
-  const accept = decider.lexical ? settings.lexical.accept : settings.decision.accept;
-  const template = answer.choice === NONE || probability < accept ? undefined : candidates.find((t) => t.id === answer.choice);
-  return { ...(template ? { template } : {}), probability, probabilities, by: nameOf(decider.judge), ...(problems.length > 0 ? { problems } : {}) };
+  const candidates = matched ? [matched] : narrow(request, templates, (t) => `${t.id} ${describe(t)}`, settings.decision.maxOptions - 1, settings.lexical.stopwords);
+  const kept = decisions ?? new TemplateDecisions({ clock: { now: () => 0 }, keep: settings.decision.keep });
+  const chosen = await kept.decide({ request, candidates, matched, deciders, settings, describe });
+  const template = chosen.choice === NONE || !chosen.active ? undefined : candidates.find((t) => t.id === chosen.choice);
+  return { ...(template ? { template } : {}), probability: chosen.probability, probabilities: chosen.probabilities, by: chosen.by, ...(chosen.problems.length > 0 ? { problems: chosen.problems } : {}), id: chosen.id };
 }
 
 /** What the harness knows, by name, computed when a hole asks. */
