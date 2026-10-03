@@ -16,6 +16,7 @@
     "@ai-sdk/provider": "4.0.18",
     "@harness/cognitive": "0.0.0",
     "@harness/core": "0.0.0",
+    "@harness/decision": "0.0.0",
     "@harness/platform-browser": "0.0.0",
     "@harness/workers": "0.0.0",
     "@huggingface/transformers": "4.3.0",

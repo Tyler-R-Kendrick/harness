@@ -181,7 +181,34 @@ runs the harness; see `packages/platform-native/data/evolution.example.json`. Th
 saved after every round and resumes; documents are written back only on request.
 Settings are in `packages/evolution/data/settings.json`.
 
-### The System One wire
+### The decision layer
+
+Between the chat layer (people, sessions, consent) and the inference layer (generators,
+tools, workflows) sits a layer that never generates: it asks typed questions (choice,
+score, yes/no) of decision models, turns calibrated probabilities into actions with
+code, and records every decision so it can be checked, calibrated and improved from what
+happened next. ADR 0030 has the design; section S of `docs/features.md` has the status.
+
+- **Forks, not prompts.** A decision is a fork with a ladder: a rule, then decision models
+  (options rotated and averaged against position bias), then a judge asked a different
+  question, then a generator, then a person. Thresholds are data per fork, and they can be
+  set from outcomes with a stated bound on the share of wrong answers that get acted on.
+- **A model cannot approve what the authority does not allow.** A deterministic authority
+  sets a floor of restrictiveness; learned verdicts can raise it and never lower it. The
+  permission-risk fork only annotates a request; people still answer it.
+- **The layer improves itself with a frozen outer layer.** Outcomes calibrate the models,
+  recorded decisions become examples and rules (which answer only after they pass shadow),
+  and criteria text can be evolved, accepted only on a paired test (exact for small samples) over a holdout the
+  proposer cannot touch.
+
+```sh
+node packages/platform-native/src/main.ts --stdio --worker ensemble --cognitive --decision ~/.harness/decision
+harness-decision report ~/.harness/decision --text
+harness-decision calibrate ~/.harness/decision
+```
+
+Over ACP the layer is the `decision.*` operations of `_harness/cognitive/invoke`; in a
+page, `browserDecision` keeps the same records in IndexedDB.
 
 Any evaluation model the ensemble can reach is also served as a **System One provider**,
 the request shape TypeSafe's Jev and the open decision models share (`choice`, `score`

@@ -55,6 +55,7 @@
     "harness-workflow": "./src/workflow-cli.ts",
     "harness-dialogue": "./src/dialogue-cli.ts",
     "harness-evolution": "./src/evolution-cli.ts",
-    "harness-deliver": "./src/deliver-cli.ts"
+    "harness-deliver": "./src/deliver-cli.ts",
+    "harness-decision": "./src/decision-cli.ts"
   }
 }

@@ -368,6 +368,28 @@ describe("failover on calls", () => {
     expect(e.state("down-emb")).toBe("failed");
   });
 
+  it("EN9.1 a language model limited to some members never calls the others, however well they rank", async () => {
+    const e = new Ensemble({ platform: "native" });
+    let hostedCalls = 0;
+    e.register(descriptor("local-small", ["chat"], ["generator"], { benchmarks: [win("B", 10, "chat")] }), async () => ({ generator: generator("local") }));
+    e.register(descriptor("hosted-big", ["chat"], ["generator"], { locality: "hosted", benchmarks: [win("B", 90, "chat")] }), async () => (hostedCalls++, { generator: generator("hosted") }));
+    const prompt: LanguageModelV4Prompt = [{ role: "user", content: [{ type: "text", text: "hi" }] }];
+    expect((await e.languageModel().doGenerate({ prompt })).response?.headers?.[MODEL_HEADER]).toBe("hosted-big");
+    hostedCalls = 0;
+    const limited = e.languageModel("chat", "generator", (d) => d.locality === "local");
+    const generated = await limited.doGenerate({ prompt });
+    expect(generated.response?.headers?.[MODEL_HEADER]).toBe("local-small");
+    const streamed = await limited.doStream({ prompt });
+    expect(streamed.response?.headers?.[MODEL_HEADER]).toBe("local-small");
+    expect(hostedCalls).toBe(0);
+  });
+
+  it("EN9.2 a language model limited to members of which none qualifies has no member to call", async () => {
+    const e = new Ensemble({ platform: "native" });
+    e.register(descriptor("hosted-big", ["chat"], ["generator"], { locality: "hosted" }), async () => ({ generator: generator("hosted") }));
+    await expect(e.languageModel("chat", "generator", (d) => d.locality === "local").doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }] })).rejects.toMatchObject({ code: "no_member" });
+  });
+
   it("EN4.1 a prompt over the context budget is compacted with the compressor before a generate or a stream", async () => {
     const prompts: LanguageModelV4Prompt[] = [];
     const e = new Ensemble({ platform: "native", contextTokens: 6 });
