@@ -55,6 +55,7 @@ export function leaks(changes: readonly Change[], tasks: readonly Task[], settin
   const grams = new Map<string, string>();
   for (const t of tasks) {
     const ws = words(`${t.text} ${t.reference ?? ""}`);
+    // Stryker disable next-line ArithmeticOperator: equivalent; the only ArithmeticOperator mutant on this line is `i - ngram` in the bound, whose extra starts only store a run shorter than ngram words (a key with fewer spaces, or ""), and the added text is looked up by runs of exactly ngram words (ngram is at least 2 in the settings schema, and words are non-empty and hold no space), so none is ever found
     for (let i = 0; i + settings.ngram <= ws.length; i++) {
       const g = ws.slice(i, i + settings.ngram).join(" ");
       if (!grams.has(g)) grams.set(g, t.id);
@@ -64,6 +65,7 @@ export function leaks(changes: readonly Change[], tasks: readonly Task[], settin
   for (const s of added) {
     for (const t of tasks) if (new RegExp(`(?<![\\p{L}\\p{N}])${escape(t.id)}(?![\\p{L}\\p{N}])`, "iu").test(s) && !reasons.includes(`it names task ${t.id}`)) reasons.push(`it names task ${t.id}`);
     const ws = words(s);
+    // Stryker disable next-line ArithmeticOperator: equivalent; the only ArithmeticOperator mutant on this line is `i - ngram` in the bound, whose extra starts only cut a run shorter than ngram words (fewer spaces, or ""), and every stored gram has exactly ngram words (ngram is at least 2 in the settings schema, and words are non-empty and hold no space), so none can match
     for (let i = 0; i + settings.ngram <= ws.length; i++) {
       const g = ws.slice(i, i + settings.ngram).join(" ");
       const task = grams.get(g);

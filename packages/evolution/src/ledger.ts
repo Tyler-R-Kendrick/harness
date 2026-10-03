@@ -84,9 +84,12 @@ export function stalled(records: readonly LedgerRecord[], round: number, window:
   return !records.some((r) => r.kind === "change" && r.outcome === "accepted" && r.measured?.verdict === "supported" && r.round >= round - window && r.round < round);
 }
 
-/** The paper's sigma_t = 1[S_t - S_{t-w} <= delta] over the trajectory of incumbent scores; false until w rounds exist. */
+/**
+ * The paper's sigma_t = 1[S_t - S_{t-w} <= delta] over the trajectory of incumbent scores; false until w rounds exist.
+ * No guard is needed for that: an index below 0 (t < w) or at or past the length (t >= length) reads undefined, the
+ * difference is NaN, and NaN <= delta is false.
+ */
 export function paperStall(trajectory: readonly number[], t: number, w: number, delta: number): boolean {
-  if (t < w || t >= trajectory.length) return false;
   return trajectory[t]! - trajectory[t - w]! <= delta;
 }
 
