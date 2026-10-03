@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { APICallError } from "ai";
+import { describe, expect, it, vi } from "vitest";
+import { APICallError, NoObjectGeneratedError, NoOutputGeneratedError } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { judgeCritic, modelProposer, parseSettings } from "@harness/evolution";
 import type { AppliedEdit, ProposalRequest } from "@harness/evolution";
@@ -24,6 +24,9 @@ describe("what the proposer sends the model", () => {
     const call = model.doGenerateCalls[0]!;
     const system = systemOf(call);
     expect(system).toHaveLength(1);
+    // Nothing but the signature's own system prompt: not the user's turn, and no other message.
+    expect(system[0]).toMatch(/^<identity>[\s\S]*<\/formatting_rules>$/);
+    expect(system[0]).not.toContain("Round Request: {");
     expect(system[0]).toContain("Round Request: The round's request as JSON: the incumbent, the evidence, and the constraints.");
     expect(system[0]).toContain("Summary (wire key: `summary`): (This string field must be included) One line saying what the proposal changes.");
     expect(system[0]).toContain("Edits (wire key: `edits`): (This json array of JSON object items field must be included) One edit: id, hypothesis, targets, predicted, ops.");
@@ -67,6 +70,13 @@ describe("what the proposer answers", () => {
   it("RS23.44 edits that arrive as JSON strings are parsed into the proposal", async () => {
     const model = scriptedModel(() => JSON.stringify({ summary: "s", edits: [JSON.stringify(edit1)] }));
     expect(await modelProposer(model, untuned)(request)).toEqual({ summary: "s", edits: [edit1] });
+  });
+
+  it("RS23.48 an edit that arrives JSON-encoded twice is decoded, and one that is not JSON once decoded is not a proposal", async () => {
+    const twice = scriptedModel(() => JSON.stringify({ summary: "s", edits: [JSON.stringify(JSON.stringify(edit1))] }));
+    expect(await modelProposer(twice, untuned)(request)).toEqual({ summary: "s", edits: [edit1] });
+    const broken = scriptedModel(() => JSON.stringify({ summary: "s", edits: [JSON.stringify("{not json")] }));
+    expect(await modelProposer(broken, untuned)(request)).toBe("the answer was not a proposal");
   });
 
   it("RS23.45 edits that are not edits come back as the reason that the answer was not a proposal", async () => {
@@ -124,10 +134,13 @@ describe("tuning the proposer's prompt with GEPA", () => {
     expect(systemOf(model.doGenerateCalls.at(-1)!)[0]).not.toContain(TUNED);
   });
 
-  it("RS23.62 an answer that is not a proposal scores 0 as well: the optimizer reflects on it", async () => {
+  it("RS23.62 an answer that is not a proposal scores 0 exactly as one over the budget does: the optimizer spends the same calls and reflects on it", async () => {
+    const over = tuningModel(twoEdits, oneEdit);
+    await modelProposer(over, tuned)(request);
     const model = tuningModel({ summary: "s", edits: [{ bogus: 1 }] }, oneEdit);
     expect(await modelProposer(model, tuned)(request)).toEqual(oneEdit);
     expect(reflections(model)).toHaveLength(2);
+    expect(model.doGenerateCalls).toHaveLength(over.doGenerateCalls.length);
   });
 
   it("RS23.63 every example the optimizer scores is the round's request, and the tuning calls all carry the settings' token cap", async () => {
@@ -146,6 +159,32 @@ describe("tuning the proposer's prompt with GEPA", () => {
     const spent = model.doGenerateCalls.length;
     await propose(request);
     expect(model.doGenerateCalls.length).toBe(spent + 1);
+  });
+});
+
+describe("failures while tuning", () => {
+  it("RS23.65 a transport failure while the optimizer runs is thrown, not offered as a reason", async () => {
+    const failing = new MockLanguageModelV4({ doGenerate: async () => { throw new Error("gateway down"); } });
+    await expect(modelProposer(failing, tuned)(request)).rejects.toThrow("gateway down");
+  });
+
+  it("RS23.66 a bad answer reported by the AI SDK while the optimizer runs comes back as the reason, whichever of its two errors it is", async () => {
+    const noObject = new MockLanguageModelV4({ doGenerate: async () => { throw new NoObjectGeneratedError({ message: "no object", response: {}, usage: {} as never, finishReason: "stop" }); } });
+    expect(await modelProposer(noObject, tuned)(request)).toBe("no object");
+    const noOutput = new MockLanguageModelV4({ doGenerate: async () => { throw new NoOutputGeneratedError({ message: "no output" }); } });
+    expect(await modelProposer(noOutput, tuned)(request)).toBe("no output");
+  });
+
+  it("RS23.67 tuning prints nothing", async () => {
+    const written: unknown[] = [];
+    const spies = [vi.spyOn(console, "log"), vi.spyOn(console, "info"), vi.spyOn(console, "warn"), vi.spyOn(console, "error"), vi.spyOn(process.stdout, "write"), vi.spyOn(process.stderr, "write")];
+    for (const spy of spies) spy.mockImplementation((...args: unknown[]) => { written.push(args); return true; });
+    try {
+      await modelProposer(tuningModel(twoEdits, oneEdit), tuned)(request);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(written).toEqual([]);
   });
 });
 

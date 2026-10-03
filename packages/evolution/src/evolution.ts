@@ -420,11 +420,12 @@ export class Evolution {
       }
       const c = compare(m, reference, { alpha: level, resamples, entropy: ports.entropy });
       const candidate = measuredOf(d, m, c, ports.guards?.(m, reference) ?? []);
+      // Stryker disable next-line ConditionalExpression: equivalent; with no cost in the base harness the anchor's cost is undefined either way, and calibratedDecision reads only its value
+      const anchor = state.base.cost === undefined ? {} : { cost: state.base.cost };
       const decision =
         rule.rule === "paper"
           ? paperDecision(candidate, { ...rule, delta: state.delta! }, { best: state.best, accepted: this.#acceptedComponents(), structural: this.#surface.structural })
-          // Stryker disable next-line ConditionalExpression: equivalent; with no cost in the base harness the anchor's cost is undefined either way, and calibratedDecision reads only its value
-          : calibratedDecision(candidate, rule, { drift: state.drift, certified: state.certified, anchor: state.base.cost === undefined ? {} : { cost: state.base.cost } });
+          : calibratedDecision(candidate, rule, { drift: state.drift, certified: state.certified, anchor });
       judged.push({ draft: d, measurement: m, against: reference, alpha: level, abandoned: false, candidate, decision });
     });
     const chosen = choose(
