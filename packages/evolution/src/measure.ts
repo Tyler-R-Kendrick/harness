@@ -118,6 +118,7 @@ export function measure(runs: readonly TaskRun[], tasks: readonly string[], k: n
     if (info && run.weight !== undefined && run.weight !== info.weight) throw new RangeError(`the evaluator reported weight ${run.weight} for task ${run.task}, but the task set says ${info.weight}`);
     run.trials.forEach((t, j) => {
       const checked = TrialSchema.safeParse(t);
+      // Stryker disable next-line StringLiteral: equivalent for the issue path's separator: TrialSchema is flat, so every issue path has at most one segment and joining with "." or "" gives the same text (the "; " between issues is killed by RS23.20)
       if (!checked.success) throw new RangeError(`trial ${j} of ${run.task} is invalid: ${checked.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
     });
     byTask.set(run.task, run);
