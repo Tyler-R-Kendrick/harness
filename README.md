@@ -181,6 +181,22 @@ runs the harness; see `packages/platform-native/data/evolution.example.json`. Th
 saved after every round and resumes; documents are written back only on request.
 Settings are in `packages/evolution/data/settings.json`.
 
+### The System One wire
+
+Any evaluation model the ensemble can reach is also served as a **System One provider**,
+the request shape TypeSafe's Jev and the open decision models share (`choice`, `score`
+and `noul` questions answered with probabilities):
+
+```sh
+node packages/platform-native/src/main.ts --stdio --cognitive --systemone 8765 --systemone-token-file ~/.harness/token
+curl -s localhost:8765/v1/models -H "authorization: Bearer $(cat ~/.harness/token)"
+```
+
+The server is loopback-only, refuses requests without the token when one is set, and
+derives `choice`, `score` and `confidence` from the probabilities itself (a server's own
+`confidence` means different things in different implementations, so the layer never
+reads one). The conformance suite behind it is `systemOneContract` in `@harness/testkit`.
+
 ### Behavior graphs (the local kernel)
 
 Like a game character's state machine, a behavior graph reads features of a sparse
