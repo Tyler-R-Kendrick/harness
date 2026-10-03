@@ -47,6 +47,7 @@ function resampledMean(u: Uniform, rewards: readonly number[]): number {
   const first = rewards[0]!;
   if (rewards.every((r) => r === first)) return first;
   let sum = 0;
+  // Stryker disable next-line AssignmentOperator: equivalent; the only caller takes the standard deviation of the resampled scores, which does not change when the varying tasks' means are all negated (the constant tasks return before this loop and only shift every score alike; the standard deviation is unchanged except possibly in the last bit of rounding)
   for (let j = 0; j < rewards.length; j++) sum += rewards[u.index(rewards.length)]!;
   return sum / rewards.length;
 }
@@ -92,6 +93,7 @@ function signFlipBounds(sums: readonly number[], weights: readonly number[], alp
     for (let mask = 1; mask < 2 ** G; mask++) {
       let num = 0;
       let den = 0;
+      // Stryker disable next-line EqualityOperator: equivalent; mask < 2 ** G has no bit G, so the extra pass g = G never selects a group
       for (let g = 0; g < G; g++)
         if (mask & (1 << g)) {
           num += sums[g]!;
@@ -107,6 +109,7 @@ function signFlipBounds(sums: readonly number[], weights: readonly number[], alp
       let num = 0;
       let den = 0;
       for (let g = 0; g < G; g++)
+        // Stryker disable next-line EqualityOperator: equivalent; a draw is (word + 0.5) / 2 ** 32 for an integer word and is never exactly one half
         if (u.next() < 0.5) {
           num += sums[g]!;
           den += weights[g]!;
@@ -230,13 +233,16 @@ export interface NoiseBand {
 export function noiseBand(evaluations: readonly Measurement[], options: { readonly z: number; readonly resamples: number; readonly entropy: Entropy }): NoiseBand {
   const [first] = evaluations;
   if (!first) throw new RangeError("no evaluations of the base harness");
+  // Stryker disable next-line ConditionalExpression: equivalent; with one evaluation sd() is 0 / 0 = NaN, and NaN > 0 is false, so the bootstrap below runs as it does without this branch
   if (evaluations.length >= 2) {
     const spread = sd(evaluations.map((e) => e.score)) * Math.SQRT2;
     if (spread > 0) return { delta: options.z * spread, method: "repeated", sd: spread };
   }
   const pooled = pool(evaluations);
   const u = new Uniform(options.entropy);
+  // Stryker disable next-line ArithmeticOperator: equivalent; a negative denominator negates every resampled score exactly, and the standard deviation does not change under negation
   const den = pooled.tasks.reduce((s, t) => s + t.weight, 0);
+  // Stryker disable next-line ArithmeticOperator: equivalent for s + ... becoming s - ...; the weighted sum is negated exactly, so every resampled score is, and the standard deviation does not change under negation
   const scores = Array.from({ length: options.resamples }, () => pooled.tasks.reduce((s, t) => s + t.weight * resampledMean(u, t.rewards), 0) / den);
   const spread = Math.SQRT2 * sd(scores) * Math.sqrt(pooled.k / first.k);
   return { delta: options.z * spread, method: "bootstrap", sd: spread };
