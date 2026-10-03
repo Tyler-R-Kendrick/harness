@@ -124,7 +124,10 @@ describe("an evaluation with too many missing trials is not a measurement", () =
     const e = await start(w, lenient());
     const { propose } = scripted((r) => (r.candidate === "A" ? toggle("lossy") : toggle(`noop${r.round}${r.candidate}`)));
     const report = await e.round(ports(w, propose, { evaluate: losing(w, (d) => ruleNames(d).includes("lossy"), 1) }));
-    expect(byCandidate(report.records)["A"]!.measured).toBeDefined();
+    const a = byCandidate(report.records)["A"]!;
+    expect(a.outcome).toBe("rejected");
+    expect(a.reason).not.toMatch(/evaluation invalid/);
+    expect(a.measured).toMatchObject({ gain: expect.any(Number), lower: expect.any(Number), upper: expect.any(Number) });
   });
 });
 

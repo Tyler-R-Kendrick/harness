@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Evolution, score } from "@harness/evolution";
-import type { EvolutionPorts, LedgerRecord, State } from "@harness/evolution";
+import type { EvolutionPorts, LedgerRecord, State, Task } from "@harness/evolution";
 import { SeededEntropy } from "@harness/testkit";
 import { scripted, settings, toggle, world } from "./world.ts";
 
 type World = ReturnType<typeof world>;
 
-const start = (w: World, s = settings(), evaluate: EvolutionPorts["evaluate"] = w.evaluate, seed = 1) => Evolution.start({ surface: w.surface, settings: s, split: w.split, documents: w.documents, ports: { evaluate, entropy: new SeededEntropy(seed) } });
+const start = (w: World, s = settings(), evaluate: EvolutionPorts["evaluate"] = w.evaluate, seed = 1, split = w.split) => Evolution.start({ surface: w.surface, settings: s, split, documents: w.documents, ports: { evaluate, entropy: new SeededEntropy(seed) } });
 const ports = (w: World, propose: EvolutionPorts["propose"], extra: Partial<EvolutionPorts> = {}): EvolutionPorts => ({ evaluate: w.evaluate, propose, entropy: new SeededEntropy(2), ...extra });
 const byCandidate = (records: readonly LedgerRecord[]) => Object.fromEntries(records.map((r) => [r.candidate, r]));
 const clone = (e: Evolution) => JSON.parse(JSON.stringify(e.save())) as Record<string, unknown> & State;
@@ -141,6 +141,7 @@ describe("the removal of a mechanism is chosen among those that are due", () => 
     const young = { round: 3 };
     const { prune, e } = await drafted({ "r0A.e1": young, "r0A.e2": young, "r0A.e3": young, "r0A.e4": young }, undefined, { prune: { after: 2, every: 10 } });
     expect(prune).toBeUndefined();
+    expect(e.mechanisms.map((m) => m.id)).toEqual(["r0A.e1", "r0A.e2", "r0A.e3", "r0A.e4"]);
     expect(e.mechanisms.every((m) => m.ablated === undefined)).toBe(true);
   });
 
@@ -158,6 +159,27 @@ describe("the removal of a mechanism is chosen among those that are due", () => 
     const { prune } = await drafted({ "r0A.e2": { lower: 0.01 } });
     expect(prune).toMatchObject({ kind: "prune", candidate: "P" });
     expect(prune!.edits).toStrictEqual([{ id: "r0A.e2", hypothesis: "prune: f1 helps", targets: "a mechanism that may no longer earn its place", components: ["config"], footprint: 0, predicted: [] }]);
+  });
+
+  it("RS24.1 a removal that is refused marks its mechanism as ablated in that round, and no other", async () => {
+    // Removing `verify` (e1), which earns its place, is refused; the weakest evidence (lower) makes it the one drafted.
+    const { report, prune, e } = await drafted({ "r0A.e1": { lower: 0.01 } });
+    expect(prune!.edits.map((x) => x.id)).toEqual(["r0A.e1"]);
+    expect(prune!.outcome).toBe("rejected");
+    expect(report.accepted).toBeUndefined();
+    expect(e.mechanisms.map((m) => [m.id, m.ablated])).toEqual([
+      ["r0A.e1", 4],
+      ["r0A.e2", undefined],
+      ["r0A.e3", undefined],
+      ["r0A.e4", undefined],
+    ]);
+  });
+
+  it("RS24.2 a round that drafts no removal marks no mechanism as ablated", async () => {
+    const { prune, e } = await drafted({}, undefined, { prune: { after: 10, every: 10 } });
+    expect(prune).toBeUndefined();
+    expect(e.mechanisms).toHaveLength(4);
+    for (const m of e.mechanisms) expect(m).not.toHaveProperty("ablated");
   });
 });
 
@@ -293,5 +315,102 @@ describe("the paper's rule", () => {
       const report = await second.round(ports(w, scripted((r) => (r.candidate === "A" ? toggle("skillrule1") : noop(r))).propose));
       expect(byCandidate(report.records)["A"]).toMatchObject({ outcome: "accepted", reason: expect.stringMatching(/nu = 1/) });
     });
+  });
+});
+
+describe("what selection and the ledger are given of cost", () => {
+  const verify = { verify: (i: number) => (i < 20 ? 1 : 0) };
+  const proposeVerify = scripted((r) => (r.candidate === "A" ? toggle("verify") : noop(r))).propose;
+
+  it("RS24.3 a candidate's cost reaches selection: a gain that costs a hundred times the base harness's tokens is refused for it", async () => {
+    const w = world({ n: 40, base: () => 0, effects: verify, cost: { verify: 99000 } });
+    const e = await start(w);
+    const a = byCandidate((await e.round(ports(w, proposeVerify))).records)["A"]!;
+    expect(a.measured!.gain).toBeGreaterThan(0);
+    expect(a.outcome).toBe("rejected");
+    expect(a.reason).toMatch(/tokens over the base harness, more than the/);
+  });
+
+  it("RS24.4 the base harness's cost is the anchor of that cap: the same candidate is not refused for it when the base harness reported no tokens", async () => {
+    const w = world({ n: 40, base: () => 0, effects: verify, cost: { verify: 99000 } });
+    let calls = 0;
+    // The base harness (measured by start, before any round) reports no tokens; later evaluations do.
+    const evaluate: EvolutionPorts["evaluate"] = async (documents, tasks, k) => {
+      const runs = await w.evaluate(documents, tasks, k);
+      return calls++ === 0 ? runs.map((run) => ({ ...run, trials: run.trials.map(({ reward }) => ({ reward })) })) : runs;
+    };
+    const e = await start(w, settings(), evaluate);
+    const a = byCandidate((await e.round(ports(w, proposeVerify, { evaluate }))).records)["A"]!;
+    expect(a.reason).not.toMatch(/tokens over the base harness/);
+  });
+
+  it("RS24.5 a cost change whose upper bound is unbounded is recorded without that bound (JSON has no infinity), the change and its lower bound kept", async () => {
+    const w = world({ n: 40, base: () => 0, effects: verify });
+    // Tokens are reported on the even tasks by the incumbent and on the odd ones by a candidate: no task reports on both sides.
+    const evaluate: EvolutionPorts["evaluate"] = async (documents, tasks, k) => {
+      const candidate = Object.keys((documents["policy"] as { rules: Record<string, boolean> }).rules).length > 0;
+      return (await w.evaluate(documents, tasks, k)).map((run) => (Number(run.task.slice(1)) % 2 === (candidate ? 1 : 0) ? run : { ...run, trials: run.trials.map(({ reward }) => ({ reward })) }));
+    };
+    const e = await start(w, settings(), evaluate);
+    const report = await e.round(ports(w, proposeVerify, { evaluate }));
+    const m = byCandidate(report.records)["A"]!.measured!;
+    expect(m.costLower).toBe(-1);
+    expect(m).toHaveProperty("costChange");
+    expect(m).not.toHaveProperty("costUpper");
+    expect(() => restore(w, settings(), JSON.parse(JSON.stringify(e.save())))).not.toThrow();
+  });
+});
+
+describe("the task set is checked as a whole", () => {
+  const w = world({ n: 40, holdout: 20, base: () => 0 });
+  const bad = (patch: (tasks: readonly Task[]) => readonly Task[], where: "evolve" | "holdout") => ({ ...w.split, [where]: patch(w.split[where]!) });
+
+  it("RS24.6 a task of the holdout that is also an evolve task is a task listed twice", async () => {
+    const split = { ...w.split, holdout: [w.split.evolve[3]!, ...w.split.holdout!.slice(1)] };
+    await expect(start(w, settings(), w.evaluate, 1, split)).rejects.toThrow("task e003 is in the task set twice");
+  });
+
+  it("RS24.7 the weight of an evolve task must be positive and finite", async () => {
+    const split = bad((tasks) => tasks.map((t, i) => (i === 2 ? { ...t, weight: 0 } : t)), "evolve");
+    await expect(start(w, settings(), w.evaluate, 1, split)).rejects.toThrow("the weight of task e002 must be positive and finite, not 0");
+  });
+
+  it("RS24.8 the weight of a holdout task must be positive and finite too", async () => {
+    const split = bad((tasks) => tasks.map((t, i) => (i === 1 ? { ...t, weight: Number.POSITIVE_INFINITY } : t)), "holdout");
+    await expect(start(w, settings(), w.evaluate, 1, split)).rejects.toThrow("the weight of task h001 must be positive and finite, not Infinity");
+  });
+});
+
+describe("futility staging", () => {
+  const select = (futility?: object) => ({ rule: "calibrated", alpha: 0.1, resamples: 400, margin: 0.02, saving: 0.05, beta0: 0.1, beta1: 35, ...(futility ? { futility } : {}) });
+  const harmful = scripted((r) => (r.candidate === "A" ? toggle("harm") : noop(r))).propose;
+  const make = () => world({ n: 40, base: () => 1, effects: { harm: () => -1 } });
+
+  it("RS24.9 a run with a futility setting stages nothing when its prefix is all the evolve tasks: every candidate is evaluated in one call, on the tasks in their order", async () => {
+    const w = make();
+    const e = await start(w, settings({ select: select({ fraction: 0.99, alpha: 0.1 }) }));
+    w.calls.length = 0;
+    const a = byCandidate((await e.round(ports(w, harmful))).records)["A"]!;
+    expect(a.reason).not.toMatch(/abandoned for futility/);
+    expect(w.calls).toHaveLength(3);
+    for (const call of w.calls) expect(call.tasks).toEqual(w.split.evolve);
+  });
+
+  it("RS24.10 a run without a futility setting never stages", async () => {
+    const w = make();
+    const e = await start(w, settings({ select: select() }));
+    w.calls.length = 0;
+    const a = byCandidate((await e.round(ports(w, harmful))).records)["A"]!;
+    expect(a.reason).not.toMatch(/abandoned for futility/);
+    expect(w.calls).toHaveLength(3);
+    for (const call of w.calls) expect(call.tasks).toEqual(w.split.evolve);
+  });
+
+  it("RS24.11 a run with a futility setting that does stage abandons a clearly harmful candidate on the prefix", async () => {
+    const w = make();
+    const e = await start(w, settings({ select: select({ fraction: 0.5, alpha: 0.1 }) }));
+    const a = byCandidate((await e.round(ports(w, harmful))).records)["A"]!;
+    expect(a.reason).toMatch(/^abandoned for futility after 20 of 40 evolve tasks/);
+    expect(a.reason).toMatch(/is below -0\.0200,/);
   });
 });
