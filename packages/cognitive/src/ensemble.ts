@@ -211,9 +211,11 @@ export class Ensemble {
    * The ensemble as an AI SDK language model for a task: each call goes to the best
    * member (a constrained call first to members that enforce that kind of
    * constraint), failing over when a member's service is unavailable. The response
-   * names the member that served it in the `x-harness-model` header.
+   * names the member that served it in the `x-harness-model` header. With `only`, no
+   * member it rejects is ever called, however well it ranks (a task that must stay
+   * on this machine passes a test of locality).
    */
-  languageModel(task: TaskCategory = "chat", kind: "generator" | "router" | "document-parser" = "generator"): LanguageModelV4 {
+  languageModel(task: TaskCategory = "chat", kind: "generator" | "router" | "document-parser" = "generator", only?: (d: ModelDescriptor) => boolean): LanguageModelV4 {
     const prefer = (options: LanguageModelV4CallOptions) => {
       const constraint = constraintOf(options)?.type;
       return constraint === undefined ? undefined : (d: ModelDescriptor) => d.constraints?.includes(constraint) === true;
@@ -225,12 +227,12 @@ export class Ensemble {
       supportedUrls: {},
       doGenerate: async (options) => {
         const prepared = await this.#fit(options);
-        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(withResponseFormat(prepared)), prefer(prepared));
+        const { id, value } = await this.#call(task, kind, (m) => m.doGenerate(withResponseFormat(prepared)), prefer(prepared), only);
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
       doStream: async (options) => {
         const prepared = await this.#fit(options);
-        const { id, value } = await this.#call(task, kind, (m) => m.doStream(withResponseFormat(prepared)), prefer(prepared));
+        const { id, value } = await this.#call(task, kind, (m) => m.doStream(withResponseFormat(prepared)), prefer(prepared), only);
         return { ...value, response: { ...value.response, headers: { ...value.response?.headers, [MODEL_HEADER]: id } } };
       },
     };
@@ -318,12 +320,12 @@ export class Ensemble {
    * Run a call on the best member, moving to the next when the member's service is
    * unavailable (out of budget, unauthorized, down); a rejected request is the caller's.
    */
-  async #call<K extends PortKind, T>(task: TaskCategory, kind: K, call: (port: PortMap[K]) => PromiseLike<T>, prefer?: (d: ModelDescriptor) => boolean): Promise<{ id: string; value: T }> {
+  async #call<K extends PortKind, T>(task: TaskCategory, kind: K, call: (port: PortMap[K]) => PromiseLike<T>, prefer?: (d: ModelDescriptor) => boolean, only?: (d: ModelDescriptor) => boolean): Promise<{ id: string; value: T }> {
     let unavailable: unknown;
     for (;;) {
       let chosen: { id: string; port: PortMap[K] };
       try {
-        chosen = await this.#use(task, kind, prefer);
+        chosen = await this.#use(task, kind, prefer, only);
       } catch (e) {
         throw unavailable ?? e;
       }
@@ -337,8 +339,8 @@ export class Ensemble {
     }
   }
 
-  async #use<K extends PortKind>(task: TaskCategory, kind: K, prefer?: (d: ModelDescriptor) => boolean): Promise<{ id: string; port: PortMap[K] }> {
-    const ranked = this.candidates(task);
+  async #use<K extends PortKind>(task: TaskCategory, kind: K, prefer?: (d: ModelDescriptor) => boolean, only?: (d: ModelDescriptor) => boolean): Promise<{ id: string; port: PortMap[K] }> {
+    const ranked = this.candidates(task).filter((c) => only === undefined || only(c.descriptor));
     const ordered = prefer ? [...ranked.filter((c) => prefer(c.descriptor)), ...ranked.filter((c) => !prefer(c.descriptor))] : ranked;
     for (const candidate of ordered) {
       if (!candidate.descriptor.ports.includes(kind)) continue;

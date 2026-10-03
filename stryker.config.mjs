@@ -3,7 +3,7 @@
 // Sharding and the changed-file filter live in tools/ci/scope.mjs, which the promote workflow shares.
 import { mutationTargets } from "./tools/ci/scope.mjs";
 
-const SOURCES = "packages/{core,runtime,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins,constrained,dialogue,dialogue-standards,evolution,procedural}/src/**/*.ts";
+const SOURCES = "packages/{core,runtime,protocol,cognitive,behavior,memory,learning,workflows,learning-plugins,constrained,dialogue,dialogue-standards,decision,evolution,procedural}/src/**/*.ts";
 const MUTATE = [SOURCES, "!packages/*/src/index.ts"];
 
 /** No shard and no file filter keeps the glob. A shard or a file list returns those paths. */

@@ -21,6 +21,7 @@ export const MUTATION_PACKAGES = [
   "constrained",
   "dialogue",
   "dialogue-standards",
+  "decision",
   "evolution",
   "procedural",
 ];
@@ -39,12 +40,13 @@ const HOST_PREFIXES = [
   "packages/runtime/",
   "packages/protocol/",
   "packages/workers/",
+  "packages/decision/",
   "packages/client/",
   "packages/platform-native/",
   "packages/evals/",
 ];
 
-const BROWSER_PREFIXES = ["packages/platform-browser/", "packages/playground/"];
+const BROWSER_PREFIXES = ["packages/platform-browser/", "packages/playground/", "packages/decision/"];
 
 const MODEL_PREFIXES = ["packages/models/", "packages/playground/"];
 

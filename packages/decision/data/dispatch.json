@@ -1,0 +1,27 @@
+{
+  "$schema": "./dispatch.schema.json",
+  "version": "dispatch-1",
+  "prices": {
+    "small": { "input": 1, "cachedInput": 0.1, "cacheWrite": 0.25, "output": 5 },
+    "large": { "input": 5, "cachedInput": 0.5, "cacheWrite": 1.25, "output": 25 }
+  },
+  "hysteresis": 0.15,
+  "stepTokens": 400,
+  "routine": {
+    "instructions": "Looking at what the agent has just done and what it will do next, how many of the next steps are routine: mechanical work such as reading files, searching, renaming, formatting or repeating a known change, that needs no judgment about the design or the goal?",
+    "levels": [
+      "none of the next steps are routine: the next step needs judgment",
+      "one or two routine steps, then judgment is needed again",
+      "several routine steps in a row",
+      "a long run of routine steps before any judgment is needed"
+    ]
+  },
+  "stretch": [0, 500, 2500, 10000],
+  "protect": {
+    "any": [{ "eq": ["facts.irreversible", true] }, { "eq": ["facts.production", true] }]
+  },
+  "derive": {
+    "irreversible": ["delete", "remove", "rm", "rmdir", "unlink", "drop", "truncate", "destroy", "wipe", "purge", "erase", "shred", "kill", "terminate", "revoke", "reset", "force", "prune", "mkfs"],
+    "production": ["deploy", "publish", "release", "prod", "production", "rollout", "migrate"]
+  }
+}

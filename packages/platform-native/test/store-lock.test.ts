@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { lockStore, STORE_LOCK } from "@harness/platform-native";
+import { DECISION_LOCK, lockStore, STORE_LOCK } from "@harness/platform-native";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -91,5 +91,33 @@ describe("the procedural store's lock", () => {
     expect(await readdir(dir)).toEqual([STORE_LOCK]);
     await writeFile(join(dir, "file"), "");
     await expect(lockStore(join(dir, "file"), "harness")).rejects.toThrow(/EEXIST|ENOTDIR/);
+  });
+});
+
+describe("the lock file's name", () => {
+  it("DLK1.1 the lock file's name is a parameter: a lock on decision.lock is held apart from the procedural one in the same directory, and names the same owner fields", async () => {
+    const dir = await scratch();
+    expect(DECISION_LOCK).toBe("decision.lock");
+    const decision = await lockStore(dir, "harness", { file: DECISION_LOCK });
+    expect(decision.status).toBe("acquired");
+    expect(JSON.parse(await readFile(join(dir, DECISION_LOCK), "utf8"))).toEqual({ pid: process.pid, holder: "harness" });
+    expect(existsSync(join(dir, STORE_LOCK))).toBe(false);
+    expect(await lockStore(dir, "harness-decision", { file: DECISION_LOCK })).toEqual({ status: "held", owner: { pid: process.pid, holder: "harness" } });
+    // The other name is a different lock, and no scratch file is left by either.
+    expect((await lockStore(dir, "harness-procedural")).status).toBe("acquired");
+    expect((await readdir(dir)).sort()).toEqual([DECISION_LOCK, STORE_LOCK]);
+  });
+
+  it("DLK1.2 a named lock is released, and taken over when stale, like the default one", async () => {
+    const dir = await scratch();
+    const first = await lockStore(dir, "harness", { file: DECISION_LOCK });
+    if (first.status !== "acquired") throw new Error("not acquired");
+    await first.lock.release();
+    expect(existsSync(join(dir, DECISION_LOCK))).toBe(false);
+    await writeFile(join(dir, DECISION_LOCK), JSON.stringify({ pid: deadPid(), holder: "harness" }));
+    const taken = await lockStore(dir, "harness-decision", { file: DECISION_LOCK });
+    expect(taken.status).toBe("acquired");
+    expect(JSON.parse(await readFile(join(dir, DECISION_LOCK), "utf8"))).toEqual({ pid: process.pid, holder: "harness-decision" });
+    expect((await readdir(dir)).sort()).toEqual([DECISION_LOCK]);
   });
 });

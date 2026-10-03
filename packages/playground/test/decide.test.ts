@@ -81,13 +81,13 @@ describe("choosing a template", () => {
     expect(await chooseTemplate(lexical, "anything", [], settings)).toEqual({ probability: 0, probabilities: {}, by: "none: no templates" });
   });
 
-  it("DC2.4 a model is asked what the user asks for, with each template's description alone; the lexical judge reads names, descriptions and examples", async () => {
+  it("DC2.4 a model is asked (as the fork's one question, named choice) what the user asks for, with each template's description alone; the lexical judge reads names, descriptions and examples", async () => {
     const model = fixed({ none: 1, "list-files": 0, today: 0 });
     await chooseTemplate([modelDecider(model)], "anything", [listFiles, date], once);
-    expect(model.asked[0]!["q0"]).toEqual({ type: "choice", instructions: settings.decision.question, criteria: { none: settings.decision.none, "list-files": listFiles.description, today: date.description } });
+    expect(model.asked[0]!["choice"]).toEqual({ type: "choice", instructions: settings.decision.question, criteria: { none: settings.decision.none, "list-files": listFiles.description, today: date.description } });
     const words = fixed({ none: 1, "list-files": 0 });
     await chooseTemplate([{ ...lexicalDecider(settings.lexical), judge: words }], "anything", [listFiles], settings);
-    expect((words.asked[0]!["q0"] as { criteria: Record<string, string> }).criteria["list-files"]).toBe("Lists the files in the working directory. what files are here?. list the files");
+    expect((words.asked[0]!["choice"] as { criteria: Record<string, string> }).criteria["list-files"]).toBe("Lists the files in the working directory. what files are here?. list the files");
   });
 
   it("DC2.6 a model is asked with the options in every rotation at once and its answers averaged, so where an option sits does not decide it; the lexical judge is asked once", async () => {
@@ -112,10 +112,11 @@ describe("choosing a template", () => {
     };
     const decision = await chooseTemplate([modelDecider(firstWins)], "anything", [listFiles, date], settings);
     const [n, l, d] = [settings.decision.none, listFiles.description, date.description];
+    // The decision layer's fork lists the options and then none (so none no longer leads the first order), and rotates them.
     expect(asked).toEqual([
-      [n, l, d],
       [l, d, n],
       [d, n, l],
+      [n, l, d],
     ]);
     // Each option was first once: an even spread, below the threshold.
     expect(decision.template).toBeUndefined();
@@ -172,7 +173,7 @@ describe("choosing a template", () => {
   it("DC2.2 more templates than one question takes are narrowed lexically first, so the decision model sees the likeliest", async () => {
     const many = Array.from({ length: 30 }, (_, i) => template(`t${i}`, `Answers about topic${i}`, [`tell me about topic${i}`]));
     const asked: string[][] = [];
-    const spy: EvaluationModelV4 = { ...judge, doEvaluate: async (o) => (asked.push(Object.keys((o.questions["q0"] as { criteria: object }).criteria)), judge.doEvaluate(o)) };
+    const spy: EvaluationModelV4 = { ...judge, doEvaluate: async (o) => (asked.push(Object.keys((o.questions["choice"] as { criteria: object }).criteria)), judge.doEvaluate(o)) };
     const chosen = await chooseTemplate([{ ...lexicalDecider(settings.lexical), judge: spy }], "tell me about topic27", many, settings);
     expect(chosen.template?.id).toBe("t27");
     expect(asked[0]).toHaveLength(settings.decision.maxOptions);
