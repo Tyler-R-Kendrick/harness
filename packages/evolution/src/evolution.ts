@@ -112,13 +112,16 @@ function measuredOf(d: Drafted, m: Measurement, c: Comparison, guards: readonly 
     label: d.label,
     kind: d.kind,
     score: m.score,
+    // Stryker disable next-line ConditionalExpression: equivalent; the mutant leaves the key there with the value undefined, and selection reads its fields by name, so an absent key and an undefined one behave alike
     ...(m.cost === undefined ? {} : { cost: m.cost }),
     gain: c.gain,
     lower: c.lower,
     upper: c.upper,
+    // Stryker disable ConditionalExpression: equivalent; the mutant leaves the key there with the value undefined, and selection reads its fields by name, so an absent key and an undefined one behave alike
     ...(c.costChange === undefined ? {} : { costChange: c.costChange }),
     ...(c.costLower === undefined ? {} : { costLower: c.costLower }),
     ...(c.costUpper === undefined ? {} : { costUpper: c.costUpper }),
+    // Stryker restore ConditionalExpression
     components: [...new Set(d.edits.flatMap((e) => e.components))],
     guards,
   };
@@ -136,6 +139,7 @@ function checkDocuments(surface: Surface, documents: Documents): void {
 /** What the task set says of each task (group and weight), refusing a weight that is not positive and finite and a task listed twice. */
 function knownTasks(split: Split): ReadonlyMap<string, TaskInfo> {
   const known = new Map<string, TaskInfo>();
+  // Stryker disable next-line ArrayDeclaration: equivalent; the extra element is a string with no id, so it is entered under the key undefined, which no task id (only ids are looked up) can ever match
   for (const t of [...split.evolve, ...(split.holdout ?? [])]) {
     if (known.has(t.id)) throw new RangeError(`task ${t.id} is in the task set twice`);
     if (t.weight !== undefined && !(t.weight > 0 && Number.isFinite(t.weight))) throw new RangeError(`the weight of task ${t.id} must be positive and finite, not ${t.weight}`);
@@ -345,9 +349,12 @@ export class Evolution {
     // clearly worse there; the incumbent is measured in full in the same window either way,
     // and ablations are never staged (see futility.ts for why this cannot add acceptances).
     const evolve = this.#split.evolve;
+    // Stryker disable next-line ConditionalExpression: equivalent; the paper rule's schema is strict, so a parsed paper rule has no futility and the property is undefined either way
     const futility = rule.rule === "calibrated" ? rule.futility : undefined;
+    // Stryker disable next-line ConditionalExpression: equivalent; margin is read only when staging (which needs a futility) or after `!paper`, so under the paper rule it is never read
     const margin = rule.rule === "calibrated" ? rule.margin : 0;
     const stage = futility === undefined ? evolve.length : prefixSize(futility.fraction, evolve.length);
+    // Stryker disable next-line ConditionalExpression: equivalent; without a futility `stage` is evolve.length, so `stage < evolve.length` is false on its own
     const staging = futility !== undefined && stage < evolve.length;
     const order = staging ? permute(evolve, ports.entropy) : evolve;
     const first = order.slice(0, stage);
@@ -401,6 +408,7 @@ export class Evolution {
       const early = stopped.get(i);
       if (early) {
         const c = early.comparison;
+        // Stryker disable next-line ArrayDeclaration: equivalent; an abandoned candidate's decision is fixed (inadmissible) just below, and its guards are read by nothing else (they are not in its record)
         const candidate = measuredOf(d, m, c, []);
         const reason = `abandoned for futility after ${stage} of ${evolve.length} evolve tasks: the gain's upper bound ${c.upper.toFixed(4)} (level ${c.alpha}) is below -${margin.toFixed(4)}, so it can be neither a supported gain nor non-inferior; the other ${later.length} tasks were not evaluated`;
         judged.push({ draft: d, measurement: m, against: early.against, alpha: c.alpha, abandoned: true, candidate, decision: { admissible: false, reason, verdict: verdictOf(candidate) } });
@@ -415,12 +423,16 @@ export class Evolution {
       const decision =
         rule.rule === "paper"
           ? paperDecision(candidate, { ...rule, delta: state.delta! }, { best: state.best, accepted: this.#acceptedComponents(), structural: this.#surface.structural })
+          // Stryker disable next-line ConditionalExpression: equivalent; with no cost in the base harness the anchor's cost is undefined either way, and calibratedDecision reads only its value
           : calibratedDecision(candidate, rule, { drift: state.drift, certified: state.certified, anchor: state.base.cost === undefined ? {} : { cost: state.base.cost } });
       judged.push({ draft: d, measurement: m, against: reference, alpha: level, abandoned: false, candidate, decision });
     });
     const chosen = choose(
       judged.map((j) => ({ candidate: j.candidate, decision: j.decision })),
-      paper ? "score" : "lower",
+      paper
+        ? "score"
+        : // Stryker disable next-line StringLiteral: equivalent; choose() reads anything but "score" as the lower bound
+          "lower",
     );
     let winner = judged.find((j) => j.candidate === chosen);
     // The winner is put to the holdout: measured with the incumbent, fresh and in one window, and confirmed by the same test at the holdout's level (holdout.ts).
@@ -464,6 +476,7 @@ export class Evolution {
       const improved = (task: string) => {
         const a = j.measurement.tasks.find((x) => x.task === task);
         const b = j.against.tasks.find((x) => x.task === task);
+        // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent; both measurements are over the same evolve tasks, so a task is in both or in neither and the two existence tests agree (a predicted task that is no evolve task is a miss: RS20.19)
         return a !== undefined && b !== undefined && a.mean > b.mean;
       };
       records.push({
@@ -483,6 +496,7 @@ export class Evolution {
           ...(j.candidate.costChange === undefined ? {} : { costChange: j.candidate.costChange }),
           ...(j.candidate.costLower === undefined ? {} : { costLower: j.candidate.costLower }),
           // Absent while a cost change is present: the upper bound is unbounded (too few tasks reported tokens on both sides; JSON has no infinity).
+          // Stryker disable next-line ConditionalExpression: equivalent; Number.isFinite(undefined) is false, so an undefined costUpper is left out by the second test whatever the first says
           ...(j.candidate.costUpper === undefined || !Number.isFinite(j.candidate.costUpper) ? {} : { costUpper: j.candidate.costUpper }),
           verdict: verdictOf(j.candidate),
           hits: predicted.filter(improved),
@@ -496,7 +510,13 @@ export class Evolution {
     let mechanisms = state.mechanisms;
     if (ablation && "entangled" in ablation) mechanisms = mechanisms.map((m) => (m.id === ablation.entangled ? { ...m, entangled: true } : m));
     const target = drafted.find((d) => d.kind === "prune")?.target;
-    if (target && accepted?.draft.target !== target) mechanisms = mechanisms.map((m) => (m.id === target.id ? { ...m, ablated: t } : m));
+    if (
+      // Stryker disable next-line LogicalOperator: equivalent; `target` is undefined only when no removal was drafted, and then accepted?.draft.target is undefined too, so the second test is false as well
+      target &&
+      // Stryker disable next-line ConditionalExpression: equivalent; marking the accepted removal's own mechanism as ablated is moot, because the block below takes it out of the list
+      accepted?.draft.target !== target
+    )
+      mechanisms = mechanisms.map((m) => (m.id === target.id ? { ...m, ablated: t } : m));
     let next: State;
     if (accepted) {
       const c = accepted.candidate;
@@ -521,8 +541,10 @@ export class Evolution {
 
   /** Ask for a candidate, and send it back with the reasons it was refused, up to `repair` times. */
   async #draft(ports: EvolutionPorts, request: ProposalRequest): Promise<{ documents: Documents; edits: readonly AppliedEdit[] } | { problems: readonly string[]; edits: readonly AppliedEdit[] }> {
+    // Stryker disable next-line ArrayDeclaration: equivalent; the loop runs at least once, and every pass that does not return assigns problems before anything reads it
     let problems: readonly string[] = [];
     let previous: unknown;
+    // Stryker disable next-line ArrayDeclaration: equivalent; the loop runs at least once, and every pass that does not return assigns edits before anything reads it
     let edits: readonly AppliedEdit[] = [];
     for (let attempt = 0; attempt <= this.#settings.repair; attempt++) {
       // Every call gets its own copy of the documents: a proposer that edits them in place must not change the state, nor what the next candidate is shown.
