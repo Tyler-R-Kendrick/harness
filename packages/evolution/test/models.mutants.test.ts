@@ -6,6 +6,9 @@ import { judgeCritic, modelProposer, parseSettings } from "@harness/evolution";
 import type { AppliedEdit, ProposalRequest } from "@harness/evolution";
 import { probability } from "@harness/cognitive";
 import { scriptedJudge, scriptedModel } from "@harness/testkit";
+import { AxGenerateError } from "@ax-llm/ax";
+import { promptOf, readProposal, reasonOf } from "../src/models.ts";
+import { TUNING_EXAMPLES } from "../src/schemas.ts";
 import { toggle } from "./world.ts";
 
 const s = parseSettings(JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")));
@@ -247,5 +250,136 @@ describe("what the critic asks and answers", () => {
     expect(await judgeCritic(judge(0.999), s.critic)({ edits: [edit], examples })).toEqual({ accept: false, reasons: ["it reads as specific to the evolve tasks (p = 1.00)"] });
     expect(await judgeCritic(judge(0.5), { ...s.critic, threshold: probability(0.5) })({ edits: [edit], examples })).toEqual({ accept: false, reasons: ["it reads as specific to the evolve tasks (p = 0.50)"] });
     expect(await judgeCritic(judge(0.4999), s.critic)({ edits: [edit], examples })).toEqual({ accept: true, reasons: [] });
+  });
+});
+
+describe("what the proposer sends and reads, step by step", () => {
+  it("RS27.1 the system messages become the instructions, joined by a blank line, and the other turns stay in order", () => {
+    const sent = promptOf([
+      { role: "system", content: "first" },
+      { role: "user", content: "question" },
+      { role: "system", content: "second" },
+      { role: "assistant", content: "answer" },
+      { role: "user", content: "again" },
+    ]);
+    expect(sent).toEqual({
+      instructions: "first\n\nsecond",
+      messages: [
+        { role: "user", content: "question" },
+        { role: "assistant", content: "answer" },
+        { role: "user", content: "again" },
+      ],
+    });
+  });
+
+  it("RS27.2 a prompt without a system message has no instructions at all, and turns that are not plain text are left out", () => {
+    const sent = promptOf([
+      { role: "user", content: [{ type: "text", text: "parts" }] },
+      { role: "user", content: "plain" },
+      { role: "assistant", functionCalls: [{ id: "c1", type: "function", function: { name: "f" } }] },
+      { role: "function", result: "result", functionId: "c1" },
+    ]);
+    expect(sent).toEqual({ messages: [{ role: "user", content: "plain" }] });
+    expect("instructions" in sent).toBe(false);
+  });
+
+  it("RS27.3 an answer that is not an object with an array of edits is not a proposal", () => {
+    for (const answer of [undefined, null, "text", 5, {}, { summary: "s" }, { edits: [] }, { summary: "s", edits: "none" }, { summary: "s", edits: { 0: edit1 } }, { summary: 5, edits: [] }]) expect(readProposal(answer)).toBeUndefined();
+  });
+
+  it("RS27.4 edits are decoded from strings one by one, and what stays undecodable is refused whole", () => {
+    expect(readProposal({ summary: "s", edits: [edit1, JSON.stringify(edit1)] })).toEqual({ summary: "s", edits: [edit1, edit1] });
+    expect(readProposal({ summary: "s", edits: [] })).toEqual({ summary: "s", edits: [] });
+    expect(readProposal({ summary: "s", edits: [edit1, "{not json"] })).toBeUndefined();
+    expect(readProposal({ summary: "s", edits: ["{not json"] })).toBeUndefined();
+  });
+
+  it("RS27.19 only a string is decoded: an object that would print as an edit is not one", () => {
+    expect(readProposal({ summary: "s", edits: [{ toString: () => JSON.stringify(edit1) }] })).toBeUndefined();
+  });
+
+  it("RS27.20 the reason is what Ax wrapped when it wrapped an error, and the error's own message otherwise", () => {
+    const details = { model: "m", maxTokens: 1, streaming: false, signature: { input: [], output: [] } } as never;
+    expect(reasonOf(new AxGenerateError("Generate failed: wrapped", details, { cause: new Error("inner") }))).toBe("inner");
+    expect(reasonOf(new AxGenerateError("Generate failed: no cause", details))).toBe("Generate failed: no cause");
+    expect(reasonOf(new AxGenerateError("Generate failed: odd cause", details, { cause: "text" as never }))).toBe("Generate failed: odd cause");
+    expect(reasonOf(new Error("plain"))).toBe("plain");
+    expect(reasonOf("text")).toBe("text");
+  });
+});
+
+describe("the tuning cap the settings allow", () => {
+  it("RS27.5 the smallest cap the settings allow above zero scores the optimizer's examples once and tunes", async () => {
+    const model = tuningModel(oneEdit, oneEdit);
+    const answer = await modelProposer(model, { ...untuned, optimize: { maxMetricCalls: TUNING_EXAMPLES, seed: 0 } })(request);
+    expect(answer).toEqual(oneEdit);
+    expect(model.doGenerateCalls.filter((c) => c.responseFormat !== undefined)).toHaveLength(TUNING_EXAMPLES + 1);
+  });
+
+  it("RS27.6 a cap one below the examples cannot score them: the optimizer's own error is thrown", async () => {
+    const model = scriptedModel(() => JSON.stringify(oneEdit));
+    await expect(modelProposer(model, { ...untuned, optimize: { maxMetricCalls: TUNING_EXAMPLES - 1, seed: 0 } })(request)).rejects.toThrow(/is too small to evaluate the initial Pareto set/);
+  });
+
+  it("RS27.7 while tuning, the program's own retry limit holds: an answer Ax rejects is never sent back to the model for correction", async () => {
+    const model = scriptedModel(() => JSON.stringify({ summary: "s" }));
+    await modelProposer(model, tuned)(request);
+    const proposing = model.doGenerateCalls.filter((c) => c.responseFormat !== undefined);
+    expect(proposing.length).toBeGreaterThan(0);
+    for (const call of proposing) expect(call.prompt.filter((m) => m.role !== "system")).toHaveLength(1);
+  });
+
+  it("RS27.8 the optimizer reflects on the answer it scored 0, as the model gave it", async () => {
+    const model = tuningModel({ summary: "s", edits: [{ bogus: "marker-of-the-answer" }] }, oneEdit);
+    await modelProposer(model, tuned)(request);
+    const reflecting = reflections(model);
+    expect(reflecting.length).toBeGreaterThan(0);
+    expect(JSON.stringify(reflecting[0]!.prompt)).toContain("marker-of-the-answer");
+  });
+});
+
+describe("what comes back from a bad answer and what is thrown", () => {
+  const answering = (text: string) => scriptedModel(() => text);
+  const reason = async (text: string, settings = untuned) => modelProposer(answering(text), settings)(request);
+
+  it("RS27.9 an edit that is not JSON comes back as a reason, not as an error", async () => {
+    const answer = await reason(JSON.stringify({ summary: "s", edits: ["{not json"] }));
+    expect(typeof answer).toBe("string");
+    expect(answer).toMatch(/^Unable to fix validation error: .*Invalid JSON/);
+  });
+
+  it("RS27.10 an answer without a summary comes back as a reason", async () => {
+    const answer = await reason(JSON.stringify({ edits: [edit1] }));
+    expect(typeof answer).toBe("string");
+    expect(answer).toMatch(/summary/i);
+  });
+
+  it("RS27.11 an answer whose edits are not an array comes back as a reason", async () => {
+    const answer = await reason(JSON.stringify({ summary: "s", edits: "none" }));
+    expect(typeof answer).toBe("string");
+    expect(answer).toMatch(/edits/i);
+  });
+
+  it("RS27.12 the same bad answers come back as reasons after tuning", async () => {
+    for (const text of [JSON.stringify({ summary: "s", edits: ["{not json"] }), JSON.stringify({ edits: [edit1] }), JSON.stringify({ summary: "s", edits: "none" })]) {
+      expect(typeof (await reason(text, tuned))).toBe("string");
+    }
+  });
+
+  it("RS27.13 a transport failure is thrown, in forward and while tuning, whether Ax wrapped it or passed it on", async () => {
+    const plain = new Error("gateway down");
+    const named = Object.assign(new Error("model said no"), { name: "ValidationError" });
+    for (const boom of [plain, named]) {
+      const failing = () => new MockLanguageModelV4({ doGenerate: async () => { throw boom; } });
+      await expect(modelProposer(failing(), untuned)(request)).rejects.toBe(boom);
+      await expect(modelProposer(failing(), tuned)(request)).rejects.toBe(boom);
+    }
+  });
+
+  it("RS27.14 a failure that is not an Error is thrown as an Error that carries its string", async () => {
+    const failing = new MockLanguageModelV4({ doGenerate: async () => { throw "offline"; } });
+    const caught = await modelProposer(failing, untuned)(request).catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toBe("offline");
   });
 });
