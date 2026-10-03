@@ -319,3 +319,13 @@ Every native local model the host runs is tested on real weights by `catalog.mod
 | MX5 daemon restart | built | MX5.1, NS1.3, NS2.4 |
 | MX6 overhead budget | not started | |
 | MX7 input lease | built | MX7.1–MX7.14 |
+
+## S. Decision layer
+
+The layer between the chat layer and the inference layer (ADR 0030): typed forks that never generate, calibrated and bounded, recorded, and improved from their own outcomes.
+
+| Feature | Status | Evidence / gap |
+|---|---|---|
+| Three layers (chat, decision, inference) with calls pointing down and evidence pointing up; improvement crosses layers only as data (ADR 0030) | built | ADR 0030; `@harness/decision` is pure and enforced by lint |
+| Shared contract: refined `ForkId`, `DecisionId`, `Cost`, `Temperature`; `Fork`, `Member` (with the model that answered), `Policy`, `DecisionRecord`, `Outcome` and the `DecisionLog` port | built | TYP1.1–TYP2.12 |
+| Rule conditions as data (all/any/not over eq, in, gte, lte, prefix, suffix, contains, exists on dot paths; bounded depth and size, no code, no patterns) and a Cedar-shaped authority (forbid wins, stated default, rule order never matters); a learned verdict can tighten an authority and never relax it | built | CND1.1–CND3.6, AUT1.1–AUT3.3 |
