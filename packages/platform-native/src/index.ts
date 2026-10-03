@@ -19,6 +19,8 @@ export type { DockerSandboxOptions } from "./docker-sandbox.ts";
 export { hostSandbox } from "./host-sandbox.ts";
 export { FileHarnessStore, harnessAdapter, harnessWorker, modelIdsFromCatalog, parseHarnessSpec, parseSandboxSpec, prepareLocalClaude, probeModelIds, sandboxProvider } from "./harness-host.ts";
 export type { HarnessSpec, SandboxSpec } from "./harness-host.ts";
+export { serveSystemOne, systemOneUrl } from "./systemone-server.ts";
+export type { SystemOneServer, SystemOneServerOptions } from "./systemone-server.ts";
 export { evolutionCommand } from "./evolution-command.ts";
 export type { EvolutionDeps, EvolutionIo } from "./evolution-command.ts";
 export { buildSplit, buildSurface, commandEvaluator, evolutionConfigJsonSchema, isTextDocument, loadEvolutionConfig, parseEvolutionConfig, parseTaskRuns, textCheck } from "./evolution-config.ts";
