@@ -85,6 +85,9 @@ const clip = (feedback: string): string => {
   return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
 };
 
+// Stryker disable next-line StringLiteral: equivalent; TrialSchema is flat, so an issue's path has at most one segment and joining with "." or "" gives the same text
+const where = (path: readonly PropertyKey[]): string => path.join(".");
+
 /**
  * The score and cost of Eq. (3): S = sum_x w_x sum_j r_xj / sum_x w_x k, and C the mean
  * tokens of the trials that report any. A missing trial counts 0 with the full
@@ -118,8 +121,7 @@ export function measure(runs: readonly TaskRun[], tasks: readonly string[], k: n
     if (info && run.weight !== undefined && run.weight !== info.weight) throw new RangeError(`the evaluator reported weight ${run.weight} for task ${run.task}, but the task set says ${info.weight}`);
     run.trials.forEach((t, j) => {
       const checked = TrialSchema.safeParse(t);
-      // Stryker disable next-line StringLiteral: equivalent for the issue path's separator: TrialSchema is flat, so every issue path has at most one segment and joining with "." or "" gives the same text (the "; " between issues is killed by RS23.20)
-      if (!checked.success) throw new RangeError(`trial ${j} of ${run.task} is invalid: ${checked.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+      if (!checked.success) throw new RangeError(`trial ${j} of ${run.task} is invalid: ${checked.error.issues.map((i) => `${where(i.path)}: ${i.message}`).join("; ")}`);
     });
     byTask.set(run.task, run);
   }
