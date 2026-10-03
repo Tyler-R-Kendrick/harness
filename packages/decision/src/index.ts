@@ -21,4 +21,8 @@ export * from "./dispatch.ts";
 export * from "./attention.ts";
 export * from "./scrub.ts";
 export * from "./permission.ts";
+export * from "./ensemble-member.ts";
+export * from "./compose.ts";
+export * from "./extension.ts";
+export * from "./plugin.ts";
 export * from "./condition.ts";

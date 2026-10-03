@@ -42,7 +42,7 @@ A built library that the daemon does not call yet says so; it is not an end-to-e
 | Detach vs close vs cancel vs handoff kept distinct | partial | Detach and cancel are distinct (MX1.6, DM2.8); no close or handoff yet |
 | Late events cannot reach the wrong turn or session | built | DM2.7 |
 | Team sharing (invite, grant/revoke control) | not started | Attach is owner-only (MX1.3) |
-| Attention/review inbox | not started | |
+| Attention/review inbox | partial | The decision layer's inbox ranks open permissions, finished turns and stuck sessions (ATT, DCO, DPL; `decision.inbox` over ACP); no client shows it yet |
 
 ## C. Workers and harness coordination
 
@@ -233,7 +233,7 @@ Every native local model the host runs is tested on real weights by `catalog.mod
 | Plugins as external actors over ACP (subscribe/poll/ack) | built | DM7.1–DM7.3 |
 | Saga correlation and saga view | built | HK1.2, HK3.1 |
 | Daemon lifecycle events on the bus | built | session.*, turn.*, permission.*, capability.* (DM7.1, DM7.3) |
-| Plugins publishing events and acting through the API | not started | |
+| Plugins publishing events and acting through the API | partial | The decision plugin reads events and publishes `decision.made` through the layer's host-side publisher (DPL, DHN); a plugin on a client connection still cannot publish |
 | Gates, transformers, around-call hooks; plugin supervision | not started | |
 
 ## K. Local state repo
@@ -350,3 +350,6 @@ The layer between the chat layer and the inference layer (ADR 0030): typed forks
 | Read-only daemon accessors for host-side plugins: `pendingPermission(s)` and `sessions()` (copies; the snapshot format is unchanged) | built | DCP1.1–DCP1.9 |
 | Durable decision logs: `FileDecisionLog` (append-only JSON lines, replay, torn tail tolerated, atomic compaction, cap rule identical to the memory log) and `decisionFiles(dir)` (policy, authority, calibration with atomic save); `IndexedDbDecisionLog` in the browser; all run the same contract suite | built | DHK1–DHK8, DBR1–DBR4 |
 | Per-step model dispatch seam in `sessionAgent` (`dispatch`: tiers and a planner; every step of a tool loop can switch models; images still force the vision model; a failing planner stays put) | built | DWK1–DWK7 |
+| `createDecisionLayer`: report (accuracy, ECE, reliability, risk–coverage per fork), calibrate from outcomes, thresholds for a risk target, off-policy estimate of another act threshold, distill, induce rules into shadow, evolve criteria, attention inbox, rollback | built | DCO1–DCO15, EMB1 |
+| `decision.*` cognitive extension over `_harness/cognitive/invoke` (status, forks, decide, record, outcome, report, calibrate, thresholds, estimate, distill, induce, rules, evolve, inbox, dispatch, spans, policy) | built | DCX1–DCX5 |
+| The layer as a plugin actor on the hook bus: `permission.requested` is annotated with a risk level and an inbox item, `permission.resolved` becomes the decision's outcome, `turn.ended` runs stuck detection over the session log and adds a review item; it never answers a permission; at-least-once delivery is idempotent | built | DPL1–DPL13 (the daemon facts, including the log read, are DPL in `plugin.adapters.test.ts`) |
