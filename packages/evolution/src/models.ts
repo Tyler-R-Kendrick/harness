@@ -24,20 +24,17 @@ function languageModelService(model: LanguageModel, maxTokens: number, transport
     name: "ai-sdk",
     // Stryker disable next-line ObjectLiteral,BooleanLiteral: equivalent; with structuredOutputModes given Ax reads neither structuredOutputs nor functions (without it both default to on), the program has no tools, and AxMockAIService.chat never reads streaming, so no variant changes a request or an answer
     features: { functions: false, streaming: false, structuredOutputs: true, structuredOutputModes: ["native"] },
-    chatResponse: async (req?: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
-      // Stryker disable next-line ConditionalExpression,StringLiteral,CallExpression: equivalent; AxMockAIService.chat always passes the request it was given (it is optional only in the type of its chatResponse), so the guard cannot fire
-      if (req === undefined) throw new Error("Ax chat request is required");
-      const format = req.responseFormat;
-      const declared =
-        format?.type === "json_schema"
-          ? // Stryker disable next-line OptionalChaining: equivalent; Ax's json_schema response format always carries its schema wrapper, so this `?.` never meets undefined
-            (format.schema?.schema ?? format.schema)
-          : undefined;
-      const prompt = promptOf(req.chatPrompt);
+    chatResponse: async (req: Readonly<AxChatRequest<unknown>>): Promise<AxChatResponse> => {
       try {
+        const format = req.responseFormat;
+        const declared =
+          format?.type === "json_schema"
+            ? // Stryker disable next-line OptionalChaining: equivalent; Ax's json_schema response format always carries its schema wrapper, so this `?.` never meets undefined
+              (format.schema?.schema ?? format.schema)
+            : undefined;
         const { text } = await generateText({
           model,
-          ...prompt,
+          ...promptOf(req.chatPrompt),
           // Stryker disable next-line OptionalChaining: equivalent; Ax sets a modelConfig object on every request it sends (at least `{}`)
           maxOutputTokens: req.modelConfig?.maxTokens ?? maxTokens,
           maxRetries: 0,
@@ -46,9 +43,9 @@ function languageModelService(model: LanguageModel, maxTokens: number, transport
         return { results: [{ index: 0, content: text, finishReason: "stop" }] };
       } catch (e) {
         // Ax wraps whatever the service throws, and passes some errors on as they are; this
-        // marks the ones that came from the model or the transport, so the proposer can
-        // tell them from what Ax says about an answer. A model that answered badly is not
-        // one of them: that answer is the proposer's reason to give back.
+        // marks everything this service raised (the model, the transport, or our own code
+        // in here), so the proposer can tell it from what Ax says about an answer. A model
+        // that answered badly is not one of them: that answer is the proposer's reason to give back.
         const failure = e instanceof Error ? e : new Error(String(e));
         if (!badAnswer(failure)) transport.add(failure);
         throw failure;
@@ -122,7 +119,7 @@ async function tune(program: ReturnType<typeof proposalProgram>, service: AxMock
     verbose: false,
     optimizerLogger: () => {},
   });
-  // Stryker disable next-line ConditionalExpression,CallExpression: equivalent; optimize() applies the optimized program itself (its apply option defaults on) and always returns one, so this only repeats that
+  // optimize() leaves the program at the last candidate it evaluated, which need not be the best, and returns no program when it found none.
   if (result.optimizedProgram) program.applyOptimization(result.optimizedProgram);
 }
 
@@ -134,11 +131,13 @@ export const reasonOf = (e: unknown): string => message(e instanceof AxGenerateE
  * and the system text, and constrains the answer to the proposal schema. When the
  * metric-call cap is above zero, Ax's GEPA tunes that prompt once; later requests
  * use the tuned program. An answer that is not a proposal comes back as the reason,
- * which the round sends to the next attempt: that is whatever Ax raises about the
- * answer (it is not JSON, a field is missing or ill-typed) and the AI SDK's own
- * errors for one. Only a failure of the model or the transport, which is what the
- * service recorded as thrown by its own call, is thrown, and so is an error of the
- * optimizer itself.
+ * which the round sends to the next attempt. Only two things are returned that way: the
+ * AI SDK's own errors for an answer it could not read (NoObjectGeneratedError and
+ * NoOutputGeneratedError) and an AxGenerateError that the service did not raise, which is
+ * what Ax says about an answer (it is not JSON, a field is missing or ill-typed). Everything
+ * else is thrown: a failure of the model or the transport, which is what the service
+ * recorded as raised by its own call (our code in it included), an error of the optimizer
+ * itself, and any other error, whether from our code here or from inside Ax.
  */
 export function modelProposer(model: LanguageModel, settings: Settings["proposer"]): (request: ProposalRequest) => Promise<unknown> {
   const program = proposalProgram(settings.system);
@@ -158,7 +157,9 @@ export function modelProposer(model: LanguageModel, settings: Settings["proposer
     } catch (e) {
       const failure = failureOf(e);
       if (failure) throw failure;
-      return reasonOf(e);
+      // An allowlist: only what is about the answer is a reason; anything else is a fault of ours or of Ax's internals and aborts the run.
+      if (badAnswer(e) || e instanceof AxGenerateError) return reasonOf(e);
+      throw e;
     }
   };
 }

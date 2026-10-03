@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CalibratedRuleSchema, PaperRuleSchema, RuleSchema, calibratedDecision, choose, paperDecision } from "@harness/evolution";
+import { CalibratedRuleSchema, PaperRuleSchema, RuleSchema, advance, calibratedDecision, choose, paperDecision } from "@harness/evolution";
 import type { CalibratedContext, CalibratedRule, Decision, Measured, PaperContext, PaperRule } from "@harness/evolution";
 
 type Paper = PaperRule & { readonly delta: number };
@@ -253,6 +253,56 @@ describe("choose: the winner among admissible candidates", () => {
   it("RS22.92 an inadmissible candidate never wins", () => {
     const refused = [{ candidate: lucky, decision: { admissible: false, reason: "no" } }, { candidate: evidenced, decision: ok }];
     expect(choose(refused, "score")?.label).toBe("evidenced");
+  });
+});
+
+describe("the calibrated rule: unbounded costs, the loss counter and ties", () => {
+  it("RS22.93 a cost upper bound of infinity is reported as unbounded in the cap, not as a percentage", () => {
+    const d = decide({ kind: "prune", cost: 200, costChange: 1, costUpper: Number.POSITIVE_INFINITY, costLower: 0.5 }, { beta0: 0.25 }, { anchor: { cost: 100 } });
+    expect(d).toMatchObject({
+      admissible: false,
+      reason: "the harness would spend up to unbounded tokens over the base harness, more than the +25.0% its certified gain pays for",
+    });
+  });
+
+  it("RS22.94 a removal whose cost upper bound is infinite says it costs up to unbounded", () => {
+    const d = decide({ kind: "prune", costChange: 1, costUpper: Number.POSITIVE_INFINITY });
+    expect(d).toMatchObject({
+      admissible: false,
+      reason: "non-inferior (lower bound 0.0000 > -0.0100), but removing it costs +100.0% tokens (up to unbounded at the test's level), more than +10.0%",
+    });
+  });
+
+  it("RS22.95 an accepted step lowers the loss counter by its lower bound, not below zero, and adds the lower bound to the certified total", () => {
+    expect(advance({ drift: 0.25, certified: 0.5 }, 0.125)).toEqual({ drift: 0.125, certified: 0.625 });
+    expect(advance({ drift: 0.25, certified: 0.5 }, -0.125)).toEqual({ drift: 0.375, certified: 0.375 });
+    expect(advance({ drift: 0.125, certified: 0 }, 0.5)).toEqual({ drift: 0, certified: 0.5 });
+  });
+
+  it("RS22.96 accumulated losses exactly at the margin are within it, and any more are refused", () => {
+    const saving = { costChange: -0.125, costLower: -0.5, costUpper: -0.0625 };
+    expect(decide({ lower: 0, ...saving }, { margin: 0.25 }, { drift: 0.25 }).admissible).toBe(true);
+    expect(decide({ lower: -0.0625, ...saving }, { margin: 0.25 }, { drift: 0.25 })).toMatchObject({
+      admissible: false,
+      reason: "accumulated losses 0.3125 (a running total of the accepted steps' lower bounds) would exceed the margin 0.2500",
+    });
+  });
+
+  it("RS22.97 candidates equal in score and lower bound are ordered by the lowest cost change, whichever order they come in", () => {
+    const ok = { admissible: true, reason: "" };
+    const win = (by: "score" | "lower", ...costs: (number | undefined)[]) =>
+      choose(
+        costs.map((costChange, i) => ({ candidate: measuredOf({ label: `c${i}`, ...(costChange === undefined ? {} : { costChange }) }), decision: ok })),
+        by,
+      )?.label;
+    for (const by of ["score", "lower"] as const) {
+      expect(win(by, 0.25, 0.5)).toBe("c0");
+      expect(win(by, 0.5, 0.25)).toBe("c1");
+      expect(win(by, -0.5, -0.25)).toBe("c0");
+      expect(win(by, -0.25, -0.5)).toBe("c1");
+      expect(win(by, 0.5, undefined, -0.25)).toBe("c2");
+      expect(win(by, -0.25, undefined, 0.5)).toBe("c0");
+    }
   });
 });
 

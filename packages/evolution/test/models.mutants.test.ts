@@ -6,10 +6,24 @@ import { judgeCritic, modelProposer, parseSettings } from "@harness/evolution";
 import type { AppliedEdit, ProposalRequest } from "@harness/evolution";
 import { probability } from "@harness/cognitive";
 import { scriptedJudge, scriptedModel } from "@harness/testkit";
-import { AxGenerateError } from "@ax-llm/ax";
+import { AxGen, AxGenerateError } from "@ax-llm/ax";
+import type * as AxModule from "@ax-llm/ax";
 import { promptOf, readProposal, reasonOf } from "../src/models.ts";
 import { TUNING_EXAMPLES } from "../src/schemas.ts";
 import { toggle } from "./world.ts";
+
+// Ax's optimize() is the real one, except in the one test that needs a run which finds no Pareto front (RS31.2).
+const optimizer = vi.hoisted(() => ({ dropsProgram: false }));
+vi.mock("@ax-llm/ax", async (importOriginal) => {
+  const actual = await importOriginal<typeof AxModule>();
+  return {
+    ...actual,
+    optimize: async (...args: Parameters<typeof actual.optimize>) => {
+      const result = await actual.optimize(...args);
+      return optimizer.dropsProgram ? { ...result, optimizedProgram: undefined } : result;
+    },
+  };
+});
 
 const s = parseSettings(JSON.parse(readFileSync(new URL("../data/settings.json", import.meta.url), "utf8")));
 const request = { round: 0, candidate: "A", budget: 1, components: ["prompt"], documents: {}, analysis: { score: 0, failures: [], successes: [] }, history: [], mechanisms: [] } satisfies ProposalRequest;
@@ -381,5 +395,87 @@ describe("what comes back from a bad answer and what is thrown", () => {
     const caught = await modelProposer(failing, untuned)(request).catch((e: unknown) => e);
     expect(caught).toBeInstanceOf(Error);
     expect((caught as Error).message).toBe("offline");
+  });
+});
+
+describe("what tuning leaves the proposer with, and what aborts it", () => {
+  /** The round number the request in a call carried. */
+  const roundOf = (call: { prompt: readonly { role: string; content: unknown }[] }): number => {
+    const user = call.prompt.find((m) => m.role === "user")!.content as { text: string }[];
+    return (JSON.parse(user[0]!.text.slice("Round Request: ".length)) as { round: number }).round;
+  };
+
+  it("RS31.1 when the last candidate the optimizer evaluates is not the best, the proposer answers with the best one", async () => {
+    let seeded = 0;
+    const BAD = "Propose nothing useful.";
+    // The system text answers badly in tuning round 0 on every other call, and always well in round 1; the instruction the
+    // optimizer writes answers badly in every round, so it is evaluated last, scores below the system text, and is not kept.
+    const model = scriptedModel((options) => {
+      const system = String((options.prompt[0] as { content: unknown }).content);
+      if (system.includes("`Target Id`")) return "feedbackSummary: the proposals have too many edits";
+      if (system.includes("`Component Key`")) return `newValue: ${BAD}`;
+      if (system.includes(BAD)) return JSON.stringify(twoEdits);
+      seeded += 1;
+      return JSON.stringify(roundOf(options) === 1 || seeded % 2 === 1 ? oneEdit : twoEdits);
+    });
+    const applied = vi.spyOn(AxGen.prototype, "applyOptimization");
+    try {
+      const propose = modelProposer(model, tuned);
+      await propose(request);
+      expect(model.doGenerateCalls.some((c) => systemOf(c)[0]?.includes(BAD))).toBe(true);
+      expect(applied).toHaveBeenCalledTimes(1);
+      const answer = await propose({ ...request, round: 1 });
+      expect(answer).toEqual(oneEdit);
+      expect(systemOf(model.doGenerateCalls.at(-1)!)[0]).not.toContain(BAD);
+    } finally {
+      applied.mockRestore();
+    }
+  });
+
+  it("RS31.2 an optimizer run that returns no program applies nothing, and the proposer still answers", async () => {
+    const applied = vi.spyOn(AxGen.prototype, "applyOptimization");
+    optimizer.dropsProgram = true;
+    try {
+      expect(await modelProposer(tuningModel(oneEdit, oneEdit), tuned)(request)).toEqual(oneEdit);
+      expect(applied).not.toHaveBeenCalled();
+    } finally {
+      optimizer.dropsProgram = false;
+      applied.mockRestore();
+    }
+  });
+
+  it("RS31.3 an error of our own code is thrown, not offered as a reason: a request that cannot be written as JSON, untuned and tuned", async () => {
+    const unwritable = { ...request, round: 1n } as never;
+    const model = scriptedModel(() => JSON.stringify(oneEdit));
+    await expect(modelProposer(model, untuned)(unwritable)).rejects.toThrow(/BigInt/);
+    await expect(modelProposer(model, tuned)(unwritable)).rejects.toThrow(/BigInt/);
+    expect(model.doGenerateCalls).toHaveLength(0);
+  });
+
+  it("RS31.4 an error that Ax raises on its own account and is not about the answer is thrown as it is, even when it is not an Error", async () => {
+    const internal = new TypeError("Ax internal fault");
+    for (const fault of [internal, "odd fault"]) {
+      const forward = vi.spyOn(AxGen.prototype, "forward").mockRejectedValueOnce(fault);
+      try {
+        await expect(modelProposer(scriptedModel(() => JSON.stringify(oneEdit)), untuned)(request)).rejects.toBe(fault);
+      } finally {
+        forward.mockRestore();
+      }
+    }
+  });
+
+  it("RS31.5 the AI SDK's two errors for an answer it could not read come back as the reason even when Ax passes them on unwrapped", async () => {
+    const unreadable = [
+      new NoObjectGeneratedError({ message: "no object", response: {} as never, usage: {} as never, finishReason: "stop" }),
+      new NoOutputGeneratedError({ message: "no output" }),
+    ];
+    for (const error of unreadable) {
+      const forward = vi.spyOn(AxGen.prototype, "forward").mockRejectedValueOnce(error);
+      try {
+        expect(await modelProposer(scriptedModel(() => JSON.stringify(oneEdit)), untuned)(request)).toBe(error.message);
+      } finally {
+        forward.mockRestore();
+      }
+    }
   });
 });
