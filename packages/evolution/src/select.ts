@@ -188,16 +188,20 @@ export function calibratedDecision(c: Measured, rule: CalibratedRule, ctx: Calib
   const reject = (reason: string): Decision => ({ admissible: false, reason, verdict });
   if (c.guards.length) return reject(`domain guard violated: ${c.guards.join("; ")}`);
   const dC = c.costChange ?? 0;
-  if (c.cost !== undefined && ctx.anchor.cost) {
+  // An absent number is NaN and an absent lower bound is -Infinity, so every comparison below that uses one is false: no cost, no bound, no claim.
+  const cost = c.cost ?? Number.NaN;
+  if (ctx.anchor.cost) {
     const allowed = rule.beta0 + rule.beta1 * Math.max(0, ctx.certified + c.lower);
     // The candidate's cost against H_0: its point cost, or the upper bound of its change on the incumbent's cost when there is one.
-    const bounded = c.costUpper !== undefined && c.costChange !== undefined && 1 + c.costChange > 0;
-    const total = bounded ? (c.cost * (1 + c.costUpper!)) / (1 + c.costChange!) / ctx.anchor.cost - 1 : (c.cost - ctx.anchor.cost) / ctx.anchor.cost;
+    const change = c.costChange ?? Number.NaN;
+    const bounded = c.costUpper !== undefined && 1 + change > 0;
+    const total = bounded ? (cost * (1 + c.costUpper!)) / (1 + change) / ctx.anchor.cost - 1 : (cost - ctx.anchor.cost) / ctx.anchor.cost;
     if (total > allowed) return reject(`the harness would spend ${bounded ? "up to " : ""}${bound(total)} tokens over the base harness, more than the ${pct(allowed)} its certified gain pays for`);
   }
   if (c.kind === "change" && c.lower > 0) {
     const budget = rule.beta0 + rule.beta1 * c.lower;
-    if (c.costLower !== undefined && c.costLower > budget) return reject(`costs ${pct(dC)} tokens (at least ${pct(c.costLower)} at the test's level); a gain of at least ${f(c.lower)} pays for ${pct(budget)}`);
+    const costLower = c.costLower ?? Number.NEGATIVE_INFINITY;
+    if (costLower > budget) return reject(`costs ${pct(dC)} tokens (at least ${pct(costLower)} at the test's level); a gain of at least ${f(c.lower)} pays for ${pct(budget)}`);
     return { admissible: true, reason: `supported gain: ${f(c.gain)}, at least ${f(c.lower)}; cost ${pct(dC)} within ${pct(budget)}`, verdict };
   }
   if (c.lower <= -rule.margin) return reject(`${c.kind === "change" ? `no supported gain (lower bound ${f(c.lower)} <= 0), and it ` : "it "}may be worse than the incumbent by the margin or more: lower bound ${f(c.lower)} <= -${f(rule.margin)}`);
