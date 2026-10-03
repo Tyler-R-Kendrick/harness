@@ -86,6 +86,69 @@ describe("what the proposer answers", () => {
   });
 });
 
+/**
+ * A model that plays all three parts GEPA needs: the proposer, whose proposals fit the budget only once the
+ * system prompt holds the tuned instruction, the reflection that summarizes feedback, and the one that writes
+ * the instruction. `answers` is the proposal the proposer gives without and with the instruction.
+ */
+const TUNED = "Propose exactly one edit.";
+function tuningModel(without: unknown, withInstruction: unknown) {
+  return scriptedModel((options) => {
+    const system = String((options.prompt[0] as { content: unknown }).content);
+    if (system.includes("`Target Id`")) return "feedbackSummary: the proposals have too many edits";
+    if (system.includes("`Component Key`")) return `newValue: ${TUNED}`;
+    return JSON.stringify(system.includes(TUNED) ? withInstruction : without);
+  });
+}
+const tuned = { ...untuned, optimize: { maxMetricCalls: 40, seed: 0 } };
+const twoEdits = { summary: "two", edits: [edit1, { ...edit1, id: "e2" }] };
+const oneEdit = { summary: "one", edits: [edit1] };
+const reflections = (model: ReturnType<typeof scriptedModel>) => model.doGenerateCalls.filter((c) => c.responseFormat === undefined);
+
+describe("tuning the proposer's prompt with GEPA", () => {
+  it("RS23.60 proposals over the round's budget make the optimizer reflect and write a better instruction, which the proposer then uses", async () => {
+    const model = tuningModel(twoEdits, oneEdit);
+    const answer = await modelProposer(model, tuned)(request);
+    expect(answer).toEqual(oneEdit);
+    expect(reflections(model)).toHaveLength(2);
+    const last = model.doGenerateCalls.at(-1)!;
+    expect(last.responseFormat).toBeDefined();
+    expect(systemOf(last)[0]).toContain(TUNED);
+  });
+
+  it("RS23.61 proposals within the budget leave nothing to improve: no reflection, and the instruction is the system text", async () => {
+    const model = tuningModel(oneEdit, oneEdit);
+    const answer = await modelProposer(model, tuned)(request);
+    expect(answer).toEqual(oneEdit);
+    expect(reflections(model)).toHaveLength(0);
+    expect(systemOf(model.doGenerateCalls.at(-1)!)[0]).not.toContain(TUNED);
+  });
+
+  it("RS23.62 an answer that is not a proposal scores 0 as well: the optimizer reflects on it", async () => {
+    const model = tuningModel({ summary: "s", edits: [{ bogus: 1 }] }, oneEdit);
+    expect(await modelProposer(model, tuned)(request)).toEqual(oneEdit);
+    expect(reflections(model)).toHaveLength(2);
+  });
+
+  it("RS23.63 every example the optimizer scores is the round's request, and the tuning calls all carry the settings' token cap", async () => {
+    const model = tuningModel(twoEdits, oneEdit);
+    await modelProposer(model, tuned)(request);
+    const proposing = model.doGenerateCalls.filter((c) => c.responseFormat !== undefined);
+    expect(proposing.length).toBeGreaterThan(2);
+    for (const call of proposing) expect(call.prompt.filter((m) => m.role === "user")).toEqual([{ role: "user", content: [{ type: "text", text: `Round Request: ${JSON.stringify(request)}\n` }] }]);
+    expect(new Set(model.doGenerateCalls.map((c) => c.maxOutputTokens))).toEqual(new Set([777]));
+  });
+
+  it("RS23.64 the optimizer is tuned once per proposer: a second request is one call", async () => {
+    const model = tuningModel(twoEdits, oneEdit);
+    const propose = modelProposer(model, tuned);
+    await propose(request);
+    const spent = model.doGenerateCalls.length;
+    await propose(request);
+    expect(model.doGenerateCalls.length).toBe(spent + 1);
+  });
+});
+
 describe("what the critic asks and answers", () => {
   const examples = [{ id: "t1", text: "task one" }, { id: "t2", text: "task two" }];
   const edit: AppliedEdit = {
