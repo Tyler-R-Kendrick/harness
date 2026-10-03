@@ -6,6 +6,7 @@ import type { ModelDescriptor } from "@harness/cognitive";
 import { lexicalDecider } from "../src/decide.ts";
 import { deciders, DECIDING, rankDecisionModels } from "../src/decision-model.ts";
 import { LocalModel, LocalModels } from "../src/local-models.ts";
+import type { Candidate } from "../src/local-models.ts";
 import type { Capabilities, Past } from "../src/model-choice.ts";
 import { parseEngineSettings } from "../src/engine-settings.ts";
 
@@ -105,7 +106,7 @@ const big = { id: "org/big", name: "Big", downloadBytes: bytes(600_000_000), loc
 const small = { id: "org/small", name: "Small", downloadBytes: bytes(36_000_000), locality: "local" as const };
 
 /** The page's decision models over stand-in ensembles, one per model, settled when the test says. */
-function models(ranked = [big, small], past: Record<string, Past> = {}) {
+function models(ranked: readonly Candidate[] = [big, small], past: Record<string, Past> = {}) {
   const ensembles = new Map<string, ReturnType<typeof ensemble>>();
   const changed: string[] = [];
   const ensembleOf = (id: string) => ensembles.get(id) ?? (ensembles.set(id, ensemble()), ensembles.get(id)!);
@@ -174,6 +175,20 @@ describe("which decision model decides: picked for this browser unless named (/d
     expect([m.phase("org/small"), m.status("org/small")]).toEqual(["idle", "Small: not kept in this browser last time (QuotaExceededError): /decide org/small downloads it again (36 MB)"]);
     m.want("org/small", true);
     expect(m.phase("org/small")).toBe("loading");
+  });
+
+  it("PD2.6 a decision model decides under its catalog id at the revision its weights are pinned to; one that pins none is its own version", async () => {
+    const pinned = rankDecisionModels(catalog)[0]!;
+    const { m, ensembles } = models([pinned, small]);
+    m.want(pinned.id, true);
+    ensembles.get(pinned.id)!.settle().resolve(judge);
+    await tick();
+    expect(pinned.artifact?.revision).toMatch(/^[0-9a-f]{40}$/);
+    expect(deciders(m, pinned.id, lexical)[0]!.identity).toEqual({ id: pinned.id, version: pinned.artifact!.revision });
+    m.want("org/small", true);
+    ensembles.get("org/small")!.settle().resolve(judge);
+    await tick();
+    expect(deciders(m, "org/small", lexical)[0]!.identity).toEqual({ id: "org/small", version: "org/small" });
   });
 
   it("PD2.5 lexical, or a slug no longer in the catalog, leaves the lexical judge alone and loads nothing", () => {
