@@ -106,22 +106,22 @@ const FORMAT = "harness.evolution/v1";
 
 const describeEdits = (edits: readonly AppliedEdit[]): LedgerRecord["edits"] => edits.map((e) => ({ id: e.id, hypothesis: e.hypothesis, targets: e.targets, components: e.components, footprint: e.footprint, predicted: e.predicted }));
 
+/** The fields of `fields` that have a value: an absent one is left out, not kept as a key holding undefined. */
+function present<K extends string>(fields: Readonly<Record<K, number | undefined>>): { [P in K]?: number } {
+  return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined)) as { [P in K]?: number };
+}
+
 /** A drafted candidate's measurement and comparison, as selection sees it. */
 function measuredOf(d: Drafted, m: Measurement, c: Comparison, guards: readonly string[]): Measured {
   return {
     label: d.label,
     kind: d.kind,
     score: m.score,
-    // Stryker disable next-line ConditionalExpression: equivalent; the mutant leaves the key there with the value undefined, and selection reads its fields by name, so an absent key and an undefined one behave alike
-    ...(m.cost === undefined ? {} : { cost: m.cost }),
+    ...present({ cost: m.cost }),
     gain: c.gain,
     lower: c.lower,
     upper: c.upper,
-    // Stryker disable ConditionalExpression: equivalent; the mutant leaves the key there with the value undefined, and selection reads its fields by name, so an absent key and an undefined one behave alike
-    ...(c.costChange === undefined ? {} : { costChange: c.costChange }),
-    ...(c.costLower === undefined ? {} : { costLower: c.costLower }),
-    ...(c.costUpper === undefined ? {} : { costUpper: c.costUpper }),
-    // Stryker restore ConditionalExpression
+    ...present({ costChange: c.costChange, costLower: c.costLower, costUpper: c.costUpper }),
     components: [...new Set(d.edits.flatMap((e) => e.components))],
     guards,
   };
@@ -140,7 +140,8 @@ function checkDocuments(surface: Surface, documents: Documents): void {
 function knownTasks(split: Split): ReadonlyMap<string, TaskInfo> {
   const known = new Map<string, TaskInfo>();
   // Stryker disable next-line ArrayDeclaration: equivalent; the extra element is a string with no id, so it is entered under the key undefined, which no task id (only ids are looked up) can ever match
-  for (const t of [...split.evolve, ...(split.holdout ?? [])]) {
+  const held = split.holdout ?? [];
+  for (const t of [...split.evolve, ...held]) {
     if (known.has(t.id)) throw new RangeError(`task ${t.id} is in the task set twice`);
     if (t.weight !== undefined && !(t.weight > 0 && Number.isFinite(t.weight))) throw new RangeError(`the weight of task ${t.id} must be positive and finite, not ${t.weight}`);
     known.set(t.id, { group: t.group ?? t.id, weight: t.weight ?? 1 });
@@ -349,13 +350,11 @@ export class Evolution {
     // clearly worse there; the incumbent is measured in full in the same window either way,
     // and ablations are never staged (see futility.ts for why this cannot add acceptances).
     const evolve = this.#split.evolve;
-    // Stryker disable next-line ConditionalExpression: equivalent; the paper rule's schema is strict, so a parsed paper rule has no futility and the property is undefined either way
-    const futility = rule.rule === "calibrated" ? rule.futility : undefined;
-    // Stryker disable next-line ConditionalExpression: equivalent; margin is read only when staging (which needs a futility) or after `!paper`, so under the paper rule it is never read
-    const margin = rule.rule === "calibrated" ? rule.margin : 0;
+    // Only the calibrated rule has a futility and a margin (the paper rule's schema is strict): the defaults stand for the paper rule, which stages nothing and never reads the margin.
+    const { futility, margin } = { futility: undefined, margin: 0, ...rule };
     const stage = futility === undefined ? evolve.length : prefixSize(futility.fraction, evolve.length);
-    // Stryker disable next-line ConditionalExpression: equivalent; without a futility `stage` is evolve.length, so `stage < evolve.length` is false on its own
-    const staging = futility !== undefined && stage < evolve.length;
+    // Without a futility `stage` is evolve.length, so this is false then on its own.
+    const staging = stage < evolve.length;
     const order = staging ? permute(evolve, ports.entropy) : evolve;
     const first = order.slice(0, stage);
     const later = order.slice(stage);
@@ -420,8 +419,7 @@ export class Evolution {
       }
       const c = compare(m, reference, { alpha: level, resamples, entropy: ports.entropy });
       const candidate = measuredOf(d, m, c, ports.guards?.(m, reference) ?? []);
-      // Stryker disable next-line ConditionalExpression: equivalent; with no cost in the base harness the anchor's cost is undefined either way, and calibratedDecision reads only its value
-      const anchor = state.base.cost === undefined ? {} : { cost: state.base.cost };
+      const anchor = present({ cost: state.base.cost });
       const decision =
         rule.rule === "paper"
           ? paperDecision(candidate, { ...rule, delta: state.delta! }, { best: state.best, accepted: this.#acceptedComponents(), structural: this.#surface.structural })
@@ -474,12 +472,9 @@ export class Evolution {
       // An abandoned candidate was measured on a prefix only: a task it never ran is neither a hit nor a miss.
       const measuredTasks = new Set(j.measurement.tasks.map((x) => x.task));
       const predicted = [...new Set(j.draft.edits.flatMap((e) => e.predicted))].filter((p) => !j.abandoned || measuredTasks.has(p));
-      const improved = (task: string) => {
-        const a = j.measurement.tasks.find((x) => x.task === task);
-        const b = j.against.tasks.find((x) => x.task === task);
-        // Stryker disable next-line ConditionalExpression,LogicalOperator: equivalent; both measurements are over the same evolve tasks, so a task is in both or in neither and the two existence tests agree (a predicted task that is no evolve task is a miss: RS20.19)
-        return a !== undefined && b !== undefined && a.mean > b.mean;
-      };
+      // A task a measurement has no mean for (a predicted task that is no evolve task) has NaN, which no comparison holds for: it did not improve.
+      const meanOf = (m: Measurement, task: string) => m.tasks.find((x) => x.task === task)?.mean ?? Number.NaN;
+      const improved = (task: string) => meanOf(j.measurement, task) > meanOf(j.against, task);
       records.push({
         round: t,
         candidate: j.draft.label,
@@ -489,16 +484,13 @@ export class Evolution {
         reason: decision.reason,
         measured: {
           score: j.measurement.score,
-          ...(j.measurement.cost === undefined ? {} : { cost: j.measurement.cost }),
+          ...present({ cost: j.measurement.cost }),
           gain: j.candidate.gain,
           lower: j.candidate.lower,
           upper: j.candidate.upper,
           alpha: j.alpha,
-          ...(j.candidate.costChange === undefined ? {} : { costChange: j.candidate.costChange }),
-          ...(j.candidate.costLower === undefined ? {} : { costLower: j.candidate.costLower }),
-          // Absent while a cost change is present: the upper bound is unbounded (too few tasks reported tokens on both sides; JSON has no infinity).
-          // Stryker disable next-line ConditionalExpression: equivalent; Number.isFinite(undefined) is false, so an undefined costUpper is left out by the second test whatever the first says
-          ...(j.candidate.costUpper === undefined || !Number.isFinite(j.candidate.costUpper) ? {} : { costUpper: j.candidate.costUpper }),
+          // costUpper is absent while a cost change is present when it is unbounded (too few tasks reported tokens on both sides; JSON has no infinity).
+          ...present({ costChange: j.candidate.costChange, costLower: j.candidate.costLower, costUpper: Number.isFinite(j.candidate.costUpper) ? j.candidate.costUpper : undefined }),
           verdict: verdictOf(j.candidate),
           hits: predicted.filter(improved),
           misses: predicted.filter((p) => !improved(p)),
@@ -511,13 +503,8 @@ export class Evolution {
     let mechanisms = state.mechanisms;
     if (ablation && "entangled" in ablation) mechanisms = mechanisms.map((m) => (m.id === ablation.entangled ? { ...m, entangled: true } : m));
     const target = drafted.find((d) => d.kind === "prune")?.target;
-    if (
-      // Stryker disable next-line LogicalOperator: equivalent; `target` is undefined only when no removal was drafted, and then accepted?.draft.target is undefined too, so the second test is false as well
-      target &&
-      // Stryker disable next-line ConditionalExpression: equivalent; marking the accepted removal's own mechanism as ablated is moot, because the block below takes it out of the list
-      accepted?.draft.target !== target
-    )
-      mechanisms = mechanisms.map((m) => (m.id === target.id ? { ...m, ablated: t } : m));
+    // The accepted removal's own mechanism is marked too: the block below takes it out of the list.
+    if (target) mechanisms = mechanisms.map((m) => (m.id === target.id ? { ...m, ablated: t } : m));
     let next: State;
     if (accepted) {
       const c = accepted.candidate;
