@@ -23,6 +23,7 @@ export { proceduralStoreContract } from "./procedural-store-contract.ts";
 export type { ProceduralStoreFixture } from "./procedural-store-contract.ts";
 export { codeModeContract } from "./code-mode-contract.ts";
 export type { CodeModeContractHost, CodeModeUnderTest } from "./code-mode-contract.ts";
+export * from "./decision-contract.ts";
 export * from "./systemone-contract.ts";
 export { evaluatorContract, ScriptedEnvironment } from "./procedural-evaluator.ts";
 export type { EvaluatorFixture, ScriptedTask } from "./procedural-evaluator.ts";
