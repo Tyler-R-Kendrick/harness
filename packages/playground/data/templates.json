@@ -5,7 +5,8 @@
     "maxOptions": 20,
     "question": "Which intent does the user's message express?",
     "none": "Something else: a question none of these answers",
-    "rotate": true
+    "rotate": true,
+    "keep": 500
   },
   "lexical": {
     "accept": 0.6,

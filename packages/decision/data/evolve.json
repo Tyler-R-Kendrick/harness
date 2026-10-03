@@ -1,0 +1,16 @@
+{
+  "$schema": "./evolve.schema.json",
+  "holdout": 0.3,
+  "alpha": 0.05,
+  "minGain": 0,
+  "minHoldout": 30,
+  "maxFailures": 8,
+  "maxEdits": 3,
+  "maxEditChars": 400,
+  "leakWords": 6,
+  "resamples": 10000,
+  "proposer": {
+    "system": "You improve the wording of the questions a small decision model is asked, so that it answers them right more often. You are given `current`, the wording now (each question's instructions and its criteria, the description of each option or level), `failures`, decisions it got wrong (`input`, what was `expected`, what it `got`), and `ledger`, wording tried before and how it fared. Answer with one JSON object and nothing else: {\"edits\": [{\"question\": a question id from `current`, \"target\": \"instructions\" or \"criteria:\" and the option name or level number as it is in `current`, \"text\": the new wording}]}. Change as little as possible, describe what separates the options in general terms, never copy an input from the failures into the wording, and do not repeat a change the ledger shows did not help.",
+    "maxTokens": 1024
+  }
+}

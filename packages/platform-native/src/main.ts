@@ -17,6 +17,11 @@ import type { ApprovalNotice, GraphId, PlanNotice, PlanRunner } from "@harness/p
 import { buildDialogue, buildNativeEnsemble, builtinDialogue, dialogueFlows, installDocumentFlows } from "./cognitive-host.ts";
 import { loadBuiltinBook, loadProceduralComposition, loadProceduralPolicy, loadProceduralResolver, loadProceduralSettings, loadProceduralTools, loadTaskSuite, withBuiltinBook, withoutBuiltinBook } from "./catalog-files.ts";
 import { Ensemble } from "@harness/cognitive";
+import { ensembleSystemOneModels } from "@harness/decision";
+import { buildNativeDecision, localChatTier } from "./decision-host.ts";
+import type { NativeDecision } from "./decision-host.ts";
+import { serveSystemOne } from "./systemone-server.ts";
+import type { SystemOneServer } from "./systemone-server.ts";
 import { dialogueExtension, dialogueSaves } from "@harness/dialogue";
 import { instructionsWithSkills } from "@harness/core";
 import type { HarnessHome } from "@harness/core";
@@ -44,7 +49,7 @@ import {
   proceduralStore,
 } from "./procedural-host.ts";
 import { generateCliProject } from "./cli-project.ts";
-import { lockStore } from "./store-lock.ts";
+import { DECISION_LOCK, lockStore } from "./store-lock.ts";
 
 const { values } = parseArgs({
   options: {
@@ -82,6 +87,9 @@ const { values } = parseArgs({
     ws: { type: "string" },
     "ws-token-file": { type: "string" },
     "ws-origin": { type: "string", multiple: true },
+    decision: { type: "string" },
+    systemone: { type: "string" },
+    "systemone-token-file": { type: "string" },
     "sandbox-setup": { type: "string" },
     "sandbox-env": { type: "string", multiple: true },
     "new-cli": { type: "string" },
@@ -111,7 +119,8 @@ if (!values.stdio && values.socket === undefined && values.ws === undefined) {
       "                 [--sandbox host|docker:<image> [--sandbox-setup <command>] [--sandbox-env <NAME>]...] [--sandboxes <dir>]]\n" +
       "               [--cognitive [--llama-server <path>] [--model-cache <dir>] [--no-hosted]\n" +
       "                            [--behavior <graph.json> --sae-rows <rows.json>] [--memory <file> [--learning <file>]] [--workflows <dir>]\n" +
-      "                            [--consult <gateway id>]]\n" +
+      "                            [--consult <gateway id>] [--systemone <port> [--systemone-token-file <file>]]\n" +
+      "                            [--decision <dir>]]\n" +
       "               [--procedural <dir> [--procedural-settings <settings.json>] [--procedural-resolver <resolver.json>] [--procedural-policy <policy.json>]\n" +
       "                                 [--procedural-eval <tasks.json>] [--procedural-composition <composition.json>] [--procedural-tools <tools.json>]]\n" +
       "               [--dialogue <file> [--dialogue-flows <dir>] [--dialogue-grace <ms>]]\n",
@@ -126,6 +135,45 @@ try {
 } catch (e) {
   process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
   process.exit(1);
+}
+
+// --systemone serves the ensemble's judgment models as a System One provider over HTTP (loopback; a
+// bearer token when --systemone-token-file names a file holding one).
+const systemOnePort = values.systemone === undefined ? undefined : /^\d+$/.test(values.systemone) ? Number(values.systemone) : Number.NaN;
+if (values.systemone !== undefined && !(systemOnePort! >= 0 && systemOnePort! <= 65535)) {
+  process.stderr.write(`--systemone takes a port number (0 for any free one), not "${values.systemone}"\n`);
+  process.exit(2);
+}
+if (values.systemone !== undefined && !values.cognitive && values.worker !== "ensemble") {
+  process.stderr.write("--systemone needs --cognitive (or --worker ensemble): it serves the ensemble's models\n");
+  process.exit(2);
+}
+if (values["systemone-token-file"] !== undefined && values.systemone === undefined) {
+  process.stderr.write("--systemone-token-file needs --systemone\n");
+  process.exit(2);
+}
+// The token is read, and checked, before any model loads.
+const systemOneToken = await (async () => {
+  const file = values["systemone-token-file"];
+  if (file === undefined) return undefined;
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (e) {
+    process.stderr.write(`--systemone-token-file: cannot read ${file}: ${(e as Error).message}\n`);
+    return process.exit(2);
+  }
+  if (text.trim() === "") {
+    process.stderr.write(`--systemone-token-file: ${file} is empty: a token is required\n`);
+    process.exit(2);
+  }
+  return text.trim();
+})();
+
+// --decision keeps the decision layer's records, policy, calibration and learned rules in a directory (harness-decision reads it).
+if (values.decision !== undefined && !values.cognitive && values.worker !== "ensemble") {
+  process.stderr.write("--decision needs --cognitive (or --worker ensemble): the layer asks the ensemble's judgment models\n");
+  process.exit(2);
 }
 
 if ((values.behavior === undefined) !== (values["sae-rows"] === undefined)) {
@@ -248,6 +296,25 @@ const cognitive =
         ...(learningFile ? { learning: { ...(learned === undefined ? {} : { saved: learned }), persist: (s: unknown) => void learningFile.save(s) } } : {}),
       })
     : undefined;
+// The decision layer, installed on the ensemble before the host starts (so the daemon offers `decision.*`), and
+// connected to the running daemon as a plugin below. A directory it cannot read stops the daemon.
+// One process owns a decision directory: opening its log may compact or truncate it, so the daemon holds the
+// directory's lock while it runs, and refuses to start while another process (a daemon, harness-decision) holds it.
+const decisionLockResult = values.decision === undefined ? undefined : await lockStore(values.decision, "harness", { file: DECISION_LOCK });
+if (decisionLockResult?.status === "held") {
+  const { holder, pid } = decisionLockResult.owner;
+  process.stderr.write(`the decision directory ${values.decision} is in use by ${holder} (pid ${pid}); stop it first\n`);
+  process.exit(1);
+}
+const decisionLock = decisionLockResult?.lock;
+const decision: NativeDecision | undefined =
+  values.decision === undefined
+    ? undefined
+    : await buildNativeDecision({ dir: values.decision, ensemble: cognitive!.ensemble, log: (message) => void process.stderr.write(`${message}\n`) }).catch(async (e: unknown) => {
+        process.stderr.write(`--decision ${values.decision}: ${e instanceof Error ? e.message : String(e)}\n`);
+        await decisionLock?.release();
+        return process.exit(1);
+      });
 const procedural = proceduralFiles && { store: proceduralFiles, settings: proceduralSettings! };
 // The generator dream refines with and live reflection (when a preset turns it on) reflects with:
 // the ensemble's reasoning model, or else the gateway model.
@@ -385,6 +452,13 @@ const ownModelId = speaking?.modelId ?? "\u0000";
 const remembered = cognitive?.memory;
 const sessionVoice = { voice: harnessVoice, book: citations, ownModelId, ...(remembered === undefined ? {} : { memoryStore: remembered }) };
 const scripted = (model: Exclude<LanguageModel, string>) => sessionModel(model, dialogue || undefined, sessionVoice);
+// With the decision layer, each step of a session's turn is planned: routine stretches go to the ensemble's local chat
+// model (the small tier) and back to the session's model (the large one) when that pays (the dispatch fork). Without a
+// local chat model there is no small tier, and without a model other than the session's own nothing to dispatch to.
+const dispatching = (large: Exclude<LanguageModel, string>) => {
+  const small = decision && localChatTier(cognitive!.ensemble);
+  return decision && small ? { dispatch: decision.dispatch({ small: scripted(small), large }) } : {};
+};
 // MCP tools are callable only through code mode. When the ensemble can classify, a turn's tools are ranked and those below the decision bar are left out.
 const codeMode = sessionCodeMode();
 const rankedTools = cognitive?.ensemble.serves("classification", "judge") ? { decide: cognitive.ensemble.evaluationModel("classification") } : {};
@@ -410,14 +484,16 @@ const harness =
       });
 // The model worker runs an AI SDK agent on a gateway model; the ensemble worker runs one
 // on the ensemble (the steered kernel with a behavior pack), with memory and learning.
+const gatewayModel = values.worker === "model" ? scripted(gateway(values.model)) : undefined;
+const ensembleModel = values.worker === "ensemble" ? scripted(cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat")) : undefined;
 const sessions: Worker = harness
   ? harness.worker
   : values.worker === "model"
-    ? new AgentWorker({ agent: sessionAgent({ model: scripted(gateway(values.model)), ...(step ? { step } : {}), tools: sessionTools(composition?.tools), codeMode, ...rankedTools }), ...conversations })
+    ? new AgentWorker({ agent: sessionAgent({ model: gatewayModel!, ...(step ? { step } : {}), tools: sessionTools(composition?.tools), codeMode, ...rankedTools, ...dispatching(gatewayModel!) }), ...conversations })
     : values.worker === "ensemble"
       ? new AgentWorker({
           agent: sessionAgent({
-            model: scripted(cognitive!.ensemble.languageModel(behavior ? "steered-chat" : "chat")),
+            model: ensembleModel!,
             vision: sessionModel(cognitive!.ensemble.languageModel("vision-qa"), undefined, sessionVoice),
             ...instructions,
             ...(step ? { step } : {}),
@@ -430,6 +506,8 @@ const sessions: Worker = harness
             tools: sessionTools(composition ? composition.tools : cognitive!.workflowHost ? () => workflowTools(cognitive!.workflowHost!) : undefined),
             codeMode,
             ...rankedTools,
+            // The steered model is a tier of its own, apart from the ensemble's plain chat model.
+            ...(behavior ? dispatching(ensembleModel!) : {}),
           }),
           ...(cognitive!.memory ? { onTurn: rememberTurns(cognitive!.memory) } : {}),
           // Plugins' behavior events (`_harness/behavior/event`) go to the session's behavior state.
@@ -471,6 +549,10 @@ const host = await NodeHost.start({
   ...(values.state === undefined ? {} : { statePath: values.state }),
 });
 running.host = host;
+await decision?.attach(host.runtime).catch((e: unknown) => {
+  process.stderr.write(`--decision ${values.decision}: cannot connect the decision plugin: ${e instanceof Error ? e.message : String(e)}\n`);
+  return process.exit(1);
+});
 
 if (procedural) live.notify = hookNotifier(host.runtime);
 if (procedural && generator) {
@@ -507,6 +589,8 @@ if (live.plans) {
 // The step hook forgets each session the daemon detaches (its pinned view and guidance cache).
 const evictions = step && nativeStepEvictions({ runtime: host.runtime, step, log: (message) => void process.stderr.write(`${message}\n`) });
 
+// The System One server, once it is listening (started below, after the signal handlers are in place).
+let systemOne: SystemOneServer | undefined;
 const shutdown = async () => {
   // Learning under way (a drafter's answer among it) gets the grace (--dialogue-grace) to land in the
   // book while the host still runs, so what it publishes on the hook bus is saved with the state.
@@ -515,15 +599,34 @@ const shutdown = async () => {
   evictions?.close();
   live.learner?.close();
   live.schedule?.close();
+  // The plugin stops first (it speaks to the daemon); the records it and the operations wrote are on disk before the exit.
+  await decision?.stop();
+  await systemOne?.close();
   await host.close();
+  await decision?.settled();
   await dialogueSaved?.settled();
   await harness?.close();
   await cognitive?.close();
+  await decisionLock?.release();
   await storeLock?.release();
   process.exit(0);
 };
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+
+// The System One server asks the ensemble the questions it is sent; a request that fails is answered, never fatal.
+if (systemOnePort !== undefined) {
+  systemOne = await serveSystemOne({
+    models: ensembleSystemOneModels(cognitive!.ensemble),
+    port: systemOnePort,
+    ...(systemOneToken === undefined ? {} : { token: systemOneToken }),
+    log: (message) => void process.stderr.write(`systemone: ${message}\n`),
+  }).catch((e: unknown) => {
+    process.stderr.write(`systemone: cannot listen on port ${systemOnePort}: ${e instanceof Error ? e.message : String(e)}\n`);
+    return process.exit(1);
+  });
+  process.stderr.write(`systemone listening on ${systemOne.url}\n`);
+}
 
 if (values.stdio) {
   // Editors launch ACP agents as child processes; stdout carries protocol frames only.

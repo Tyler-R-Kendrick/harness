@@ -20,6 +20,7 @@
     "@harness/cognitive": "0.0.0",
     "@harness/constrained": "0.0.0",
     "@harness/core": "0.0.0",
+    "@harness/decision": "0.0.0",
     "@harness/dialogue": "0.0.0",
     "@harness/dialogue-standards": "0.0.0",
     "@harness/evolution": "0.0.0",
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "1.5.0",
+    "@ai-sdk/provider": "4.0.18",
     "@harness/testkit": "0.0.0",
     "@types/write-file-atomic": "4.0.3",
     "@types/ws": "8.18.1",
@@ -53,6 +55,7 @@
     "harness-workflow": "./src/workflow-cli.ts",
     "harness-dialogue": "./src/dialogue-cli.ts",
     "harness-evolution": "./src/evolution-cli.ts",
-    "harness-deliver": "./src/deliver-cli.ts"
+    "harness-deliver": "./src/deliver-cli.ts",
+    "harness-decision": "./src/decision-cli.ts"
   }
 }

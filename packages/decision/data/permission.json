@@ -1,0 +1,473 @@
+{
+  "$schema": "./permission.schema.json",
+  "version": "permission-1",
+  "default": "escalate",
+  "rules": [
+    {
+      "id": "read-only-kinds",
+      "effect": "permit",
+      "when": {
+        "in": [
+          "kind",
+          [
+            "read",
+            "search",
+            "think"
+          ]
+        ]
+      },
+      "reason": "reading, searching and thinking change nothing"
+    },
+    {
+      "id": "secret-locations",
+      "effect": "escalate",
+      "when": {
+        "any": [
+          {
+            "contains": [
+              "path",
+              ".ssh/"
+            ]
+          },
+          {
+            "contains": [
+              "path",
+              ".aws/"
+            ]
+          },
+          {
+            "contains": [
+              "path",
+              ".gnupg/"
+            ]
+          },
+          {
+            "contains": [
+              "path",
+              ".netrc"
+            ]
+          },
+          {
+            "contains": [
+              "path",
+              "id_rsa"
+            ]
+          },
+          {
+            "contains": [
+              "path",
+              ".env"
+            ]
+          }
+        ]
+      },
+      "reason": "credentials live here, even reading them needs a look"
+    },
+    {
+      "id": "wipes-root-or-home",
+      "effect": "forbid",
+      "when": {
+        "any": [
+          {
+            "suffix": [
+              "command",
+              "rm -rf /"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf / "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf /*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf /* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf ~"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf ~ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf ~/"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf ~/ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf ~/*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf ~/* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf $HOME"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf $HOME "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf $HOME/"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf $HOME/ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf $HOME/*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf $HOME/* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -rf \"$HOME\""
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -rf \"$HOME\" "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr /"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr / "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr /*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr /* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr ~"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr ~ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr ~/"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr ~/ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr ~/*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr ~/* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr $HOME"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr $HOME "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr $HOME/"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr $HOME/ "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr $HOME/*"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr $HOME/* "
+            ]
+          },
+          {
+            "suffix": [
+              "command",
+              "rm -fr \"$HOME\""
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "rm -fr \"$HOME\" "
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "--no-preserve-root"
+            ]
+          }
+        ]
+      },
+      "reason": "deletes the root or the home directory"
+    },
+    {
+      "id": "destroys-disks",
+      "effect": "forbid",
+      "when": {
+        "any": [
+          {
+            "contains": [
+              "command",
+              "mkfs"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "wipefs"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "> /dev/sd"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "> /dev/nvme"
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              "> /dev/disk"
+            ]
+          },
+          {
+            "all": [
+              {
+                "contains": [
+                  "command",
+                  "dd "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "of=/dev/"
+                ]
+              }
+            ]
+          },
+          {
+            "contains": [
+              "command",
+              ":(){ :|:& };:"
+            ]
+          }
+        ]
+      },
+      "reason": "overwrites a disk or a filesystem, or is a fork bomb"
+    },
+    {
+      "id": "pipes-to-shell",
+      "effect": "forbid",
+      "when": {
+        "all": [
+          {
+            "any": [
+              {
+                "contains": [
+                  "command",
+                  "curl "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "wget "
+                ]
+              }
+            ]
+          },
+          {
+            "any": [
+              {
+                "suffix": [
+                  "command",
+                  "| sh"
+                ]
+              },
+              {
+                "suffix": [
+                  "command",
+                  "| bash"
+                ]
+              },
+              {
+                "suffix": [
+                  "command",
+                  "|sh"
+                ]
+              },
+              {
+                "suffix": [
+                  "command",
+                  "|bash"
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "| sh "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "| bash "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "|sh "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "|bash "
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "| sudo sh"
+                ]
+              },
+              {
+                "contains": [
+                  "command",
+                  "| sudo bash"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "reason": "runs a downloaded script without anyone reading it"
+    },
+    {
+      "id": "writes-outside-cwd",
+      "effect": "forbid",
+      "when": {
+        "all": [
+          {
+            "eq": [
+              "outsideCwd",
+              true
+            ]
+          },
+          {
+            "in": [
+              "kind",
+              [
+                "edit",
+                "delete",
+                "move"
+              ]
+            ]
+          }
+        ]
+      },
+      "reason": "changes files outside the session's working directory"
+    }
+  ]
+}

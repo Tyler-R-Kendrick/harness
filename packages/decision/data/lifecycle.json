@@ -1,0 +1,14 @@
+{
+  "$schema": "./lifecycle.schema.json",
+  "promote": {
+    "fits": 5,
+    "sessions": 2,
+    "lowerBound": 0.55
+  },
+  "retire": {
+    "margin": 2
+  },
+  "audit": {
+    "every": 20
+  }
+}

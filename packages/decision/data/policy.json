@@ -1,0 +1,6 @@
+{
+  "$schema": "./policy.schema.json",
+  "version": "policy-1",
+  "default": { "act": 0.9, "verify": 0.5, "accept": 0.8, "rotate": 1, "explore": 0, "mode": "active" },
+  "forks": {}
+}

@@ -209,7 +209,7 @@ describe("slash commands: parsed before bash, with a command-line parser", () =>
   it("TM5.5 the parser's commands are the ones help lists, each with a description", async () => {
     const t = await terminal();
     const listed = (await t.run("/help")).stdout.trim().split("\n").map((l) => l.split(/\s+/)[0]);
-    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/decide", "/writer", "/templates", "/rate", "/trace", "/status", "/snapshot", "/reset", "/help"]);
+    expect(listed).toEqual(["/ask", "/new", "/sessions", "/use", "/worker", "/tier", "/approve", "/generate", "/decide", "/writer", "/templates", "/rate", "/decisions", "/trace", "/status", "/snapshot", "/reset", "/help"]);
     const commands = new SlashCommands({ playground: t.playground, tracer: t.tracer, settings: t.settings, prompter: t.prompter, write: () => {}, workers: [] }).list();
     expect(commands.map((c) => `/${c.name.split(" ")[0]}`)).toEqual(listed);
     expect(commands[0]).toEqual({ name: "ask [...prompt]", description: expect.stringContaining("Run a turn") });
@@ -290,6 +290,25 @@ describe("the template engine's commands", () => {
     expect(await t.run("/rate meh")).toMatchObject({ exitCode: 2, stderr: "usage: /rate good|bad [why]\n" });
   });
 
+  it("TM6.8 /decisions lists the newest decisions about which template answers, each with the ladder's trace and any rating; /status counts them; /rate good attaches a rating to the decision", async () => {
+    const t = await withEngine();
+    expect((await t.run("/decisions")).stdout).toBe("no decisions yet: /ask something first\n");
+    expect((await t.run("/status")).stdout).toMatch(/^decisions\s+0 of playground\.template$/m);
+    await t.engine.model().doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "list the files" }] }] });
+    await t.engine.model().doGenerate({ prompt: [{ role: "user", content: [{ type: "text", text: "write me a sonnet about autumn" }] }] });
+    expect((await t.run("/status")).stdout).toMatch(/^decisions\s+2 of playground\.template$/m);
+    const listed = (await t.run("/decisions")).stdout;
+    expect(listed).toMatch(/^dec-0 · list-files · model · \d\.\d\d · active$/m);
+    expect(listed).toContain('  "list the files"\n  model harness.lexical/tf-idf: accepted (');
+    expect(listed).toMatch(/^dec-1 · none · /m);
+    expect((await t.run("/decisions 1")).stdout).not.toContain("dec-0");
+    expect(await t.run("/decisions many")).toMatchObject({ exitCode: 2, stderr: "usage: /decisions [n], n a positive whole number\n" });
+    t.engine.last = { templateId: "list-files", request: "list the files" };
+    t.engine.lastDecision = "dec-0";
+    await t.run("/rate good");
+    expect((await t.run("/decisions 2")).stdout).toMatch(/^dec-0 · list-files · model · \d\.\d\d · active · rated-good$/m);
+  });
+
   it("TM6.7 /rate replace rewrites the last answer's template and the next answer is that text", async () => {
     const t = await withEngine();
     t.engine.last = { templateId: "list-files", request: "list the files" };
@@ -308,6 +327,8 @@ describe("the template engine's commands", () => {
     const t = await terminal();
     expect(await t.run("/templates")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });
     expect(await t.run("/rate good")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });
+    expect(await t.run("/decisions")).toMatchObject({ exitCode: 1, stderr: "no template engine here\n" });
+    expect((await t.run("/status")).stdout).not.toContain("decisions");
   });
 });
 

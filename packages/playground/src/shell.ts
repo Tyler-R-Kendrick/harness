@@ -8,10 +8,12 @@
 import type { RequestPermissionRequest, SessionUpdate } from "@agentclientprotocol/sdk";
 import { cac } from "cac";
 import type { Bash, BashExecResult, ExecOptions } from "just-bash";
+import type { DecisionRecord } from "@harness/decision";
 import { GENERATIONS } from "./engine.ts";
 import type { Generation, TemplateEngine } from "./engine.ts";
 import type { Playground, TurnReport } from "./playground.ts";
 import type { ModelTier } from "./sample-model.ts";
+import { TEMPLATE_FORK } from "./template-decision.ts";
 import type { TraceEvent, Tracer } from "./trace.ts";
 import type { TemplateStore } from "./templates.ts";
 import type { ApprovalPolicy } from "./vfs.ts";
@@ -177,6 +179,14 @@ export interface ShellContext {
   readonly decider?: { slugs(): readonly string[]; status(slug: string): string };
   /** The generators' slugs, and how a slug's local model is doing, for `/writer` and `/status`. */
   readonly writer?: { slugs(): readonly string[]; status(slug: string): string };
+}
+
+/** A decision record as `/decisions` shows it: what was decided and by whom, the request, and each rung's step. */
+function decisionLines(r: DecisionRecord): string {
+  const request = (r.input as { request?: unknown }).request;
+  const outcome = r.outcome === undefined ? "" : ` · ${r.outcome.kind}`;
+  const steps = r.trace.map((s) => `  ${s.rung}${s.member === undefined ? "" : ` ${s.member}`}: ${s.outcome}${s.confidence === undefined ? "" : ` (${s.confidence.toFixed(2)})`}`);
+  return [`${r.id} · ${String(r.action)} · ${r.rung} · ${r.confidence.toFixed(2)} · ${r.mode}${outcome}`, `  ${JSON.stringify(request)}`, ...steps].join("\n");
 }
 
 /** A path under home as the terminal shows it. */
@@ -378,14 +388,24 @@ export class SlashCommands {
         }
       }
       const counted = await store.feedback(last.templateId, verdict === "good" ? "helpful" : "harmful", note || undefined);
+      // The rating is also the outcome of the decision that chose the template.
+      await engine.rated(verdict);
       const after = counted.retired ? `; retired to ${tilde(store.dir)}/retired` : counted.refine !== undefined && verdict === "bad" ? `; rewritten when next chosen (${counted.refine})` : "";
       return ok(`${last.templateId}: ${counted.helpful} helpful, ${counted.harmful} harmful${after}\n`);
+    });
+    cli.command("decisions [n]", "The newest decisions about which template answers (the decision layer's log), with the ladder's trace (default 5)").action(async (n: string | undefined) => {
+      const { engine } = this.#ctx;
+      if (!engine) return fail("no template engine here\n", 1);
+      if (n !== undefined && !/^[1-9]\d*$/.test(String(n))) return fail("usage: /decisions [n], n a positive whole number\n");
+      const records = (await engine.decisions.log.query()).slice(-Number(n ?? 5));
+      if (records.length === 0) return ok("no decisions yet: /ask something first\n");
+      return ok(records.map(decisionLines).join("\n") + "\n");
     });
     cli.command("trace [n]", "The newest trace events (default 20)").action((n: string | undefined) => {
       if (n !== undefined && !/^[1-9]\d*$/.test(String(n))) return fail("usage: /trace [n], n a positive whole number\n");
       return ok(tracer.events().slice(-Number(n ?? 20)).map(traceLine).join("\n") + "\n");
     });
-    cli.command("status", "What the daemon holds").action(() => {
+    cli.command("status", "What the daemon holds").action(async () => {
       const snap = playground.snapshot();
       const hooks = (snap.hooks as { events: unknown[] }).events.length;
       const rows: [string, string | number][] = [
@@ -397,6 +417,7 @@ export class SlashCommands {
         ["generate", settings.generate],
         ["decide", this.#ctx.decider ? `${settings.decide}: ${this.#ctx.decider.status(settings.decide)}` : settings.decide],
         ["writer", this.#ctx.writer ? `${settings.writer}: ${this.#ctx.writer.status(settings.writer)}` : settings.writer],
+        ...(this.#ctx.engine ? ([["decisions", `${await this.#ctx.engine.decisions.log.size()} of ${TEMPLATE_FORK}`]] as [string, string][]) : []),
         ["hook events", hooks],
         ["trace events", tracer.events().length],
         ["capabilities", playground.host.daemon.capabilities().map((c) => c.name).join(", ")],
